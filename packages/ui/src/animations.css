@@ -1,0 +1,13 @@
+/* ── Muza motion classes ──────────────────────────────────────────
+   Язык движения дизайн-системы: контент «поднимается» при входе,
+   никогда не появляется из ниоткуда (из ui_kits/muza-app). */
+
+.muza-view { animation: muzaViewIn var(--dur-slow) var(--ease-out); }
+.muza-fade { animation: muzaFade var(--dur-slow) var(--ease-out); }
+
+@keyframes muzaViewIn { from { opacity: 0; transform: translateY(10px); } }
+@keyframes muzaFade { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .muza-view, .muza-fade { animation: none; }
+}
