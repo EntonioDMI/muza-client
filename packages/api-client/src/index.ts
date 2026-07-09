@@ -18,3 +18,4 @@ export interface MuzaApi {
 }
 
 export { MockMuzaApi } from "./mock";
+export { HttpMuzaApi, ApiError } from "./http";

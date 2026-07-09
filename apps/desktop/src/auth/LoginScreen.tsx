@@ -61,6 +61,8 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
     try {
       const session = mode === "login" ? await api.login(parsed.data) : await api.register(parsed.data);
       onSession(session);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Что-то пошло не так");
     } finally {
       setBusy(false);
     }

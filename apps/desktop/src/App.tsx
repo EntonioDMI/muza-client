@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Menu, SearchInput, Toast } from "@muza/ui";
-import { MockMuzaApi, type Session } from "@muza/api-client";
+import { HttpMuzaApi, type Session } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, type Prefs, type View } from "./types";
 import { LoginScreen } from "./auth/LoginScreen";
@@ -15,7 +15,10 @@ import { LibraryView } from "./views/LibraryView";
 import { SettingsView } from "./views/SettingsView";
 
 export function App() {
-  const api = useMemo(() => new MockMuzaApi(), []);
+  const api = useMemo(
+    () => new HttpMuzaApi(import.meta.env.VITE_API_URL ?? "http://localhost:8000/api"),
+    [],
+  );
   const [session, setSession] = useState<Session | null>(null);
   const [restoring, setRestoring] = useState(true);
 
