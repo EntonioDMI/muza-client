@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Базовые права главного окна. Tauri v2: default-deny, каждый плагин добавляет своё разрешение сюда явно.","local":true,"windows":["main"],"permissions":["core:default"]}}
