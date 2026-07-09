@@ -26,6 +26,9 @@ secrets/
 .cache/
 .vite/
 
+# CodeGraph (локальный индекс кода)
+.codegraph/
+
 # OS / editors
 .DS_Store
 Thumbs.db
