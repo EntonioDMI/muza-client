@@ -9,6 +9,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Не сторожить Rust-таргеты: cargo пишет туда во время сборки → EBUSY у Vite-вотчера.
+    watch: {
+      ignored: ["**/src-tauri/**"],
+    },
   },
   envPrefix: ["VITE_"],
   build: {
