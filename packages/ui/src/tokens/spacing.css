@@ -1,0 +1,27 @@
+/* ── Muza spacing & layout metrics ────────────────────────────────
+   Spacious by default: tiles breathe, few small elements. */
+
+:root {
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+  --sp-9: 56px;
+  --sp-10: 80px;
+
+  /* Fixed window regions (desktop app, 1440×900 reference frame) */
+  --w-sidebar: 280px;        /* left rail */
+  --w-nowplaying: 340px;     /* right "Сейчас играет" panel */
+  --h-playerbar: 92px;       /* persistent bottom player */
+  --gap-zone: 12px;          /* gutter between window zones */
+  --pad-zone: 20px;          /* inner padding of a zone */
+  --pad-tile: 16px;          /* inner padding of a tile */
+
+  --size-cover-bar: 60px;    /* player-bar cover */
+  --size-tile-cover: 100%;   /* tile covers are square, fill width */
+  --hit-min: 44px;           /* minimum interactive hit target */
+}

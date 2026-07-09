@@ -1,0 +1,17 @@
+{
+  "name": "muza-client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Muza — открытый десктоп-клиент музыкального плеера (Tauri + React). Тексты-герой, без цензуры, тотальная кастомизация.",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "desktop": "pnpm --filter muza-desktop tauri dev"
+  },
+  "packageManager": "pnpm@11.10.0",
+  "devDependencies": {
+    "turbo": "^2.10.4",
+    "typescript": "^7.0.2"
+  }
+}

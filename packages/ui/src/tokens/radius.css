@@ -1,0 +1,20 @@
+/* ── Muza corner radius ───────────────────────────────────────────
+   Soft, tiled. Radius is USER-ADJUSTABLE: settings swap the whole scale
+   via [data-radius] on <html> or any subtree. Default = "soft". */
+
+:root {
+  --r-xs: 10px;              /* small controls inside tiles */
+  --r-sm: 14px;              /* buttons, inputs, chips (non-pill) */
+  --r-md: 20px;              /* tiles, list rows, covers */
+  --r-lg: 28px;              /* zones: sidebar, panels, player bar */
+  --r-xl: 36px;              /* overlays, fullscreen sheets */
+  --r-pill: 999px;           /* pills, sliders, play FAB */
+}
+
+[data-radius="mild"] {
+  --r-xs: 6px; --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 20px;
+}
+
+[data-radius="round"] {
+  --r-xs: 14px; --r-sm: 18px; --r-md: 26px; --r-lg: 36px; --r-xl: 48px;
+}

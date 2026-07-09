@@ -1,0 +1,44 @@
+/* ── Muza color system ────────────────────────────────────────────
+   Dark, near-monochrome. One accent. Zones are separated by background
+   translucency ONLY — never borders, never shadows, never gradients. */
+
+:root {
+  /* Base backgrounds (warm near-black, anchored to the logo tile #171614) */
+  --bg-0: #121110;            /* app window background */
+  --bg-1: #171614;            /* raised base zone (logo tile color) */
+
+  /* Surface layers — translucent white; opacity encodes elevation.
+     Stack them: a zone is exactly one layer, nested content steps up one. */
+  --surface-1: rgba(255, 255, 255, 0.04);   /* zone: sidebar, panels */
+  --surface-2: rgba(255, 255, 255, 0.07);   /* tile / card resting */
+  --surface-3: rgba(255, 255, 255, 0.11);   /* hover, input fields */
+  --surface-4: rgba(255, 255, 255, 0.15);   /* active / selected / pressed */
+
+  /* Frosted glass — panels that float over content (player bar, now-playing,
+     overlays). Pair --glass-* background with backdrop-filter: blur(var(--blur-glass)). */
+  --glass-panel: rgba(23, 22, 20, 0.62);
+  --glass-deep:  rgba(18, 17, 16, 0.78);    /* fullscreen listening-mode scrim */
+  --glass-light: rgba(255, 255, 255, 0.08); /* frosted tile ON TOP of imagery */
+
+  /* Text — warm white ramp. Never pure #fff, never gray hex (use alpha). */
+  --text-1: #f4f3f1;
+  --text-2: rgba(244, 243, 241, 0.62);
+  --text-3: rgba(244, 243, 241, 0.38);
+  --text-on-accent: #ffffff;
+
+  /* Accent — exactly one per theme. Default: sky-blue. */
+  --accent:       #3b82f6;
+  --accent-hover: #5c96f7;
+  --accent-text:  #85b3fa;                  /* accent as text on dark bg (AA) */
+  --accent-soft:  rgba(59, 130, 246, 0.16); /* accent-tinted surface */
+
+  /* Brand constants — do not re-theme these; they belong to the logo. */
+  --brand-tile:  #171614;
+  --brand-bolt:  #327ad9;
+  --brand-flame: #f76967;
+
+  /* Functional (rare — errors in settings/forms only) */
+  --danger: #f76967;
+
+  color-scheme: dark;
+}

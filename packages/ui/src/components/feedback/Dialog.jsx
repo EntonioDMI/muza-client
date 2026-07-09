@@ -1,0 +1,56 @@
+import React, { useEffect } from "react";
+
+/** Modal dialog — frosted glass panel over a deep scrim. Use sparingly. */
+export function Dialog({ open, title, children, actions, onClose, width = 440 }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape" && onClose) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        display: "grid",
+        placeItems: "center",
+        background: "var(--glass-deep)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        animation: "muzaFadeIn var(--dur-base) var(--ease-out)",
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width,
+          maxWidth: "calc(100% - 48px)",
+          padding: "var(--sp-6)",
+          borderRadius: "var(--r-xl)",
+          background: "var(--bg-1)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--sp-5)",
+          animation: "muzaRiseIn var(--dur-base) var(--ease-out)",
+        }}
+      >
+        <style>{"@keyframes muzaFadeIn{from{opacity:0}}@keyframes muzaRiseIn{from{opacity:0;transform:translateY(14px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=dialog]{animation:none!important}}"}</style>
+        {title ? (
+          <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)", letterSpacing: "-0.01em" }}>{title}</div>
+        ) : null}
+        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>{children}</div>
+        {actions ? (
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--sp-3)" }}>{actions}</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

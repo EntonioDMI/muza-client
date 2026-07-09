@@ -1,0 +1,21 @@
+/* ── Muza effects ─────────────────────────────────────────────────
+   NO box-shadows. NO glows. NO gradients. Blur is the only "material":
+   frosted panels use backdrop-filter + a --glass-* background. */
+
+:root {
+  --blur-glass: 28px;        /* frosted panels (player bar, now playing) */
+  --blur-scenery: 64px;      /* blurred cover art used as a backdrop */
+
+  /* Motion — quick, exponential ease-out; state changes only. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* @kind other */
+  --dur-fast: 150ms;   /* @kind other */
+  --dur-base: 220ms;   /* @kind other */
+  --dur-slow: 400ms;   /* @kind other */  /* listening-mode enter/exit, lyric advance */
+
+  /* Focus — accent ring drawn with outline (not shadow) */
+  --focus-ring: 2px solid var(--accent); /* @kind other */
+  --focus-offset: 2px; /* @kind other */
+
+  /* Press feedback — scale, no color flash */
+  --press-scale: 0.97; /* @kind other */
+}

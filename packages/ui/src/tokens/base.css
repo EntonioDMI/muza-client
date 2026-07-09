@@ -1,0 +1,29 @@
+/* ── Muza base element styles ─────────────────────────────────── */
+
+body {
+  margin: 0;
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-ui);
+  font-weight: var(--fw-regular);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent-text); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+
+::selection { background: var(--accent-soft); }
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
+}

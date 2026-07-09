@@ -1,0 +1,17 @@
+/* ── Muza accent themes ───────────────────────────────────────────
+   Exactly one accent at a time; user switches in Настройки → Кастомизация.
+   Apply [data-accent="…"] on <html> or any subtree. Default (no attr) = blue. */
+
+[data-accent="red"] {
+  --accent:       #f76967;   /* the logo flame */
+  --accent-hover: #f9807e;
+  --accent-text:  #fa9b99;
+  --accent-soft:  rgba(247, 105, 103, 0.16);
+}
+
+[data-accent="bolt"] {
+  --accent:       #327ad9;   /* the logo bolt — deeper blue */
+  --accent-hover: #4f8fe0;
+  --accent-text:  #7fb0ec;
+  --accent-soft:  rgba(50, 122, 217, 0.16);
+}

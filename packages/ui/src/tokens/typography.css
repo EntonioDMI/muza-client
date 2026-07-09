@@ -1,0 +1,30 @@
+/* ── Muza type system ─────────────────────────────────────────────
+   One UI family (Golos Text) carries everything; Unbounded appears only
+   at brand moments: wordmark, home greeting, listening-mode headliner. */
+
+:root {
+  --font-ui: "Golos Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Unbounded", "Golos Text", sans-serif;
+
+  /* Fixed rem scale, ratio ≈1.2 — spacious and large, few small elements */
+  --fs-caption: 0.8125rem;   /* 13px — timestamps, counts */
+  --fs-body:    0.9375rem;   /* 15px — default UI text */
+  --fs-strong:  1.0625rem;   /* 17px — tile titles, row titles */
+  --fs-title:   1.375rem;    /* 22px — shelf/section headers */
+  --fs-h1:      1.75rem;     /* 28px — page titles */
+  --fs-greet:   2.25rem;     /* 36px — home greeting (display font) */
+  --fs-lyric:   1.5rem;      /* 24px — synced lyrics, side panel */
+  --fs-karaoke: 3.5rem;      /* 56px — fullscreen karaoke line */
+
+  --lh-tight: 1.15;    /* @kind font */
+  --lh-ui: 1.4;        /* @kind font */
+  --lh-lyrics: 1.3;    /* @kind font */
+
+  --fw-regular: 400;   /* @kind font */
+  --fw-medium: 500;    /* @kind font */
+  --fw-semibold: 600;  /* @kind font */
+  --fw-bold: 700;      /* @kind font */
+
+  --ls-display: -0.01em;     /* Unbounded is wide; never tighter than this */
+  --ls-caps: 0.08em;         /* rare uppercase micro-labels */
+}
