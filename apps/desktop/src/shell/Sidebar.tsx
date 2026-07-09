@@ -34,6 +34,8 @@ function NavItem({
         alignItems: "center",
         gap: "var(--sp-3)",
         height: NAV_H,
+        width: "100%",
+        boxSizing: "border-box",
         padding: "0 var(--sp-4)",
         border: "none",
         borderRadius: "var(--r-sm)",
