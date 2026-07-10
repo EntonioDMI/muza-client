@@ -128,15 +128,18 @@ export function Sidebar({
   setView,
   playlists,
   onCreatePlaylist,
+  onOpenPlaylist,
 }: {
   view: View;
   setView: (v: View) => void;
   playlists: DemoCollection[];
   onCreatePlaylist: () => void;
+  onOpenPlaylist: (id: string) => void;
 }) {
   const mainNav = [
     { key: "home" as const, icon: "home", label: "Главная" },
     { key: "search" as const, icon: "search", label: "Поиск" },
+    { key: "favorites" as const, icon: "heart", label: "Любимое" },
     { key: "library" as const, icon: "library-big", label: "Библиотека" },
   ];
   const idx = mainNav.findIndex((n) => n.key === view);
@@ -218,7 +221,7 @@ export function Sidebar({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", scrollbarWidth: "none" }}>
         {playlists.map((p) => (
-          <PlaylistRow key={p.id} cover={p.cover} name={p.name} meta={p.meta} />
+          <PlaylistRow key={p.id} cover={p.cover} name={p.name} meta={p.meta} onClick={() => onOpenPlaylist(p.id)} />
         ))}
       </div>
       <div style={{ marginTop: "auto" }}>

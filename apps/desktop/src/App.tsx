@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Menu, SearchInput, Toast } from "@muza/ui";
-import { HttpMuzaApi, type Session } from "@muza/api-client";
+import { HttpMuzaApi, type MuzaApi, type Session } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
-import { DEFAULT_PREFS, type Prefs, type View } from "./types";
+import { DEFAULT_PREFS, type Prefs, type RepeatMode, type View } from "./types";
+import { customAccentVars } from "./lib/accent";
+import { useMediaQuery } from "./lib/useMediaQuery";
 import { LoginScreen } from "./auth/LoginScreen";
 import { Sidebar } from "./shell/Sidebar";
 import { NowPlayingPanel } from "./shell/NowPlayingPanel";
@@ -11,8 +13,9 @@ import { QueuePanel } from "./shell/QueuePanel";
 import { ListeningMode } from "./shell/ListeningMode";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";
+import { FavoritesView } from "./views/FavoritesView";
 import { LibraryView } from "./views/LibraryView";
-import { SettingsView } from "./views/SettingsView";
+import { SettingsView, type SettingsIntent } from "./views/SettingsView";
 
 export function App() {
   const api = useMemo(
@@ -37,6 +40,9 @@ export function App() {
   }
   return (
     <Player
+      api={api}
+      canSearch={!session.user.anonymous}
+      greetName={session.user.anonymous ? null : session.user.username}
       username={session.user.anonymous ? "Аноним (без синхронизации)" : (session.user.username ?? "")}
       onLogout={async () => {
         await api.logout();
@@ -46,8 +52,34 @@ export function App() {
   );
 }
 
+const PREFS_KEY = "muza.prefs.v1";
+
+function loadPrefs(): Prefs {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return DEFAULT_PREFS;
+    // merge с дефолтами: новые поля Prefs не ломают старые сохранения
+    return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<Prefs>) };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
 /** Каркас плеера Stage 1: воспроизведение имитируется таймером (реальный движок — Stage 3). */
-function Player({ username, onLogout }: { username: string; onLogout: () => void }) {
+function Player({
+  api,
+  canSearch,
+  greetName,
+  username,
+  onLogout,
+}: {
+  api: MuzaApi;
+  canSearch: boolean;
+  /** Ник для приветствия на главной; null у анонима. */
+  greetName: string | null;
+  username: string;
+  onLogout: () => void;
+}) {
   const [view, setView] = useState<View>("home");
   const [currentId, setCurrentId] = useState(TRACKS[0].id);
   const [playing, setPlaying] = useState(true);
@@ -55,7 +87,12 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
   const [vol, setVol] = useState(64);
   const [likes, setLikes] = useState<string[]>(["t3"]);
   const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState(false);
+  // Повтор трёхрежимный: выкл → вся очередь → один трек (как в нормальных плеерах)
+  const [repeat, setRepeat] = useState<RepeatMode>("off");
+  // Частая настройка — живёт в плеер-баре; в демо честно ускоряет таймер
+  const [speed, setSpeed] = useState(1);
+  // Запрос открыть конкретный под-экран настроек (кнопка эквалайзера в баре)
+  const [settingsIntent, setSettingsIntent] = useState<SettingsIntent | null>(null);
   const [lyricsOn, setLyricsOn] = useState(true);
   const [queueOn, setQueueOn] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -70,18 +107,41 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
     track: null,
   });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  // Кастомизация переживает перезапуск: без этого все настройки слетали
+  const [prefs, setPrefsState] = useState<Prefs>(loadPrefs);
+  const setPrefs = (p: Prefs) => {
+    setPrefsState(p);
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+  };
 
   const track = TRACKS.find((t) => t.id === currentId) ?? TRACKS[0];
   const idx = TRACKS.indexOf(track);
 
+  // Адаптив окна: фиксированные колонки не должны душить контент.
+  // < 1200px — прячем «Сейчас играет» (вторична), < 950px — ужимаем сайдбар.
+  const wideEnoughForPanel = useMediaQuery("(min-width: 1200px)");
+  const wideEnoughForSidebar = useMediaQuery("(min-width: 950px)");
+  const showNowPlaying = lyricsOn && wideEnoughForPanel;
+
   useEffect(() => {
     if (!playing) return;
     const iv = setInterval(() => {
-      setPos((p) => (p + 1 > track.duration ? 0 : p + 1));
-    }, 1000);
+      setPos((p) => {
+        if (p + 1 <= track.duration) return p + 1;
+        // конец трека: повтор трека — сначала; иначе дальше по очереди,
+        // а без повтора на последнем — стоп
+        if (repeat === "one") return 0;
+        const isLast = TRACKS.indexOf(track) === TRACKS.length - 1;
+        if (repeat === "off" && isLast) {
+          setPlaying(false);
+          return track.duration;
+        }
+        stepRef.current(1);
+        return 0;
+      });
+    }, 1000 / speed);
     return () => clearInterval(iv);
-  }, [playing, track]);
+  }, [playing, track, speed, repeat]);
 
   const activeLine = useMemo(() => {
     let a = 0;
@@ -112,6 +172,56 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
     setPos(0);
     setPlaying(true);
   };
+  // таймеру конца трека нужен свежий step без пересоздания интервала
+  const stepRef = useRef(step);
+  stepRef.current = step;
+
+  const cycleRepeat = () => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
+  const SPEEDS = [1, 1.25, 1.5, 2, 0.75];
+  const cycleSpeed = () => setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length]);
+  const openEqualizer = () => {
+    setView("settings");
+    setSettingsIntent({ sub: "equalizer", nonce: Date.now() });
+  };
+
+  // Mute: клик по иконке громкости или клавиша M; помним прежний уровень
+  const prevVolRef = useRef(64);
+  const toggleMute = () => {
+    setVol((v) => {
+      if (v > 0) {
+        prevVolRef.current = v;
+        return 0;
+      }
+      return prevVolRef.current || 64;
+    });
+  };
+
+  // Глобальные горячие клавиши — база нативности десктоп-плеера.
+  // Слушатель один на маунт, актуальные значения — через ref (без стейл-замыканий).
+  const hotkeysRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  hotkeysRef.current = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+    const k = e.key.toLowerCase();
+    if (e.code === "Space") {
+      e.preventDefault(); // иначе скроллит страницу / жмёт сфокусированную кнопку
+      setPlaying((p) => !p);
+    } else if (e.code === "ArrowRight" && e.ctrlKey) step(1);
+    else if (e.code === "ArrowLeft" && e.ctrlKey) step(-1);
+    else if (e.code === "ArrowRight") setPos((p) => Math.min(p + 5, track.duration));
+    else if (e.code === "ArrowLeft") setPos((p) => Math.max(p - 5, 0));
+    else if (k === "m" || k === "ь") toggleMute();
+    else if (k === "l" || k === "д") toggleLike(currentId);
+    else if ((k === "k" || k === "л") && e.ctrlKey) {
+      e.preventDefault();
+      setView("search");
+    } else if (e.code === "Escape" && queueOn) setQueueOn(false);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => hotkeysRef.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const seekLine = (i: number) => setPos(track.lyrics[i].t);
   const toggleLike = (id: string) => {
     const had = likes.includes(id);
@@ -137,7 +247,7 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
     showToast("Плейлист создан", "list-music");
   };
 
-  const accentAttr = prefs.accent === "blue" ? undefined : prefs.accent;
+  const accentAttr = prefs.accent === "blue" || prefs.accent === "custom" ? undefined : prefs.accent;
   const rootStyle = {
     position: "absolute",
     inset: 0,
@@ -146,6 +256,9 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
     fontFamily: "var(--font-ui)",
     "--blur-glass": `${prefs.blur}px`,
     "--glass-panel": `rgba(23, 22, 20, ${prefs.glassOpacity / 100})`,
+    // свой акцент: все четыре акцент-токена выводятся из выбранного hex
+    ...(prefs.accent === "custom" ? customAccentVars(prefs.customAccent) : {}),
+    ...(wideEnoughForSidebar ? {} : { "--w-sidebar": "220px" }),
     ...(prefs.anims ? {} : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
   } as React.CSSProperties;
 
@@ -174,22 +287,51 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
           position: "absolute",
           inset: 0,
           display: "grid",
-          gridTemplateColumns: lyricsOn ? "var(--w-sidebar) 1fr var(--w-nowplaying)" : "var(--w-sidebar) 1fr",
+          gridTemplateColumns: showNowPlaying ? "var(--w-sidebar) 1fr var(--w-nowplaying)" : "var(--w-sidebar) 1fr",
           gap: "var(--gap-zone)",
           padding: "var(--gap-zone)",
           paddingBottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
         }}
       >
-        <Sidebar view={view} setView={setView} playlists={playlists} onCreatePlaylist={() => setDialogOpen(true)} />
-        <main style={{ overflowY: "auto", scrollbarWidth: "none", borderRadius: "var(--r-lg)" }}>
-          <div key={view} className="muza-view">
+        <Sidebar
+          view={view}
+          setView={setView}
+          playlists={playlists}
+          onCreatePlaylist={() => setDialogOpen(true)}
+          onOpenPlaylist={() => setView("library")}
+        />
+        {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
+            прошлого экрана не протекает в новый (короткий экран улетал вверх) */}
+        <main key={view} style={{ overflowY: "auto", scrollbarWidth: "none", borderRadius: "var(--r-lg)" }}>
+          <div className="muza-view">
             {view === "home" ? (
-              <HomeFeed currentId={currentId} playing={playing} onPlayTrack={playTrack} onOpen={setView} />
-            ) : view === "search" ? (
-              <SearchView
+              <HomeFeed
+                greetName={greetName}
                 currentId={currentId}
                 playing={playing}
                 likes={likes}
+                onPlayTrack={playTrack}
+                onLike={toggleLike}
+                onTrackMenu={openTrackMenu}
+                onOpen={setView}
+              />
+            ) : view === "search" ? (
+              <SearchView
+                api={api}
+                canSearch={canSearch}
+                currentId={currentId}
+                playing={playing}
+                likes={likes}
+                onPlayTrack={playTrack}
+                onLike={toggleLike}
+                onTrackMenu={openTrackMenu}
+                onNotify={showToast}
+              />
+            ) : view === "favorites" ? (
+              <FavoritesView
+                likes={likes}
+                currentId={currentId}
+                playing={playing}
                 onPlayTrack={playTrack}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
@@ -197,11 +339,11 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
             ) : view === "library" ? (
               <LibraryView onPlayTrack={playTrack} />
             ) : (
-              <SettingsView prefs={prefs} setPrefs={setPrefs} username={username} onLogout={onLogout} />
+              <SettingsView prefs={prefs} setPrefs={setPrefs} username={username} onLogout={onLogout} intent={settingsIntent} />
             )}
           </div>
         </main>
-        {lyricsOn ? (
+        {showNowPlaying ? (
           <NowPlayingPanel
             track={track}
             liked={likes.includes(track.id)}
@@ -236,11 +378,15 @@ function Player({ username, onLogout }: { username: string; onLogout: () => void
         shuffle={shuffle}
         onShuffle={() => setShuffle(!shuffle)}
         repeat={repeat}
-        onRepeat={() => setRepeat(!repeat)}
+        onRepeat={cycleRepeat}
+        speed={speed}
+        onSpeed={cycleSpeed}
         lyricsOn={lyricsOn}
         onLyrics={() => setLyricsOn(!lyricsOn)}
         queueOn={queueOn}
         onQueue={() => setQueueOn(!queueOn)}
+        onEqualizer={openEqualizer}
+        onMute={toggleMute}
         onExpand={() => setExpanded(true)}
       />
 

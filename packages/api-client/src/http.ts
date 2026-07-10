@@ -1,5 +1,13 @@
 import type { MuzaApi } from "./index";
-import { type Credentials, type Session, SessionSchema } from "./schemas";
+import {
+  type Credentials,
+  type RegisterStatus,
+  type SearchScope,
+  type Session,
+  SessionSchema,
+  type Track,
+  TrackSchema,
+} from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
 
@@ -18,6 +26,31 @@ interface TokenPair {
   refresh_token: string;
   user_id: string;
   username: string;
+}
+
+/** Проводной формат трека (snake_case сервера) → Track (camelCase). */
+interface TrackWire {
+  id: string;
+  artist: string;
+  title: string;
+  duration_sec: number;
+  cover_url: string | null;
+  is_cached: boolean;
+  sources: string[];
+  loudness: number | null;
+}
+
+function trackFromWire(wire: TrackWire): Track {
+  return TrackSchema.parse({
+    id: wire.id,
+    artist: wire.artist,
+    title: wire.title,
+    durationSec: wire.duration_sec,
+    coverUrl: wire.cover_url,
+    isCached: wire.is_cached,
+    sources: wire.sources,
+    loudness: wire.loudness,
+  });
 }
 
 function sessionFromTokens(pair: TokenPair): Session {
@@ -117,11 +150,7 @@ export class HttpMuzaApi implements MuzaApi {
     // access мог протухнуть — обновляем пару через refresh-ротацию
     if (!session.refreshToken) return null;
     try {
-      const pair = await this.request<TokenPair>("/auth/refresh", {
-        method: "POST",
-        body: JSON.stringify({ refresh_token: session.refreshToken }),
-      });
-      return this.persist(sessionFromTokens(pair));
+      return await this.refreshPair(session.refreshToken);
     } catch (e) {
       if (e instanceof ApiError && e.status === 0) return session; // офлайн — не разлогиниваем
       localStorage.removeItem(STORAGE_KEY);
@@ -129,14 +158,61 @@ export class HttpMuzaApi implements MuzaApi {
     }
   }
 
-  // ---------- Регистрация с почтой (verify-before-create), UI подключится позже ----------
-
-  async registerStart(input: Credentials & { email: string }): Promise<{ pending_id: string; email: string }> {
-    return this.request("/auth/register/start", { method: "POST", body: JSON.stringify(input) });
+  /** Обновить пару токенов по refresh (ротация) и сохранить сессию. */
+  private async refreshPair(refreshToken: string): Promise<Session> {
+    const pair = await this.request<TokenPair>("/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    return this.persist(sessionFromTokens(pair));
   }
 
-  async registerStatus(pendingId: string): Promise<"pending" | "verified" | "expired" | "notfound"> {
-    const out = await this.request<{ status: "pending" | "verified" | "expired" | "notfound" }>(
+  /** Запрос с Bearer текущей сессии; на 401 — одна refresh-ротация и повтор
+   *  (access короткоживущий, протухает между действиями пользователя). */
+  private async authedRequest<T>(path: string, init?: RequestInit): Promise<T> {
+    const session = this.load();
+    if (!session || session.user.anonymous) {
+      throw new ApiError(401, "Нужен вход с аккаунтом");
+    }
+    const withAuth = (token: string): RequestInit => ({
+      ...init,
+      headers: { ...init?.headers, Authorization: `Bearer ${token}` },
+    });
+    try {
+      return await this.request<T>(path, withAuth(session.accessToken));
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 401 || !session.refreshToken) throw e;
+      const refreshed = await this.refreshPair(session.refreshToken);
+      return this.request<T>(path, withAuth(refreshed.accessToken));
+    }
+  }
+
+  // ---------- Каталог (Stage 2, слайс 3) ----------
+
+  async search(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]> {
+    const params = new URLSearchParams({ q: query });
+    if (opts?.scope) params.set("scope", opts.scope);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const out = await this.authedRequest<{ query: string; results: TrackWire[] }>(`/search?${params}`);
+    return out.results.map(trackFromWire);
+  }
+
+  async getTrack(id: string): Promise<Track> {
+    return trackFromWire(await this.authedRequest<TrackWire>(`/tracks/${encodeURIComponent(id)}`));
+  }
+
+  // ---------- Регистрация с почтой (verify-before-create) ----------
+
+  async registerStart(input: Credentials & { email: string }): Promise<{ pendingId: string; email: string }> {
+    const out = await this.request<{ pending_id: string; email: string }>("/auth/register/start", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return { pendingId: out.pending_id, email: out.email };
+  }
+
+  async registerStatus(pendingId: string): Promise<RegisterStatus> {
+    const out = await this.request<{ status: RegisterStatus }>(
       `/auth/register/status?pending_id=${encodeURIComponent(pendingId)}`,
     );
     return out.status;

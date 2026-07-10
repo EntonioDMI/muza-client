@@ -1,6 +1,44 @@
+import { useState } from "react";
 import { Icon, IconButton, Slider, Tooltip } from "@muza/ui";
 import type { DemoTrack } from "../data/demo";
+import type { RepeatMode } from "../types";
 import { fmtTime } from "../lib/format";
+
+/** Кнопка скорости: текст «1×», клик циклит пресеты (как в голосовых Telegram).
+ *  Частая настройка — живёт прямо в баре, а не в недрах настроек. */
+function SpeedButton({ speed, onClick }: { speed: number; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  const label = `${speed}×`.replace(".", ",");
+  return (
+    <Tooltip label="Скорость воспроизведения">
+      <button
+        type="button"
+        aria-label={`Скорость: ${label}`}
+        onClick={onClick}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          height: 28,
+          minWidth: 44,
+          padding: "0 var(--sp-2)",
+          border: "none",
+          borderRadius: "var(--r-pill)",
+          background: hover ? "var(--surface-3)" : speed !== 1 ? "var(--surface-2)" : "transparent",
+          color: speed !== 1 ? "var(--accent-text)" : "var(--text-2)",
+          fontFamily: "var(--font-ui)",
+          fontSize: "var(--fs-caption)",
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          cursor: "pointer",
+          transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+          flex: "none",
+        }}
+      >
+        {label}
+      </button>
+    </Tooltip>
+  );
+}
 
 export function PlayerBar({
   track,
@@ -18,10 +56,14 @@ export function PlayerBar({
   onShuffle,
   repeat,
   onRepeat,
+  speed,
+  onSpeed,
   lyricsOn,
   onLyrics,
   queueOn,
   onQueue,
+  onEqualizer,
+  onMute,
   onExpand,
 }: {
   track: DemoTrack;
@@ -37,14 +79,19 @@ export function PlayerBar({
   onLike: () => void;
   shuffle: boolean;
   onShuffle: () => void;
-  repeat: boolean;
+  repeat: RepeatMode;
   onRepeat: () => void;
+  speed: number;
+  onSpeed: () => void;
   lyricsOn: boolean;
   onLyrics: () => void;
   queueOn: boolean;
   onQueue: () => void;
+  onEqualizer: () => void;
+  onMute: () => void;
   onExpand: () => void;
 }) {
+  const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
   return (
     <div
       style={{
@@ -108,7 +155,7 @@ export function PlayerBar({
           </div>
         </div>
         <Tooltip label="Нравится">
-          <IconButton icon="heart" size="sm" active={liked} label="Нравится" onClick={onLike} />
+          <IconButton icon="heart" size="sm" active={liked} filled={liked} label="Нравится" onClick={onLike} />
         </Tooltip>
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
@@ -128,8 +175,14 @@ export function PlayerBar({
           <Tooltip label="Следующий">
             <IconButton icon="skip-forward" label="Следующий" onClick={onNext} />
           </Tooltip>
-          <Tooltip label="Повтор">
-            <IconButton icon="repeat" size="sm" active={repeat} label="Повтор" onClick={onRepeat} />
+          <Tooltip label={repeatLabel}>
+            <IconButton
+              icon={repeat === "one" ? "repeat-1" : "repeat"}
+              size="sm"
+              active={repeat !== "off"}
+              label={repeatLabel}
+              onClick={onRepeat}
+            />
           </Tooltip>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", width: 480 }}>
@@ -145,14 +198,28 @@ export function PlayerBar({
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}>
+        <SpeedButton speed={speed} onClick={onSpeed} />
+        <Tooltip label="Эквалайзер">
+          <IconButton icon="sliders-vertical" size="sm" label="Эквалайзер" onClick={onEqualizer} />
+        </Tooltip>
         <Tooltip label="Текст">
           <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label="Текст" onClick={onLyrics} />
         </Tooltip>
         <Tooltip label="Очередь">
           <IconButton icon="list-music" size="sm" active={queueOn} label="Очередь" onClick={onQueue} />
         </Tooltip>
-        <Icon name="volume-2" size={18} color="var(--text-2)" />
-        <Slider value={vol} onChange={onVol} ariaLabel="Громкость" style={{ width: 110 }} />
+        {/* клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость */}
+        <Tooltip label={vol === 0 ? "Включить звук" : "Без звука"}>
+          <IconButton
+            icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
+            size="sm"
+            label={vol === 0 ? "Включить звук" : "Без звука"}
+            onClick={onMute}
+          />
+        </Tooltip>
+        <div onWheel={(e) => onVol(Math.max(0, Math.min(100, vol + (e.deltaY < 0 ? 5 : -5))))} style={{ display: "flex" }}>
+          <Slider value={vol} onChange={onVol} ariaLabel="Громкость" style={{ width: 110 }} />
+        </div>
         <Tooltip label="Во весь экран">
           <IconButton icon="maximize-2" size="sm" label="Режим прослушивания" onClick={onExpand} />
         </Tooltip>
