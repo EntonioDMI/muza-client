@@ -602,7 +602,7 @@ export function SettingsView({
       <SettingRow title="Размер текста" hint="Базовый размер интерфейса (позже)">
         <DisabledSlider value={15} max={20} label="Размер текста" />
       </SettingRow>
-      <SettingRow title="Размер караоке-текста" hint="Отдельно от интерфейса (Stage 3)">
+      <SettingRow title="Размер караоке-текста" hint="Отдельно от интерфейса (позже)">
         <DisabledSlider value={28} max={44} label="Размер караоке-текста" />
       </SettingRow>
 
@@ -911,7 +911,7 @@ export function SettingsView({
         <SettingRow title="Email" hint="Для восстановления пароля (позже — смена из приложения)">
           <RowValue>указан при регистрации</RowValue>
         </SettingRow>
-        <SettingRow title="Сменить пароль" hint="Появится вместе с восстановлением" chevron></SettingRow>
+        <SettingRow title="Сменить пароль" hint="Из приложения — позже; сейчас через «Восстановление» на экране входа" chevron></SettingRow>
         <SettingRow title="Сессии и устройства" hint="Где выполнен вход (позже)" chevron></SettingRow>
         <GroupTitle>Приватность</GroupTitle>
         <SettingRow
@@ -930,7 +930,7 @@ export function SettingsView({
           onClick={() => setSub("data")}
           chevron
         ></SettingRow>
-        <SettingRow title="Выгрузить или удалить данные" hint="Появится к релизу (Stage 4)" danger chevron></SettingRow>
+        <SettingRow title="Выгрузить или удалить данные" hint="Появится к релизу" danger chevron></SettingRow>
       </div>
     ) : tab === "appearance" ? (
       <div key="appearance" className={paneClass} style={paneStyle}>
@@ -999,7 +999,7 @@ export function SettingsView({
         <SettingRow title="Кроссфейд" hint="Плавный переход между треками (4 секунды)">
           <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label="Кроссфейд" />
         </SettingRow>
-        <SettingRow title="Gapless" hint="Треки альбома без паузы (Stage 3)">
+        <SettingRow title="Gapless" hint="Преднагрузка следующего трека уже работает; идеальный стык — позже">
           <Switch checked disabled label="Gapless" />
         </SettingRow>
         <GroupTitle>Звук</GroupTitle>
@@ -1021,14 +1021,14 @@ export function SettingsView({
           />
         </SettingRow>
         <GroupTitle>Очередь</GroupTitle>
-        <SettingRow title="Конец очереди" hint="Что играть, когда очередь кончилась (Stage 3)">
+        <SettingRow title="Конец очереди" hint="Что играть, когда очередь кончилась (Stage 5 — радио и автоплей)">
           <RowValue>Похожее</RowValue>
         </SettingRow>
-        <SettingRow title="Запоминать позицию трека" hint="Продолжать с места остановки (Stage 3)">
+        <SettingRow title="Запоминать позицию трека" hint="Продолжать с места остановки (позже)">
           <Switch checked disabled label="Запоминать позицию" />
         </SettingRow>
         <GroupTitle>Стрим</GroupTitle>
-        <SettingRow title="Качество стрима" hint="Максимум или эконом (Stage 3)">
+        <SettingRow title="Качество стрима" hint="Максимум или эконом (позже; сейчас — лучший формат по рецепту)">
           <RowValue>Авто</RowValue>
         </SettingRow>
         <SettingRow title="Sleep timer" hint="Пресеты луны в баре: выкл → эти минуты → конец трека">
@@ -1045,7 +1045,7 @@ export function SettingsView({
       </div>
     ) : tab === "sources" ? (
       <div key="sources" className={paneClass} style={paneStyle}>
-        <SettingRow title="Что предпочитать" hint="Официальное · любое лучшее · всегда спрашивать (Stage 3)">
+        <SettingRow title="Что предпочитать" hint="Глобальная политика — позже; выбрать версию у трека уже можно: «⋯ → Версии и источники»">
           <RowValue>Официальное</RowValue>
         </SettingRow>
         <GroupTitle>Источники по приоритету</GroupTitle>
@@ -1058,7 +1058,7 @@ export function SettingsView({
         <SettingRow title="SoundCloud" hint="Фолбэк">
           <Switch checked disabled label="SoundCloud" />
         </SettingRow>
-        <SettingRow title="Bandcamp" hint="Появится позже">
+        <SettingRow title="Bandcamp" hint="В поиске — позже; по прямой ссылке уже работает">
           <Switch checked={false} disabled label="Bandcamp" />
         </SettingRow>
         <GroupTitle>Поиск</GroupTitle>
@@ -1068,18 +1068,20 @@ export function SettingsView({
         <SettingRow title="Мгновенный поиск" hint="Каталог при вводе, источники — по Enter">
           <Switch checked disabled label="Мгновенный поиск" />
         </SettingRow>
-        <SettingRow title="Прямые и локальные источники" hint="Папки и добавленное по ссылке (Stage 3–4)" chevron></SettingRow>
+        <SettingRow title="Прямые и локальные источники" hint="Работает: файлы, папки и ссылки — в Медиатеке">
+          <RowValue>Медиатека → Локальные / По ссылке</RowValue>
+        </SettingRow>
       </div>
     ) : tab === "lyrics" ? (
       <div key="lyrics" className={paneClass} style={paneStyle}>
         <GroupTitle>Отображение</GroupTitle>
-        <SettingRow title="Синхро-текст" hint="Караоке-строки в такт (Stage 3)">
+        <SettingRow title="Синхро-текст" hint="Караоке-строки в такт — работает">
           <Switch checked disabled label="Синхро-текст" />
         </SettingRow>
-        <SettingRow title="Автоскролл" hint="Следовать за текущей строкой (Stage 3)">
+        <SettingRow title="Автоскролл" hint="Следовать за текущей строкой — работает">
           <Switch checked disabled label="Автоскролл" />
         </SettingRow>
-        <SettingRow title="Размер караоке-текста" hint="Настройка в Кастомизации (Stage 3)">
+        <SettingRow title="Размер караоке-текста" hint="Настройка в Кастомизации (позже)">
           <DisabledSlider value={28} max={44} label="Размер караоке-текста" />
         </SettingRow>
         <GroupTitle>Понимание</GroupTitle>
@@ -1134,16 +1136,16 @@ export function SettingsView({
       </div>
     ) : tab === "integrations" ? (
       <div key="integrations" className={paneClass} style={paneStyle}>
-        <SettingRow title="Discord Rich Presence" hint="Статус, шаблоны строк, предпросмотр (Stage 3)" onClick={() => setSub("discord")} chevron>
+        <SettingRow title="Discord Rich Presence" hint="Статус и кнопка работают (нужен Application ID из Dev Portal); шаблоны строк — позже" onClick={() => setSub("discord")} chevron>
           <RowValue>Выкл</RowValue>
         </SettingRow>
-        <SettingRow title="Скробблинг Last.fm" hint="Подключение аккаунта (Stage 3)" chevron>
+        <SettingRow title="Скробблинг Last.fm" hint="Подключение аккаунта (позже; внутренняя история уже пишется)" chevron>
           <RowValue>Не подключён</RowValue>
         </SettingRow>
-        <SettingRow title="Скробблинг ListenBrainz" hint="Подключение аккаунта (Stage 3)" chevron>
+        <SettingRow title="Скробблинг ListenBrainz" hint="Подключение аккаунта (позже)" chevron>
           <RowValue>Не подключён</RowValue>
         </SettingRow>
-        <SettingRow title="Медиаклавиши" hint="Play/Pause/Next с клавиатуры (Stage 3)">
+        <SettingRow title="Медиаклавиши" hint="Play/Pause/Next с клавиатуры — работают">
           <Switch checked disabled label="Медиаклавиши" />
         </SettingRow>
       </div>
@@ -1175,13 +1177,13 @@ export function SettingsView({
       </div>
     ) : (
       <div key="system" className={paneClass} style={paneStyle}>
-        <SettingRow title="Запускать при старте Windows" hint="Появится с системной интеграцией (Stage 4)">
+        <SettingRow title="Запускать при старте Windows" hint="Появится с системной интеграцией (позже)">
           <Switch checked={prefs.autostart} disabled label="Автозапуск" />
         </SettingRow>
-        <SettingRow title="Сворачивать в трей" hint="Появится с системной интеграцией (Stage 4)">
+        <SettingRow title="Сворачивать в трей" hint="Появится с системной интеграцией (позже)">
           <Switch checked={prefs.tray} disabled label="Трей" />
         </SettingRow>
-        <SettingRow title="При закрытии окна" hint="Сворачивать или выходить (Stage 4)">
+        <SettingRow title="При закрытии окна" hint="Сворачивать или выходить (позже)">
           <RowValue>Сворачивать</RowValue>
         </SettingRow>
         <SettingRow title="Автообновление" hint="Подписанные обновления — к первому релизу">
