@@ -7,6 +7,7 @@ import type {
   Annotations,
   Credentials,
   HistoryItem,
+  ImportReport,
   Lyrics,
   PlaylistDetail,
   PlaylistMeta,
@@ -14,7 +15,9 @@ import type {
   RegisterStatus,
   SearchScope,
   Session,
+  TelemetryStats,
   Track,
+  TrackSource,
 } from "./schemas";
 
 export * from "./schemas";
@@ -44,6 +47,23 @@ export interface MuzaApi {
   // сервер его не знает → поиск недоступен).
   search(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]>;
   getTrack(id: string): Promise<Track>;
+  /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
+   *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */
+  getTrackSources(id: string): Promise<TrackSource[]>;
+
+  // Источники и версии (Stage 4).
+  /** Запомнить явный выбор источника трека (per-user; матчинг не перебивает). */
+  chooseTrackSource(trackId: string, sourceId: string): Promise<void>;
+  /** Сбросить выбор: снова играет лучший источник по приоритету. */
+  resetTrackSource(trackId: string): Promise<void>;
+  /** Прямая ссылка (YT/YTM/SC/Bandcamp; Spotify/Apple — через Odesli):
+   *  трек добавляется как есть, источник — kind=direct + выбор пользователя. */
+  addDirectTrack(url: string): Promise<Track>;
+  /** Локальный файл (device-bound): регистрирует трек с источником kind=local
+   *  по хэшу файла; сам файл остаётся на устройстве. */
+  addLocalTrack(input: { artist: string; title: string; durationSec: number; hash: string }): Promise<Track>;
+  /** Импорт плейлиста по ссылке (Spotify/YT/Apple) через матчинг в каталог. */
+  importPlaylist(url: string): Promise<ImportReport>;
 
   // Личное (Stage 2, слайс 4): избранное, плейлисты, история. Серверная сессия.
   getFavorites(): Promise<Track[]>;
@@ -66,6 +86,9 @@ export interface MuzaApi {
 
   /** Горячий рецепт добычи (Stage 2, слайс 6); применяется клиентом в Stage 3. */
   getRecipe(): Promise<RecipeEnvelope>;
+
+  /** Анонимный агрегат телеметрии (Stage 3): без идентификаторов, best-effort. */
+  sendTelemetry(stats: TelemetryStats): Promise<void>;
 }
 
 export { MockMuzaApi } from "./mock";

@@ -12,6 +12,10 @@ target/
 # Tauri (генерируется при сборке)
 **/src-tauri/gen/schemas/
 
+# Sidecar-бинари движка добычи (качаются отдельно, см. bin/README.md)
+**/src-tauri/bin/*.exe
+**/src-tauri/bin/yt-dlp-*
+
 # Env & secrets — NEVER commit
 .env
 .env.*

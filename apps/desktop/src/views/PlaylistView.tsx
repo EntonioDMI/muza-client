@@ -1,30 +1,54 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
+import { localList } from "../lib/localFiles";
+import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
- *  переименование, удаление, убрать трек. Воспроизведение — Stage 3. */
+ *  переименование, удаление, убрать трек. Stage 3: клик — играет,
+ *  очередь = плейлист. */
 export function PlaylistView({
   api,
   playlistId,
   likes,
+  currentId,
+  playing,
+  onPlayCatalog,
   onLike,
   onNotify,
+  onVersions,
+  onSaveOffline,
   onChanged,
   onDeleted,
 }: {
   api: MuzaApi;
   playlistId: string;
   likes: string[];
+  currentId: string;
+  playing: boolean;
+  /** Играть трек в контексте плейлиста (Stage 3, движок). */
+  onPlayCatalog: (tracks: Track[], id: string) => void;
   onLike: (id: string) => void;
   onNotify: (text: string, icon?: string) => void;
+  /** Открыть «Версии и источники» трека (Stage 4). */
+  onVersions: (t: Track) => void;
+  /** «Сохранить оффлайн» весь плейлист (Stage 4): пины + фоновая догрузка. */
+  onSaveOffline: (tracks: Track[]) => void;
   /** Состав/имя изменились — сайдбару пора перечитать список. */
   onChanged: () => void;
   onDeleted: () => void;
 }) {
   const [detail, setDetail] = useState<PlaylistDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Stage 4: хэши локальных файлов, живых на ЭТОМ устройстве (смешанные
+  // плейлисты: чужой локальный трек — серый, «нет на устройстве»)
+  const [localHashes, setLocalHashes] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    localList()
+      .then((entries) => setLocalHashes(new Set(entries.filter((e) => e.available).map((e) => e.hash))))
+      .catch(() => undefined);
+  }, []);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -35,9 +59,15 @@ export function PlaylistView({
     track: null,
   });
 
+  // Stage 4: сервер лёг — читаем последний снапшот (закреплённое играет из кэша)
+  const [offline, setOffline] = useState(false);
   const load = useCallback(async () => {
     try {
-      setDetail(await api.getPlaylist(playlistId));
+      const { data, offline: fromSnapshot } = await withSnapshot(`playlist:${playlistId}`, () =>
+        api.getPlaylist(playlistId),
+      );
+      setDetail(data);
+      setOffline(fromSnapshot);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось загрузить плейлист");
@@ -105,9 +135,17 @@ export function PlaylistView({
             {detail?.name ?? "…"}
           </h1>
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-            {detail ? `${detail.tracks.length} тр. · синхронизируется` : "загрузка"}
+            {detail ? `${detail.tracks.length} тр. · ${offline ? "оффлайн-копия" : "синхронизируется"}` : "загрузка"}
           </div>
         </div>
+        <IconButton
+          icon="download"
+          size="sm"
+          label="Сохранить оффлайн"
+          onClick={() => {
+            if (detail) onSaveOffline(detail.tracks);
+          }}
+        />
         <IconButton
           icon="pencil"
           size="sm"
@@ -123,28 +161,41 @@ export function PlaylistView({
       {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-body)" }}>{error}</div> : null}
 
       <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
-        {(detail?.tracks ?? []).map((t, i) => (
-          <TrackRow
-            key={t.id}
-            index={i + 1}
-            cover={t.coverUrl ?? undefined}
-            title={t.title}
-            artist={t.artist}
-            duration={fmtTime(t.durationSec)}
-            liked={likes.includes(t.id)}
-            onPlay={() => onNotify("Воспроизведение — в Stage 3 (движок)", "hourglass")}
-            onLike={() => onLike(t.id)}
-            onMore={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              setMenu({
-                open: true,
-                x: Math.min(e.clientX, window.innerWidth - 250),
-                y: Math.min(e.clientY, window.innerHeight - 160),
-                track: t,
-              });
-            }}
-          />
-        ))}
+        {(detail?.tracks ?? []).map((t, i) => {
+          // локальный трек с другого устройства: файла здесь нет — серый
+          const missingLocal = t.localHash !== null && !localHashes.has(t.localHash) && t.sources.every((s) => s === "local");
+          return (
+            <div key={t.id} style={missingLocal ? { opacity: 0.45 } : undefined}>
+              <TrackRow
+                index={i + 1}
+                cover={t.coverUrl ?? undefined}
+                title={t.title}
+                artist={missingLocal ? `${t.artist} · локальный, нет на этом устройстве` : t.artist}
+                duration={fmtTime(t.durationSec)}
+                liked={likes.includes(t.id)}
+                active={currentId === t.id}
+                playing={currentId === t.id && playing}
+                onPlay={() => {
+                  if (missingLocal) {
+                    onNotify("Локальный трек: файла нет на этом устройстве", "x");
+                    return;
+                  }
+                  onPlayCatalog(detail?.tracks ?? [], t.id);
+                }}
+                onLike={() => onLike(t.id)}
+                onMore={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  setMenu({
+                    open: true,
+                    x: Math.min(e.clientX, window.innerWidth - 250),
+                    y: Math.min(e.clientY, window.innerHeight - 160),
+                    track: t,
+                  });
+                }}
+              />
+            </div>
+          );
+        })}
         {detail && detail.tracks.length === 0 ? (
           <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
             Пусто. Добавляй треки из поиска: «⋯ → В плейлист».
@@ -158,6 +209,14 @@ export function PlaylistView({
         y={menu.y}
         onClose={() => setMenu((m) => ({ ...m, open: false }))}
         items={[
+          {
+            icon: "git-branch",
+            label: "Версии и источники",
+            onClick: () => {
+              if (menu.track) onVersions(menu.track);
+            },
+          },
+          "-",
           {
             icon: "list-x",
             label: "Убрать из плейлиста",

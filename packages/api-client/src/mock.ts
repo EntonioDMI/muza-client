@@ -3,6 +3,7 @@ import {
   type Annotations,
   type Credentials,
   type HistoryItem,
+  type ImportReport,
   type Lyrics,
   type PlaylistDetail,
   type PlaylistMeta,
@@ -12,6 +13,7 @@ import {
   type Session,
   SessionSchema,
   type Track,
+  type TrackSource,
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
@@ -99,6 +101,26 @@ export class MockMuzaApi implements MuzaApi {
     throw new Error(`Мок: трек ${id} не найден`);
   }
 
+  async getTrackSources(): Promise<TrackSource[]> {
+    return []; // мок: источников нет
+  }
+
+  async chooseTrackSource(): Promise<void> {}
+
+  async resetTrackSource(): Promise<void> {}
+
+  async addDirectTrack(): Promise<Track> {
+    throw new Error("Мок: прямые ссылки живут на сервере");
+  }
+
+  async addLocalTrack(): Promise<Track> {
+    throw new Error("Мок: локальные треки живут на сервере");
+  }
+
+  async importPlaylist(): Promise<ImportReport> {
+    throw new Error("Мок: импорт живёт на сервере");
+  }
+
   // Личное: in-memory плейлисты, чтобы UI жил без сервера
   private playlists = new Map<string, PlaylistMeta>();
 
@@ -155,5 +177,9 @@ export class MockMuzaApi implements MuzaApi {
 
   async getRecipe(): Promise<RecipeEnvelope> {
     throw new Error("Мок: рецепта нет");
+  }
+
+  async sendTelemetry(): Promise<void> {
+    // мок: агрегат некуда слать
   }
 }

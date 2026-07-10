@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Icon, IconButton, Slider, Tooltip } from "@muza/ui";
-import type { DemoTrack } from "../data/demo";
+import type { PlayerTrack } from "../player/types";
 import type { RepeatMode } from "../types";
 import { fmtTime } from "../lib/format";
 
@@ -43,6 +43,7 @@ function SpeedButton({ speed, onClick }: { speed: number; onClick: () => void })
 export function PlayerBar({
   track,
   playing,
+  buffering = false,
   onTogglePlay,
   onPrev,
   onNext,
@@ -65,9 +66,14 @@ export function PlayerBar({
   onEqualizer,
   onMute,
   onExpand,
+  sleepActive,
+  sleepLabel,
+  onSleep,
 }: {
-  track: DemoTrack;
+  track: PlayerTrack;
   playing: boolean;
+  /** Идёт добыча/буферизация каталожного трека. */
+  buffering?: boolean;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -90,6 +96,10 @@ export function PlayerBar({
   onEqualizer: () => void;
   onMute: () => void;
   onExpand: () => void;
+  /** Таймер сна: клик по луне циклит выкл → пресеты (prefs) → конец трека. */
+  sleepActive: boolean;
+  sleepLabel: string;
+  onSleep: () => void;
 }) {
   const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
   return (
@@ -167,9 +177,9 @@ export function PlayerBar({
             <IconButton icon="skip-back" label="Предыдущий" onClick={onPrev} />
           </Tooltip>
           <IconButton
-            icon={playing ? "pause" : "play"}
+            icon={buffering ? "loader-circle" : playing ? "pause" : "play"}
             variant="accent"
-            label={playing ? "Пауза" : "Слушать"}
+            label={buffering ? "Добываем трек…" : playing ? "Пауза" : "Слушать"}
             onClick={onTogglePlay}
           />
           <Tooltip label="Следующий">
@@ -198,6 +208,9 @@ export function PlayerBar({
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}>
+        <Tooltip label={sleepLabel}>
+          <IconButton icon="moon" size="sm" active={sleepActive} label={sleepLabel} onClick={onSleep} />
+        </Tooltip>
         <SpeedButton speed={speed} onClick={onSpeed} />
         <Tooltip label="Эквалайзер">
           <IconButton icon="sliders-vertical" size="sm" label="Эквалайзер" onClick={onEqualizer} />

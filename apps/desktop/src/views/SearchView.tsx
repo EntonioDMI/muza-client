@@ -6,8 +6,8 @@ import { fmtTime } from "../lib/format";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
  *  каталогу (scope=catalog), Enter/кнопка — полный с провайдерами (scope=full,
- *  секунды: два запуска yt-dlp на сервере). Воспроизведение серверных треков —
- *  Stage 3 (движок); пустой запрос показывает демо-полку как раньше. */
+ *  секунды: два запуска yt-dlp на сервере). Stage 3: клик по результату
+ *  реально играет (очередь = список результатов). */
 export function SearchView({
   api,
   canSearch,
@@ -15,10 +15,11 @@ export function SearchView({
   playing,
   likes,
   onPlayTrack,
+  onPlayCatalog,
   onLike,
   onTrackMenu,
   onNotify,
-  onAddToPlaylist,
+  onCatalogMenu,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, каталог недоступен. */
@@ -27,11 +28,13 @@ export function SearchView({
   playing: boolean;
   likes: string[];
   onPlayTrack: (id: string) => void;
+  /** Играть каталожный трек в контексте списка (Stage 3, движок). */
+  onPlayCatalog: (tracks: Track[], id: string) => void;
   onLike: (id: string) => void;
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   onNotify: (text: string, icon?: string) => void;
-  /** «⋯» на серверном треке: выбор плейлиста (слайс 4). */
-  onAddToPlaylist: (t: Track) => void;
+  /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
+  onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Track[] | null>(null); // null — запроса ещё не было
@@ -126,12 +129,9 @@ export function SearchView({
                 active={currentId === t.id}
                 playing={currentId === t.id && playing}
                 liked={likes.includes(t.id)}
-                onPlay={() => onNotify("Воспроизведение — в Stage 3 (движок)", "hourglass")}
+                onPlay={() => onPlayCatalog(results ?? [], t.id)}
                 onLike={() => onLike(t.id)}
-                onMore={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  onAddToPlaylist(t);
-                }}
+                onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
               />
             ))}
             {results !== null && results.length === 0 && !busy ? (

@@ -34,8 +34,19 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, style }) {
         setDrag(true);
         setFromEvent(e);
       }}
-      onPointerMove={(e) => drag && setFromEvent(e)}
+      onPointerMove={(e) => {
+        if (!drag) return;
+        // pointerup мог потеряться (отпустили вне окна, потеря capture) —
+        // без зажатой кнопки не «прилипаем» к мыши
+        if (e.pointerType === "mouse" && (e.buttons & 1) === 0) {
+          setDrag(false);
+          return;
+        }
+        setFromEvent(e);
+      }}
       onPointerUp={() => setDrag(false)}
+      onPointerCancel={() => setDrag(false)}
+      onLostPointerCapture={() => setDrag(false)}
       style={{
         position: "relative",
         height: 20,

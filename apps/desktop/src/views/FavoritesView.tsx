@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { TRACKS, type DemoTrack } from "../data/demo";
+import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 
 /** «Любимое»: при серверной сессии — настоящее избранное с сервера
@@ -14,9 +15,10 @@ export function FavoritesView({
   currentId,
   playing,
   onPlayTrack,
+  onPlayCatalog,
   onLike,
   onTrackMenu,
-  onNotify,
+  onCatalogMenu,
 }: {
   api: MuzaApi;
   canSearch: boolean;
@@ -24,17 +26,20 @@ export function FavoritesView({
   currentId: string;
   playing: boolean;
   onPlayTrack: (id: string) => void;
+  /** Играть серверный трек в контексте избранного (Stage 3, движок). */
+  onPlayCatalog: (tracks: Track[], id: string) => void;
   onLike: (id: string) => void;
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
-  onNotify: (text: string, icon?: string) => void;
+  /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
+  onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
 }) {
   const [server, setServer] = useState<Track[] | null>(null);
 
   useEffect(() => {
     if (!canSearch) return;
-    api
-      .getFavorites()
-      .then(setServer)
+    // Stage 4: сервер лёг — показываем последний снапшот (оффлайн-режим)
+    withSnapshot("favorites", () => api.getFavorites())
+      .then(({ data }) => setServer(data))
       .catch(() => setServer([]));
     // likes меняются лайками в интерфейсе — перечитываем список
   }, [api, canSearch, likes]);
@@ -64,8 +69,9 @@ export function FavoritesView({
             active={currentId === t.id}
             playing={currentId === t.id && playing}
             liked
-            onPlay={() => onNotify("Воспроизведение — в Stage 3 (движок)", "hourglass")}
+            onPlay={() => onPlayCatalog(server ?? [], t.id)}
             onLike={() => onLike(t.id)}
+            onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
           />
         ))}
 

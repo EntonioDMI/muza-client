@@ -37,8 +37,18 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
         setDrag(true);
         setFromEvent(e);
       }}
-      onPointerMove={(e) => drag && setFromEvent(e)}
+      onPointerMove={(e) => {
+        if (!drag) return;
+        // pointerup мог потеряться (отпустили вне окна) — не липнем к мыши
+        if (e.pointerType === "mouse" && (e.buttons & 1) === 0) {
+          setDrag(false);
+          return;
+        }
+        setFromEvent(e);
+      }}
       onPointerUp={() => setDrag(false)}
+      onPointerCancel={() => setDrag(false)}
+      onLostPointerCapture={() => setDrag(false)}
       style={{
         position: "relative",
         width: 24,

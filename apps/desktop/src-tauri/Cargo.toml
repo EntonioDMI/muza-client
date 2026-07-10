@@ -12,6 +12,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: подпись рецепта — над байтами JSON.stringify сервера,
+# порядок ключей при ре-сериализации обязан сохраняться
+serde_json = { version = "1", features = ["preserve_order"] }
+# Движок добычи (Stage 3): проверка Ed25519-подписи горячего рецепта,
+# single-flight резолвов, LRU-touch файлов кэша
+ed25519-dalek = "2"
+base64 = "0.22"
+tokio = { version = "1", features = ["sync"] }
+filetime = "0.2"
+# Discord Rich Presence (Stage 3, слайс 7)
+discord-rich-presence = "0.2"
+lofty = "0.24.0"
+sha2 = "0.11.0"
+tauri-plugin-dialog = "2.7.1"

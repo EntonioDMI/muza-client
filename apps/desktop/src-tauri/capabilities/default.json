@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Базовые права главного окна. Tauri v2: default-deny, каждый плагин добавляет своё разрешение сюда явно.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }

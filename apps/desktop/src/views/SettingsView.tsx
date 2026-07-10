@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ChipGroup, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
 import { DEFAULT_PREFS, type Prefs } from "../types";
+import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 
 /* Структура и состав — docs/notes/2026-07-10-настройки-спецификация.md:
    11 вкладок-разделов; «Внешний вид» = простые (пресеты) + под-экран
@@ -176,6 +177,52 @@ function SettingInput({
         flex: "none",
       }}
     />
+  );
+}
+
+/** Редактор списка чисел «через запятую» (шаги скорости, пресеты сна) —
+ *  кастомизация закардкоженных значений по правке владельца. Применяется
+ *  по blur/Enter; мусор отбрасывается, пустой список → дефолт. */
+function StepsEditor({
+  values,
+  onApply,
+  min,
+  max,
+  maxCount,
+  fallback,
+  suffix,
+}: {
+  values: number[];
+  onApply: (v: number[]) => void;
+  min: number;
+  max: number;
+  maxCount: number;
+  fallback: number[];
+  suffix?: string;
+}) {
+  const [raw, setRaw] = useState(values.join(", "));
+  // значения могли поменяться извне (сброс) — синхронизируем черновик
+  useEffect(() => setRaw(values.join(", ")), [values]);
+  const apply = () => {
+    const parsed = raw
+      .split(/[,;\s]+/)
+      .map((s) => Number(s.replace(",", ".")))
+      .filter((n) => Number.isFinite(n) && n >= min && n <= max)
+      .slice(0, maxCount);
+    const out = parsed.length > 0 ? parsed : fallback;
+    onApply(out);
+    setRaw(out.join(", "));
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+      <SettingInput value={raw} onChange={setRaw} width={200} />
+      {suffix ? (
+        <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", flex: "none" }}>{suffix}</span>
+      ) : null}
+      <Button variant="ghost" icon="check" onClick={apply}>
+        Применить
+      </Button>
+    </div>
   );
 }
 
@@ -392,7 +439,7 @@ const HOTKEYS: { action: string; combo: string }[] = [
   { action: "Поиск", combo: "Ctrl + K" },
 ];
 
-type Sub = "customize" | "equalizer" | "discord" | "market" | null;
+type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | null;
 
 /** Запрос извне открыть под-экран (кнопка эквалайзера в плеер-баре). */
 export interface SettingsIntent {
@@ -406,6 +453,7 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   equalizer: "playback",
   discord: "integrations",
   market: "extensions",
+  data: "account",
 };
 
 /** Витрина маркетплейса (демо-каталог; установка — Stage 6). */
@@ -461,17 +509,20 @@ export function SettingsView({
     setSub("market");
   };
 
-  // Эквалайзер: интерактивный макет (крутится уже сейчас, звук — Stage 3)
-  const [eqOn, setEqOn] = useState(false);
-  const [eqPreset, setEqPreset] = useState("Ровный");
-  const [eqBands, setEqBands] = useState<number[]>(EQ_PRESETS["Ровный"]);
+  // Эквалайзер живёт в Prefs (Stage 3: реально крутит звук через Web Audio)
+  const eqOn = prefs.eqOn;
+  const eqPreset = prefs.eqPreset;
+  const eqBands = prefs.eqBands;
+  const setEqOn = (on: boolean) => setPrefs({ ...prefs, eqOn: on });
   const applyPreset = (name: string) => {
-    setEqPreset(name);
-    if (EQ_PRESETS[name]) setEqBands(EQ_PRESETS[name]);
+    setPrefs({ ...prefs, eqPreset: name, eqBands: EQ_PRESETS[name] ?? prefs.eqBands });
   };
   const setBand = (i: number, v: number) => {
-    setEqBands((b) => b.map((x, j) => (j === i ? Math.round(v) : x)));
-    setEqPreset("Свой");
+    setPrefs({
+      ...prefs,
+      eqPreset: "Свой",
+      eqBands: prefs.eqBands.map((x, j) => (j === i ? Math.round(v) : x)),
+    });
   };
 
   // Открытие под-экрана извне (кнопка EQ в плеер-баре)
@@ -481,6 +532,20 @@ export function SettingsView({
     setSub(intent.sub);
   }, [intent]);
   const set = (patch: Partial<Prefs>) => setPrefs({ ...prefs, ...patch });
+
+  // Кэш добычи (Stage 4): реальные цифры + живая очистка (пины переживают)
+  const [cache, setCache] = useState<CacheStats | null>(null);
+  const reloadCache = () => {
+    if (!engineAvailable()) return;
+    cacheStats().then(setCache).catch(() => undefined);
+  };
+  useEffect(() => {
+    if (tab === "library") reloadCache();
+  }, [tab]);
+  const fmtGb = (bytes: number) =>
+    bytes >= 1024 * 1024 * 1024
+      ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} ГБ`
+      : `${Math.round(bytes / (1024 * 1024))} МБ`;
   // Первый рендер — без своей анимации (вход анимирует обёртка в App).
   const mounted = useRef(false);
   useEffect(() => {
@@ -615,7 +680,7 @@ export function SettingsView({
   const equalizerPane = (
     <div key="equalizer" className={paneClass} style={paneStyle}>
       <SubHeader title="Эквалайзер" onBack={() => setSub(null)} />
-      <SettingRow title="Включить" hint="Крутить можно уже сейчас — звук подключится в Stage 3">
+      <SettingRow title="Включить" hint="Живой десятиполосник — крутит звук каталожных треков">
         <Switch checked={eqOn} onChange={setEqOn} label="Эквалайзер" />
       </SettingRow>
       <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
@@ -664,10 +729,10 @@ export function SettingsView({
   const discordPane = (
     <div key="discord" className={paneClass} style={paneStyle}>
       <SubHeader title="Discord Rich Presence" onBack={() => setSub(null)} />
-      <SettingRow title="Показывать в Discord" hint="Статус «слушает Muza» (Stage 3)">
-        <Switch checked={false} disabled label="Discord RPC" />
+      <SettingRow title="Показывать в Discord" hint="Статус «слушает Muza»; нужен запущенный Discord и зарегистрированное приложение (client id)">
+        <Switch checked={prefs.discordRpcOn} onChange={(discordRpcOn: boolean) => set({ discordRpcOn })} label="Discord RPC" />
       </SettingRow>
-      <GroupTitle>Что показывать (Stage 3)</GroupTitle>
+      <GroupTitle>Что показывать</GroupTitle>
       <SettingRow title="Название и артист">
         <Switch checked disabled label="Название и артист" />
       </SettingRow>
@@ -778,6 +843,51 @@ export function SettingsView({
     </div>
   );
 
+  // Документ о данных (Stage 4): честно и по-человечески — что где живёт.
+  const dataDocBlock = (title: string, items: string[]) => (
+    <div style={{ marginBottom: "var(--sp-4)" }}>
+      <div style={{ fontSize: "var(--fs-body)", fontWeight: 700, color: "var(--text-1)", marginBottom: "var(--sp-2)" }}>
+        {title}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+        {items.map((text, i) => (
+          <div key={i} style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.55 }}>
+            {text}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const dataPane = (
+    <div key="data" className={paneClass} style={paneStyle}>
+      <SubHeader title="Данные: что и где живёт" onBack={() => setSub(null)} />
+      {dataDocBlock("Остаётся только на этом устройстве", [
+        "— Аудио-кэш прослушанного и оффлайн-загрузки (байты музыки сервер не проходят: клиент добывает их сам).",
+        "— Локальные файлы и их пути на диске.",
+        "— Настройки, тема, ключи текущей сессии.",
+      ])}
+      {dataDocBlock("Хранится на сервере — для твоих же функций, видно только тебе", [
+        "— Аккаунт: ник и хэш пароля; email — только если сам указал (восстановление пароля).",
+        "— Лайки, дизлайки, плейлисты, выбранные версии треков.",
+        "— История прослушиваний — из неё строится твоя статистика (и позже рекомендации).",
+        "— От локальных файлов — только название, артист и отпечаток файла (hash), не сам файл и не путь.",
+      ])}
+      {dataDocBlock("Анонимная статистика (галочка в «Аккаунте»)", [
+        "— Раз в ~10 минут уходят суммарные счётчики: сколько добыч удалось и с какими ошибками (по ним чинится добыча без обновления приложения) и сколько было прослушиваний.",
+        "— Без привязки к аккаунту: ни ника, ни id, ни названий треков в этих счётчиках нет.",
+      ])}
+      {dataDocBlock("Чего мы не делаем", [
+        "— Не продаём и не передаём данные.",
+        "— Не собираем пофамильную историю в аналитику — агрегаты обезличены.",
+        "— Не шлём писем без дела: только верификация и восстановление пароля.",
+      ])}
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        Удаление аккаунта удаляет всё серверное. Кнопка появится к релизу — пока это делается по запросу.
+      </div>
+    </div>
+  );
+
   // ── Вкладки ───────────────────────────────────────────────────────
 
   const pane =
@@ -789,6 +899,8 @@ export function SettingsView({
       discordPane
     ) : sub === "market" ? (
       marketPane
+    ) : sub === "data" ? (
+      dataPane
     ) : tab === "account" ? (
       <div key="account" className={paneClass} style={paneStyle}>
         <SettingRow title="Профиль" hint={username}>
@@ -802,10 +914,22 @@ export function SettingsView({
         <SettingRow title="Сменить пароль" hint="Появится вместе с восстановлением" chevron></SettingRow>
         <SettingRow title="Сессии и устройства" hint="Где выполнен вход (позже)" chevron></SettingRow>
         <GroupTitle>Приватность</GroupTitle>
-        <SettingRow title="Анонимная статистика" hint="Только агрегаты, снята по умолчанию (Stage 4)">
-          <Switch checked={false} disabled label="Анонимная статистика" />
+        <SettingRow
+          title="Анонимная статистика"
+          hint="Обезличенные агрегаты добычи и прослушиваний — по ним чинится добыча; без ника, id и названий треков"
+        >
+          <Switch
+            checked={prefs.telemetry}
+            onChange={(on: boolean) => set({ telemetry: on })}
+            label="Анонимная статистика"
+          />
         </SettingRow>
-        <SettingRow title="Документ о данных" hint="Что мы храним и зачем (Stage 4)" chevron></SettingRow>
+        <SettingRow
+          title="Документ о данных"
+          hint="Что остаётся на устройстве, что хранит сервер и что уходит в статистику"
+          onClick={() => setSub("data")}
+          chevron
+        ></SettingRow>
         <SettingRow title="Выгрузить или удалить данные" hint="Появится к релизу (Stage 4)" danger chevron></SettingRow>
       </div>
     ) : tab === "appearance" ? (
@@ -872,25 +996,29 @@ export function SettingsView({
     ) : tab === "playback" ? (
       <div key="playback" className={paneClass} style={paneStyle}>
         <GroupTitle>Переходы</GroupTitle>
-        <SettingRow title="Кроссфейд" hint="Плавный переход между треками (Stage 3)">
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-            <DisabledSlider value={4} max={12} label="Длительность кроссфейда" />
-            <RowValue>4 с</RowValue>
-            <Switch checked={prefs.crossfade} disabled label="Кроссфейд" />
-          </div>
+        <SettingRow title="Кроссфейд" hint="Плавный переход между треками (4 секунды)">
+          <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label="Кроссфейд" />
         </SettingRow>
         <SettingRow title="Gapless" hint="Треки альбома без паузы (Stage 3)">
           <Switch checked disabled label="Gapless" />
         </SettingRow>
         <GroupTitle>Звук</GroupTitle>
-        <SettingRow title="Эквалайзер" hint="Пресеты и свои полосы; звук — Stage 3" onClick={() => setSub("equalizer")} chevron>
+        <SettingRow title="Эквалайзер" hint="Пресеты и свои полосы — звук живой" onClick={() => setSub("equalizer")} chevron>
           <RowValue>{eqOn ? eqPreset : "Выкл"}</RowValue>
         </SettingRow>
-        <SettingRow title="Нормализация громкости" hint="Выравнивает громкость между треками (Stage 3)">
-          <Switch checked={prefs.normalize} disabled label="Нормализация" />
+        <SettingRow title="Нормализация громкости" hint="Выравнивает громкость между треками (−14 LUFS, если громкость трека измерена)">
+          <Switch checked={prefs.normalize} onChange={(v: boolean) => set({ normalize: v })} label="Нормализация" />
         </SettingRow>
-        <SettingRow title="Скорость и тон по умолчанию" hint="Nightcore/slowed на лету (позже)">
-          <RowValue>1.0×</RowValue>
+        <SettingRow title="Шаги скорости" hint="Кнопка «1×» в баре циклит эти значения; свои шаги — через запятую (0.25–4)">
+          <StepsEditor
+            values={prefs.speedSteps}
+            onApply={(speedSteps) => set({ speedSteps })}
+            min={0.25}
+            max={4}
+            maxCount={8}
+            fallback={DEFAULT_PREFS.speedSteps}
+            suffix="×"
+          />
         </SettingRow>
         <GroupTitle>Очередь</GroupTitle>
         <SettingRow title="Конец очереди" hint="Что играть, когда очередь кончилась (Stage 3)">
@@ -903,8 +1031,16 @@ export function SettingsView({
         <SettingRow title="Качество стрима" hint="Максимум или эконом (Stage 3)">
           <RowValue>Авто</RowValue>
         </SettingRow>
-        <SettingRow title="Sleep timer" hint="Дефолт таймера сна (Stage 3)">
-          <RowValue>30 мин</RowValue>
+        <SettingRow title="Sleep timer" hint="Пресеты луны в баре: выкл → эти минуты → конец трека">
+          <StepsEditor
+            values={prefs.sleepPresets}
+            onApply={(sleepPresets) => set({ sleepPresets: sleepPresets.map(Math.round) })}
+            min={1}
+            max={600}
+            maxCount={6}
+            fallback={DEFAULT_PREFS.sleepPresets}
+            suffix="мин"
+          />
         </SettingRow>
       </div>
     ) : tab === "sources" ? (
@@ -956,12 +1092,17 @@ export function SettingsView({
       </div>
     ) : tab === "library" ? (
       <div key="library" className={paneClass} style={paneStyle}>
-        <SettingRow title="Локальные папки" hint="Своя музыка с диска (Stage 4)">
-          <Button variant="ghost" icon="folder-plus" disabled>
-            Добавить
-          </Button>
+        <SettingRow title="Локальные файлы" hint="Добавление файлов и папок — в Медиатеке, вкладка «Локальные»">
+          <RowValue>Медиатека → Локальные</RowValue>
         </SettingRow>
-        <SettingRow title="Кэш прослушанного" hint="Лимит выбирается уже сейчас; сам кэш — Stage 3">
+        <SettingRow
+          title="Кэш прослушанного"
+          hint={
+            cache
+              ? `Занято ${fmtGb(cache.bytes)} · ${cache.files} файл(ов); очистка не трогает оффлайн`
+              : "LRU-кэш добытого аудио — живой, эвикция по лимиту"
+          }
+        >
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
             <LiveSlider
               value={prefs.cacheLimitGb - 1}
@@ -970,18 +1111,25 @@ export function SettingsView({
               suffix={`${prefs.cacheLimitGb} ГБ`}
               onChange={(v) => set({ cacheLimitGb: 1 + Math.round(v) })}
             />
-            <Button variant="ghost" icon="trash-2" disabled>
+            <Button
+              variant="ghost"
+              icon="trash-2"
+              disabled={!engineAvailable()}
+              onClick={() => {
+                void cacheClear().then(reloadCache);
+              }}
+            >
               Очистить
             </Button>
           </div>
         </SettingRow>
-        <SettingRow title="Оффлайн-загрузки" hint="Сохранённое для оффлайна (Stage 4)" chevron>
-          <RowValue>0 треков</RowValue>
+        <SettingRow title="Оффлайн-загрузки" hint="«Сохранить оффлайн» у трека или плейлиста; не эвиктится и переживает очистку">
+          <RowValue>
+            {cache ? `${cache.pinnedFiles} тр. · ${fmtGb(cache.pinnedBytes)}` : "0 треков"}
+          </RowValue>
         </SettingRow>
-        <SettingRow title="Импорт плейлистов" hint="Spotify, YouTube, Apple Music, M3U (Stage 4)">
-          <Button variant="ghost" icon="import" disabled>
-            Импортировать
-          </Button>
+        <SettingRow title="Импорт плейлистов" hint="Spotify, YouTube / YT Music, Apple Music — кнопка в Медиатеке">
+          <RowValue>Медиатека → Импорт</RowValue>
         </SettingRow>
       </div>
     ) : tab === "integrations" ? (

@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import { Icon, IconButton, Lyrics } from "@muza/ui";
-import type { DemoTrack } from "../data/demo";
+import type { LyricLine } from "../data/demo";
+import type { PlayerTrack } from "../player/types";
 
 export function NowPlayingPanel({
   track,
+  lyrics,
   liked,
   onLike,
   activeLine,
   onSeekLine,
 }: {
-  track: DemoTrack;
+  track: PlayerTrack;
+  /** Строки текста: демо — локальные, каталог — LRCLIB с сервера (слайс 4). */
+  lyrics: LyricLine[];
   liked: boolean;
   onLike: () => void;
   activeLine: number;
@@ -18,7 +22,7 @@ export function NowPlayingPanel({
   // «Режим смысла»: открытая аннотация строки (пунктирные строки кликабельны)
   const [explain, setExplain] = useState<number | null>(null);
   useEffect(() => setExplain(null), [track.id]);
-  const noted = explain !== null ? track.lyrics[explain] : null;
+  const noted = explain !== null ? lyrics[explain] : null;
 
   return (
     <aside
@@ -65,7 +69,7 @@ export function NowPlayingPanel({
             {track.title}
           </div>
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
-            {track.artist} · {track.album}
+            {track.album ? `${track.artist} · ${track.album}` : track.artist}
           </div>
         </div>
         <IconButton icon="heart" active={liked} filled={liked} label="Нравится" onClick={onLike} />
@@ -81,13 +85,28 @@ export function NowPlayingPanel({
           overflow: "hidden",
         }}
       >
-        <Lyrics
-          lines={track.lyrics}
-          activeIndex={activeLine}
-          onSeek={onSeekLine}
-          onExplain={(i: number) => setExplain((cur) => (cur === i ? null : i))}
-          style={{ height: "100%" }}
-        />
+        {lyrics.length > 0 ? (
+          <Lyrics
+            lines={lyrics}
+            activeIndex={activeLine}
+            onSeek={onSeekLine}
+            onExplain={(i: number) => setExplain((cur) => (cur === i ? null : i))}
+            style={{ height: "100%" }}
+          />
+        ) : (
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-3)",
+              fontSize: "var(--fs-caption)",
+            }}
+          >
+            Текст не найден
+          </div>
+        )}
         {noted ? (
           // Карточка «смысл строки»: стекло поверх текста, снизу — как подсказка Genius
           <div

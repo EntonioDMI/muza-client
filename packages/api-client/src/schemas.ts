@@ -46,8 +46,37 @@ export const TrackSchema = z.object({
   sources: z.array(z.string()),
   /** Integrated loudness (EBU R128, LUFS); null = не измерена. */
   loudness: z.number().nullable(),
+  /** Хэш локального источника (Stage 4): трек привязан к файлу на устройстве;
+   *  null — обычный стриминговый трек. */
+  localHash: z.string().nullable().default(null),
 });
 export type Track = z.infer<typeof TrackSchema>;
+
+/** Живой источник трека: из него клиент добывает байты на своём IP (Stage 3).
+ *  Источники приходят по убыванию priority — пробовать сверху вниз.
+ *  Stage 4: id/kind/durationSec/isChosen — для разворота «Версии и источники»
+ *  (выбранный пользователем источник сервер кладёт первым). */
+export const TrackSourceSchema = z.object({
+  /** TrackSource.id сервера — нужен для «выбрать этот источник». */
+  id: z.string().default(""),
+  provider: z.string(), // youtube | soundcloud | bandcamp | local
+  sourceId: z.string(),
+  url: z.string(),
+  priority: z.number(),
+  /** catalog — авто-матч; direct — вставленная ссылка; local — файл на устройстве. */
+  kind: z.string().default("catalog"),
+  durationSec: z.number().default(0),
+  isChosen: z.boolean().default(false),
+});
+export type TrackSource = z.infer<typeof TrackSourceSchema>;
+
+/** Отчёт импорта плейлиста (Stage 4): что нашли в каталоге, что — нет. */
+export interface ImportReport {
+  playlist: PlaylistMeta;
+  total: number;
+  matched: number;
+  unmatched: { artist: string; title: string }[];
+}
 
 /** full — каталог + внешние провайдеры (медленно, rate-limit);
  *  catalog — мгновенно, только по накопленной базе (живой ввод). */
@@ -102,6 +131,23 @@ export type Annotation = z.infer<typeof AnnotationSchema>;
 export interface Annotations {
   geniusUrl: string | null;
   annotations: Annotation[] | null;
+}
+
+/** Анонимный агрегат телеметрии (Stage 3): счётчики добычи (KPI SABR/403)
+ *  и прослушиваний за окно отправки. Без каких-либо идентификаторов. */
+export interface TelemetryStats {
+  appVersion: string;
+  recipeVersion: number;
+  resolveOk: number;
+  resolveFail: number;
+  attempts: number;
+  cacheHits: number;
+  fail403: number;
+  failBot: number;
+  failFormat: number;
+  failOther: number;
+  plays: number;
+  playsCompleted: number;
 }
 
 /** Конверт горячего рецепта: recipe + Ed25519-подпись. Клиент (Stage 3)

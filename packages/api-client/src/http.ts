@@ -4,6 +4,7 @@ import {
   type Annotations,
   type Credentials,
   type HistoryItem,
+  type ImportReport,
   type Lyrics,
   type PlaylistDetail,
   type PlaylistMeta,
@@ -12,8 +13,11 @@ import {
   type SearchScope,
   type Session,
   SessionSchema,
+  type TelemetryStats,
   type Track,
   TrackSchema,
+  type TrackSource,
+  TrackSourceSchema,
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
@@ -45,6 +49,7 @@ interface TrackWire {
   is_cached: boolean;
   sources: string[];
   loudness: number | null;
+  local_hash?: string | null;
 }
 
 function trackFromWire(wire: TrackWire): Track {
@@ -57,6 +62,7 @@ function trackFromWire(wire: TrackWire): Track {
     isCached: wire.is_cached,
     sources: wire.sources,
     loudness: wire.loudness,
+    localHash: wire.local_hash ?? null,
   });
 }
 
@@ -208,6 +214,89 @@ export class HttpMuzaApi implements MuzaApi {
     return trackFromWire(await this.authedRequest<TrackWire>(`/tracks/${encodeURIComponent(id)}`));
   }
 
+  async getTrackSources(id: string): Promise<TrackSource[]> {
+    const out = await this.authedRequest<{
+      sources: {
+        id: string;
+        provider: string;
+        source_id: string;
+        url: string;
+        priority: number;
+        kind: string;
+        duration_sec: number;
+        is_chosen: boolean;
+      }[];
+    }>(`/tracks/${encodeURIComponent(id)}/sources`);
+    return out.sources.map((s) =>
+      TrackSourceSchema.parse({
+        id: s.id,
+        provider: s.provider,
+        sourceId: s.source_id,
+        url: s.url,
+        priority: s.priority,
+        kind: s.kind,
+        durationSec: s.duration_sec,
+        isChosen: s.is_chosen,
+      }),
+    );
+  }
+
+  // ---------- Источники и версии (Stage 4) ----------
+
+  async chooseTrackSource(trackId: string, sourceId: string): Promise<void> {
+    await this.authedRequest(`/me/tracks/${encodeURIComponent(trackId)}/source`, {
+      method: "PUT",
+      body: JSON.stringify({ source_id: sourceId }),
+    });
+  }
+
+  async resetTrackSource(trackId: string): Promise<void> {
+    await this.authedRequest(`/me/tracks/${encodeURIComponent(trackId)}/source`, { method: "DELETE" });
+  }
+
+  async addDirectTrack(url: string): Promise<Track> {
+    return trackFromWire(
+      await this.authedRequest<TrackWire>("/me/tracks/direct", {
+        method: "POST",
+        body: JSON.stringify({ url }),
+      }),
+    );
+  }
+
+  async addLocalTrack(input: { artist: string; title: string; durationSec: number; hash: string }): Promise<Track> {
+    return trackFromWire(
+      await this.authedRequest<TrackWire>("/me/tracks/local", {
+        method: "POST",
+        body: JSON.stringify({
+          artist: input.artist,
+          title: input.title,
+          duration_sec: input.durationSec,
+          hash: input.hash,
+        }),
+      }),
+    );
+  }
+
+  async importPlaylist(url: string): Promise<ImportReport> {
+    const out = await this.authedRequest<{
+      playlist: { id: string; name: string; track_count: number; created_at: string };
+      total: number;
+      matched: number;
+      unmatched: { artist: string; title: string }[];
+    }>("/me/playlists/import", { method: "POST", body: JSON.stringify({ url }) });
+    return {
+      playlist: {
+        id: out.playlist.id,
+        name: out.playlist.name,
+        trackCount: out.playlist.track_count,
+        createdAt: out.playlist.created_at,
+      },
+      total: out.total,
+      matched: out.matched,
+      unmatched: out.unmatched,
+    };
+  }
+
   // ---------- Личное (Stage 2, слайс 4) ----------
 
   async getFavorites(): Promise<Track[]> {
@@ -317,6 +406,26 @@ export class HttpMuzaApi implements MuzaApi {
 
   async getRecipe(): Promise<RecipeEnvelope> {
     return this.authedRequest<RecipeEnvelope>("/recipe");
+  }
+
+  async sendTelemetry(stats: TelemetryStats): Promise<void> {
+    await this.authedRequest("/telemetry", {
+      method: "POST",
+      body: JSON.stringify({
+        app_version: stats.appVersion,
+        recipe_version: stats.recipeVersion,
+        resolve_ok: stats.resolveOk,
+        resolve_fail: stats.resolveFail,
+        attempts: stats.attempts,
+        cache_hits: stats.cacheHits,
+        fail_403: stats.fail403,
+        fail_bot: stats.failBot,
+        fail_format: stats.failFormat,
+        fail_other: stats.failOther,
+        plays: stats.plays,
+        plays_completed: stats.playsCompleted,
+      }),
+    });
   }
 
   // ---------- Регистрация с почтой (verify-before-create) ----------

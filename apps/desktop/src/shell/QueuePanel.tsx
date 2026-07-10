@@ -1,5 +1,5 @@
 import { IconButton, TrackRow } from "@muza/ui";
-import type { DemoTrack } from "../data/demo";
+import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 
 export function QueuePanel({
@@ -11,7 +11,7 @@ export function QueuePanel({
   onClose,
 }: {
   open: boolean;
-  tracks: DemoTrack[];
+  tracks: PlayerTrack[];
   currentId: string;
   playing: boolean;
   onPlayTrack: (id: string) => void;

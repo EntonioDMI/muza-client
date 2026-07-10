@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { IconButton, Lyrics, Slider } from "@muza/ui";
-import type { DemoTrack } from "../data/demo";
+import type { LyricLine } from "../data/demo";
+import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 
 /** Полноэкранный «режим прослушивания» — караоке-оверлей («ночной вайб»). */
 export function ListeningMode({
   open,
   track,
+  lyrics,
   playing,
   pos,
   activeLine,
@@ -18,7 +20,9 @@ export function ListeningMode({
   onClose,
 }: {
   open: boolean;
-  track: DemoTrack;
+  track: PlayerTrack;
+  /** Строки текста (демо — локальные, каталог — LRCLIB, слайс 4). */
+  lyrics: LyricLine[];
   playing: boolean;
   pos: number;
   activeLine: number;
@@ -121,11 +125,26 @@ export function ListeningMode({
               {track.title}
             </div>
             <div style={{ fontSize: "var(--fs-strong)", color: "var(--text-2)", marginTop: 6 }}>
-              {track.artist} · {track.album}
+              {track.album ? `${track.artist} · ${track.album}` : track.artist}
             </div>
           </div>
         </div>
-        <Lyrics lines={track.lyrics} activeIndex={activeLine} mode="karaoke" onSeek={onSeekLine} style={{ height: "100%" }} />
+        {lyrics.length > 0 ? (
+          <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" onSeek={onSeekLine} style={{ height: "100%" }} />
+        ) : (
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-3)",
+              fontSize: "var(--fs-strong)",
+            }}
+          >
+            Текст не найден
+          </div>
+        )}
       </div>
 
       <div

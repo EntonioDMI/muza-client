@@ -2,15 +2,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Menu, SearchInput, Toast } from "@muza/ui";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
-import { DEFAULT_PREFS, type Prefs, type RepeatMode, type View } from "./types";
+import { DEFAULT_PREFS, type Prefs, type View } from "./types";
 import { customAccentVars } from "./lib/accent";
 import { useMediaQuery } from "./lib/useMediaQuery";
+import { applyRecipe, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
+import { withSnapshot } from "./lib/offlineSnapshot";
+import { clearDiscordActivity, updateDiscordActivity } from "./lib/discord";
+import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
+import { useCoverArt } from "./lib/coverArt";
+import { loadServerIds, type LocalEntry } from "./lib/localFiles";
+import { usePlayback } from "./player/usePlayback";
+import { useLyrics } from "./player/useLyrics";
+import { useMediaSession } from "./player/useMediaSession";
+import { fromCatalog, fromDemo, fromLocalEntry } from "./player/types";
 import { LoginScreen } from "./auth/LoginScreen";
 import { Sidebar } from "./shell/Sidebar";
 import { NowPlayingPanel } from "./shell/NowPlayingPanel";
 import { PlayerBar } from "./shell/PlayerBar";
 import { QueuePanel } from "./shell/QueuePanel";
 import { ListeningMode } from "./shell/ListeningMode";
+import { VersionsDialog } from "./shell/VersionsDialog";
+import { AddLinkDialog } from "./shell/AddLinkDialog";
+import { ImportDialog } from "./shell/ImportDialog";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";
 import { FavoritesView } from "./views/FavoritesView";
@@ -66,7 +79,11 @@ function loadPrefs(): Prefs {
   }
 }
 
-/** Каркас плеера Stage 1: воспроизведение имитируется таймером (реальный движок — Stage 3). */
+/** Демо-очередь по умолчанию: главная/библиотека живут на демо-каталоге. */
+const DEMO_QUEUE = TRACKS.map(fromDemo);
+
+/** Каркас плеера. Stage 3: реальное воспроизведение каталожных треков
+ *  (добыча на своём IP → LRU-кэш → Web Audio), демо-треки — симуляция. */
 function Player({
   api,
   canSearch,
@@ -82,16 +99,7 @@ function Player({
   onLogout: () => void;
 }) {
   const [view, setView] = useState<View>("home");
-  const [currentId, setCurrentId] = useState(TRACKS[0].id);
-  const [playing, setPlaying] = useState(true);
-  const [pos, setPos] = useState(24);
-  const [vol, setVol] = useState(64);
   const [likes, setLikes] = useState<string[]>(["t3"]);
-  const [shuffle, setShuffle] = useState(false);
-  // Повтор трёхрежимный: выкл → вся очередь → один трек (как в нормальных плеерах)
-  const [repeat, setRepeat] = useState<RepeatMode>("off");
-  // Частая настройка — живёт в плеер-баре; в демо честно ускоряет таймер
-  const [speed, setSpeed] = useState(1);
   // Запрос открыть конкретный под-экран настроек (кнопка эквалайзера в баре)
   const [settingsIntent, setSettingsIntent] = useState<SettingsIntent | null>(null);
   const [lyricsOn, setLyricsOn] = useState(true);
@@ -105,6 +113,17 @@ function Player({
   const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
   // выбор плейлиста для «В плейлист» из поиска
   const [plPick, setPlPick] = useState<CatalogTrack | null>(null);
+  // Stage 4: меню каталожного трека («⋯») и диалог «Версии и источники»
+  const [catMenu, setCatMenu] = useState<{ open: boolean; x: number; y: number; track: CatalogTrack | null }>({
+    open: false,
+    x: 0,
+    y: 0,
+    track: null,
+  });
+  const [versionsTrack, setVersionsTrack] = useState<CatalogTrack | null>(null);
+  // Stage 4: «Добавить по ссылке» (прямые источники) и импорт плейлистов
+  const [addLinkOpen, setAddLinkOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [toast, setToast] = useState({ open: false, text: "", icon: "check" });
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: DemoTrack | null }>({
     open: false,
@@ -120,28 +139,123 @@ function Player({
     localStorage.setItem(PREFS_KEY, JSON.stringify(p));
   };
 
-  const track = TRACKS.find((t) => t.id === currentId) ?? TRACKS[0];
-  const idx = TRACKS.indexOf(track);
+  // Реальный плеер (Stage 3): очередь-контекст, добыча, кроссфейд, EQ
+  const pbRaw = usePlayback({
+    api,
+    initialQueue: DEMO_QUEUE,
+    prefs,
+    onError: (m) => showToast(m, "x"),
+    // Скробблинг: каталожные прослушивания — в историю сервера (демо — нет)
+    onPlayEnd: ({ track: t, playedMs, completed }) => {
+      if (!canSearch || t.kind !== "catalog") return;
+      // анонимный счётчик для телеметрии (без id трека — агрегат)
+      playCountersRef.current = {
+        plays: playCountersRef.current.plays + 1,
+        completed: playCountersRef.current.completed + (completed ? 1 : 0),
+      };
+      void api
+        .recordPlay({ trackId: t.id, playedMs, durationMs: t.duration * 1000, completed })
+        .catch(() => undefined); // best-effort: история не стоит тоста
+    },
+  });
+  // Анонимная агрегированная аналитика: KPI добычи + счётчик прослушиваний.
+  // Stage 4: честная галочка согласия (prefs.telemetry) — выключил и не шлём.
+  const playCountersRef = useRef<PlayCounters>({ plays: 0, completed: 0 });
+  useTelemetry(api, canSearch && prefs.telemetry, playCountersRef);
+
+  // Обложка без letterbox-полос YouTube-тумбов (canvas-кроп, кэш на сессию);
+  // панели/бар/фон получают уже чистую
+  const cleanCover = useCoverArt(pbRaw.track.cover);
+  const pb = useMemo(
+    () => ({ ...pbRaw, track: { ...pbRaw.track, cover: cleanCover } }),
+    [pbRaw, cleanCover],
+  );
+  const { track, playing, pos, vol } = pb;
+
+  // Горячий рецепт добычи — при серверной сессии (эндпоинт под AuthGuard)
+  useEffect(() => {
+    if (canSearch) void applyRecipe(api);
+  }, [api, canSearch]);
+  // Лимит LRU-кэша движка живёт в Prefs
+  useEffect(() => {
+    void setCacheLimit(prefs.cacheLimitGb);
+  }, [prefs.cacheLimitGb]);
 
   // Серверная сессия: подтягиваем плейлисты и избранное (лайки каталожных
-  // треков живут на сервере; демо-треки — по-прежнему локально)
+  // треков живут на сервере; демо-треки — по-прежнему локально).
+  // Stage 4: удачные ответы снапшотятся — без сети библиотека читается.
   const reloadServerPlaylists = async () => {
     if (!canSearch) return;
     try {
-      setSrvPlaylists(await api.getPlaylists());
+      const { data } = await withSnapshot("playlists", () => api.getPlaylists());
+      setSrvPlaylists(data);
     } catch {
-      /* сервер недоступен — сайдбар просто не обновится */
+      /* сервер недоступен и снапшота нет — сайдбар просто не обновится */
     }
   };
   useEffect(() => {
     if (!canSearch) return;
     void reloadServerPlaylists();
-    api
-      .getFavorites()
-      .then((tracks) => setLikes((ls) => [...new Set([...ls, ...tracks.map((t) => t.id)])]))
+    withSnapshot("favorites", () => api.getFavorites())
+      .then(({ data }) => setLikes((ls) => [...new Set([...ls, ...data.map((t) => t.id)])]))
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, canSearch]);
+
+  // Оффлайн-пины (Stage 4): что закреплено на этом устройстве
+  const [pins, setPins] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    enginePins()
+      .then((list) => setPins(new Set(list.map((p) => p.track_id))))
+      .catch(() => undefined);
+  }, []);
+
+  /** Закрепить трек оффлайн: пин + немедленная догрузка в кэш добычи. */
+  const saveOffline = async (t: CatalogTrack) => {
+    await enginePin(t.id, true);
+    setPins((p) => new Set([...p, t.id]));
+    if (t.sources.every((s) => s === "local")) return; // локальный и так на диске
+    try {
+      const sources = await api.getTrackSources(t.id);
+      await resolvePlayable(t.id, sources);
+      return true;
+    } catch {
+      return false; // пин остался — докачается при первом прослушивании
+    }
+  };
+
+  const toggleOffline = async (t: CatalogTrack) => {
+    if (pins.has(t.id)) {
+      await enginePin(t.id, false);
+      setPins((p) => {
+        const next = new Set(p);
+        next.delete(t.id);
+        return next;
+      });
+      showToast("Убрано из оффлайна", "cloud-off");
+      return;
+    }
+    showToast("Сохраняем оффлайн…", "download");
+    const ok = await saveOffline(t);
+    showToast(
+      ok === false ? "Закреплено — скачаем при первом прослушивании" : "Сохранено оффлайн",
+      "download",
+    );
+  };
+
+  /** «Сохранить оффлайн» на плейлисте: пины + фоновая догрузка по очереди. */
+  const saveOfflinePlaylist = async (tracks: CatalogTrack[]) => {
+    const targets = tracks.filter((t) => /^\d+$/.test(t.id));
+    if (targets.length === 0) return;
+    showToast(`Сохраняем оффлайн ${targets.length} тр. — качаем в фоне`, "download");
+    let ok = 0;
+    for (const t of targets) {
+      const r = await saveOffline(t);
+      if (r !== false) ok += 1;
+    }
+    setPins((p) => new Set([...p, ...targets.map((t) => t.id)]));
+    showToast(`Оффлайн готов: ${ok} из ${targets.length} скачано`, "download");
+  };
 
   /** Каталожный (серверный) id — числовой; демо-ид вида "t1". */
   const isCatalogId = (id: string) => /^\d+$/.test(id);
@@ -152,33 +266,100 @@ function Player({
   const wideEnoughForSidebar = useMediaQuery("(min-width: 950px)");
   const showNowPlaying = lyricsOn && wideEnoughForPanel;
 
-  useEffect(() => {
-    if (!playing) return;
-    const iv = setInterval(() => {
-      setPos((p) => {
-        if (p + 1 <= track.duration) return p + 1;
-        // конец трека: повтор трека — сначала; иначе дальше по очереди,
-        // а без повтора на последнем — стоп
-        if (repeat === "one") return 0;
-        const isLast = TRACKS.indexOf(track) === TRACKS.length - 1;
-        if (repeat === "off" && isLast) {
-          setPlaying(false);
-          return track.duration;
-        }
-        stepRef.current(1);
-        return 0;
-      });
-    }, 1000 / speed);
-    return () => clearInterval(iv);
-  }, [playing, track, speed, repeat]);
+  // Медиаклавиши и системный медиа-оверлей (SMTC) через Media Session API
+  useMediaSession(track, playing, pos, {
+    toggle: pb.toggle,
+    next: pb.next,
+    prev: pb.prev,
+    seek: pb.seek,
+    pause: pb.pause,
+  });
 
+  // Discord Rich Presence: активность на смену трека/паузу (RPC живёт в Rust;
+  // Discord не запущен или client_id не настроен — no-op)
+  useEffect(() => {
+    if (!prefs.discordRpcOn || !playing) {
+      void clearDiscordActivity();
+      return;
+    }
+    void updateDiscordActivity({
+      details: track.title,
+      state: track.artist,
+      coverUrl: track.cover.startsWith("https") ? track.cover : null,
+      startTs: Math.floor(Date.now() / 1000 - pos),
+      buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
+      buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
+    });
+    // pos нарочно не в deps: активность шлём на смену трека/состояния, не каждый тик
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track.id, playing, prefs.discordRpcOn, prefs.discordBtnOn, prefs.discordBtnLabel, prefs.discordBtnUrl]);
+
+  // Таймер сна: луна в баре циклит выкл → пресеты из настроек → конец трека
+  // (mode: "off" | "track" | число минут из prefs.sleepPresets)
+  const [sleep, setSleep] = useState<{ mode: "off" | "track" | number; at: number | null }>({
+    mode: "off",
+    at: null,
+  });
+  const sleepLabel =
+    sleep.mode === "off"
+      ? "Таймер сна выключен"
+      : sleep.mode === "track"
+        ? "Сон в конце трека"
+        : `Сон через ${sleep.mode} мин`;
+  const cycleSleep = () => {
+    const order: ("off" | "track" | number)[] = ["off", ...prefs.sleepPresets, "track"];
+    const i = order.findIndex((m) => m === sleep.mode);
+    const mode = order[(i + 1) % order.length];
+    const minutes = typeof mode === "number" ? mode : null;
+    setSleep({ mode, at: minutes ? Date.now() + minutes * 60_000 : null });
+    showToast(
+      mode === "off" ? "Таймер сна выключен" : mode === "track" ? "Уснём в конце трека" : `Уснём через ${minutes} мин`,
+      "moon",
+    );
+  };
+  useEffect(() => {
+    if (!sleep.at) return;
+    const iv = setInterval(() => {
+      if (Date.now() >= (sleep.at ?? Infinity)) {
+        setSleep({ mode: "off", at: null });
+        pb.pause();
+        showToast("Таймер сна: пауза", "moon");
+      }
+    }, 5000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sleep.at]);
+  // «Конец трека»: следующая смена трека — пауза
+  const sleepTrackArmedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (sleep.mode !== "track") {
+      sleepTrackArmedRef.current = null;
+      return;
+    }
+    if (sleepTrackArmedRef.current === null) {
+      sleepTrackArmedRef.current = track.id; // взводим на текущем треке
+      return;
+    }
+    if (sleepTrackArmedRef.current !== track.id) {
+      setSleep({ mode: "off", at: null });
+      pb.pause();
+      showToast("Таймер сна: пауза", "moon");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sleep.mode, track.id]);
+
+  // Тексты: демо — локальные строки, каталог — LRCLIB с сервера
+  const { lines: lyrics, synced: lyricsSynced } = useLyrics(api, track, canSearch);
+
+  // Активная строка — только у синхронизированного текста (plain не подсвечиваем)
   const activeLine = useMemo(() => {
+    if (!lyricsSynced) return -1;
     let a = 0;
-    track.lyrics.forEach((l, i) => {
+    lyrics.forEach((l, i) => {
       if (l.t <= pos) a = i;
     });
     return a;
-  }, [pos, track]);
+  }, [pos, lyrics, lyricsSynced]);
 
   const showToast = (text: string, icon = "check") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -186,28 +367,23 @@ function Player({
     toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 2400);
   };
 
-  const playTrack = (id: string) => {
-    if (id === currentId) {
-      setPlaying(!playing);
-      return;
-    }
-    setCurrentId(id);
-    setPos(0);
-    setPlaying(true);
+  /** Клик по демо-треку (главная/библиотека/демо-поиск): очередь = демо-каталог. */
+  const playTrack = (id: string) => pb.playContext(DEMO_QUEUE, id);
+  /** Клик по каталожному треку: очередь = список, из которого кликнули. */
+  const playCatalog = (tracks: CatalogTrack[], id: string) =>
+    pb.playContext(tracks.map(fromCatalog), id);
+  /** Клик по локальному файлу (Stage 4): очередь = живые файлы вкладки;
+   *  с серверным id — обычный каталожный путь (скроббл/лайки). */
+  const playLocal = (entries: LocalEntry[], hash: string) => {
+    const ids = loadServerIds();
+    const playable = entries.filter((e) => e.available);
+    if (playable.length === 0) return;
+    const queue = playable.map((e) => fromLocalEntry(e, canSearch ? (ids[e.hash] ?? null) : null));
+    const clicked = playable.find((e) => e.hash === hash) ?? playable[0];
+    const clickedId = canSearch && ids[clicked.hash] ? ids[clicked.hash] : `local:${clicked.hash}`;
+    pb.playContext(queue, clickedId);
   };
-  const step = (d: number) => {
-    const n = (idx + d + TRACKS.length) % TRACKS.length;
-    setCurrentId(TRACKS[n].id);
-    setPos(0);
-    setPlaying(true);
-  };
-  // таймеру конца трека нужен свежий step без пересоздания интервала
-  const stepRef = useRef(step);
-  stepRef.current = step;
 
-  const cycleRepeat = () => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
-  const SPEEDS = [1, 1.25, 1.5, 2, 0.75];
-  const cycleSpeed = () => setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length]);
   const openEqualizer = () => {
     setView("settings");
     setSettingsIntent({ sub: "equalizer", nonce: Date.now() });
@@ -216,13 +392,12 @@ function Player({
   // Mute: клик по иконке громкости или клавиша M; помним прежний уровень
   const prevVolRef = useRef(64);
   const toggleMute = () => {
-    setVol((v) => {
-      if (v > 0) {
-        prevVolRef.current = v;
-        return 0;
-      }
-      return prevVolRef.current || 64;
-    });
+    if (vol > 0) {
+      prevVolRef.current = vol;
+      pb.setVol(0);
+    } else {
+      pb.setVol(prevVolRef.current || 64);
+    }
   };
 
   // Глобальные горячие клавиши — база нативности десктоп-плеера.
@@ -234,13 +409,13 @@ function Player({
     const k = e.key.toLowerCase();
     if (e.code === "Space") {
       e.preventDefault(); // иначе скроллит страницу / жмёт сфокусированную кнопку
-      setPlaying((p) => !p);
-    } else if (e.code === "ArrowRight" && e.ctrlKey) step(1);
-    else if (e.code === "ArrowLeft" && e.ctrlKey) step(-1);
-    else if (e.code === "ArrowRight") setPos((p) => Math.min(p + 5, track.duration));
-    else if (e.code === "ArrowLeft") setPos((p) => Math.max(p - 5, 0));
+      pb.toggle();
+    } else if (e.code === "ArrowRight" && e.ctrlKey) pb.next();
+    else if (e.code === "ArrowLeft" && e.ctrlKey) pb.prev();
+    else if (e.code === "ArrowRight") pb.seek(Math.min(pos + 5, track.duration));
+    else if (e.code === "ArrowLeft") pb.seek(Math.max(pos - 5, 0));
     else if (k === "m" || k === "ь") toggleMute();
-    else if (k === "l" || k === "д") toggleLike(currentId);
+    else if (k === "l" || k === "д") toggleLike(track.id);
     else if ((k === "k" || k === "л") && e.ctrlKey) {
       e.preventDefault();
       setView("search");
@@ -251,7 +426,11 @@ function Player({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  const seekLine = (i: number) => setPos(track.lyrics[i].t);
+  const seekLine = (i: number) => {
+    if (!lyricsSynced) return; // у plain-текста нет таймкодов
+    const line = lyrics[i];
+    if (line) pb.seek(line.t);
+  };
   const toggleLike = (id: string) => {
     const had = likes.includes(id);
     setLikes((ls) => (had ? ls.filter((x) => x !== id) : [...ls, id]));
@@ -272,6 +451,17 @@ function Player({
       open: true,
       x: Math.min(e.clientX, window.innerWidth - 250),
       y: Math.min(e.clientY, window.innerHeight - 220),
+      track: t,
+    });
+  };
+
+  /** «⋯» на каталожном (серверном) треке — меню Stage 4. */
+  const openCatalogMenu = (t: CatalogTrack, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCatMenu({
+      open: true,
+      x: Math.min(e.clientX, window.innerWidth - 250),
+      y: Math.min(e.clientY, window.innerHeight - 180),
       track: t,
     });
   };
@@ -385,7 +575,7 @@ function Player({
             {view === "home" ? (
               <HomeFeed
                 greetName={greetName}
-                currentId={currentId}
+                currentId={track.id}
                 playing={playing}
                 likes={likes}
                 onPlayTrack={playTrack}
@@ -397,34 +587,41 @@ function Player({
               <SearchView
                 api={api}
                 canSearch={canSearch}
-                currentId={currentId}
+                currentId={track.id}
                 playing={playing}
                 likes={likes}
                 onPlayTrack={playTrack}
+                onPlayCatalog={playCatalog}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onNotify={showToast}
-                onAddToPlaylist={(t) => setPlPick(t)}
+                onCatalogMenu={openCatalogMenu}
               />
             ) : view === "favorites" ? (
               <FavoritesView
                 api={api}
                 canSearch={canSearch}
                 likes={likes}
-                currentId={currentId}
+                currentId={track.id}
                 playing={playing}
                 onPlayTrack={playTrack}
+                onPlayCatalog={playCatalog}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
-                onNotify={showToast}
+                onCatalogMenu={openCatalogMenu}
               />
             ) : view === "playlist" && openPlaylistId ? (
               <PlaylistView
                 api={api}
                 playlistId={openPlaylistId}
                 likes={likes}
+                currentId={track.id}
+                playing={playing}
+                onPlayCatalog={playCatalog}
                 onLike={toggleLike}
                 onNotify={showToast}
+                onVersions={setVersionsTrack}
+                onSaveOffline={(tracks) => void saveOfflinePlaylist(tracks)}
                 onChanged={() => void reloadServerPlaylists()}
                 onDeleted={() => {
                   setOpenPlaylistId(null);
@@ -432,7 +629,20 @@ function Player({
                 }}
               />
             ) : view === "library" ? (
-              <LibraryView onPlayTrack={playTrack} />
+              <LibraryView
+                api={api}
+                canSearch={canSearch}
+                srvPlaylists={srvPlaylists}
+                currentId={track.id}
+                playing={playing}
+                onOpenPlaylist={openPlaylist}
+                onPlayTrack={playTrack}
+                onPlayLocal={playLocal}
+                onAddToPlaylist={(t) => setPlPick(t)}
+                onAddLink={() => setAddLinkOpen(true)}
+                onImport={() => setImportOpen(true)}
+                onNotify={showToast}
+              />
             ) : (
               <SettingsView prefs={prefs} setPrefs={setPrefs} username={username} onLogout={onLogout} intent={settingsIntent} />
             )}
@@ -441,6 +651,7 @@ function Player({
         {showNowPlaying ? (
           <NowPlayingPanel
             track={track}
+            lyrics={lyrics}
             liked={likes.includes(track.id)}
             onLike={() => toggleLike(track.id)}
             activeLine={activeLine}
@@ -451,31 +662,32 @@ function Player({
 
       <QueuePanel
         open={queueOn}
-        tracks={TRACKS}
-        currentId={currentId}
+        tracks={pb.queue}
+        currentId={track.id}
         playing={playing}
-        onPlayTrack={playTrack}
+        onPlayTrack={(id) => pb.playContext(pb.queue, id)}
         onClose={() => setQueueOn(false)}
       />
 
       <PlayerBar
         track={track}
         playing={playing}
-        onTogglePlay={() => setPlaying(!playing)}
-        onPrev={() => step(-1)}
-        onNext={() => step(1)}
+        buffering={pb.buffering}
+        onTogglePlay={pb.toggle}
+        onPrev={pb.prev}
+        onNext={pb.next}
         pos={pos}
-        onSeek={setPos}
+        onSeek={pb.seek}
         vol={vol}
-        onVol={setVol}
+        onVol={pb.setVol}
         liked={likes.includes(track.id)}
         onLike={() => toggleLike(track.id)}
-        shuffle={shuffle}
-        onShuffle={() => setShuffle(!shuffle)}
-        repeat={repeat}
-        onRepeat={cycleRepeat}
-        speed={speed}
-        onSpeed={cycleSpeed}
+        shuffle={pb.shuffle}
+        onShuffle={pb.toggleShuffle}
+        repeat={pb.repeat}
+        onRepeat={pb.cycleRepeat}
+        speed={pb.speed}
+        onSpeed={pb.cycleSpeed}
         lyricsOn={lyricsOn}
         onLyrics={() => setLyricsOn(!lyricsOn)}
         queueOn={queueOn}
@@ -483,6 +695,9 @@ function Player({
         onEqualizer={openEqualizer}
         onMute={toggleMute}
         onExpand={() => setExpanded(true)}
+        sleepActive={sleep.mode !== "off"}
+        sleepLabel={sleepLabel}
+        onSleep={cycleSleep}
       />
 
       <Toast
@@ -517,6 +732,64 @@ function Player({
           "-",
           { icon: "link", label: "Скопировать ссылку", onClick: () => showToast("Ссылка скопирована", "link") },
         ]}
+      />
+
+      {/* Меню каталожного трека (Stage 4): плейлист + версии/источники */}
+      <Menu
+        open={catMenu.open}
+        x={catMenu.x}
+        y={catMenu.y}
+        onClose={() => setCatMenu((m) => ({ ...m, open: false }))}
+        items={[
+          {
+            icon: "plus",
+            label: "В плейлист",
+            onClick: () => {
+              if (catMenu.track) setPlPick(catMenu.track);
+            },
+          },
+          {
+            icon: "git-branch",
+            label: "Версии и источники",
+            onClick: () => {
+              if (catMenu.track) setVersionsTrack(catMenu.track);
+            },
+          },
+          {
+            icon: catMenu.track && pins.has(catMenu.track.id) ? "cloud-off" : "download",
+            label: catMenu.track && pins.has(catMenu.track.id) ? "Убрать из оффлайна" : "Сохранить оффлайн",
+            onClick: () => {
+              if (catMenu.track) void toggleOffline(catMenu.track);
+            },
+          },
+        ]}
+      />
+
+      <VersionsDialog api={api} track={versionsTrack} onClose={() => setVersionsTrack(null)} onNotify={showToast} />
+
+      {/* «Добавить по ссылке» (Stage 4): прямой источник + сразу «в плейлист» */}
+      <AddLinkDialog
+        api={api}
+        open={addLinkOpen}
+        onClose={() => setAddLinkOpen(false)}
+        onNotify={showToast}
+        onAdded={(t) => {
+          showToast(`«${t.title}» добавлен`, "link");
+          setPlPick(t); // сразу предлагаем положить в плейлист
+        }}
+      />
+
+      {/* Импорт плейлиста (Stage 4): Spotify/YT/Apple → каталог + отчёт */}
+      <ImportDialog
+        api={api}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onNotify={showToast}
+        onImported={(report) => {
+          void reloadServerPlaylists();
+          setOpenPlaylistId(report.playlist.id);
+          setView("playlist");
+        }}
       />
 
       <Dialog
@@ -565,13 +838,14 @@ function Player({
       <ListeningMode
         open={expanded}
         track={track}
+        lyrics={lyrics}
         playing={playing}
         pos={pos}
         activeLine={activeLine}
-        onTogglePlay={() => setPlaying(!playing)}
-        onPrev={() => step(-1)}
-        onNext={() => step(1)}
-        onSeek={setPos}
+        onTogglePlay={pb.toggle}
+        onPrev={pb.prev}
+        onNext={pb.next}
+        onSeek={pb.seek}
         onSeekLine={seekLine}
         onClose={() => setExpanded(false)}
       />
