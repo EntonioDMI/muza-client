@@ -1,9 +1,13 @@
 import type { MuzaApi } from "./index";
 import {
+  type Annotation,
+  type Annotations,
   type Credentials,
   type HistoryItem,
+  type Lyrics,
   type PlaylistDetail,
   type PlaylistMeta,
+  type RecipeEnvelope,
   type RegisterStatus,
   type SearchScope,
   type Session,
@@ -283,6 +287,36 @@ export class HttpMuzaApi implements MuzaApi {
       `/me/history?limit=${limit}`,
     );
     return rows.map((r) => ({ track: trackFromWire(r.track), playedAt: r.played_at, completed: r.completed }));
+  }
+
+  // ---------- Тексты и рецепт (Stage 2, слайсы 5–6) ----------
+
+  async getLyrics(trackId: string): Promise<Lyrics> {
+    return this.authedRequest<Lyrics>(`/tracks/${encodeURIComponent(trackId)}/lyrics`);
+  }
+
+  async getAnnotations(trackId: string): Promise<Annotations> {
+    const out = await this.authedRequest<{
+      genius_url: string | null;
+      annotations:
+        | { fragment: string; body: string; votes: number; verified: boolean; line_idx?: number | null; line_count?: number; line_idxs?: number[] }[]
+        | null;
+    }>(`/tracks/${encodeURIComponent(trackId)}/annotations`);
+    const annotations: Annotation[] | null =
+      out.annotations?.map((a) => ({
+        fragment: a.fragment,
+        body: a.body,
+        votes: a.votes,
+        verified: a.verified,
+        lineIdx: a.line_idx ?? null,
+        lineCount: a.line_count ?? 0,
+        lineIdxs: a.line_idxs ?? [],
+      })) ?? null;
+    return { geniusUrl: out.genius_url, annotations };
+  }
+
+  async getRecipe(): Promise<RecipeEnvelope> {
+    return this.authedRequest<RecipeEnvelope>("/recipe");
   }
 
   // ---------- Регистрация с почтой (verify-before-create) ----------

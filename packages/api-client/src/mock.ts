@@ -1,9 +1,12 @@
 import type { MuzaApi } from "./index";
 import {
+  type Annotations,
   type Credentials,
   type HistoryItem,
+  type Lyrics,
   type PlaylistDetail,
   type PlaylistMeta,
+  type RecipeEnvelope,
   type RegisterStatus,
   type SearchScope,
   type Session,
@@ -140,5 +143,17 @@ export class MockMuzaApi implements MuzaApi {
 
   async getHistory(): Promise<HistoryItem[]> {
     return [];
+  }
+
+  async getLyrics(): Promise<Lyrics> {
+    return { synced: null, plain: null, source: null };
+  }
+
+  async getAnnotations(): Promise<Annotations> {
+    return { geniusUrl: null, annotations: null };
+  }
+
+  async getRecipe(): Promise<RecipeEnvelope> {
+    throw new Error("Мок: рецепта нет");
   }
 }

@@ -75,3 +75,38 @@ export const HistoryItemSchema = z.object({
   completed: z.boolean(),
 });
 export type HistoryItem = z.infer<typeof HistoryItemSchema>;
+
+/** Синхронизированная строка текста (LRC). */
+export const SyncedLineSchema = z.object({ t: z.number(), line: z.string() });
+export type SyncedLineOut = z.infer<typeof SyncedLineSchema>;
+
+export const LyricsSchema = z.object({
+  synced: z.array(SyncedLineSchema).nullable(),
+  plain: z.string().nullable(),
+  source: z.string().nullable(),
+});
+export type Lyrics = z.infer<typeof LyricsSchema>;
+
+/** Аннотация Genius: lineIdx привязывает объяснение к строке synced-текста. */
+export const AnnotationSchema = z.object({
+  fragment: z.string(),
+  body: z.string(),
+  votes: z.number(),
+  verified: z.boolean(),
+  lineIdx: z.number().nullable(),
+  lineCount: z.number(),
+  lineIdxs: z.array(z.number()),
+});
+export type Annotation = z.infer<typeof AnnotationSchema>;
+
+export interface Annotations {
+  geniusUrl: string | null;
+  annotations: Annotation[] | null;
+}
+
+/** Конверт горячего рецепта: recipe + Ed25519-подпись. Клиент (Stage 3)
+ *  верифицирует вшитым pubkey и без валидной подписи не применяет. */
+export interface RecipeEnvelope {
+  recipe: Record<string, unknown> & { recipe_version: number };
+  sig: string;
+}

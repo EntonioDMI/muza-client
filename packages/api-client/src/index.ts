@@ -4,10 +4,13 @@
  */
 
 import type {
+  Annotations,
   Credentials,
   HistoryItem,
+  Lyrics,
   PlaylistDetail,
   PlaylistMeta,
+  RecipeEnvelope,
   RegisterStatus,
   SearchScope,
   Session,
@@ -56,6 +59,13 @@ export interface MuzaApi {
   /** Скроббл (клиент шлёт с реальным движком — Stage 3; сервер уже готов). */
   recordPlay(input: { trackId: string; playedMs: number; durationMs: number; completed: boolean }): Promise<void>;
   getHistory(limit?: number): Promise<HistoryItem[]>;
+
+  // Тексты и смысл (Stage 2, слайс 5): LRCLIB-синхротекст + Genius-аннотации.
+  getLyrics(trackId: string): Promise<Lyrics>;
+  getAnnotations(trackId: string): Promise<Annotations>;
+
+  /** Горячий рецепт добычи (Stage 2, слайс 6); применяется клиентом в Stage 3. */
+  getRecipe(): Promise<RecipeEnvelope>;
 }
 
 export { MockMuzaApi } from "./mock";
