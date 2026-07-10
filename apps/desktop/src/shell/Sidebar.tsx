@@ -1,8 +1,15 @@
 import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
-import type { DemoCollection } from "../data/demo";
 import type { View } from "../types";
+
+/** Пункт списка плейлистов: демо (с обложкой) или серверный (без — плейсхолдер). */
+export interface SidebarPlaylist {
+  id: string;
+  name: string;
+  meta: string;
+  cover?: string;
+}
 
 const NAV_H = 48;
 const NAV_GAP = 4;
@@ -74,7 +81,7 @@ function PlaylistRow({
   meta,
   onClick,
 }: {
-  cover: string;
+  cover?: string;
   name: string;
   meta: string;
   onClick?: () => void;
@@ -99,7 +106,25 @@ function PlaylistRow({
         transition: "background var(--dur-fast) var(--ease-out)",
       }}
     >
-      <img src={cover} alt="" style={{ width: 40, height: 40, borderRadius: "var(--r-xs)", flex: "none" }} />
+      {cover ? (
+        <img src={cover} alt="" style={{ width: 40, height: 40, borderRadius: "var(--r-xs)", flex: "none" }} />
+      ) : (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: "var(--r-xs)",
+            flex: "none",
+            background: "var(--accent-soft)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Icon name="list-music" size={18} color="var(--accent-text)" />
+        </span>
+      )}
       <span style={{ minWidth: 0 }}>
         <span
           style={{
@@ -132,7 +157,7 @@ export function Sidebar({
 }: {
   view: View;
   setView: (v: View) => void;
-  playlists: DemoCollection[];
+  playlists: SidebarPlaylist[];
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
 }) {

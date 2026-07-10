@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Menu, SearchInput, Toast } from "@muza/ui";
-import { HttpMuzaApi, type MuzaApi, type Session } from "@muza/api-client";
+import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, type Prefs, type RepeatMode, type View } from "./types";
 import { customAccentVars } from "./lib/accent";
@@ -14,6 +14,7 @@ import { ListeningMode } from "./shell/ListeningMode";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";
 import { FavoritesView } from "./views/FavoritesView";
+import { PlaylistView } from "./views/PlaylistView";
 import { LibraryView } from "./views/LibraryView";
 import { SettingsView, type SettingsIntent } from "./views/SettingsView";
 
@@ -99,6 +100,11 @@ function Player({
   const [playlists, setPlaylists] = useState<DemoCollection[]>(PLAYLISTS);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [plName, setPlName] = useState("");
+  // Слайс 4: серверные плейлисты и открытая страница плейлиста
+  const [srvPlaylists, setSrvPlaylists] = useState<PlaylistMeta[]>([]);
+  const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
+  // выбор плейлиста для «В плейлист» из поиска
+  const [plPick, setPlPick] = useState<CatalogTrack | null>(null);
   const [toast, setToast] = useState({ open: false, text: "", icon: "check" });
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: DemoTrack | null }>({
     open: false,
@@ -116,6 +122,29 @@ function Player({
 
   const track = TRACKS.find((t) => t.id === currentId) ?? TRACKS[0];
   const idx = TRACKS.indexOf(track);
+
+  // Серверная сессия: подтягиваем плейлисты и избранное (лайки каталожных
+  // треков живут на сервере; демо-треки — по-прежнему локально)
+  const reloadServerPlaylists = async () => {
+    if (!canSearch) return;
+    try {
+      setSrvPlaylists(await api.getPlaylists());
+    } catch {
+      /* сервер недоступен — сайдбар просто не обновится */
+    }
+  };
+  useEffect(() => {
+    if (!canSearch) return;
+    void reloadServerPlaylists();
+    api
+      .getFavorites()
+      .then((tracks) => setLikes((ls) => [...new Set([...ls, ...tracks.map((t) => t.id)])]))
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, canSearch]);
+
+  /** Каталожный (серверный) id — числовой; демо-ид вида "t1". */
+  const isCatalogId = (id: string) => /^\d+$/.test(id);
 
   // Адаптив окна: фиксированные колонки не должны душить контент.
   // < 1200px — прячем «Сейчас играет» (вторична), < 950px — ужимаем сайдбар.
@@ -227,6 +256,14 @@ function Player({
     const had = likes.includes(id);
     setLikes((ls) => (had ? ls.filter((x) => x !== id) : [...ls, id]));
     showToast(had ? "Убрано из Любимого" : "Добавлено в Любимое", "heart");
+    // каталожный трек при серверной сессии — синхронизируем (optimistic;
+    // упало → откатываем и честно говорим)
+    if (canSearch && isCatalogId(id)) {
+      (had ? api.removeFavorite(id) : api.addFavorite(id)).catch(() => {
+        setLikes((ls) => (had ? [...ls, id] : ls.filter((x) => x !== id)));
+        showToast("Не удалось синхронизировать лайк", "x");
+      });
+    }
   };
 
   const openTrackMenu = (t: DemoTrack, e: React.MouseEvent) => {
@@ -239,12 +276,53 @@ function Player({
     });
   };
 
-  const createPlaylist = () => {
+  const createPlaylist = async () => {
     const name = plName.trim() || "Новый плейлист";
+    if (canSearch) {
+      try {
+        const created = await api.createPlaylist(name);
+        await reloadServerPlaylists();
+        setDialogOpen(false);
+        setPlName("");
+        showToast("Плейлист создан", "list-music");
+        setOpenPlaylistId(created.id);
+        setView("playlist");
+        return;
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : "Не удалось создать плейлист", "x");
+        return;
+      }
+    }
     setPlaylists((ps) => [...ps, { id: `p${ps.length + 1}${Date.now()}`, name, meta: "0 треков", cover: NEW_PLAYLIST_COVER }]);
     setDialogOpen(false);
     setPlName("");
     showToast("Плейлист создан", "list-music");
+  };
+
+  // Сайдбар: серверная сессия видит настоящие плейлисты, аноним — демо
+  const sidebarPlaylists = canSearch
+    ? srvPlaylists.map((p) => ({ id: p.id, name: p.name, meta: `${p.trackCount} тр.` }))
+    : playlists;
+
+  const openPlaylist = (id: string) => {
+    if (!canSearch) {
+      setView("library"); // демо-плейлисты без страниц
+      return;
+    }
+    setOpenPlaylistId(id);
+    setView("playlist");
+  };
+
+  const addToPlaylist = async (playlistId: string, playlistName: string) => {
+    if (!plPick) return;
+    setPlPick(null);
+    try {
+      await api.addPlaylistTrack(playlistId, plPick.id);
+      await reloadServerPlaylists();
+      showToast(`Добавлено в «${playlistName}»`, "list-music");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Не удалось добавить", "x");
+    }
   };
 
   const accentAttr = prefs.accent === "blue" || prefs.accent === "custom" ? undefined : prefs.accent;
@@ -296,9 +374,9 @@ function Player({
         <Sidebar
           view={view}
           setView={setView}
-          playlists={playlists}
+          playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
-          onOpenPlaylist={() => setView("library")}
+          onOpenPlaylist={openPlaylist}
         />
         {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
             прошлого экрана не протекает в новый (короткий экран улетал вверх) */}
@@ -326,15 +404,32 @@ function Player({
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onNotify={showToast}
+                onAddToPlaylist={(t) => setPlPick(t)}
               />
             ) : view === "favorites" ? (
               <FavoritesView
+                api={api}
+                canSearch={canSearch}
                 likes={likes}
                 currentId={currentId}
                 playing={playing}
                 onPlayTrack={playTrack}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
+                onNotify={showToast}
+              />
+            ) : view === "playlist" && openPlaylistId ? (
+              <PlaylistView
+                api={api}
+                playlistId={openPlaylistId}
+                likes={likes}
+                onLike={toggleLike}
+                onNotify={showToast}
+                onChanged={() => void reloadServerPlaylists()}
+                onDeleted={() => {
+                  setOpenPlaylistId(null);
+                  setView("home");
+                }}
               />
             ) : view === "library" ? (
               <LibraryView onPlayTrack={playTrack} />
@@ -440,6 +535,31 @@ function Player({
         }
       >
         <SearchInput value={plName} onChange={setPlName} placeholder="Название" icon="list-music" autoFocus />
+      </Dialog>
+
+      {/* Выбор плейлиста для найденного трека («⋯ → В плейлист») */}
+      <Dialog
+        open={plPick !== null}
+        title={plPick ? `«${plPick.title}» — в плейлист` : "В плейлист"}
+        onClose={() => setPlPick(null)}
+        actions={
+          <Button variant="ghost" onClick={() => setPlPick(null)}>
+            Отмена
+          </Button>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 280 }}>
+          {srvPlaylists.map((p) => (
+            <Button key={p.id} variant="secondary" icon="list-music" onClick={() => void addToPlaylist(p.id, p.name)} style={{ justifyContent: "flex-start" }}>
+              {p.name}
+            </Button>
+          ))}
+          {srvPlaylists.length === 0 ? (
+            <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.5 }}>
+              Плейлистов пока нет — создай первый кнопкой «+» в сайдбаре.
+            </div>
+          ) : null}
+        </div>
       </Dialog>
 
       <ListeningMode

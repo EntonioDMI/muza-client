@@ -18,6 +18,7 @@ export function SearchView({
   onLike,
   onTrackMenu,
   onNotify,
+  onAddToPlaylist,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, каталог недоступен. */
@@ -29,6 +30,8 @@ export function SearchView({
   onLike: (id: string) => void;
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   onNotify: (text: string, icon?: string) => void;
+  /** «⋯» на серверном треке: выбор плейлиста (слайс 4). */
+  onAddToPlaylist: (t: Track) => void;
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Track[] | null>(null); // null — запроса ещё не было
@@ -125,6 +128,10 @@ export function SearchView({
                 liked={likes.includes(t.id)}
                 onPlay={() => onNotify("Воспроизведение — в Stage 3 (движок)", "hourglass")}
                 onLike={() => onLike(t.id)}
+                onMore={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onAddToPlaylist(t);
+                }}
               />
             ))}
             {results !== null && results.length === 0 && !busy ? (

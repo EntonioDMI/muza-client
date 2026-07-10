@@ -1,6 +1,9 @@
 import type { MuzaApi } from "./index";
 import {
   type Credentials,
+  type HistoryItem,
+  type PlaylistDetail,
+  type PlaylistMeta,
   type RegisterStatus,
   type SearchScope,
   type Session,
@@ -201,6 +204,87 @@ export class HttpMuzaApi implements MuzaApi {
     return trackFromWire(await this.authedRequest<TrackWire>(`/tracks/${encodeURIComponent(id)}`));
   }
 
+  // ---------- Личное (Stage 2, слайс 4) ----------
+
+  async getFavorites(): Promise<Track[]> {
+    const rows = await this.authedRequest<TrackWire[]>("/me/favorites");
+    return rows.map(trackFromWire);
+  }
+
+  async addFavorite(trackId: string): Promise<void> {
+    await this.authedRequest(`/me/favorites/${encodeURIComponent(trackId)}`, { method: "PUT" });
+  }
+
+  async removeFavorite(trackId: string): Promise<void> {
+    await this.authedRequest(`/me/favorites/${encodeURIComponent(trackId)}`, { method: "DELETE" });
+  }
+
+  async getPlaylists(): Promise<PlaylistMeta[]> {
+    const rows = await this.authedRequest<{ id: string; name: string; track_count: number; created_at: string }[]>(
+      "/me/playlists",
+    );
+    return rows.map((p) => ({ id: p.id, name: p.name, trackCount: p.track_count, createdAt: p.created_at }));
+  }
+
+  async createPlaylist(name: string): Promise<PlaylistMeta> {
+    const p = await this.authedRequest<{ id: string; name: string; track_count: number; created_at: string }>(
+      "/me/playlists",
+      { method: "POST", body: JSON.stringify({ name }) },
+    );
+    return { id: p.id, name: p.name, trackCount: p.track_count, createdAt: p.created_at };
+  }
+
+  async getPlaylist(id: string): Promise<PlaylistDetail> {
+    const p = await this.authedRequest<{ id: string; name: string; tracks: TrackWire[] }>(
+      `/me/playlists/${encodeURIComponent(id)}`,
+    );
+    return { id: p.id, name: p.name, tracks: p.tracks.map(trackFromWire) };
+  }
+
+  async renamePlaylist(id: string, name: string): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deletePlaylist(id: string): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async addPlaylistTrack(playlistId: string, trackId: string): Promise<void> {
+    await this.authedRequest(
+      `/me/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(trackId)}`,
+      { method: "PUT" },
+    );
+  }
+
+  async removePlaylistTrack(playlistId: string, trackId: string): Promise<void> {
+    await this.authedRequest(
+      `/me/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(trackId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async recordPlay(input: { trackId: string; playedMs: number; durationMs: number; completed: boolean }): Promise<void> {
+    await this.authedRequest("/me/plays", {
+      method: "POST",
+      body: JSON.stringify({
+        track_id: input.trackId,
+        played_ms: input.playedMs,
+        duration_ms: input.durationMs,
+        completed: input.completed,
+      }),
+    });
+  }
+
+  async getHistory(limit = 50): Promise<HistoryItem[]> {
+    const rows = await this.authedRequest<{ track: TrackWire; played_at: string; completed: boolean }[]>(
+      `/me/history?limit=${limit}`,
+    );
+    return rows.map((r) => ({ track: trackFromWire(r.track), playedAt: r.played_at, completed: r.completed }));
+  }
+
   // ---------- Регистрация с почтой (verify-before-create) ----------
 
   async registerStart(input: Credentials & { email: string }): Promise<{ pendingId: string; email: string }> {
@@ -230,6 +314,13 @@ export class HttpMuzaApi implements MuzaApi {
     await this.request("/auth/register/resend", {
       method: "POST",
       body: JSON.stringify({ pending_id: pendingId }),
+    });
+  }
+
+  async recoveryStart(email: string): Promise<void> {
+    await this.request("/auth/recovery/start", {
+      method: "POST",
+      body: JSON.stringify({ email }),
     });
   }
 

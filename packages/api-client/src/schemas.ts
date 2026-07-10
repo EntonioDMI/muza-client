@@ -52,3 +52,26 @@ export type Track = z.infer<typeof TrackSchema>;
 /** full — каталог + внешние провайдеры (медленно, rate-limit);
  *  catalog — мгновенно, только по накопленной базе (живой ввод). */
 export type SearchScope = "full" | "catalog";
+
+/** Плейлист в списке (без треков). */
+export const PlaylistMetaSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  trackCount: z.number(),
+  createdAt: z.string(),
+});
+export type PlaylistMeta = z.infer<typeof PlaylistMetaSchema>;
+
+export const PlaylistDetailSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  tracks: z.array(TrackSchema),
+});
+export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>;
+
+export const HistoryItemSchema = z.object({
+  track: TrackSchema,
+  playedAt: z.string(),
+  completed: z.boolean(),
+});
+export type HistoryItem = z.infer<typeof HistoryItemSchema>;

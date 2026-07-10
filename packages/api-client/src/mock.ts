@@ -1,6 +1,9 @@
 import type { MuzaApi } from "./index";
 import {
   type Credentials,
+  type HistoryItem,
+  type PlaylistDetail,
+  type PlaylistMeta,
   type RegisterStatus,
   type SearchScope,
   type Session,
@@ -81,11 +84,61 @@ export class MockMuzaApi implements MuzaApi {
     // мок: письма нет, слать нечего
   }
 
+  async recoveryStart(): Promise<void> {
+    // мок: письма нет — как и сервер, делаем вид, что отправили
+  }
+
   async search(_query: string, _opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]> {
     return []; // мок: каталога нет
   }
 
   async getTrack(id: string): Promise<Track> {
     throw new Error(`Мок: трек ${id} не найден`);
+  }
+
+  // Личное: in-memory плейлисты, чтобы UI жил без сервера
+  private playlists = new Map<string, PlaylistMeta>();
+
+  async getFavorites(): Promise<Track[]> {
+    return [];
+  }
+
+  async addFavorite(): Promise<void> {}
+
+  async removeFavorite(): Promise<void> {}
+
+  async getPlaylists(): Promise<PlaylistMeta[]> {
+    return [...this.playlists.values()];
+  }
+
+  async createPlaylist(name: string): Promise<PlaylistMeta> {
+    const p: PlaylistMeta = { id: crypto.randomUUID(), name, trackCount: 0, createdAt: new Date().toISOString() };
+    this.playlists.set(p.id, p);
+    return p;
+  }
+
+  async getPlaylist(id: string): Promise<PlaylistDetail> {
+    const p = this.playlists.get(id);
+    if (!p) throw new Error("Плейлист не найден");
+    return { id: p.id, name: p.name, tracks: [] };
+  }
+
+  async renamePlaylist(id: string, name: string): Promise<void> {
+    const p = this.playlists.get(id);
+    if (p) this.playlists.set(id, { ...p, name });
+  }
+
+  async deletePlaylist(id: string): Promise<void> {
+    this.playlists.delete(id);
+  }
+
+  async addPlaylistTrack(): Promise<void> {}
+
+  async removePlaylistTrack(): Promise<void> {}
+
+  async recordPlay(): Promise<void> {}
+
+  async getHistory(): Promise<HistoryItem[]> {
+    return [];
   }
 }

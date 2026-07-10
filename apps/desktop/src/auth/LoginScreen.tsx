@@ -116,8 +116,16 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
         setError("Похоже, это не email.");
         return;
       }
-      // Серверного эндпоинта сброса пароля ещё нет — честная заглушка
-      setNotice("Восстановление появится в ближайшем обновлении — эндпоинт сервера ещё в работе.");
+      setBusy(true);
+      try {
+        await api.recoveryStart(email.trim());
+        // сервер всегда 204: формулировка не выдаёт, есть ли такая почта
+        setNotice("Если такая почта привязана к аккаунту — письмо со ссылкой уже летит. Ссылка действует 30 минут.");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Что-то пошло не так");
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     const parsed = CredentialsSchema.safeParse({ username, password });
