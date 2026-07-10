@@ -93,6 +93,34 @@ export class MockMuzaApi implements MuzaApi {
     // мок: письма нет — как и сервер, делаем вид, что отправили
   }
 
+  async changePassword(): Promise<void> {
+    // мок: пароля нет — делаем вид, что сменили
+  }
+
+  // Скробблинг в моке недоступен: сервера с ключами нет
+  async getScrobbling() {
+    return {
+      lastfm: { available: false, connected: false, username: null },
+      listenbrainz: { connected: false, username: null },
+    };
+  }
+
+  async lastfmConnectStart(): Promise<{ token: string; authUrl: string }> {
+    throw new Error("Мок: Last.fm недоступен");
+  }
+
+  async lastfmConnectComplete(): Promise<{ username: string }> {
+    throw new Error("Мок: Last.fm недоступен");
+  }
+
+  async lastfmDisconnect(): Promise<void> {}
+
+  async listenbrainzConnect(): Promise<{ username: string }> {
+    throw new Error("Мок: ListenBrainz недоступен");
+  }
+
+  async listenbrainzDisconnect(): Promise<void> {}
+
   async search(_query: string, _opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]> {
     return []; // мок: каталога нет
   }

@@ -6,6 +6,7 @@ import { DEFAULT_PREFS, type Prefs, type View } from "./types";
 import { customAccentVars } from "./lib/accent";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
+import { syncAutostart, trayConfigure } from "./lib/system";
 import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
@@ -186,6 +187,14 @@ function Player({
   useEffect(() => {
     void setCacheLimit(prefs.cacheLimitGb);
   }, [prefs.cacheLimitGb]);
+  // Автозапуск с системой: prefs — источник истины, приводим ОС к нему
+  useEffect(() => {
+    void syncAutostart(prefs.autostart);
+  }, [prefs.autostart]);
+  // Трей: видимость иконки + «закрыть = свернуть» (Rust перехватывает close)
+  useEffect(() => {
+    void trayConfigure(prefs.tray, prefs.closeToTray);
+  }, [prefs.tray, prefs.closeToTray]);
 
   // Серверная сессия: подтягиваем плейлисты и избранное (лайки каталожных
   // треков живут на сервере; демо-треки — по-прежнему локально).
@@ -650,7 +659,16 @@ function Player({
                 onNotify={showToast}
               />
             ) : (
-              <SettingsView prefs={prefs} setPrefs={setPrefs} username={username} onLogout={onLogout} intent={settingsIntent} />
+              <SettingsView
+                api={api}
+                serverSession={canSearch}
+                prefs={prefs}
+                setPrefs={setPrefs}
+                username={username}
+                onLogout={onLogout}
+                onNotify={showToast}
+                intent={settingsIntent}
+              />
             )}
           </div>
         </main>

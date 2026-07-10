@@ -11,7 +11,11 @@ export interface Prefs {
   radius: "mild" | "soft" | "round";
   bgCover: boolean;
   autostart: boolean;
+  /** Иконка Muza в области уведомлений. */
   tray: boolean;
+  /** Закрытие окна сворачивает в трей (музыка играет дальше), а не выходит.
+   *  Действует только при включённом tray — иначе окно было бы не вернуть. */
+  closeToTray: boolean;
   normalize: boolean;
   crossfade: boolean;
   blur: number;
@@ -48,6 +52,7 @@ export const DEFAULT_PREFS: Prefs = {
   bgCover: false,
   autostart: true,
   tray: true,
+  closeToTray: true,
   normalize: true,
   crossfade: false,
   blur: 28,

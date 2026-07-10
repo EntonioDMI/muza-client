@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, ChipGroup, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
+import { Button, ChipGroup, Dialog, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
+import { ApiError, type MuzaApi, type ScrobblingStatus } from "@muza/api-client";
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
+import { openExternal } from "../lib/system";
 
 /* Структура и состав — docs/notes/2026-07-10-настройки-спецификация.md:
    11 вкладок-разделов; «Внешний вид» = простые (пресеты) + под-экран
@@ -150,15 +152,17 @@ function SettingInput({
   onChange,
   placeholder,
   width = 220,
+  type = "text",
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   width?: number;
+  type?: "text" | "password";
 }) {
   return (
     <input
-      type="text"
+      type={type}
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
@@ -487,20 +491,63 @@ const EQ_PRESETS: Record<string, number[]> = {
 };
 
 export function SettingsView({
+  api,
+  serverSession,
   prefs,
   setPrefs,
   username,
   onLogout,
+  onNotify,
   intent,
 }: {
+  api: MuzaApi;
+  /** false у анонима: серверные функции аккаунта (смена пароля) недоступны. */
+  serverSession: boolean;
   prefs: Prefs;
   setPrefs: (p: Prefs) => void;
   username: string;
   onLogout: () => void;
+  onNotify: (text: string, icon?: string) => void;
   intent?: SettingsIntent | null;
 }) {
   const [tab, setTab] = useState("appearance");
   const [sub, setSub] = useState<Sub>(null);
+
+  // Смена пароля (слайс «Аккаунт»): диалог старый → новый → повтор
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdCur, setPwdCur] = useState("");
+  const [pwdNew, setPwdNew] = useState("");
+  const [pwdRepeat, setPwdRepeat] = useState("");
+  const [pwdErr, setPwdErr] = useState<string | null>(null);
+  const [pwdBusy, setPwdBusy] = useState(false);
+  const openPwd = () => {
+    setPwdCur("");
+    setPwdNew("");
+    setPwdRepeat("");
+    setPwdErr(null);
+    setPwdOpen(true);
+  };
+  const submitPwd = async () => {
+    if (pwdNew.length < 8) {
+      setPwdErr("Новый пароль — минимум 8 символов");
+      return;
+    }
+    if (pwdNew !== pwdRepeat) {
+      setPwdErr("Пароли не совпадают");
+      return;
+    }
+    setPwdBusy(true);
+    setPwdErr(null);
+    try {
+      await api.changePassword(pwdCur, pwdNew);
+      setPwdOpen(false);
+      onNotify("Пароль изменён — другие устройства разлогинены", "shield-check");
+    } catch (e) {
+      setPwdErr(e instanceof ApiError ? e.message : "Не удалось сменить пароль");
+    } finally {
+      setPwdBusy(false);
+    }
+  };
 
   // Маркетплейс: фильтр витрины (открывается из «Расширений» с нужной категорией)
   const [marketFilter, setMarketFilter] = useState("Всё");
@@ -531,6 +578,98 @@ export function SettingsView({
     setTab(SUB_HOME_TAB[intent.sub]);
     setSub(intent.sub);
   }, [intent]);
+
+  // Внешний скробблинг (Интеграции): статус с сервера + флоу подключения
+  const [scrob, setScrob] = useState<ScrobblingStatus | null>(null);
+  const [lfmWaiting, setLfmWaiting] = useState(false);
+  const lfmCancelRef = useRef(false);
+  const [lbOpen, setLbOpen] = useState(false);
+  const [lbToken, setLbToken] = useState("");
+  const [lbErr, setLbErr] = useState<string | null>(null);
+  const [lbBusy, setLbBusy] = useState(false);
+  useEffect(() => {
+    if (tab !== "integrations" || !serverSession) return;
+    api.getScrobbling().then(setScrob).catch(() => undefined);
+  }, [tab, serverSession, api]);
+  // Уход с экрана — поллинг подтверждения Last.fm останавливается
+  useEffect(
+    () => () => {
+      lfmCancelRef.current = true;
+    },
+    [],
+  );
+
+  /** Last.fm: токен → браузер «Разрешить» → поллим complete до ~2 минут. */
+  const lfmConnect = async () => {
+    setLfmWaiting(true);
+    lfmCancelRef.current = false;
+    try {
+      const { token, authUrl } = await api.lastfmConnectStart();
+      await openExternal(authUrl);
+      onNotify("Разреши доступ в браузере — ждём подтверждения", "radio-tower");
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 4000));
+        if (lfmCancelRef.current) return;
+        try {
+          const { username } = await api.lastfmConnectComplete(token);
+          setScrob((s) =>
+            s ? { ...s, lastfm: { ...s.lastfm, connected: true, username } } : s,
+          );
+          onNotify(`Last.fm подключён: ${username}`, "radio-tower");
+          return;
+        } catch (e) {
+          // 409 = ещё не нажал «Разрешить» — ждём дальше
+          if (!(e instanceof ApiError && e.status === 409)) throw e;
+        }
+      }
+      onNotify("Не дождались подтверждения Last.fm — попробуй ещё раз", "x");
+    } catch (e) {
+      onNotify(e instanceof ApiError ? e.message : "Не удалось подключить Last.fm", "x");
+    } finally {
+      setLfmWaiting(false);
+    }
+  };
+
+  const lfmDisconnect = async () => {
+    try {
+      await api.lastfmDisconnect();
+      setScrob((s) => (s ? { ...s, lastfm: { ...s.lastfm, connected: false, username: null } } : s));
+      onNotify("Last.fm отключён", "radio-tower");
+    } catch {
+      onNotify("Не удалось отключить Last.fm", "x");
+    }
+  };
+
+  const lbConnect = async () => {
+    const token = lbToken.trim();
+    if (token.length < 8) {
+      setLbErr("Вставь user token со страницы listenbrainz.org/settings");
+      return;
+    }
+    setLbBusy(true);
+    setLbErr(null);
+    try {
+      const { username } = await api.listenbrainzConnect(token);
+      setScrob((s) => (s ? { ...s, listenbrainz: { connected: true, username } } : s));
+      setLbOpen(false);
+      setLbToken("");
+      onNotify(`ListenBrainz подключён: ${username}`, "radio-tower");
+    } catch (e) {
+      setLbErr(e instanceof ApiError ? e.message : "Не удалось подключить ListenBrainz");
+    } finally {
+      setLbBusy(false);
+    }
+  };
+
+  const lbDisconnect = async () => {
+    try {
+      await api.listenbrainzDisconnect();
+      setScrob((s) => (s ? { ...s, listenbrainz: { connected: false, username: null } } : s));
+      onNotify("ListenBrainz отключён", "radio-tower");
+    } catch {
+      onNotify("Не удалось отключить ListenBrainz", "x");
+    }
+  };
   const set = (patch: Partial<Prefs>) => setPrefs({ ...prefs, ...patch });
 
   // Кэш добычи (Stage 4): реальные цифры + живая очистка (пины переживают)
@@ -908,10 +1047,19 @@ export function SettingsView({
             Выйти
           </Button>
         </SettingRow>
-        <SettingRow title="Email" hint="Для восстановления пароля (позже — смена из приложения)">
+        <SettingRow title="Email" hint="Для восстановления пароля (смена почты — позже)">
           <RowValue>указан при регистрации</RowValue>
         </SettingRow>
-        <SettingRow title="Сменить пароль" hint="Из приложения — позже; сейчас через «Восстановление» на экране входа" chevron></SettingRow>
+        <SettingRow
+          title="Сменить пароль"
+          hint={
+            serverSession
+              ? "Старый → новый; остальные устройства разлогинятся"
+              : "Нужен аккаунт — у анонима пароля нет"
+          }
+          onClick={serverSession ? openPwd : undefined}
+          chevron={serverSession}
+        ></SettingRow>
         <SettingRow title="Сессии и устройства" hint="Где выполнен вход (позже)" chevron></SettingRow>
         <GroupTitle>Приватность</GroupTitle>
         <SettingRow
@@ -1139,11 +1287,61 @@ export function SettingsView({
         <SettingRow title="Discord Rich Presence" hint="Статус и кнопка работают (нужен Application ID из Dev Portal); шаблоны строк — позже" onClick={() => setSub("discord")} chevron>
           <RowValue>Выкл</RowValue>
         </SettingRow>
-        <SettingRow title="Скробблинг Last.fm" hint="Подключение аккаунта (позже; внутренняя история уже пишется)" chevron>
-          <RowValue>Не подключён</RowValue>
+        <SettingRow
+          title="Скробблинг Last.fm"
+          hint={
+            !serverSession
+              ? "Нужен аккаунт Muza (у анонима синхронизации нет)"
+              : !scrob
+                ? "Проверяем статус…"
+                : scrob.lastfm.connected
+                  ? `Подключён как ${scrob.lastfm.username} — прослушивания уходят сами`
+                  : scrob.lastfm.available
+                    ? "Прослушивания будут уходить в твой профиль Last.fm"
+                    : "На сервере нет API-ключей Last.fm — впиши LASTFM_API_KEY и LASTFM_API_SECRET в .env (last.fm/api)"
+          }
+        >
+          {serverSession && scrob?.lastfm.connected ? (
+            <Button variant="ghost" icon="unlink" onClick={() => void lfmDisconnect()}>
+              Отключить
+            </Button>
+          ) : serverSession && scrob?.lastfm.available ? (
+            <Button variant="secondary" icon="link" disabled={lfmWaiting} onClick={() => void lfmConnect()}>
+              {lfmWaiting ? "Ждём браузер…" : "Подключить"}
+            </Button>
+          ) : (
+            <RowValue>{serverSession && scrob ? "Недоступен" : "Не подключён"}</RowValue>
+          )}
         </SettingRow>
-        <SettingRow title="Скробблинг ListenBrainz" hint="Подключение аккаунта (позже)" chevron>
-          <RowValue>Не подключён</RowValue>
+        <SettingRow
+          title="Скробблинг ListenBrainz"
+          hint={
+            !serverSession
+              ? "Нужен аккаунт Muza (у анонима синхронизации нет)"
+              : scrob?.listenbrainz.connected
+                ? `Подключён как ${scrob.listenbrainz.username} — прослушивания уходят сами`
+                : "Открытая альтернатива Last.fm; нужен только user token"
+          }
+        >
+          {serverSession && scrob?.listenbrainz.connected ? (
+            <Button variant="ghost" icon="unlink" onClick={() => void lbDisconnect()}>
+              Отключить
+            </Button>
+          ) : serverSession && scrob ? (
+            <Button
+              variant="secondary"
+              icon="link"
+              onClick={() => {
+                setLbErr(null);
+                setLbToken("");
+                setLbOpen(true);
+              }}
+            >
+              Подключить
+            </Button>
+          ) : (
+            <RowValue>Не подключён</RowValue>
+          )}
         </SettingRow>
         <SettingRow title="Медиаклавиши" hint="Play/Pause/Next с клавиатуры — работают">
           <Switch checked disabled label="Медиаклавиши" />
@@ -1177,14 +1375,46 @@ export function SettingsView({
       </div>
     ) : (
       <div key="system" className={paneClass} style={paneStyle}>
-        <SettingRow title="Запускать при старте Windows" hint="Появится с системной интеграцией (позже)">
-          <Switch checked={prefs.autostart} disabled label="Автозапуск" />
+        <SettingRow
+          title="Запускать при старте Windows"
+          hint={engineAvailable() ? "Muza стартует вместе с системой" : "Работает только в приложении (не в браузере)"}
+        >
+          <Switch
+            checked={prefs.autostart}
+            disabled={!engineAvailable()}
+            onChange={(autostart: boolean) => set({ autostart })}
+            label="Автозапуск"
+          />
         </SettingRow>
-        <SettingRow title="Сворачивать в трей" hint="Появится с системной интеграцией (позже)">
-          <Switch checked={prefs.tray} disabled label="Трей" />
+        <SettingRow
+          title="Иконка в трее"
+          hint={engineAvailable() ? "Muza в области уведомлений: клик открывает окно" : "Работает только в приложении (не в браузере)"}
+        >
+          <Switch
+            checked={prefs.tray}
+            disabled={!engineAvailable()}
+            onChange={(tray: boolean) => set({ tray })}
+            label="Трей"
+          />
         </SettingRow>
-        <SettingRow title="При закрытии окна" hint="Сворачивать или выходить (позже)">
-          <RowValue>Сворачивать</RowValue>
+        <SettingRow
+          title="При закрытии окна"
+          hint={
+            prefs.tray
+              ? "«Сворачивать» прячет в трей — музыка играет дальше"
+              : "Без иконки в трее окно всегда закрывается с выходом"
+          }
+        >
+          <div style={prefs.tray && engineAvailable() ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+            <Tabs
+              items={[
+                { key: "tray", label: "Сворачивать" },
+                { key: "exit", label: "Выходить" },
+              ]}
+              value={prefs.closeToTray ? "tray" : "exit"}
+              onChange={(k: string) => set({ closeToTray: k === "tray" })}
+            />
+          </div>
         </SettingRow>
         <SettingRow title="Автообновление" hint="Подписанные обновления — к первому релизу">
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
@@ -1224,6 +1454,72 @@ export function SettingsView({
         }}
       />
       {pane}
+
+      {/* Смена пароля: старый → новый (сервер разлогинит остальные устройства) */}
+      <Dialog
+        open={pwdOpen}
+        title="Сменить пароль"
+        onClose={() => setPwdOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setPwdOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="shield-check" disabled={pwdBusy} onClick={() => void submitPwd()}>
+              {pwdBusy ? "Меняем…" : "Сменить"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
+          <SettingInput type="password" value={pwdCur} onChange={setPwdCur} placeholder="Текущий пароль" width={300} />
+          <SettingInput type="password" value={pwdNew} onChange={setPwdNew} placeholder="Новый пароль (от 8 символов)" width={300} />
+          <SettingInput type="password" value={pwdRepeat} onChange={setPwdRepeat} placeholder="Новый пароль ещё раз" width={300} />
+          {pwdErr ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{pwdErr}</div>
+          ) : (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              После смены все остальные устройства разлогинятся; это — останется в сессии.
+            </div>
+          )}
+        </div>
+      </Dialog>
+
+      {/* ListenBrainz: user token со страницы настроек LB */}
+      <Dialog
+        open={lbOpen}
+        title="Подключить ListenBrainz"
+        onClose={() => setLbOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setLbOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="link" disabled={lbBusy} onClick={() => void lbConnect()}>
+              {lbBusy ? "Проверяем…" : "Подключить"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
+            Скопируй user token со страницы настроек ListenBrainz и вставь сюда — токен проверится и
+            сохранится на сервере Muza.
+          </div>
+          <Button
+            variant="ghost"
+            icon="external-link"
+            onClick={() => void openExternal("https://listenbrainz.org/settings/")}
+            style={{ alignSelf: "flex-start" }}
+          >
+            Открыть listenbrainz.org/settings
+          </Button>
+          <SettingInput value={lbToken} onChange={setLbToken} placeholder="User token" width={320} />
+          {lbErr ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{lbErr}</div>
+          ) : null}
+        </div>
+      </Dialog>
     </div>
   );
 }

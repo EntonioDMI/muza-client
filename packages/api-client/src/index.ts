@@ -13,6 +13,7 @@ import type {
   PlaylistMeta,
   RecipeEnvelope,
   RegisterStatus,
+  ScrobblingStatus,
   SearchScope,
   Session,
   TelemetryStats,
@@ -42,6 +43,10 @@ export interface MuzaApi {
   /** Восстановление пароля: письмо со ссылкой на форму сброса.
    *  Сервер всегда отвечает 204 — существование почты не палится. */
   recoveryStart(email: string): Promise<void>;
+
+  /** Смена пароля из приложения (настройки → Аккаунт): старый → новый.
+   *  Остальные устройства разлогиниваются, текущая сессия живёт. */
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
 
   // Каталог (Stage 2, слайс 3). Требует серверной сессии (аноним — локальный,
   // сервер его не знает → поиск недоступен).
@@ -83,6 +88,18 @@ export interface MuzaApi {
   // Тексты и смысл (Stage 2, слайс 5): LRCLIB-синхротекст + Genius-аннотации.
   getLyrics(trackId: string): Promise<Lyrics>;
   getAnnotations(trackId: string): Promise<Annotations>;
+
+  // Внешний скробблинг (Last.fm / ListenBrainz). Секреты и подпись — на
+  // сервере; сам скроббл сервер шлёт автоматически на recordPlay.
+  getScrobbling(): Promise<ScrobblingStatus>;
+  /** Шаг 1 Last.fm: одноразовый токен + ссылка «Разрешить» для браузера. */
+  lastfmConnectStart(): Promise<{ token: string; authUrl: string }>;
+  /** Шаг 2: поллится после открытия браузера; 409 = ещё не подтверждено. */
+  lastfmConnectComplete(token: string): Promise<{ username: string }>;
+  lastfmDisconnect(): Promise<void>;
+  /** ListenBrainz: user token со страницы listenbrainz.org/settings. */
+  listenbrainzConnect(token: string): Promise<{ username: string }>;
+  listenbrainzDisconnect(): Promise<void>;
 
   /** Горячий рецепт добычи (Stage 2, слайс 6); применяется клиентом в Stage 3. */
   getRecipe(): Promise<RecipeEnvelope>;

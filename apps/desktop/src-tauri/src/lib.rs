@@ -4,20 +4,35 @@
 mod engine;
 mod local;
 mod rpc;
+mod tray;
+
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .manage(engine::EngineState::default())
         .manage(local::LocalState::default())
         .manage(rpc::RpcState::default())
+        .manage(tray::TrayState::default())
         .setup(|app| {
             // Последний доверенный рецепт из оффлайн-кэша (подпись перепроверяется)
             engine::init(app.handle());
             // Реестр локальных файлов + asset-scope для живых путей
             local::init(app.handle());
+            // Иконка трея; видимость и «закрыть = свернуть» задаёт фронт из prefs
+            tray::init(app.handle())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && tray::handle_close_requested(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             engine::recipe_apply,
@@ -37,6 +52,7 @@ pub fn run() {
             local::local_forget,
             rpc::rpc_update,
             rpc::rpc_clear,
+            tray::tray_configure,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -156,3 +156,10 @@ export interface RecipeEnvelope {
   recipe: Record<string, unknown> & { recipe_version: number };
   sig: string;
 }
+
+/** Статус внешнего скробблинга (настройки → Интеграции).
+ *  available=false у Last.fm — на сервере не вписаны API-ключи. */
+export interface ScrobblingStatus {
+  lastfm: { available: boolean; connected: boolean; username: string | null };
+  listenbrainz: { connected: boolean; username: string | null };
+}

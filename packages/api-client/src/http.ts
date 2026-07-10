@@ -10,6 +10,7 @@ import {
   type PlaylistMeta,
   type RecipeEnvelope,
   type RegisterStatus,
+  type ScrobblingStatus,
   type SearchScope,
   type Session,
   SessionSchema,
@@ -378,6 +379,42 @@ export class HttpMuzaApi implements MuzaApi {
     return rows.map((r) => ({ track: trackFromWire(r.track), playedAt: r.played_at, completed: r.completed }));
   }
 
+  // ---------- Внешний скробблинг (Last.fm / ListenBrainz) ----------
+
+  async getScrobbling(): Promise<ScrobblingStatus> {
+    return this.authedRequest<ScrobblingStatus>("/me/scrobbling");
+  }
+
+  async lastfmConnectStart(): Promise<{ token: string; authUrl: string }> {
+    const out = await this.authedRequest<{ token: string; auth_url: string }>(
+      "/me/scrobbling/lastfm/start",
+      { method: "POST" },
+    );
+    return { token: out.token, authUrl: out.auth_url };
+  }
+
+  async lastfmConnectComplete(token: string): Promise<{ username: string }> {
+    return this.authedRequest<{ username: string }>("/me/scrobbling/lastfm/complete", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  async lastfmDisconnect(): Promise<void> {
+    await this.authedRequest("/me/scrobbling/lastfm", { method: "DELETE" });
+  }
+
+  async listenbrainzConnect(token: string): Promise<{ username: string }> {
+    return this.authedRequest<{ username: string }>("/me/scrobbling/listenbrainz", {
+      method: "PUT",
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  async listenbrainzDisconnect(): Promise<void> {
+    await this.authedRequest("/me/scrobbling/listenbrainz", { method: "DELETE" });
+  }
+
   // ---------- Тексты и рецепт (Stage 2, слайсы 5–6) ----------
 
   async getLyrics(trackId: string): Promise<Lyrics> {
@@ -464,6 +501,19 @@ export class HttpMuzaApi implements MuzaApi {
     await this.request("/auth/recovery/start", {
       method: "POST",
       body: JSON.stringify({ email }),
+    });
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    // refresh текущего устройства — сервер отзывает все ОСТАЛЬНЫЕ сессии
+    const refreshToken = this.load()?.refreshToken ?? null;
+    await this.authedRequest("/auth/password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        ...(refreshToken ? { refresh_token: refreshToken } : {}),
+      }),
     });
   }
 
