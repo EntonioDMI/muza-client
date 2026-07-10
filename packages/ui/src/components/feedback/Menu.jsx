@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 
 /** Context / dropdown menu — frosted panel anchored at a point. */
@@ -37,7 +37,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
         <style>{"@keyframes muzaMenuIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=menu]{animation:none!important}}"}</style>
         {items.map((it, i) =>
           it === "-" ? (
-            <div key={i} style={{ height: "var(--sp-2)" }}></div>
+            <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--surface-3)", margin: "var(--sp-1) var(--sp-2)" }}></div>
           ) : (
             <button
               key={i}

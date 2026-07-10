@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { Icon } from "./Icon.jsx";
 
 /** Round icon-only button for transport, toggles and panel chrome. */
 export function IconButton({
   icon,
+  filled = false,
   size = "md",
   variant = "ghost",
   active = false,
@@ -64,7 +65,7 @@ export function IconButton({
       <Icon
         name={icon}
         size={glyph}
-        filled={variant === "accent" && (icon === "play" || icon === "pause")}
+        filled={filled || (variant === "accent" && (icon === "play" || icon === "pause"))}
       />
     </button>
   );

@@ -1,10 +1,11 @@
-// Декларации компонентов @muza/ui. Props-интерфейсы живут в *.d.ts рядом с
+﻿// Декларации компонентов @muza/ui. Props-интерфейсы живут в *.d.ts рядом с
 // каждым компонентом (источник истины — дизайн-система), здесь — сами функции.
 import type * as React from "react";
 
 import type { ButtonProps } from "./components/core/Button";
 import type { ChipProps } from "./components/core/Chip";
 import type { ChipGroupProps } from "./components/core/ChipGroup";
+import type { FaderProps } from "./components/core/Fader";
 import type { IconProps } from "./components/core/Icon";
 import type { IconButtonProps } from "./components/core/IconButton";
 import type { SearchInputProps } from "./components/core/SearchInput";
@@ -24,6 +25,7 @@ export type {
   ButtonProps,
   ChipProps,
   ChipGroupProps,
+  FaderProps,
   IconProps,
   IconButtonProps,
   SearchInputProps,
@@ -43,6 +45,7 @@ export type {
 export declare function Button(props: ButtonProps): React.JSX.Element;
 export declare function Chip(props: ChipProps): React.JSX.Element;
 export declare function ChipGroup(props: ChipGroupProps): React.JSX.Element;
+export declare function Fader(props: FaderProps): React.JSX.Element;
 export declare function Icon(props: IconProps): React.JSX.Element;
 export declare function IconButton(props: IconButtonProps): React.JSX.Element;
 export declare function SearchInput(props: SearchInputProps): React.JSX.Element;

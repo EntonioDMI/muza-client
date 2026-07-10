@@ -8,6 +8,8 @@ export interface IconButtonProps {
   variant?: "ghost" | "surface" | "accent";
   /** Toggled-on state (shuffle, repeat, lyrics) — accent-colored glyph. */
   active?: boolean;
+  /** Fill the glyph (liked heart). Accent play/pause fill automatically. */
+  filled?: boolean;
   disabled?: boolean;
   /** Accessible label (Russian), e.g. "Следующий трек". */
   label?: string;

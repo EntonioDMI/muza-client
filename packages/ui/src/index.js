@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @muza/ui — дизайн-система Muza (источник истины: muza-design-system/project/).
  * Тёмный монохром + один акцент, зоны полупрозрачными слоями, матовое стекло.
  * Кастомизация: атрибуты [data-accent] и [data-radius] на корневом элементе.
@@ -9,6 +9,7 @@ import "./styles.css";
 export { Button } from "./components/core/Button.jsx";
 export { Chip } from "./components/core/Chip.jsx";
 export { ChipGroup } from "./components/core/ChipGroup.jsx";
+export { Fader } from "./components/core/Fader.jsx";
 export { Icon } from "./components/core/Icon.jsx";
 export { IconButton } from "./components/core/IconButton.jsx";
 export { SearchInput } from "./components/core/SearchInput.jsx";

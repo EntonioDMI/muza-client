@@ -5,5 +5,9 @@ export interface TabsProps {
   /** Selected key. */
   value: string;
   onChange?: (key: string) => void;
+  /** Segments share the container width equally (forms, narrow cards). */
+  stretch?: boolean;
+  /** Segments wrap to new rows — every tab stays visible at any width. */
+  wrap?: boolean;
   style?: React.CSSProperties;
 }

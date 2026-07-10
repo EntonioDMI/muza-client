@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from "react";
+﻿import React, { useEffect, useRef } from "react";
 
 /** Synced lyrics — the product's signature. Full, uncensored, and NEVER blurred:
  *  inactive lines only dim. Active line is full-strength (accent in panel mode). */
-export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, style }) {
+export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, style }) {
   const wrapRef = useRef(null);
   const activeRef = useRef(null);
 
@@ -32,11 +32,13 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, style }
       {lines.map((line, i) => {
         const isActive = i === activeIndex;
         const isPast = i < activeIndex;
+        // строка с объяснением («режим смысла»): пунктир, клик открывает смысл вместо seek
+        const hasNote = !!line.note && !!onExplain;
         return (
           <div
             key={i}
             ref={isActive ? activeRef : null}
-            onClick={() => onSeek && onSeek(i)}
+            onClick={() => (hasNote ? onExplain(i) : onSeek && onSeek(i))}
             style={{
               fontFamily: "var(--font-ui)",
               fontSize: karaoke ? "var(--fs-karaoke)" : "var(--fs-lyric)",
@@ -52,6 +54,11 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, style }
               cursor: onSeek ? "pointer" : "default",
               transition: "color var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
               textWrap: "balance",
+              textDecorationLine: hasNote ? "underline" : "none",
+              textDecorationStyle: "dotted",
+              textDecorationColor: "var(--text-3)",
+              textDecorationThickness: 1,
+              textUnderlineOffset: 6,
             }}
           >
             {line.text || "•••"}

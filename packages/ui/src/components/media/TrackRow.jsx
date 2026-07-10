@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
 
@@ -68,7 +68,7 @@ export function TrackRow({
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}>
         {hover || liked ? (
-          <IconButton icon="heart" size="sm" active={liked} label="Нравится" onClick={onLike} style={{ opacity: liked || hover ? 1 : 0 }} />
+          <IconButton icon="heart" size="sm" active={liked} filled={liked} label="Нравится" onClick={onLike} style={{ opacity: liked || hover ? 1 : 0 }} />
         ) : (
           <span style={{ width: 36 }}></span>
         )}
