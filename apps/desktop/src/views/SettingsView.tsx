@@ -581,15 +581,37 @@ export function SettingsView({
 
   // Внешний скробблинг (Интеграции): статус с сервера + флоу подключения
   const [scrob, setScrob] = useState<ScrobblingStatus | null>(null);
+  const [scrobErr, setScrobErr] = useState(false);
   const [lfmWaiting, setLfmWaiting] = useState(false);
   const lfmCancelRef = useRef(false);
   const [lbOpen, setLbOpen] = useState(false);
   const [lbToken, setLbToken] = useState("");
   const [lbErr, setLbErr] = useState<string | null>(null);
   const [lbBusy, setLbBusy] = useState(false);
+  // Сервер может быть ещё не поднят — честно говорим и перепроверяем сами,
+  // пока вкладка открыта (иначе «Проверяем статус…» висело бы вечно)
   useEffect(() => {
     if (tab !== "integrations" || !serverSession) return;
-    api.getScrobbling().then(setScrob).catch(() => undefined);
+    let dead = false;
+    let iv: ReturnType<typeof setInterval> | null = null;
+    const load = async () => {
+      try {
+        const s = await api.getScrobbling();
+        if (dead) return;
+        setScrob(s);
+        setScrobErr(false);
+        if (iv) clearInterval(iv);
+        iv = null;
+      } catch {
+        if (!dead) setScrobErr(true);
+      }
+    };
+    void load();
+    iv = setInterval(() => void load(), 5000);
+    return () => {
+      dead = true;
+      if (iv) clearInterval(iv);
+    };
   }, [tab, serverSession, api]);
   // Уход с экрана — поллинг подтверждения Last.fm останавливается
   useEffect(
@@ -1293,7 +1315,9 @@ export function SettingsView({
             !serverSession
               ? "Нужен аккаунт Muza (у анонима синхронизации нет)"
               : !scrob
-                ? "Проверяем статус…"
+                ? scrobErr
+                  ? "Сервер недоступен — проверю сам, как только поднимется"
+                  : "Проверяем статус…"
                 : scrob.lastfm.connected
                   ? `Подключён как ${scrob.lastfm.username} — прослушивания уходят сами`
                   : scrob.lastfm.available
@@ -1318,9 +1342,11 @@ export function SettingsView({
           hint={
             !serverSession
               ? "Нужен аккаунт Muza (у анонима синхронизации нет)"
-              : scrob?.listenbrainz.connected
-                ? `Подключён как ${scrob.listenbrainz.username} — прослушивания уходят сами`
-                : "Открытая альтернатива Last.fm; нужен только user token"
+              : !scrob && scrobErr
+                ? "Сервер недоступен — проверю сам, как только поднимется"
+                : scrob?.listenbrainz.connected
+                  ? `Подключён как ${scrob.listenbrainz.username} — прослушивания уходят сами`
+                  : "Открытая альтернатива Last.fm; нужен только user token"
           }
         >
           {serverSession && scrob?.listenbrainz.connected ? (
