@@ -6,7 +6,7 @@ import { DEFAULT_PREFS, type Prefs, type View } from "./types";
 import { customAccentVars } from "./lib/accent";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
-import { withSnapshot } from "./lib/offlineSnapshot";
+import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useCoverArt } from "./lib/coverArt";
@@ -55,6 +55,7 @@ export function App() {
   return (
     <Player
       api={api}
+      userId={session.user.id}
       canSearch={!session.user.anonymous}
       greetName={session.user.anonymous ? null : session.user.username}
       username={session.user.anonymous ? "Аноним (без синхронизации)" : (session.user.username ?? "")}
@@ -86,18 +87,23 @@ const DEMO_QUEUE = TRACKS.map(fromDemo);
  *  (добыча на своём IP → LRU-кэш → Web Audio), демо-треки — симуляция. */
 function Player({
   api,
+  userId,
   canSearch,
   greetName,
   username,
   onLogout,
 }: {
   api: MuzaApi;
+  /** id пользователя — скоуп оффлайн-снапшотов (чужая библиотека не светится). */
+  userId: string;
   canSearch: boolean;
   /** Ник для приветствия на главной; null у анонима. */
   greetName: string | null;
   username: string;
   onLogout: () => void;
 }) {
+  // Скоуп снапшотов — до первых загрузок (эффекты ниже читают через withSnapshot)
+  setSnapshotScope(userId);
   const [view, setView] = useState<View>("home");
   const [likes, setLikes] = useState<string[]>(["t3"]);
   // Запрос открыть конкретный под-экран настроек (кнопка эквалайзера в баре)

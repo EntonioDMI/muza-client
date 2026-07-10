@@ -5,9 +5,23 @@
 
 const PREFIX = "muza.snapshot.v1:";
 
+/** Снапшоты скопированы под конкретного пользователя: без этого смена
+ *  аккаунта на одном устройстве показывала бы чужую библиотеку в оффлайне. */
+let scope = "";
+
+export function setSnapshotScope(userId: string): void {
+  scope = userId;
+  // ключи старого формата (без скоупа) — чужие по определению, выметаем
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith(PREFIX) && !key.slice(PREFIX.length).includes(":")) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
 function save<T>(key: string, value: T): void {
   try {
-    localStorage.setItem(`${PREFIX}${key}`, JSON.stringify(value));
+    localStorage.setItem(`${PREFIX}${scope}:${key}`, JSON.stringify(value));
   } catch {
     /* квота/приватный режим — снапшот просто не обновится */
   }
@@ -15,7 +29,7 @@ function save<T>(key: string, value: T): void {
 
 function load<T>(key: string): T | null {
   try {
-    const raw = localStorage.getItem(`${PREFIX}${key}`);
+    const raw = localStorage.getItem(`${PREFIX}${scope}:${key}`);
     return raw === null ? null : (JSON.parse(raw) as T);
   } catch {
     return null;
