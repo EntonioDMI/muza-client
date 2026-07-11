@@ -3,8 +3,10 @@
  *  финальный слайд — шеринг-карточка. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Icon, IconButton } from "@muza/ui";
+import { Button, IconButton } from "@muza/ui";
 import type { MuzaApi, Wrapped } from "@muza/api-client";
+import { hourLabel } from "../lib/hourLabel";
+import { wrappedSeason } from "../lib/wrappedSeason";
 import type { ShareData } from "../lib/shareCard";
 
 /** Плавный count-up числа при появлении слайда. */
@@ -23,17 +25,6 @@ function CountUp({ value, duration = 1100 }: { value: number; duration?: number 
     return () => cancelAnimationFrame(raf);
   }, [value, duration]);
   return <>{shown.toLocaleString("ru")}</>;
-}
-
-const HOURS_LABEL: Record<number, string> = { 0: "полуночник", 5: "ранняя пташка", 11: "дневной ритм", 17: "вечерний слушатель", 22: "полуночник" };
-
-function hourLabel(hour: number): string {
-  const keys = Object.keys(HOURS_LABEL)
-    .map(Number)
-    .sort((a, b) => a - b);
-  let label = HOURS_LABEL[0];
-  for (const k of keys) if (hour >= k) label = HOURS_LABEL[k];
-  return label;
 }
 
 export function WrappedOverlay({
@@ -58,8 +49,9 @@ export function WrappedOverlay({
     setSlide(0);
     setWrapped(null);
     setError(null);
+    // год по сезону: в январе оверлей показывает итоги прошлого года
     api
-      .getWrapped()
+      .getWrapped({ year: wrappedSeason().year })
       .then(setWrapped)
       .catch((e) => setError(e instanceof Error ? e.message : "Не удалось получить итоги"));
   }, [api, open]);
@@ -117,25 +109,28 @@ export function WrappedOverlay({
   };
   const h2: React.CSSProperties = { margin: 0, fontSize: 40, fontWeight: 700, color: "var(--text-1)" };
 
-  const statRow = (icon: string, label: string, value: string) => (
-    <div key={label} style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+  const statLine = (label: string, value: string, opts?: { highlight?: boolean; last?: boolean }) => (
+    <div
+      key={label}
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: "var(--sp-4)",
+        padding: "var(--sp-3) 0",
+        borderBottom: opts?.last ? "none" : "1px solid rgba(244,243,241,0.10)",
+      }}
+    >
+      <span style={{ flex: 1, textAlign: "left", fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{label}</span>
       <span
-        aria-hidden="true"
         style={{
-          width: 44,
-          height: 44,
-          borderRadius: "var(--r-sm)",
-          background: "var(--accent-soft)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flex: "none",
+          fontSize: 28,
+          fontWeight: 700,
+          color: opts?.highlight ? "var(--accent-text)" : "var(--text-1)",
+          fontVariantNumeric: "tabular-nums",
         }}
       >
-        <Icon name={icon} size={20} color="var(--accent-text)" />
+        {value}
       </span>
-      <span style={{ flex: 1, textAlign: "left", fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{label}</span>
-      <span style={{ fontSize: 24, fontWeight: 700, color: "var(--text-1)", fontVariantNumeric: "tabular-nums" }}>{value}</span>
     </div>
   );
 
@@ -268,20 +263,19 @@ export function WrappedOverlay({
         ) : kind === "rhythm" ? (
           <>
             <span style={caps}>Твой ритм</span>
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", width: "100%", maxWidth: 440 }}>
-              {statRow("calendar-days", "Дней с музыкой", String(wrapped!.activeDays))}
-              {statRow("flame", "Самая длинная серия подряд", `${wrapped!.longestStreakDays} дн.`)}
+            <div style={{ display: "flex", flexDirection: "column", width: "100%", maxWidth: 440 }}>
+              {statLine("Дней с музыкой", String(wrapped!.activeDays))}
+              {statLine("Самая длинная серия подряд", `${wrapped!.longestStreakDays} дн.`, { highlight: true })}
               {wrapped!.peakDay
-                ? statRow(
-                    "trophy",
+                ? statLine(
                     "Самый музыкальный день",
                     new Date(`${wrapped!.peakDay.date}T00:00:00`).toLocaleDateString("ru", { day: "numeric", month: "long" }),
                   )
                 : null}
               {wrapped!.topHour !== null
-                ? statRow("clock", `Любимый час (${hourLabel(wrapped!.topHour)})`, `${wrapped!.topHour}:00`)
+                ? statLine(`Любимый час (${hourLabel(wrapped!.topHour)})`, `${wrapped!.topHour}:00`)
                 : null}
-              {statRow("heart", "Лайков за год", String(wrapped!.favoritesAdded))}
+              {statLine("Лайков за год", String(wrapped!.favoritesAdded), { last: true })}
             </div>
           </>
         ) : (
