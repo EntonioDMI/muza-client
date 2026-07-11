@@ -1,0 +1,24 @@
+import { describe, expect, it } from "vitest";
+import { STATS_BLOCK_KEYS } from "../types";
+import { normalizeStatsBlocks } from "./statsBlocks";
+
+describe("normalizeStatsBlocks", () => {
+  it("пусто — все блоки включены в каноническом порядке", () => {
+    expect(normalizeStatsBlocks([])).toEqual(STATS_BLOCK_KEYS.map((key) => ({ key, on: true })));
+  });
+  it("сохранённый порядок и выключенность уважаются, новые блоки дописываются в конец включёнными", () => {
+    const saved = [
+      { key: "top_tracks" as const, on: true },
+      { key: "summary" as const, on: false },
+    ];
+    const out = normalizeStatsBlocks(saved);
+    expect(out[0]).toEqual({ key: "top_tracks", on: true });
+    expect(out[1]).toEqual({ key: "summary", on: false });
+    expect(out).toHaveLength(STATS_BLOCK_KEYS.length);
+    expect(out.slice(2).every((b) => b.on)).toBe(true);
+  });
+  it("неизвестные ключи из старых сохранений выбрасываются", () => {
+    const saved = [{ key: "genres", on: true }, { key: "summary", on: true }] as never;
+    expect(normalizeStatsBlocks(saved).map((b) => b.key)).not.toContain("genres");
+  });
+});

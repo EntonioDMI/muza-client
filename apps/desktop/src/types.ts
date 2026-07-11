@@ -3,6 +3,19 @@ export type View = "home" | "search" | "favorites" | "library" | "playlist" | "s
 /** Режим повтора: выкл → вся очередь → один трек. */
 export type RepeatMode = "off" | "all" | "one";
 
+/** Блоки страницы «Статистика»: канонический порядок = дефолтный. */
+export const STATS_BLOCK_KEYS = [
+  "summary",
+  "activity",
+  "rhythm",
+  "top_tracks",
+  "top_artists",
+  "streaks",
+  "likes",
+  "wrapped",
+] as const;
+export type StatsBlockKey = (typeof STATS_BLOCK_KEYS)[number];
+
 export interface Prefs {
   /** custom — произвольный цвет из customAccent (пикер в настройках). */
   accent: "blue" | "red" | "bolt" | "custom";
@@ -80,6 +93,11 @@ export interface Prefs {
   discordBtnOn: boolean;
   discordBtnLabel: string;
   discordBtnUrl: string;
+  /** Страница «Статистика»: видимость и порядок блоков (порядок массива =
+   *  порядок на странице; новые блоки дописываются включёнными). */
+  statsBlocks: { key: StatsBlockKey; on: boolean }[];
+  /** Период, с которым открывается страница статистики. */
+  statsPeriod: "week" | "month" | "year" | "all";
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -124,4 +142,6 @@ export const DEFAULT_PREFS: Prefs = {
   discordBtnOn: false,
   discordBtnLabel: "Открыть в Muza",
   discordBtnUrl: "https://muza.lol",
+  statsBlocks: STATS_BLOCK_KEYS.map((key) => ({ key, on: true })),
+  statsPeriod: "month",
 };
