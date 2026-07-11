@@ -62,7 +62,7 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
         const d = synced ? Math.abs(i - activeIndex) : 1;
         const isActive = synced && i === activeIndex;
         const isPast = synced && i < activeIndex;
-        // строка с объяснением («режим смысла»): пунктир, клик открывает смысл вместо seek
+        // строка с объяснением («режим смысла»): акцентный цвет, клик открывает смысл вместо seek
         const hasNote = !!line.note && !!onExplain;
         // масштаб по удалению: 100% / 90% / 80%
         const scale = isActive ? 1 : d === 1 ? 0.9 : 0.8;
@@ -110,25 +110,18 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
               fontWeight: "var(--fw-bold)",
               lineHeight: "var(--lh-lyrics)",
               letterSpacing: "-0.01em",
-              color: isActive
-                ? karaoke ? "var(--text-1)" : "var(--accent-text)"
-                : isPast || d > 1 ? "var(--text-3)" : "var(--text-2)",
+              color: hasNote
+                ? "var(--accent-text)"
+                : isActive
+                  ? karaoke ? "var(--text-1)" : "var(--accent-text)"
+                  : isPast || d > 1 ? "var(--text-3)" : "var(--text-2)",
               opacity,
               transform: `scale(${scale})`,
               transformOrigin: "left center",
               cursor: hasNote || onSeek ? "pointer" : "default",
               pointerEvents: hidden ? "none" : "auto",
-              transition: "color var(--dur-slow) var(--ease-out), background var(--dur-fast) var(--ease-out), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
+              transition: "color var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
               textWrap: "balance",
-              background: hasNote ? "var(--accent-soft)" : "transparent",
-              boxShadow: hasNote ? "inset 3px 0 0 var(--accent)" : "none",
-              borderRadius: hasNote ? "var(--r-sm)" : 0,
-              padding: hasNote ? (karaoke ? "var(--sp-3) var(--sp-4)" : "var(--sp-2) var(--sp-3)") : 0,
-              textDecorationLine: hasNote ? "underline" : "none",
-              textDecorationStyle: "dotted",
-              textDecorationColor: "var(--accent-text)",
-              textDecorationThickness: 1,
-              textUnderlineOffset: 6,
             }}
           >
             {line.text || "•••"}

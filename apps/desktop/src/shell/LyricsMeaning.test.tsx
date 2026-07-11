@@ -20,6 +20,12 @@ describe("Lyrics meaning interaction", () => {
 
     expect(screen.queryByRole("button", { name: /Обычная строка/ })).toBeNull();
     const annotated = screen.getByRole("button", { name: "Смысл строки: Строка со смыслом" });
+    expect(annotated.style.color).toBe("var(--accent-text)");
+    expect(annotated.style.background).toBe("");
+    expect(annotated.style.boxShadow).toBe("");
+    expect(annotated.style.padding).toBe("");
+    expect(annotated.style.borderRadius).toBe("");
+    expect(annotated.style.textDecorationLine).toBe("");
     fireEvent.click(annotated);
     fireEvent.keyDown(annotated, { key: "Enter" });
     fireEvent.keyDown(annotated, { key: " " });
