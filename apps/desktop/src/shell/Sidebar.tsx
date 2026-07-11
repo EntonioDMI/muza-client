@@ -173,6 +173,7 @@ export function Sidebar({
     { key: "search" as const, icon: "search", label: "Поиск" },
     { key: "favorites" as const, icon: "heart", label: "Любимое" },
     { key: "library" as const, icon: "library-big", label: "Библиотека" },
+    { key: "stats" as const, icon: "chart-line", label: "Статистика" },
   ];
   const idx = mainNav.findIndex((n) => n.key === view);
   return (

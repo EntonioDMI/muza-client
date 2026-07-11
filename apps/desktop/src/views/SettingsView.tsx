@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ChipGroup, Dialog, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
 import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
-import { DEFAULT_PREFS, type Prefs } from "../types";
+import { DEFAULT_PREFS, type Prefs, type StatsBlockKey } from "../types";
+import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { openExternal } from "../lib/system";
 import { HOTKEYS } from "../lib/hotkeysList";
@@ -621,7 +622,7 @@ const TABS = [
 
 // Список клавиш общий с оверлеем «?» — lib/hotkeysList (обработчики в App)
 
-type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | null;
+type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | "stats" | null;
 
 /** Запрос извне открыть под-экран (кнопка эквалайзера в плеер-баре). */
 export interface SettingsIntent {
@@ -636,6 +637,7 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   discord: "integrations",
   market: "extensions",
   data: "account",
+  stats: "library",
 };
 
 /** Витрина маркетплейса (демо-каталог; установка — Stage 6). */
@@ -1558,11 +1560,70 @@ export function SettingsView({
     </div>
   );
 
+  // Под-экран «Статистика»: видимость и порядок блоков страницы + период.
+  // Порядок массива prefs.statsBlocks = порядок на странице.
+  const statsBlocks = normalizeStatsBlocks(prefs.statsBlocks);
+  const statsToggle = (key: StatsBlockKey, on: boolean) =>
+    set({ statsBlocks: statsBlocks.map((b) => (b.key === key ? { ...b, on } : b)) });
+  const statsMove = (i: number, delta: -1 | 1) => {
+    const j = i + delta;
+    if (j < 0 || j >= statsBlocks.length) return;
+    const next = [...statsBlocks];
+    [next[i], next[j]] = [next[j], next[i]];
+    set({ statsBlocks: next });
+  };
+  const statsPane = (
+    <div key="stats" className={paneClass} style={paneStyle}>
+      <SubHeader title="Статистика" onBack={() => setSub(null)} />
+
+      <GroupTitle>Блоки страницы</GroupTitle>
+      {statsBlocks.map((b, i) => (
+        <SettingRow key={b.key} title={STATS_BLOCK_META[b.key].label} hint={STATS_BLOCK_META[b.key].hint}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+            <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
+              <IconButton
+                icon="chevron-up"
+                size="sm"
+                label={`Выше: ${STATS_BLOCK_META[b.key].label}`}
+                onClick={() => statsMove(i, -1)}
+              />
+            </span>
+            <span style={{ opacity: i === statsBlocks.length - 1 ? 0.3 : 1 }}>
+              <IconButton
+                icon="chevron-down"
+                size="sm"
+                label={`Ниже: ${STATS_BLOCK_META[b.key].label}`}
+                onClick={() => statsMove(i, 1)}
+              />
+            </span>
+            <Switch checked={b.on} onChange={(on: boolean) => statsToggle(b.key, on)} label={STATS_BLOCK_META[b.key].label} />
+          </div>
+        </SettingRow>
+      ))}
+
+      <GroupTitle>Период по умолчанию</GroupTitle>
+      <SettingRow title="Период" hint="С каким периодом открывается страница">
+        <Tabs
+          items={[
+            { key: "week", label: "Неделя" },
+            { key: "month", label: "Месяц" },
+            { key: "year", label: "Год" },
+            { key: "all", label: "Всё время" },
+          ]}
+          value={prefs.statsPeriod}
+          onChange={(k: string) => set({ statsPeriod: k as Prefs["statsPeriod"] })}
+        />
+      </SettingRow>
+    </div>
+  );
+
   // ── Вкладки ───────────────────────────────────────────────────────
 
   const pane =
     sub === "customize" ? (
       customizePane
+    ) : sub === "stats" ? (
+      statsPane
     ) : sub === "equalizer" ? (
       equalizerPane
     ) : sub === "discord" ? (
@@ -1830,6 +1891,12 @@ export function SettingsView({
         <SettingRow title="Импорт плейлистов" hint="Spotify, YouTube / YT Music, Apple Music — кнопка в Медиатеке">
           <RowValue>Медиатека → Импорт</RowValue>
         </SettingRow>
+        <SettingRow
+          title="Статистика"
+          hint="Блоки страницы, их порядок и период по умолчанию"
+          onClick={() => setSub("stats")}
+          chevron
+        ></SettingRow>
       </div>
     ) : tab === "integrations" ? (
       <div key="integrations" className={paneClass} style={paneStyle}>

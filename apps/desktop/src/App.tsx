@@ -41,6 +41,7 @@ import { PlaylistView } from "./views/PlaylistView";
 import { LibraryView } from "./views/LibraryView";
 import { AdminView } from "./views/AdminView";
 import { SettingsView, type SettingsIntent } from "./views/SettingsView";
+import { StatsView } from "./views/StatsView";
 import { WrappedOverlay } from "./views/WrappedOverlay";
 
 export function App() {
@@ -910,6 +911,23 @@ function Player({
                 onImport={() => setImportOpen(true)}
                 onJoinCode={() => setJoinOpen(true)}
                 onNotify={showToast}
+              />
+            ) : view === "stats" ? (
+              <StatsView
+                api={api}
+                canSearch={canSearch}
+                prefs={prefs}
+                currentId={track.id}
+                playing={playing}
+                likes={likes}
+                onPlayCatalog={playCatalog}
+                onLike={toggleLike}
+                onCatalogMenu={openCatalogMenu}
+                onOpenWrapped={() => setWrappedOpen(true)}
+                onCustomize={() => {
+                  setView("settings");
+                  setSettingsIntent({ sub: "stats", nonce: Date.now() });
+                }}
               />
             ) : view === "admin" ? (
               <AdminView api={api} />

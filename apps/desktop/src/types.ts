@@ -1,4 +1,4 @@
-export type View = "home" | "search" | "favorites" | "library" | "playlist" | "settings" | "admin";
+export type View = "home" | "search" | "favorites" | "library" | "stats" | "playlist" | "settings" | "admin";
 
 /** Режим повтора: выкл → вся очередь → один трек. */
 export type RepeatMode = "off" | "all" | "one";
