@@ -426,15 +426,20 @@ function Player({
 
   // «Режим смысла» (Stage 5): настоящие Genius-аннотации каталожного трека —
   // строкам с аннотацией ставится note (пунктир в Lyrics, карточка в панели);
-  // индексы аннотаций привязаны к synced-строкам, plain не размечаем
-  const { notes: annotationNotes, geniusUrl } = useAnnotations(api, track, canSearch);
+  // индексы аннотаций привязаны к synced-строкам, plain не размечаем.
+  // Тумблер prefs.meaningMode (Тексты) выключает и Genius, и демо-note.
+  const { notes: annotationNotes, geniusUrl } = useAnnotations(api, track, canSearch && prefs.meaningMode);
   const lyrics = useMemo(() => {
+    if (!prefs.meaningMode) {
+      // выключено: строки без note — Lyrics не подчёркивает, карточек нет
+      return rawLyrics.some((l) => l.note) ? rawLyrics.map((l) => ({ ...l, note: undefined })) : rawLyrics;
+    }
     if (!lyricsSynced || annotationNotes.size === 0) return rawLyrics;
     return rawLyrics.map((l, i) => {
       const a = annotationNotes.get(i);
       return a ? { ...l, note: a.body } : l;
     });
-  }, [rawLyrics, lyricsSynced, annotationNotes]);
+  }, [rawLyrics, lyricsSynced, annotationNotes, prefs.meaningMode]);
 
   // Активная строка — только у синхронизированного текста (plain не подсвечиваем)
   const activeLine = useMemo(() => {

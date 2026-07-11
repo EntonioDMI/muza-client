@@ -1772,15 +1772,21 @@ export function SettingsView({
         <SettingRow title="Автоскролл" hint="Следовать за текущей строкой — работает">
           <Switch checked disabled label="Автоскролл" />
         </SettingRow>
-        <SettingRow title="Размер караоке-текста" hint="Настройка в Кастомизации (позже)">
-          <DisabledSlider value={28} max={44} label="Размер караоке-текста" />
+        <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания (тот же слайдер — в Кастомизации)">
+          <LiveSlider
+            value={prefs.karaokeSize - 36}
+            max={36}
+            label="Размер караоке-текста"
+            suffix={`${prefs.karaokeSize} px`}
+            onChange={(v) => set({ karaokeSize: 36 + Math.round(v) })}
+          />
         </SettingRow>
         <GroupTitle>Понимание</GroupTitle>
         <SettingRow title="Перевод" hint="Перевод строк на выбранный язык (позже)">
           <RowValue>Выкл</RowValue>
         </SettingRow>
-        <SettingRow title="Режим смысла" hint="Аннотации Genius к строкам (Stage 5)">
-          <Switch checked={false} disabled label="Режим смысла" />
+        <SettingRow title="Режим смысла" hint="Пунктирные строки с объяснениями Genius — клик открывает карточку">
+          <Switch checked={prefs.meaningMode} onChange={(meaningMode: boolean) => set({ meaningMode })} label="Режим смысла" />
         </SettingRow>
       </div>
     ) : tab === "library" ? (

@@ -41,6 +41,9 @@ export interface Prefs {
   customCss: string;
   /** Визуализатор в режиме прослушивания (встроенное расширение). */
   visualizer: "bars" | "wave" | "off";
+  /** «Режим смысла»: пунктирные строки с Genius-аннотациями (Stage 5).
+   *  Выключен — текст без пунктира и карточек. */
+  meaningMode: boolean;
   autostart: boolean;
   /** Иконка Muza в области уведомлений. */
   tray: boolean;
@@ -115,6 +118,7 @@ export const DEFAULT_PREFS: Prefs = {
   speedSteps: [1, 1.25, 1.5, 2, 0.75],
   sleepPresets: [15, 30, 60],
   radioEndless: true,
+  meaningMode: true,
   telemetry: true,
   discordRpcOn: false,
   discordBtnOn: false,
