@@ -1,13 +1,19 @@
 import type { MuzaApi } from "./index";
 import {
+  type AdminContent,
+  type AdminHealth,
+  type AdminOverview,
+  type AdminUsers,
   type Annotations,
   type Credentials,
   type HistoryItem,
+  type HomeSection,
   type ImportReport,
   type Lyrics,
   type PlaylistDetail,
   type PlaylistMeta,
   type RecipeEnvelope,
+  type RecsSettings,
   type RegisterStatus,
   type SearchScope,
   type Session,
@@ -209,5 +215,47 @@ export class MockMuzaApi implements MuzaApi {
 
   async sendTelemetry(): Promise<void> {
     // мок: агрегат некуда слать
+  }
+
+  // Рекомендации (Stage 5): без сервера ленты нет — UI показывает фолбэк
+  async getHome(): Promise<HomeSection[]> {
+    return [];
+  }
+
+  async getHomeSection(): Promise<Track[]> {
+    return [];
+  }
+
+  async getRadio(): Promise<Track[]> {
+    return [];
+  }
+
+  async getRecsSettings(): Promise<RecsSettings> {
+    return { epsilon: 0.1, tauScale: 1, epsilonMax: 0.3, tauScaleMin: 0.25, tauScaleMax: 4 };
+  }
+
+  async updateRecsSettings(): Promise<RecsSettings> {
+    return this.getRecsSettings();
+  }
+
+  // Админка в моке недоступна
+  async adminPing(): Promise<boolean> {
+    return false;
+  }
+
+  async getAdminOverview(): Promise<AdminOverview> {
+    throw new Error("Мок: админка живёт на сервере");
+  }
+
+  async getAdminContent(): Promise<AdminContent> {
+    throw new Error("Мок: админка живёт на сервере");
+  }
+
+  async getAdminHealth(): Promise<AdminHealth> {
+    throw new Error("Мок: админка живёт на сервере");
+  }
+
+  async getAdminUsers(): Promise<AdminUsers> {
+    throw new Error("Мок: админка живёт на сервере");
   }
 }

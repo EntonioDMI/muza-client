@@ -154,12 +154,15 @@ export function Sidebar({
   playlists,
   onCreatePlaylist,
   onOpenPlaylist,
+  isAdmin = false,
 }: {
   view: View;
   setView: (v: View) => void;
   playlists: SidebarPlaylist[];
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
+  /** Показывает пункт «Админка» (Stage 5); true только после adminPing. */
+  isAdmin?: boolean;
 }) {
   const mainNav = [
     { key: "home" as const, icon: "home", label: "Главная" },
@@ -250,6 +253,9 @@ export function Sidebar({
         ))}
       </div>
       <div style={{ marginTop: "auto" }}>
+        {isAdmin ? (
+          <NavItem icon="shield" label="Админка" active={view === "admin"} onClick={() => setView("admin")} />
+        ) : null}
         <NavItem icon="settings" label="Настройки" active={view === "settings"} onClick={() => setView("settings")} />
       </div>
     </aside>

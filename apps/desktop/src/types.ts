@@ -1,4 +1,4 @@
-export type View = "home" | "search" | "favorites" | "library" | "playlist" | "settings";
+export type View = "home" | "search" | "favorites" | "library" | "playlist" | "settings" | "admin";
 
 /** Режим повтора: выкл → вся очередь → один трек. */
 export type RepeatMode = "off" | "all" | "one";
@@ -32,6 +32,9 @@ export interface Prefs {
   speedSteps: number[];
   /** Пресеты таймера сна в минутах (цикл луны: выкл → пресеты → конец трека). */
   sleepPresets: number[];
+  /** Бесконечное радио (Stage 5): каталожная очередь кончилась — продолжаем
+   *  похожими треками с сервера (/radio от последнего трека). */
+  radioEndless: boolean;
   /** Анонимная агрегированная статистика (Stage 4: честная галочка).
    *  Только обезличенные счётчики добычи/прослушиваний; по ним чинится
    *  добыча (KPI SABR/403). Документ о данных — настройки → Аккаунт. */
@@ -64,6 +67,7 @@ export const DEFAULT_PREFS: Prefs = {
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   speedSteps: [1, 1.25, 1.5, 2, 0.75],
   sleepPresets: [15, 30, 60],
+  radioEndless: true,
   telemetry: true,
   discordRpcOn: false,
   discordBtnOn: false,

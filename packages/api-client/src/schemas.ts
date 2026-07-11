@@ -163,3 +163,80 @@ export interface ScrobblingStatus {
   lastfm: { available: boolean; connected: boolean; username: string | null };
   listenbrainz: { connected: boolean; username: string | null };
 }
+
+// ── Рекомендации и лента (Stage 5) ─────────────────────────────────
+
+/** Секция главной: for_you, because_N («Потому что вы любите X»),
+ *  trending, new. Треки уже дедуплицированы сервером между секциями. */
+export interface HomeSection {
+  key: string;
+  title: string;
+  tracks: Track[];
+}
+
+/** Эффективные ручки рекомендаций + границы слайдеров.
+ *  epsilon — доля исследования (ε-greedy, «новизна»); tauScale — множитель
+ *  τ свежести («как часто возвращать любимое»: меньше = чаще). */
+export interface RecsSettings {
+  epsilon: number;
+  tauScale: number;
+  epsilonMax: number;
+  tauScaleMin: number;
+  tauScaleMax: number;
+}
+
+// ── Админ-панель (Stage 5) ─────────────────────────────────────────
+
+export interface AdminOverview {
+  users: { total: number; withEmail: number; admins: number; new7d: number };
+  listeners: { dau: number; wau: number; mau: number };
+  plays: { today: number; week: number; total: number; completedWeek: number };
+  catalog: { tracks: number; sources: number; deadSources: number; cached: number };
+}
+
+export interface AdminContent {
+  topTracks: { track: Track; plays: number }[];
+  topArtists: { artist: string; plays: number }[];
+  recentTracks: Track[];
+  sourcesByProvider: { provider: string; kind: string; count: number; dead: number }[];
+  coverage: { tracks: number; withLyrics: number; withSynced: number; withAnnotations: number };
+}
+
+/** Здоровье добычи: агрегаты анонимной телеметрии (KPI SABR/403). */
+export interface AdminHealth {
+  windowHours: number;
+  totals: {
+    reports: number;
+    resolveOk: number;
+    resolveFail: number;
+    attempts: number;
+    cacheHits: number;
+    fail403: number;
+    failBot: number;
+    failFormat: number;
+    failOther: number;
+    plays: number;
+    playsCompleted: number;
+    /** null — резолвов в окне не было. */
+    successRate: number | null;
+    cacheHitRate: number | null;
+  };
+  byRecipe: { recipeVersion: number; reports: number; ok: number; fail: number; successRate: number | null }[];
+  byApp: { appVersion: string; reports: number; ok: number; fail: number }[];
+  /** Текущая версия горячего рецепта на сервере (view-only). */
+  recipeVersion: number;
+}
+
+/** Минимум PII: email не приходит вовсе — только факт его наличия. */
+export interface AdminUsers {
+  total: number;
+  users: {
+    id: string;
+    username: string;
+    hasEmail: boolean;
+    isAdmin: boolean;
+    createdAt: string;
+    plays30d: number;
+    lastPlayAt: string | null;
+  }[];
+}

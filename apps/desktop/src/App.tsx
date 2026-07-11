@@ -14,6 +14,7 @@ import { useCoverArt } from "./lib/coverArt";
 import { loadServerIds, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
+import { useAnnotations } from "./player/useAnnotations";
 import { useMediaSession } from "./player/useMediaSession";
 import { fromCatalog, fromDemo, fromLocalEntry } from "./player/types";
 import { LoginScreen } from "./auth/LoginScreen";
@@ -30,6 +31,7 @@ import { SearchView } from "./views/SearchView";
 import { FavoritesView } from "./views/FavoritesView";
 import { PlaylistView } from "./views/PlaylistView";
 import { LibraryView } from "./views/LibraryView";
+import { AdminView } from "./views/AdminView";
 import { SettingsView, type SettingsIntent } from "./views/SettingsView";
 
 export function App() {
@@ -164,6 +166,19 @@ function Player({
         .recordPlay({ trackId: t.id, playedMs, durationMs: t.duration * 1000, completed })
         .catch(() => undefined); // best-effort: история не стоит тоста
     },
+    // Бесконечное радио (Stage 5): каталожная очередь кончилась — продолжаем
+    // похожими с сервера. Демо-очередь и аноним останавливаются как раньше.
+    onQueueEnd: async (last) => {
+      if (!canSearch || !prefs.radioEndless || last.kind !== "catalog" || !/^\d+$/.test(last.id)) return null;
+      try {
+        const radio = await api.getRadio(last.id);
+        if (radio.length === 0) return null;
+        showToast("Радио: продолжаем похожими треками", "radio");
+        return radio.map(fromCatalog);
+      } catch {
+        return null; // сервер лёг — честная остановка очереди
+      }
+    },
   });
   // Анонимная агрегированная аналитика: KPI добычи + счётчик прослушиваний.
   // Stage 4: честная галочка согласия (prefs.telemetry) — выключил и не шлём.
@@ -215,6 +230,13 @@ function Player({
       .then(({ data }) => setLikes((ls) => [...new Set([...ls, ...data.map((t) => t.id)])]))
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, canSearch]);
+
+  // Админка (Stage 5): пункт в сайдбаре — только если сервер подтвердил права
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!canSearch) return;
+    void api.adminPing().then(setIsAdmin);
   }, [api, canSearch]);
 
   // Оффлайн-пины (Stage 4): что закреплено на этом устройстве
@@ -274,6 +296,18 @@ function Player({
 
   /** Каталожный (серверный) id — числовой; демо-ид вида "t1". */
   const isCatalogId = (id: string) => /^\d+$/.test(id);
+
+  /** «Радио по треку» (Stage 5): очередь = трек + похожие с сервера. */
+  const startRadio = async (t: CatalogTrack) => {
+    showToast("Собираем радио…", "radio");
+    try {
+      const radio = await api.getRadio(t.id);
+      pb.playContext([t, ...radio].map(fromCatalog), t.id);
+      showToast(`Радио по «${t.title}»`, "radio");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Не удалось собрать радио", "x");
+    }
+  };
 
   // Адаптив окна: фиксированные колонки не должны душить контент.
   // < 1200px — прячем «Сейчас играет» (вторична), < 950px — ужимаем сайдбар.
@@ -364,7 +398,19 @@ function Player({
   }, [sleep.mode, track.id]);
 
   // Тексты: демо — локальные строки, каталог — LRCLIB с сервера
-  const { lines: lyrics, synced: lyricsSynced } = useLyrics(api, track, canSearch);
+  const { lines: rawLyrics, synced: lyricsSynced } = useLyrics(api, track, canSearch);
+
+  // «Режим смысла» (Stage 5): настоящие Genius-аннотации каталожного трека —
+  // строкам с аннотацией ставится note (пунктир в Lyrics, карточка в панели);
+  // индексы аннотаций привязаны к synced-строкам, plain не размечаем
+  const { notes: annotationNotes, geniusUrl } = useAnnotations(api, track, canSearch);
+  const lyrics = useMemo(() => {
+    if (!lyricsSynced || annotationNotes.size === 0) return rawLyrics;
+    return rawLyrics.map((l, i) => {
+      const a = annotationNotes.get(i);
+      return a ? { ...l, note: a.body } : l;
+    });
+  }, [rawLyrics, lyricsSynced, annotationNotes]);
 
   // Активная строка — только у синхронизированного текста (plain не подсвечиваем)
   const activeLine = useMemo(() => {
@@ -582,6 +628,7 @@ function Player({
           playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
           onOpenPlaylist={openPlaylist}
+          isAdmin={isAdmin}
         />
         {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
             прошлого экрана не протекает в новый (короткий экран улетал вверх) */}
@@ -589,13 +636,17 @@ function Player({
           <div className="muza-view">
             {view === "home" ? (
               <HomeFeed
+                api={api}
+                canSearch={canSearch}
                 greetName={greetName}
                 currentId={track.id}
                 playing={playing}
                 likes={likes}
                 onPlayTrack={playTrack}
+                onPlayCatalog={playCatalog}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
+                onCatalogMenu={openCatalogMenu}
                 onOpen={setView}
               />
             ) : view === "search" ? (
@@ -658,6 +709,8 @@ function Player({
                 onImport={() => setImportOpen(true)}
                 onNotify={showToast}
               />
+            ) : view === "admin" ? (
+              <AdminView api={api} />
             ) : (
               <SettingsView
                 api={api}
@@ -680,6 +733,8 @@ function Player({
             onLike={() => toggleLike(track.id)}
             activeLine={activeLine}
             onSeekLine={seekLine}
+            annotations={annotationNotes}
+            geniusUrl={geniusUrl}
           />
         ) : null}
       </div>
@@ -765,6 +820,13 @@ function Player({
         y={catMenu.y}
         onClose={() => setCatMenu((m) => ({ ...m, open: false }))}
         items={[
+          {
+            icon: "radio",
+            label: "Радио по треку",
+            onClick: () => {
+              if (catMenu.track) void startRadio(catMenu.track);
+            },
+          },
           {
             icon: "plus",
             label: "В плейлист",

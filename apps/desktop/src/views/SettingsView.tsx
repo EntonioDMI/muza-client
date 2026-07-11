@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ChipGroup, Dialog, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
-import { ApiError, type MuzaApi, type ScrobblingStatus } from "@muza/api-client";
+import { ApiError, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { openExternal } from "../lib/system";
@@ -104,6 +104,90 @@ function LiveSlider({
         {suffix}
       </span>
     </div>
+  );
+}
+
+/** Ручки рекомендаций (Stage 5): ε-новизна и период возврата любимого.
+ *  Значения живут на сервере (/me/recs-settings) — действуют на ленту и
+ *  радио со следующего запроса; запись дебаунсится. Аноним — disabled. */
+function RecsTuning({
+  api,
+  enabled,
+  onNotify,
+}: {
+  api: MuzaApi;
+  enabled: boolean;
+  onNotify: (text: string, icon?: string) => void;
+}) {
+  const [s, setS] = useState<RecsSettings | null>(null);
+  const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    api
+      .getRecsSettings()
+      .then((v) => {
+        if (alive) setS(v);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [api, enabled]);
+
+  const push = (next: { epsilon?: number; tauScale?: number }) => {
+    if (pushTimer.current) clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(() => {
+      api
+        .updateRecsSettings(next)
+        .then(setS)
+        .catch(() => onNotify("Не удалось сохранить настройки рекомендаций", "x"));
+    }, 600);
+  };
+
+  if (!enabled || s === null) {
+    return (
+      <SettingRow title="Новизна и повторы" hint={enabled ? "Загружаем…" : "Слайдеры рекомендаций доступны после входа с аккаунтом"}>
+        <DisabledSlider value={30} max={100} label="Рекомендации" />
+      </SettingRow>
+    );
+  }
+
+  // τ-шкала геометрическая: линейный слайдер зажимал бы «чаще» в первых 20%
+  const tauPos = Math.round((Math.log(s.tauScale / s.tauScaleMin) / Math.log(s.tauScaleMax / s.tauScaleMin)) * 100);
+  const tauFromPos = (v: number) =>
+    Math.round(s.tauScaleMin * Math.pow(s.tauScaleMax / s.tauScaleMin, v / 100) * 100) / 100;
+
+  return (
+    <>
+      <SettingRow title="Новизна" hint="Доля незнакомого вперемешку с лучшим (ε-исследование в ленте и радио)">
+        <LiveSlider
+          value={Math.round(s.epsilon * 100)}
+          max={Math.round(s.epsilonMax * 100)}
+          label="Новизна"
+          suffix={`${Math.round(s.epsilon * 100)} %`}
+          onChange={(v) => {
+            const epsilon = Math.round(v) / 100;
+            setS({ ...s, epsilon });
+            push({ epsilon });
+          }}
+        />
+      </SettingRow>
+      <SettingRow title="Повторы любимого" hint="Левее — любимое возвращается чаще, правее — реже">
+        <LiveSlider
+          value={tauPos}
+          max={100}
+          label="Повторы любимого"
+          suffix={`×${s.tauScale}`}
+          onChange={(v) => {
+            const tauScale = tauFromPos(v);
+            setS({ ...s, tauScale });
+            push({ tauScale });
+          }}
+        />
+      </SettingRow>
+    </>
   );
 }
 
@@ -1191,9 +1275,11 @@ export function SettingsView({
           />
         </SettingRow>
         <GroupTitle>Очередь</GroupTitle>
-        <SettingRow title="Конец очереди" hint="Что играть, когда очередь кончилась (Stage 5 — радио и автоплей)">
-          <RowValue>Похожее</RowValue>
+        <SettingRow title="Бесконечное радио" hint="Очередь кончилась — продолжаем похожими треками (радио от последнего)">
+          <Switch checked={prefs.radioEndless} onChange={(v: boolean) => set({ radioEndless: v })} label="Бесконечное радио" />
         </SettingRow>
+        <GroupTitle>Рекомендации</GroupTitle>
+        <RecsTuning api={api} enabled={serverSession} onNotify={onNotify} />
         <SettingRow title="Запоминать позицию трека" hint="Продолжать с места остановки (позже)">
           <Switch checked disabled label="Запоминать позицию" />
         </SettingRow>

@@ -4,14 +4,20 @@
  */
 
 import type {
+  AdminContent,
+  AdminHealth,
+  AdminOverview,
+  AdminUsers,
   Annotations,
   Credentials,
   HistoryItem,
+  HomeSection,
   ImportReport,
   Lyrics,
   PlaylistDetail,
   PlaylistMeta,
   RecipeEnvelope,
+  RecsSettings,
   RegisterStatus,
   ScrobblingStatus,
   SearchScope,
@@ -106,6 +112,25 @@ export interface MuzaApi {
 
   /** Анонимный агрегат телеметрии (Stage 3): без идентификаторов, best-effort. */
   sendTelemetry(stats: TelemetryStats): Promise<void>;
+
+  // Рекомендации и лента (Stage 5). Персональные секции пусты у аккаунта
+  // без истории — клиент показывает фолбэк.
+  getHome(): Promise<HomeSection[]>;
+  /** Догрузка секции offset/limit; меньше limit в ответе = секция исчерпана. */
+  getHomeSection(key: string, opts?: { offset?: number; limit?: number }): Promise<Track[]>;
+  /** Бесконечное радио: продолжение очереди от сид-трека. */
+  getRadio(seedTrackId: string): Promise<Track[]>;
+  getRecsSettings(): Promise<RecsSettings>;
+  /** null в поле = сбросить на серверный дефолт; отсутствие поля = не трогать. */
+  updateRecsSettings(input: { epsilon?: number | null; tauScale?: number | null }): Promise<RecsSettings>;
+
+  // Админ-панель (Stage 5). Доступ по users.is_admin (выдаётся вручную).
+  /** true — текущий пользователь админ (по нему клиент показывает «Админку»). */
+  adminPing(): Promise<boolean>;
+  getAdminOverview(): Promise<AdminOverview>;
+  getAdminContent(): Promise<AdminContent>;
+  getAdminHealth(hours?: number): Promise<AdminHealth>;
+  getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers>;
 }
 
 export { MockMuzaApi } from "./mock";

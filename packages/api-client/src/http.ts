@@ -1,14 +1,20 @@
 import type { MuzaApi } from "./index";
 import {
+  type AdminContent,
+  type AdminHealth,
+  type AdminOverview,
+  type AdminUsers,
   type Annotation,
   type Annotations,
   type Credentials,
   type HistoryItem,
+  type HomeSection,
   type ImportReport,
   type Lyrics,
   type PlaylistDetail,
   type PlaylistMeta,
   type RecipeEnvelope,
+  type RecsSettings,
   type RegisterStatus,
   type ScrobblingStatus,
   type SearchScope,
@@ -65,6 +71,24 @@ function trackFromWire(wire: TrackWire): Track {
     loudness: wire.loudness,
     localHash: wire.local_hash ?? null,
   });
+}
+
+interface RecsSettingsWire {
+  epsilon: number;
+  tau_scale: number;
+  epsilon_max: number;
+  tau_scale_min: number;
+  tau_scale_max: number;
+}
+
+function recsSettingsFromWire(wire: RecsSettingsWire): RecsSettings {
+  return {
+    epsilon: wire.epsilon,
+    tauScale: wire.tau_scale,
+    epsilonMax: wire.epsilon_max,
+    tauScaleMin: wire.tau_scale_min,
+    tauScaleMax: wire.tau_scale_max,
+  };
 }
 
 function sessionFromTokens(pair: TokenPair): Session {
@@ -443,6 +467,184 @@ export class HttpMuzaApi implements MuzaApi {
 
   async getRecipe(): Promise<RecipeEnvelope> {
     return this.authedRequest<RecipeEnvelope>("/recipe");
+  }
+
+  // ---------- Рекомендации и лента (Stage 5) ----------
+
+  async getHome(): Promise<HomeSection[]> {
+    const out = await this.authedRequest<{ sections: { key: string; title: string; tracks: TrackWire[] }[] }>(
+      "/home",
+    );
+    return out.sections.map((s) => ({ key: s.key, title: s.title, tracks: s.tracks.map(trackFromWire) }));
+  }
+
+  async getHomeSection(key: string, opts?: { offset?: number; limit?: number }): Promise<Track[]> {
+    const params = new URLSearchParams();
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const qs = params.size > 0 ? `?${params}` : "";
+    const out = await this.authedRequest<{ tracks: TrackWire[] }>(
+      `/home/section/${encodeURIComponent(key)}${qs}`,
+    );
+    return out.tracks.map(trackFromWire);
+  }
+
+  async getRadio(seedTrackId: string): Promise<Track[]> {
+    const out = await this.authedRequest<{ tracks: TrackWire[] }>(
+      `/radio?seed=${encodeURIComponent(seedTrackId)}`,
+    );
+    return out.tracks.map(trackFromWire);
+  }
+
+  async getRecsSettings(): Promise<RecsSettings> {
+    return recsSettingsFromWire(await this.authedRequest<RecsSettingsWire>("/me/recs-settings"));
+  }
+
+  async updateRecsSettings(input: { epsilon?: number | null; tauScale?: number | null }): Promise<RecsSettings> {
+    const body: Record<string, number | null> = {};
+    if (input.epsilon !== undefined) body.epsilon = input.epsilon;
+    if (input.tauScale !== undefined) body.tau_scale = input.tauScale;
+    return recsSettingsFromWire(
+      await this.authedRequest<RecsSettingsWire>("/me/recs-settings", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  // ---------- Админ-панель (Stage 5) ----------
+
+  async adminPing(): Promise<boolean> {
+    try {
+      await this.authedRequest<{ ok: true }>("/admin/ping");
+      return true;
+    } catch {
+      return false; // 403 (не админ) и сеть — одинаково «пункт не показываем»
+    }
+  }
+
+  async getAdminOverview(): Promise<AdminOverview> {
+    const o = await this.authedRequest<{
+      users: { total: number; with_email: number; admins: number; new_7d: number };
+      listeners: { dau: number; wau: number; mau: number };
+      plays: { today: number; week: number; total: number; completed_week: number };
+      catalog: { tracks: number; sources: number; dead_sources: number; cached: number };
+    }>("/admin/overview");
+    return {
+      users: { total: o.users.total, withEmail: o.users.with_email, admins: o.users.admins, new7d: o.users.new_7d },
+      listeners: o.listeners,
+      plays: { today: o.plays.today, week: o.plays.week, total: o.plays.total, completedWeek: o.plays.completed_week },
+      catalog: {
+        tracks: o.catalog.tracks,
+        sources: o.catalog.sources,
+        deadSources: o.catalog.dead_sources,
+        cached: o.catalog.cached,
+      },
+    };
+  }
+
+  async getAdminContent(): Promise<AdminContent> {
+    const c = await this.authedRequest<{
+      top_tracks: { track: TrackWire; plays: number }[];
+      top_artists: { artist: string; plays: number }[];
+      recent_tracks: TrackWire[];
+      sources_by_provider: { provider: string; kind: string; count: number; dead: number }[];
+      coverage: { tracks: number; with_lyrics: number; with_synced: number; with_annotations: number };
+    }>("/admin/content");
+    return {
+      topTracks: c.top_tracks.map((r) => ({ track: trackFromWire(r.track), plays: r.plays })),
+      topArtists: c.top_artists,
+      recentTracks: c.recent_tracks.map(trackFromWire),
+      sourcesByProvider: c.sources_by_provider,
+      coverage: {
+        tracks: c.coverage.tracks,
+        withLyrics: c.coverage.with_lyrics,
+        withSynced: c.coverage.with_synced,
+        withAnnotations: c.coverage.with_annotations,
+      },
+    };
+  }
+
+  async getAdminHealth(hours = 24): Promise<AdminHealth> {
+    const hl = await this.authedRequest<{
+      window_hours: number;
+      totals: {
+        reports: number;
+        resolve_ok: number;
+        resolve_fail: number;
+        attempts: number;
+        cache_hits: number;
+        fail_403: number;
+        fail_bot: number;
+        fail_format: number;
+        fail_other: number;
+        plays: number;
+        plays_completed: number;
+        success_rate: number | null;
+        cache_hit_rate: number | null;
+      };
+      by_recipe: { recipe_version: number; reports: number; ok: number; fail: number; success_rate: number | null }[];
+      by_app: { app_version: string; reports: number; ok: number; fail: number }[];
+      recipe: { version: number };
+    }>(`/admin/health?hours=${hours}`);
+    return {
+      windowHours: hl.window_hours,
+      totals: {
+        reports: hl.totals.reports,
+        resolveOk: hl.totals.resolve_ok,
+        resolveFail: hl.totals.resolve_fail,
+        attempts: hl.totals.attempts,
+        cacheHits: hl.totals.cache_hits,
+        fail403: hl.totals.fail_403,
+        failBot: hl.totals.fail_bot,
+        failFormat: hl.totals.fail_format,
+        failOther: hl.totals.fail_other,
+        plays: hl.totals.plays,
+        playsCompleted: hl.totals.plays_completed,
+        successRate: hl.totals.success_rate,
+        cacheHitRate: hl.totals.cache_hit_rate,
+      },
+      byRecipe: hl.by_recipe.map((r) => ({
+        recipeVersion: r.recipe_version,
+        reports: r.reports,
+        ok: r.ok,
+        fail: r.fail,
+        successRate: r.success_rate,
+      })),
+      byApp: hl.by_app.map((r) => ({ appVersion: r.app_version, reports: r.reports, ok: r.ok, fail: r.fail })),
+      recipeVersion: hl.recipe.version,
+    };
+  }
+
+  async getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers> {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const qs = params.size > 0 ? `?${params}` : "";
+    const u = await this.authedRequest<{
+      total: number;
+      users: {
+        id: string;
+        username: string;
+        has_email: boolean;
+        is_admin: boolean;
+        created_at: string;
+        plays_30d: number;
+        last_play_at: string | null;
+      }[];
+    }>(`/admin/users${qs}`);
+    return {
+      total: u.total,
+      users: u.users.map((r) => ({
+        id: r.id,
+        username: r.username,
+        hasEmail: r.has_email,
+        isAdmin: r.is_admin,
+        createdAt: r.created_at,
+        plays30d: r.plays_30d,
+        lastPlayAt: r.last_play_at,
+      })),
+    };
   }
 
   async sendTelemetry(stats: TelemetryStats): Promise<void> {

@@ -28,6 +28,7 @@ export function usePlayback({
   prefs,
   onError,
   onPlayEnd,
+  onQueueEnd,
 }: {
   api: MuzaApi;
   initialQueue: PlayerTrack[];
@@ -36,6 +37,10 @@ export function usePlayback({
   onError: (message: string) => void;
   /** Трек отзвучал/переключён — скробблинг (слайс 5). */
   onPlayEnd?: (info: PlayEndInfo) => void;
+  /** Очередь кончилась на авто-переходе (Stage 5, бесконечное радио):
+   *  вернуть продолжение — треки добавятся в очередь и играем дальше;
+   *  null/пусто — честная остановка как раньше. */
+  onQueueEnd?: (lastTrack: PlayerTrack) => Promise<PlayerTrack[] | null>;
 }) {
   const [queue, setQueue] = useState<PlayerTrack[]>(initialQueue);
   const [index, setIndex] = useState(0);
@@ -58,6 +63,8 @@ export function usePlayback({
   onErrorRef.current = onError;
   const onPlayEndRef = useRef(onPlayEnd);
   onPlayEndRef.current = onPlayEnd;
+  const onQueueEndRef = useRef(onQueueEnd);
+  onQueueEndRef.current = onQueueEnd;
 
   // Скробблинг: накапливаем реально прослушанное время текущего трека
   const playedMsRef = useRef(0);
@@ -260,7 +267,17 @@ export function usePlayback({
     }
     const ni = nextIndexFor(d, auto);
     if (ni === null) {
-      // конец очереди без повтора
+      // конец очереди без повтора: сперва даём шанс бесконечному радио
+      if (auto && onQueueEndRef.current) {
+        const more = await onQueueEndRef.current(s.track).catch(() => null);
+        if (more && more.length > 0) {
+          const nextQueue = [...s.queue, ...more];
+          setQueue(nextQueue);
+          stateRef.current = { ...stateRef.current, queue: nextQueue };
+          await startAt(s.queue.length, { crossfade: false });
+          return;
+        }
+      }
       flushPlayEnd(true);
       setPlaying(false);
       setPos(s.track.duration);
