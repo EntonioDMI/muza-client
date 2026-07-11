@@ -3,6 +3,7 @@ import { Button, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { PLAYLISTS, RELEASES, TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
+import { WRAPPED_BANNER_PREVIEW, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
 import type { View } from "../types";
 
@@ -21,6 +22,11 @@ const COVER_FALLBACK =
   encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="176" height="176"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a2a33"/><stop offset="1" stop-color="#17171c"/></linearGradient></defs><rect width="176" height="176" fill="url(#g)"/></svg>`,
   );
+
+/** Порядок секций главной (решение владельца): витрины сверху, «Для тебя»
+ *  списком ниже, «Потому что…» после него. Неизвестные ключи — в конец. */
+const SECTION_RANK: Record<string, number> = { trending: 0, new: 1, for_you: 2 };
+const sectionRank = (key: string): number => SECTION_RANK[key] ?? (key.startsWith("because") ? 3 : 4);
 
 const sectionH2: React.CSSProperties = {
   margin: "0 0 var(--sp-3)",
@@ -99,7 +105,10 @@ export function HomeFeed({
   useEffect(load, [api, canSearch]);
 
   const live = feed.status === "live" && feed.sections.length > 0;
-  const sections = feed.sections;
+  // сортировка стабильная: внутри группы порядок сервера сохраняется
+  const sections = [...feed.sections].sort((a, b) => sectionRank(a.key) - sectionRank(b.key));
+  const season = wrappedSeason();
+  const wrappedBanner = canSearch && !!onOpenWrapped && (WRAPPED_BANNER_PREVIEW || season.inSeason);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -121,15 +130,17 @@ export function HomeFeed({
         <Notice icon="cloud-off" text="Оффлайн-копия ленты: сервер сейчас недоступен, показано последнее загруженное." action="Обновить" onAction={load} />
       ) : null}
 
-      {/* Wrapped (Stage 7): баннер-вход в «Итоги года» при серверной сессии */}
-      {canSearch && onOpenWrapped ? (
+      {/* Wrapped (Stage 7): баннер-вход в «Итоги года» — сезонно (декабрь
+          текущий год, январь прошлый); WRAPPED_BANNER_PREVIEW держит его
+          видимым круглый год, пока владелец смотрит результат */}
+      {wrappedBanner ? (
         <button
           type="button"
           onClick={onOpenWrapped}
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "var(--sp-4)",
+            gap: "var(--sp-5)",
             padding: "var(--sp-4) var(--sp-5)",
             border: "none",
             borderRadius: "var(--r-md)",
@@ -142,21 +153,20 @@ export function HomeFeed({
           <span
             aria-hidden="true"
             style={{
-              width: 44,
-              height: 44,
-              borderRadius: "var(--r-sm)",
-              background: "var(--accent-soft)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              fontFamily: "var(--font-display)",
+              fontSize: 34,
+              fontWeight: 700,
+              letterSpacing: "var(--ls-display)",
+              lineHeight: 1,
+              color: "var(--accent-text)",
               flex: "none",
             }}
           >
-            <Icon name="sparkles" size={20} color="var(--accent-text)" />
+            {season.year}
           </span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 700, color: "var(--text-1)" }}>
-              Твои итоги {new Date().getFullYear()}
+              Твои итоги {season.year}
             </span>
             <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
               Минуты, треки и артисты года — и карточка, которой не стыдно делиться
