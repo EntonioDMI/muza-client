@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ChipGroup, Dialog, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
-import { ApiError, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
+import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { openExternal } from "../lib/system";
+import {
+  addTheme,
+  applyTheme,
+  deleteTheme,
+  listThemes,
+  parseTheme,
+  sanitizeTokens,
+  saveTheme,
+  serializeTheme,
+  tokensFromPrefs,
+  type SavedTheme,
+} from "../lib/themes";
 
 /* Структура и состав — docs/notes/2026-07-10-настройки-спецификация.md:
    11 вкладок-разделов; «Внешний вид» = простые (пресеты) + под-экран
@@ -354,6 +366,37 @@ function CustomAccentSwatch({
   );
 }
 
+/** Цветовая точка с нативным пикером (реюз механики CustomAccentSwatch). */
+function ColorDot({ color, label, onPick }: { color: string; label: string; onPick: (hex: string) => void }) {
+  return (
+    <label
+      title={label}
+      style={{
+        position: "relative",
+        width: 36,
+        height: 36,
+        borderRadius: "var(--r-pill)",
+        background: color,
+        cursor: "pointer",
+        outline: "2px solid var(--surface-4)",
+        outlineOffset: 2,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Icon name="pipette" size={14} color="rgba(255,255,255,.85)" />
+      <input
+        type="color"
+        value={color}
+        aria-label={label}
+        onChange={(e) => onPick(e.target.value)}
+        style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+      />
+    </label>
+  );
+}
+
 /** Карточка витрины маркетплейса: тема (градиент-превью) или плагин (иконка). */
 function MarketCard({ item }: { item: (typeof MARKET_ITEMS)[number] }) {
   return (
@@ -401,6 +444,64 @@ function MarketCard({ item }: { item: (typeof MARKET_ITEMS)[number] }) {
       <Button variant="secondary" icon="download" disabled style={{ alignSelf: "flex-start" }}>
         Установить
       </Button>
+    </div>
+  );
+}
+
+/** Карточка темы маркетплейса (Stage 6): превью из payload + живая установка. */
+function MarketThemeCard({
+  theme,
+  onInstall,
+  onRemove,
+}: {
+  theme: MarketTheme;
+  onInstall: () => void;
+  onRemove?: () => void;
+}) {
+  const p = theme.payload as { accent?: string; customAccent?: string; bgColor?: string; baseBg?: string; bgType?: string; customCss?: string };
+  const accent =
+    p.accent === "custom" && typeof p.customAccent === "string"
+      ? p.customAccent
+      : p.accent === "red"
+        ? "#f76967"
+        : p.accent === "bolt"
+          ? "#327ad9"
+          : "#3b82f6";
+  const bg =
+    p.bgType === "color" || p.bgType === "gradient"
+      ? (typeof p.bgColor === "string" ? p.bgColor : "#121110")
+      : p.baseBg === "amoled"
+        ? "#000000"
+        : p.baseBg === "warm"
+          ? "#151110"
+          : p.baseBg === "cold"
+            ? "#0f1114"
+            : "#121110";
+  const hasCss = typeof p.customCss === "string" && p.customCss.trim().length > 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", padding: "var(--sp-4)", borderRadius: "var(--r-md)", background: "var(--surface-2)" }}>
+      <div
+        aria-hidden="true"
+        style={{
+          height: 64,
+          borderRadius: "var(--r-sm)",
+          background: `linear-gradient(120deg, ${bg} 0%, ${bg} 62%, ${accent} 62%)`,
+          outline: "1px solid var(--surface-3)",
+          outlineOffset: -1,
+        }}
+      ></div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{theme.name}</div>
+        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+          {theme.author} · {theme.installs} устан.{hasCss ? " · содержит CSS" : ""}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+        <Button variant="secondary" icon="download" onClick={onInstall}>
+          Установить
+        </Button>
+        {onRemove ? <IconButton icon="trash-2" label="Снять с публикации" onClick={onRemove} /> : null}
+      </div>
     </div>
   );
 }
@@ -640,6 +741,145 @@ export function SettingsView({
     setSub("market");
   };
 
+  // ── Темы как объекты + CSS-тир (Stage 6) ─────────────────────────
+  const [themes, setThemes] = useState<SavedTheme[]>(listThemes);
+  const [themeNameOpen, setThemeNameOpen] = useState(false);
+  const [themeName, setThemeName] = useState("");
+  const [themeImportOpen, setThemeImportOpen] = useState(false);
+  const [themeImportText, setThemeImportText] = useState("");
+  const [themeImportErr, setThemeImportErr] = useState<string | null>(null);
+  // черновик CSS: textarea не пишет в prefs на каждый символ (перерисовка всего)
+  const [cssDraft, setCssDraft] = useState(prefs.customCss);
+
+  const openSaveTheme = () => {
+    setThemeName("");
+    setThemeNameOpen(true);
+  };
+  const submitSaveTheme = () => {
+    saveTheme(themeName, prefs);
+    setThemes(listThemes());
+    setThemeNameOpen(false);
+    onNotify("Тема сохранена", "save");
+  };
+  const applySavedTheme = (t: SavedTheme) => {
+    setPrefs(applyTheme(t.tokens, prefs));
+    setCssDraft(typeof t.tokens.customCss === "string" ? t.tokens.customCss : "");
+    onNotify(`Тема «${t.name}» применена`, "paintbrush");
+  };
+  const removeTheme = (id: string) => {
+    deleteTheme(id);
+    setThemes(listThemes());
+    onNotify("Тема удалена", "trash-2");
+  };
+  const copyTheme = async (t: SavedTheme) => {
+    try {
+      await navigator.clipboard.writeText(serializeTheme(t.name, t.tokens));
+      onNotify("JSON темы в буфере — делись", "copy");
+    } catch {
+      onNotify("Буфер обмена недоступен", "x");
+    }
+  };
+  const submitImportTheme = () => {
+    const parsed = parseTheme(themeImportText);
+    if (!parsed) {
+      setThemeImportErr("Это не похоже на JSON темы Muza");
+      return;
+    }
+    const next = applyTheme(parsed.tokens, prefs);
+    setPrefs(next);
+    setCssDraft(next.customCss);
+    saveTheme(parsed.name, next);
+    setThemes(listThemes());
+    setThemeImportOpen(false);
+    setThemeImportText("");
+    setThemeImportErr(null);
+    onNotify(`Тема «${parsed.name}» импортирована и применена`, "clipboard-paste");
+  };
+
+  // ── Маркетплейс тем (Stage 6): серверный каталог ─────────────────
+  const [marketThemes, setMarketThemes] = useState<MarketTheme[] | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishName, setPublishName] = useState("");
+  const [publishErr, setPublishErr] = useState<string | null>(null);
+  const [publishBusy, setPublishBusy] = useState(false);
+  // тема с чужим CSS перед установкой честно предупреждает
+  const [cssWarnTheme, setCssWarnTheme] = useState<MarketTheme | null>(null);
+
+  useEffect(() => {
+    if (sub !== "market" || !serverSession) return;
+    let alive = true;
+    api
+      .getMarketThemes()
+      .then((t) => {
+        if (alive) setMarketThemes(t);
+      })
+      .catch(() => {
+        if (alive) setMarketThemes([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sub, serverSession, api]);
+
+  const doInstallTheme = async (t: MarketTheme) => {
+    // счётчик — best-effort: сервер лёг, а payload уже у нас
+    const installed = await api.installMarketTheme(t.id).catch(() => null);
+    const tokens = sanitizeTokens(installed?.payload ?? t.payload);
+    addTheme(t.name, tokens);
+    setThemes(listThemes());
+    const next = applyTheme(tokens, prefs);
+    setPrefs(next);
+    setCssDraft(next.customCss);
+    setMarketThemes((list) => list?.map((x) => (x.id === t.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
+    onNotify(`Тема «${t.name}» установлена и применена`, "download");
+  };
+
+  const installTheme = async (t: MarketTheme) => {
+    const css = (t.payload as { customCss?: unknown }).customCss;
+    if (typeof css === "string" && css.trim().length > 0) {
+      setCssWarnTheme(t); // CSS может переопределить что угодно — спрашиваем
+      return;
+    }
+    await doInstallTheme(t);
+  };
+
+  const unpublishTheme = async (t: MarketTheme) => {
+    try {
+      await api.deleteMarketTheme(t.id);
+      setMarketThemes((list) => list?.filter((x) => x.id !== t.id) ?? list);
+      onNotify("Тема снята с публикации", "trash-2");
+    } catch {
+      onNotify("Не удалось снять тему", "x");
+    }
+  };
+
+  const openPublishTheme = () => {
+    setPublishName("");
+    setPublishErr(null);
+    setPublishOpen(true);
+  };
+  const submitPublishTheme = async () => {
+    if (publishName.trim().length < 2) {
+      setPublishErr("Название — от 2 символов");
+      return;
+    }
+    setPublishBusy(true);
+    setPublishErr(null);
+    try {
+      const published = await api.publishMarketTheme(publishName.trim(), tokensFromPrefs(prefs));
+      setMarketThemes((list) => {
+        const rest = (list ?? []).filter((x) => x.id !== published.id);
+        return [published, ...rest];
+      });
+      setPublishOpen(false);
+      onNotify(`Тема «${published.name}» опубликована`, "upload");
+    } catch (e) {
+      setPublishErr(e instanceof ApiError ? e.message : "Не удалось опубликовать");
+    } finally {
+      setPublishBusy(false);
+    }
+  };
+
   // Эквалайзер живёт в Prefs (Stage 3: реально крутит звук через Web Audio)
   const eqOn = prefs.eqOn;
   const eqPreset = prefs.eqPreset;
@@ -814,22 +1054,43 @@ export function SettingsView({
       <SettingRow title="Размытие панелей" hint="Сила blur на матовом стекле">
         <LiveSlider value={prefs.blur} max={64} label="Размытие панелей" suffix={`${prefs.blur} px`} onChange={(v) => set({ blur: Math.round(v) })} />
       </SettingRow>
-      <SettingRow title="Размытие фона" hint="Blur обложки за интерфейсом (позже)">
-        <DisabledSlider value={40} max={80} label="Размытие фона" />
+      <SettingRow title="Размытие фона" hint="Blur обложки или картинки за интерфейсом">
+        <LiveSlider
+          value={prefs.blurScenery}
+          max={80}
+          label="Размытие фона"
+          suffix={`${prefs.blurScenery} px`}
+          onChange={(v) => set({ blurScenery: Math.round(v) })}
+        />
       </SettingRow>
       <SettingRow title="Прозрачность по зонам" hint="Плеер, «сейчас играет», меню, диалоги, сайдбар (позже)" chevron>
         <RowValue>Общая</RowValue>
       </SettingRow>
 
       <GroupTitle>Цвета и слои</GroupTitle>
-      <SettingRow title="Базовый фон" hint="Тон и температура bg-слоёв (позже)">
-        <RowValue>Графит</RowValue>
+      <SettingRow title="Базовый фон" hint="Тон и температура bg-слоёв">
+        <Tabs
+          items={[
+            { key: "graphite", label: "Графит" },
+            { key: "warm", label: "Тёплый" },
+            { key: "cold", label: "Холодный" },
+            { key: "amoled", label: "AMOLED" },
+          ]}
+          value={prefs.baseBg}
+          onChange={(k: string) => set({ baseBg: k as Prefs["baseBg"] })}
+        />
       </SettingRow>
       <SettingRow title="Роли акцента" hint="Отдельно для play, слайдеров, активного трека (позже)" chevron>
         <RowValue>Единый</RowValue>
       </SettingRow>
-      <SettingRow title="Приглушение текста" hint="Контраст text-2 / text-3 (позже)">
-        <DisabledSlider value={60} max={100} label="Приглушение текста" />
+      <SettingRow title="Приглушение текста" hint="Яркость вторичного текста (подписи, хинты)">
+        <LiveSlider
+          value={prefs.textDim - 40}
+          max={40}
+          label="Приглушение текста"
+          suffix={`${prefs.textDim} %`}
+          onChange={(v) => set({ textDim: 40 + Math.round(v) })}
+        />
       </SettingRow>
 
       <GroupTitle>Форма и размеры</GroupTitle>
@@ -839,24 +1100,55 @@ export function SettingsView({
       <SettingRow title="Плотность интерфейса" hint="Отступы и высота строк (позже)">
         <RowValue>Просторно</RowValue>
       </SettingRow>
-      <SettingRow title="Ширины зон" hint="Сайдбар, «сейчас играет», плеер-бар (позже)" chevron>
-        <RowValue>Стандарт</RowValue>
+      <SettingRow title="Ширина сайдбара" hint="На узком окне сайдбар всё равно ужимается">
+        <LiveSlider
+          value={prefs.wSidebar - 240}
+          max={100}
+          label="Ширина сайдбара"
+          suffix={`${prefs.wSidebar} px`}
+          onChange={(v) => set({ wSidebar: 240 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title="Ширина «Сейчас играет»" hint="Правая панель с текстом">
+        <LiveSlider
+          value={prefs.wNowPlaying - 300}
+          max={120}
+          label="Ширина панели «Сейчас играет»"
+          suffix={`${prefs.wNowPlaying} px`}
+          onChange={(v) => set({ wNowPlaying: 300 + Math.round(v) })}
+        />
       </SettingRow>
 
       <GroupTitle>Типографика</GroupTitle>
-      <SettingRow title="Размер текста" hint="Базовый размер интерфейса (позже)">
-        <DisabledSlider value={15} max={20} label="Размер текста" />
+      <SettingRow title="Размер текста" hint="Базовый размер — через «Масштаб интерфейса» во Внешнем виде">
+        <RowValue>{prefs.uiScale} %</RowValue>
       </SettingRow>
-      <SettingRow title="Размер караоке-текста" hint="Отдельно от интерфейса (позже)">
-        <DisabledSlider value={28} max={44} label="Размер караоке-текста" />
+      <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания">
+        <LiveSlider
+          value={prefs.karaokeSize - 36}
+          max={36}
+          label="Размер караоке-текста"
+          suffix={`${prefs.karaokeSize} px`}
+          onChange={(v) => set({ karaokeSize: 36 + Math.round(v) })}
+        />
       </SettingRow>
 
       <GroupTitle>Движение</GroupTitle>
       <SettingRow title="Анимации" hint="Плавные переходы интерфейса">
         <Switch checked={prefs.anims} onChange={(anims: boolean) => set({ anims })} label="Анимации" />
       </SettingRow>
-      <SettingRow title="Скорость анимаций" hint="Быстрее или мягче (позже)">
-        <RowValue>Стандарт</RowValue>
+      <SettingRow title="Скорость анимаций" hint="Быстрее или мягче">
+        <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          <Tabs
+            items={[
+              { key: "fast", label: "Быстрее" },
+              { key: "normal", label: "Стандарт" },
+              { key: "slow", label: "Мягче" },
+            ]}
+            value={prefs.animSpeed}
+            onChange={(k: string) => set({ animSpeed: k as Prefs["animSpeed"] })}
+          />
+        </div>
       </SettingRow>
 
       <GroupTitle>Компоновка и элементы</GroupTitle>
@@ -867,14 +1159,45 @@ export function SettingsView({
       <SettingRow title="Строка трека" hint="Обложка, альбом, длительность, источник (позже)" chevron></SettingRow>
 
       <GroupTitle>Фон</GroupTitle>
-      <SettingRow title="Тип фона" hint="Цвет, градиент, картинка, обои, из обложки, URL (позже)">
-        <RowValue>Из обложки</RowValue>
+      <SettingRow title="Тип фона" hint="Что за интерфейсом">
+        <Tabs
+          items={[
+            { key: "none", label: "Выкл" },
+            { key: "cover", label: "Обложка" },
+            { key: "color", label: "Цвет" },
+            { key: "gradient", label: "Градиент" },
+            { key: "image", label: "Картинка" },
+          ]}
+          value={prefs.bgType}
+          onChange={(k: string) => set({ bgType: k as Prefs["bgType"] })}
+        />
       </SettingRow>
+      {prefs.bgType === "color" || prefs.bgType === "gradient" ? (
+        <SettingRow title={prefs.bgType === "gradient" ? "Цвета градиента" : "Цвет фона"} hint="Пипетка открывает пикер">
+          <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+            <ColorDot color={prefs.bgColor} label="Цвет фона" onPick={(bgColor) => set({ bgColor })} />
+            {prefs.bgType === "gradient" ? (
+              <ColorDot color={prefs.bgColor2} label="Второй цвет градиента" onPick={(bgColor2) => set({ bgColor2 })} />
+            ) : null}
+          </div>
+        </SettingRow>
+      ) : null}
+      {prefs.bgType === "image" ? (
+        <SettingRow title="Картинка по URL" hint="Ссылка на изображение; размытие — слайдером выше (0 = без blur)">
+          <SettingInput value={prefs.bgImageUrl} onChange={(bgImageUrl) => set({ bgImageUrl })} placeholder="https://…" width={260} />
+        </SettingRow>
+      ) : null}
       <SettingRow title="Фон по зонам" hint="Глобально или отдельно для зон (позже)" chevron>
         <RowValue>Глобально</RowValue>
       </SettingRow>
-      <SettingRow title="Затемнение фона" hint="Чтобы контент читался поверх (позже)">
-        <DisabledSlider value={40} max={100} label="Затемнение фона" />
+      <SettingRow title="Затемнение фона" hint="Чтобы контент читался поверх">
+        <LiveSlider
+          value={prefs.bgDim}
+          max={80}
+          label="Затемнение фона"
+          suffix={`${prefs.bgDim} %`}
+          onChange={(v) => set({ bgDim: Math.round(v) })}
+        />
       </SettingRow>
       <SettingRow title="Реакция на обложку" hint="Фон подстраивается под цвет трека (позже)">
         <Switch checked={false} disabled label="Реакция на обложку" />
@@ -884,22 +1207,83 @@ export function SettingsView({
       <SettingRow title="Действие по двойному клику" hint="Что делает даблклик по треку (позже)">
         <RowValue>Играть</RowValue>
       </SettingRow>
-      <SettingRow title="Стартовый экран" hint="Что открывается при запуске (позже)">
-        <RowValue>Главная</RowValue>
+      <SettingRow title="Стартовый экран" hint="Что открывается при запуске">
+        <Tabs
+          items={[
+            { key: "home", label: "Главная" },
+            { key: "search", label: "Поиск" },
+            { key: "favorites", label: "Любимое" },
+            { key: "library", label: "Библиотека" },
+          ]}
+          value={prefs.startView}
+          onChange={(k: string) => set({ startView: k as Prefs["startView"] })}
+        />
       </SettingRow>
 
       <GroupTitle>Темы</GroupTitle>
-      <SettingRow title="Сохранить как тему" hint="Текущая кастомизация одним файлом (позже)">
-        <Button variant="ghost" icon="save" disabled>
+      <SettingRow title="Сохранить как тему" hint="Текущее оформление целиком, включая CSS-тир">
+        <Button variant="ghost" icon="save" onClick={openSaveTheme}>
           Сохранить
         </Button>
       </SettingRow>
-      <SettingRow title="Маркетплейс тем" hint="Ставить и делиться — витрина уже смотрится" onClick={() => openMarket("Темы")} chevron></SettingRow>
+      {themes.map((t) => (
+        <SettingRow key={t.id} title={t.name} hint={new Date(t.createdAt).toLocaleDateString("ru")}>
+          <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+            <Button variant="secondary" icon="paintbrush" onClick={() => applySavedTheme(t)}>
+              Применить
+            </Button>
+            <IconButton icon="copy" label="Скопировать JSON темы" onClick={() => void copyTheme(t)} />
+            <IconButton icon="trash-2" label="Удалить тему" onClick={() => removeTheme(t.id)} />
+          </div>
+        </SettingRow>
+      ))}
+      <SettingRow title="Импорт темы" hint="Вставь JSON темы (из буфера или маркетплейса)">
+        <Button variant="ghost" icon="clipboard-paste" onClick={() => setThemeImportOpen(true)}>
+          Вставить
+        </Button>
+      </SettingRow>
+      <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами" onClick={() => openMarket("Темы")} chevron></SettingRow>
 
       <GroupTitle>CSS-тир</GroupTitle>
-      <SettingRow title="Свой CSS" hint="Опасная зона: сниппеты и переопределение токенов (Stage 6)" chevron>
-        <RowValue>Выкл</RowValue>
+      <SettingRow
+        title="Свой CSS"
+        hint="Опасная зона: переопределяет любые токены и стили; сломанный вид лечится выключателем или сбросом"
+      >
+        <Switch checked={prefs.customCssOn} onChange={(customCssOn: boolean) => set({ customCssOn })} label="Свой CSS" />
       </SettingRow>
+      {prefs.customCssOn ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+          <textarea
+            value={cssDraft}
+            onChange={(e) => setCssDraft(e.target.value)}
+            spellCheck={false}
+            placeholder={":root { --accent: #22c55e; }\n.muza-view { /* … */ }"}
+            aria-label="Свой CSS"
+            style={{
+              minHeight: 140,
+              resize: "vertical",
+              padding: "var(--sp-3)",
+              border: "none",
+              borderRadius: "var(--r-sm)",
+              background: "var(--surface-3)",
+              color: "var(--text-1)",
+              fontFamily: "Consolas, monospace",
+              fontSize: 13,
+              lineHeight: 1.5,
+              outline: "none",
+            }}
+          />
+          <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
+            <Button variant="secondary" icon="check" disabled={cssDraft === prefs.customCss} onClick={() => set({ customCss: cssDraft })}>
+              Применить CSS
+            </Button>
+            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              Применяется поверх всех токенов; входит в сохранённую тему. Настройки вроде своего акцента живут
+              inline — их перебивает только !important.
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ marginTop: "var(--sp-2)" }}>
         <Button
@@ -909,10 +1293,23 @@ export function SettingsView({
             set({
               accent: DEFAULT_PREFS.accent,
               radius: DEFAULT_PREFS.radius,
-              bgCover: DEFAULT_PREFS.bgCover,
               blur: DEFAULT_PREFS.blur,
               glassOpacity: DEFAULT_PREFS.glassOpacity,
               anims: DEFAULT_PREFS.anims,
+              bgType: DEFAULT_PREFS.bgType,
+              bgColor: DEFAULT_PREFS.bgColor,
+              bgColor2: DEFAULT_PREFS.bgColor2,
+              bgImageUrl: DEFAULT_PREFS.bgImageUrl,
+              bgDim: DEFAULT_PREFS.bgDim,
+              blurScenery: DEFAULT_PREFS.blurScenery,
+              baseBg: DEFAULT_PREFS.baseBg,
+              textDim: DEFAULT_PREFS.textDim,
+              uiScale: DEFAULT_PREFS.uiScale,
+              animSpeed: DEFAULT_PREFS.animSpeed,
+              karaokeSize: DEFAULT_PREFS.karaokeSize,
+              wSidebar: DEFAULT_PREFS.wSidebar,
+              wNowPlaying: DEFAULT_PREFS.wNowPlaying,
+              customCssOn: DEFAULT_PREFS.customCssOn,
             })
           }
         >
@@ -1072,19 +1469,54 @@ export function SettingsView({
   const marketPane = (
     <div key="market" className={paneClass} style={paneStyle}>
       <SubHeader title="Маркетплейс" onBack={() => setSub(null)} />
-      <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+      <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
         <ChipGroup items={["Всё", "Темы", "Плагины"]} value={marketFilter} onChange={setMarketFilter} />
+        {serverSession && marketFilter !== "Плагины" ? (
+          <Button variant="secondary" icon="upload" onClick={openPublishTheme} style={{ marginLeft: "auto" }}>
+            Опубликовать оформление
+          </Button>
+        ) : null}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
-        {MARKET_ITEMS.filter(
-          (m) => marketFilter === "Всё" || (marketFilter === "Темы" ? m.kind === "theme" : m.kind === "plugin"),
-        ).map((m) => (
-          <MarketCard key={m.name} item={m} />
-        ))}
-      </div>
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-        Витрина-макет: установка, подпись и capability-права придут в Stage 6.
-      </div>
+
+      {marketFilter !== "Плагины" ? (
+        // Темы — настоящий серверный каталог (Stage 6)
+        !serverSession ? (
+          <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+            Маркетплейс тем доступен после входа с аккаунтом — анонимный аккаунт живёт только на устройстве.
+          </div>
+        ) : marketThemes === null ? (
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>Загружаем каталог…</div>
+        ) : marketThemes.length === 0 ? (
+          <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+            Пока пусто. Собери оформление в Кастомизации и стань первым — «Опубликовать оформление».
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
+            {marketThemes.map((t) => (
+              <MarketThemeCard
+                key={t.id}
+                theme={t}
+                onInstall={() => void installTheme(t)}
+                onRemove={t.isMine ? () => void unpublishTheme(t) : undefined}
+              />
+            ))}
+          </div>
+        )
+      ) : null}
+
+      {marketFilter !== "Темы" ? (
+        <>
+          {marketFilter === "Всё" ? <GroupTitle>Плагины</GroupTitle> : null}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
+            {MARKET_ITEMS.filter((m) => m.kind === "plugin").map((m) => (
+              <MarketCard key={m.name} item={m} />
+            ))}
+          </div>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+            Плагины — витрина: внешняя плагин-система требует песочницу (в работе). Встроенные расширения — во вкладке «Расширения».
+          </div>
+        </>
+      ) : null}
     </div>
   );
 
@@ -1236,14 +1668,24 @@ export function SettingsView({
             onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
           />
         </SettingRow>
-        <SettingRow title="Фон" hint="Цвет, градиент, картинка, из обложки (позже — больше типов)">
+        <SettingRow title="Фон" hint="Быстрый тумблер «из обложки»; все типы фона — в Кастомизации">
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-            <RowValue>Из обложки</RowValue>
-            <Switch checked={prefs.bgCover} onChange={(bgCover: boolean) => set({ bgCover })} label="Фон из обложки" />
+            <RowValue>{prefs.bgType === "cover" ? "Из обложки" : prefs.bgType === "none" ? "Выкл" : "Свой"}</RowValue>
+            <Switch
+              checked={prefs.bgType === "cover"}
+              onChange={(on: boolean) => set({ bgType: on ? "cover" : "none" })}
+              label="Фон из обложки"
+            />
           </div>
         </SettingRow>
-        <SettingRow title="Масштаб интерфейса" hint="Появится позже">
-          <DisabledSlider value={100} max={150} label="Масштаб интерфейса" />
+        <SettingRow title="Масштаб интерфейса" hint="Весь интерфейс крупнее или мельче">
+          <LiveSlider
+            value={prefs.uiScale - 85}
+            max={40}
+            label="Масштаб интерфейса"
+            suffix={`${prefs.uiScale} %`}
+            onChange={(v) => set({ uiScale: 85 + Math.round(v) })}
+          />
         </SettingRow>
         <SettingRow title="Кастомизация" hint="Редактор темы: слои, форма, типографика, темы, CSS" onClick={() => setSub("customize")} chevron></SettingRow>
       </div>
@@ -1474,12 +1916,33 @@ export function SettingsView({
       </div>
     ) : tab === "extensions" ? (
       <div key="extensions" className={paneClass} style={paneStyle}>
-        <SettingRow title="Плагины" hint="Capability-права, ревью, подпись (Stage 6)">
+        <GroupTitle>Встроенные</GroupTitle>
+        <SettingRow title="Визуализатор" hint="Спектр или волна в такт в режиме прослушивания (каталожные треки)">
+          <Switch
+            checked={prefs.visualizer !== "off"}
+            onChange={(on: boolean) => set({ visualizer: on ? "bars" : "off" })}
+            label="Визуализатор"
+          />
+        </SettingRow>
+        {prefs.visualizer !== "off" ? (
+          <SettingRow title="Вид визуализатора" hint="Бары — спектр частот, волна — форма сигнала">
+            <Tabs
+              items={[
+                { key: "bars", label: "Бары" },
+                { key: "wave", label: "Волна" },
+              ]}
+              value={prefs.visualizer}
+              onChange={(k: string) => set({ visualizer: k as Prefs["visualizer"] })}
+            />
+          </SettingRow>
+        ) : null}
+        <GroupTitle>Внешние плагины</GroupTitle>
+        <SettingRow title="Плагины" hint="Внешняя плагин-система требует песочницу и capability-права — в работе">
           <RowValue>0 установлено</RowValue>
         </SettingRow>
-        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — витрина уже смотрится" onClick={() => openMarket("Плагины")} chevron></SettingRow>
-        <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — витрина уже смотрится" onClick={() => openMarket("Темы")} chevron></SettingRow>
-        <SettingRow title="Установить из файла" hint="Для разработчиков (Stage 6)">
+        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — пока витрина" onClick={() => openMarket("Плагины")} chevron></SettingRow>
+        <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — работает" onClick={() => openMarket("Темы")} chevron></SettingRow>
+        <SettingRow title="Установить из файла" hint="Для разработчиков (с плагин-системой)">
           <Button variant="ghost" icon="folder-open" disabled>
             Выбрать файл
           </Button>
@@ -1630,6 +2093,134 @@ export function SettingsView({
           {lbErr ? (
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{lbErr}</div>
           ) : null}
+        </div>
+      </Dialog>
+
+      {/* Сохранить тему: имя (одноимённая перезаписывается) */}
+      <Dialog
+        open={themeNameOpen}
+        title="Сохранить тему"
+        onClose={() => setThemeNameOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setThemeNameOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="save" onClick={submitSaveTheme}>
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
+          <SettingInput value={themeName} onChange={setThemeName} placeholder="Название темы" width={300} />
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+            В тему входит только оформление (цвета, фон, форма, CSS) — поведение и звук не переносятся.
+          </div>
+        </div>
+      </Dialog>
+
+      {/* Импорт темы: JSON из буфера (Ctrl+V) */}
+      <Dialog
+        open={themeImportOpen}
+        title="Импорт темы"
+        onClose={() => setThemeImportOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setThemeImportOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="clipboard-paste" onClick={submitImportTheme}>
+              Импортировать
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 340 }}>
+          <textarea
+            value={themeImportText}
+            onChange={(e) => setThemeImportText(e.target.value)}
+            spellCheck={false}
+            placeholder='{"muzaTheme": 1, "name": "…", "tokens": { … }}'
+            aria-label="JSON темы"
+            style={{
+              minHeight: 120,
+              resize: "vertical",
+              padding: "var(--sp-3)",
+              border: "none",
+              borderRadius: "var(--r-sm)",
+              background: "var(--surface-3)",
+              color: "var(--text-1)",
+              fontFamily: "Consolas, monospace",
+              fontSize: 13,
+              outline: "none",
+            }}
+          />
+          {themeImportErr ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{themeImportErr}</div>
+          ) : (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              Применится сразу и появится в списке тем. Чужие поля отбрасываются.
+            </div>
+          )}
+        </div>
+      </Dialog>
+
+      {/* Публикация темы в маркетплейс */}
+      <Dialog
+        open={publishOpen}
+        title="Опубликовать оформление"
+        onClose={() => setPublishOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setPublishOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="upload" disabled={publishBusy} onClick={() => void submitPublishTheme()}>
+              {publishBusy ? "Публикуем…" : "Опубликовать"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
+          <SettingInput value={publishName} onChange={setPublishName} placeholder="Название темы" width={300} />
+          {publishErr ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{publishErr}</div>
+          ) : (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              Публикуется текущее оформление под твоим ником. Повторная публикация с тем же названием обновит тему.
+            </div>
+          )}
+        </div>
+      </Dialog>
+
+      {/* Тема с чужим CSS: честное предупреждение перед установкой */}
+      <Dialog
+        open={cssWarnTheme !== null}
+        title="Тема содержит свой CSS"
+        onClose={() => setCssWarnTheme(null)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setCssWarnTheme(null)}>
+              Отмена
+            </Button>
+            <Button
+              variant="primary"
+              icon="download"
+              onClick={() => {
+                const t = cssWarnTheme;
+                setCssWarnTheme(null);
+                if (t) void doInstallTheme(t);
+              }}
+            >
+              Установить всё равно
+            </Button>
+          </>
+        }
+      >
+        <div style={{ maxWidth: 360, fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.55 }}>
+          CSS автора может переопределить любой вид интерфейса. Это безопасно для данных, но если вид сломается —
+          выключи «Свой CSS» в Кастомизации или нажми «Сбросить оформление».
         </div>
       </Dialog>
     </div>

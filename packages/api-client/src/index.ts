@@ -14,6 +14,7 @@ import type {
   HomeSection,
   ImportReport,
   Lyrics,
+  MarketTheme,
   PlaylistDetail,
   PlaylistMeta,
   RecipeEnvelope,
@@ -123,6 +124,15 @@ export interface MuzaApi {
   getRecsSettings(): Promise<RecsSettings>;
   /** null в поле = сбросить на серверный дефолт; отсутствие поля = не трогать. */
   updateRecsSettings(input: { epsilon?: number | null; tauScale?: number | null }): Promise<RecsSettings>;
+
+  // Маркетплейс тем (Stage 6). Публикация rate-limit 5/час, payload ≤ 16КБ.
+  getMarketThemes(): Promise<MarketTheme[]>;
+  /** Опубликовать тему; своё имя = обновление записи. */
+  publishMarketTheme(name: string, payload: Record<string, unknown>): Promise<MarketTheme>;
+  /** Установка: инкремент счётчика + полный payload темы. */
+  installMarketTheme(id: string): Promise<MarketTheme>;
+  /** Снять с публикации (свою; админ — любую). */
+  deleteMarketTheme(id: string): Promise<void>;
 
   // Админ-панель (Stage 5). Доступ по users.is_admin (выдаётся вручную).
   /** true — текущий пользователь админ (по нему клиент показывает «Админку»). */

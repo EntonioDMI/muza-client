@@ -375,6 +375,9 @@ export function usePlayback({
   const cycleRepeat = () => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
   const toggleShuffle = () => setShuffle((s) => !s);
 
+  /** Анализатор движка для визуализатора (Stage 6); null у демо/plain. */
+  const getAnalyser = () => engineRef.current?.analyser() ?? null;
+
   // EQ и нормализация из Prefs — на движок
   useEffect(() => {
     engineRef.current?.setEq(prefs.eqOn, prefs.eqBands);
@@ -405,6 +408,7 @@ export function usePlayback({
       cycleSpeed,
       cycleRepeat,
       toggleShuffle,
+      getAnalyser,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [queue, track, index, playing, buffering, pos, vol, speed, repeat, shuffle],

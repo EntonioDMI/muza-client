@@ -77,11 +77,26 @@ function loadPrefs(): Prefs {
     const raw = localStorage.getItem(PREFS_KEY);
     if (!raw) return DEFAULT_PREFS;
     // merge с дефолтами: новые поля Prefs не ломают старые сохранения
-    return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<Prefs>) };
+    const stored = JSON.parse(raw) as Partial<Prefs> & { bgCover?: boolean };
+    const prefs = { ...DEFAULT_PREFS, ...stored };
+    // миграция Stage 6: старый bgCover=true → bgType="cover"
+    if (stored.bgCover && stored.bgType === undefined) prefs.bgType = "cover";
+    return prefs;
   } catch {
     return DEFAULT_PREFS;
   }
 }
+
+/** Пресеты базовых bg-слоёв (Stage 6, «Базовый фон»); graphite = дефолт ДС. */
+const BASE_BG: Record<Prefs["baseBg"], { bg0: string; bg1: string } | null> = {
+  graphite: null,
+  warm: { bg0: "#151110", bg1: "#1b1512" },
+  cold: { bg0: "#0f1114", bg1: "#13171c" },
+  amoled: { bg0: "#000000", bg1: "#0b0b0b" },
+};
+
+/** Множители скорости анимаций к базовым 150/220/400мс. */
+const ANIM_SPEED: Record<Prefs["animSpeed"], number> = { fast: 0.6, normal: 1, slow: 1.7 };
 
 /** Демо-очередь по умолчанию: главная/библиотека живут на демо-каталоге. */
 const DEMO_QUEUE = TRACKS.map(fromDemo);
@@ -107,7 +122,8 @@ function Player({
 }) {
   // Скоуп снапшотов — до первых загрузок (эффекты ниже читают через withSnapshot)
   setSnapshotScope(userId);
-  const [view, setView] = useState<View>("home");
+  // Стартовый экран — из prefs (Stage 6, «Поведение»)
+  const [view, setView] = useState<View>(() => loadPrefs().startView);
   const [likes, setLikes] = useState<string[]>(["t3"]);
   // Запрос открыть конкретный под-экран настроек (кнопка эквалайзера в баре)
   const [settingsIntent, setSettingsIntent] = useState<SettingsIntent | null>(null);
@@ -577,6 +593,8 @@ function Player({
   };
 
   const accentAttr = prefs.accent === "blue" || prefs.accent === "custom" ? undefined : prefs.accent;
+  const baseBg = BASE_BG[prefs.baseBg];
+  const animMult = ANIM_SPEED[prefs.animSpeed];
   const rootStyle = {
     position: "absolute",
     inset: 0,
@@ -587,28 +605,71 @@ function Player({
     "--glass-panel": `rgba(23, 22, 20, ${prefs.glassOpacity / 100})`,
     // свой акцент: все четыре акцент-токена выводятся из выбранного hex
     ...(prefs.accent === "custom" ? customAccentVars(prefs.customAccent) : {}),
-    ...(wideEnoughForSidebar ? {} : { "--w-sidebar": "220px" }),
-    ...(prefs.anims ? {} : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
+    // Stage 6 (продвинутая кастомизация): токен-уровневые переопределения
+    ...(baseBg ? { "--bg-0": baseBg.bg0, "--bg-1": baseBg.bg1 } : {}),
+    "--text-2": `rgba(244, 243, 241, ${(prefs.textDim / 100).toFixed(2)})`,
+    "--text-3": `rgba(244, 243, 241, ${Math.max(0.2, prefs.textDim / 100 - 0.24).toFixed(2)})`,
+    "--blur-scenery": `${prefs.blurScenery}px`,
+    "--fs-karaoke": `${prefs.karaokeSize}px`,
+    "--w-nowplaying": `${prefs.wNowPlaying}px`,
+    // zoom масштабирует весь UI (WebView2/Chromium); 100% — без свойства
+    ...(prefs.uiScale !== 100 ? { zoom: prefs.uiScale / 100 } : {}),
+    ...(wideEnoughForSidebar ? { "--w-sidebar": `${prefs.wSidebar}px` } : { "--w-sidebar": "220px" }),
+    ...(prefs.anims
+      ? animMult !== 1
+        ? {
+            "--dur-fast": `${Math.round(150 * animMult)}ms`,
+            "--dur-base": `${Math.round(220 * animMult)}ms`,
+            "--dur-slow": `${Math.round(400 * animMult)}ms`,
+          }
+        : {}
+      : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
   } as React.CSSProperties;
+
+  // Фон за интерфейсом (Stage 6): тип + затемнение поверх (читаемость)
+  const backdrop =
+    prefs.bgType === "cover" ? (
+      <img
+        key={track.cover}
+        src={track.cover}
+        alt=""
+        className="muza-fade"
+        style={{
+          position: "absolute",
+          inset: "-10%",
+          width: "120%",
+          height: "120%",
+          objectFit: "cover",
+          filter: "blur(var(--blur-scenery))",
+          opacity: 0.22,
+        }}
+      />
+    ) : prefs.bgType === "color" ? (
+      <div style={{ position: "absolute", inset: 0, background: prefs.bgColor }} />
+    ) : prefs.bgType === "gradient" ? (
+      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(160deg, ${prefs.bgColor} 0%, ${prefs.bgColor2} 100%)` }} />
+    ) : prefs.bgType === "image" && prefs.bgImageUrl ? (
+      <img
+        src={prefs.bgImageUrl}
+        alt=""
+        style={{
+          position: "absolute",
+          inset: "-5%",
+          width: "110%",
+          height: "110%",
+          objectFit: "cover",
+          filter: prefs.blurScenery > 0 ? "blur(var(--blur-scenery))" : undefined,
+        }}
+      />
+    ) : null;
 
   return (
     <div data-accent={accentAttr} data-radius={prefs.radius} style={rootStyle}>
-      {prefs.bgCover ? (
-        <img
-          key={track.cover}
-          src={track.cover}
-          alt=""
-          className="muza-fade"
-          style={{
-            position: "absolute",
-            inset: "-10%",
-            width: "120%",
-            height: "120%",
-            objectFit: "cover",
-            filter: "blur(var(--blur-scenery))",
-            opacity: 0.22,
-          }}
-        />
+      {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
+      {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
+      {backdrop}
+      {backdrop && prefs.bgDim > 0 ? (
+        <div style={{ position: "absolute", inset: 0, background: `rgba(0, 0, 0, ${prefs.bgDim / 100})` }} />
       ) : null}
 
       <div
@@ -934,6 +995,8 @@ function Player({
         onSeek={pb.seek}
         onSeekLine={seekLine}
         onClose={() => setExpanded(false)}
+        visualizer={prefs.visualizer}
+        getAnalyser={pb.getAnalyser}
       />
     </div>
   );

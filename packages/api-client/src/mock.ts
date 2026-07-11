@@ -10,6 +10,7 @@ import {
   type HomeSection,
   type ImportReport,
   type Lyrics,
+  type MarketTheme,
   type PlaylistDetail,
   type PlaylistMeta,
   type RecipeEnvelope,
@@ -237,6 +238,21 @@ export class MockMuzaApi implements MuzaApi {
   async updateRecsSettings(): Promise<RecsSettings> {
     return this.getRecsSettings();
   }
+
+  // Маркетплейс тем в моке недоступен (нужен сервер)
+  async getMarketThemes(): Promise<MarketTheme[]> {
+    return [];
+  }
+
+  async publishMarketTheme(): Promise<MarketTheme> {
+    throw new Error("Мок: маркетплейс живёт на сервере");
+  }
+
+  async installMarketTheme(): Promise<MarketTheme> {
+    throw new Error("Мок: маркетплейс живёт на сервере");
+  }
+
+  async deleteMarketTheme(): Promise<void> {}
 
   // Админка в моке недоступна
   async adminPing(): Promise<boolean> {

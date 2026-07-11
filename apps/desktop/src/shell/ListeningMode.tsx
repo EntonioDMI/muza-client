@@ -3,6 +3,7 @@ import { IconButton, Lyrics, Slider } from "@muza/ui";
 import type { LyricLine } from "../data/demo";
 import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
+import { Visualizer } from "./Visualizer";
 
 /** Полноэкранный «режим прослушивания» — караоке-оверлей («ночной вайб»). */
 export function ListeningMode({
@@ -18,6 +19,8 @@ export function ListeningMode({
   onSeek,
   onSeekLine,
   onClose,
+  visualizer = "off",
+  getAnalyser,
 }: {
   open: boolean;
   track: PlayerTrack;
@@ -32,6 +35,9 @@ export function ListeningMode({
   onSeek: (v: number) => void;
   onSeekLine: (i: number) => void;
   onClose: () => void;
+  /** Визуализатор (Stage 6): бары/волна поверх сцены, за контентом. */
+  visualizer?: "bars" | "wave" | "off";
+  getAnalyser?: () => AnalyserNode | null;
 }) {
   const [calm, setCalm] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,6 +102,24 @@ export function ListeningMode({
           WebkitBackdropFilter: "blur(var(--blur-glass))",
         }}
       ></div>
+
+      {/* Визуализатор — за контентом, клики не перехватывает */}
+      {visualizer !== "off" && getAnalyser ? (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: visualizer === "bars" ? "24vh" : "34vh",
+            pointerEvents: "none",
+            opacity: 0.5,
+          }}
+        >
+          <Visualizer mode={visualizer} active={open} getAnalyser={getAnalyser} />
+        </div>
+      ) : null}
 
       <div
         style={{

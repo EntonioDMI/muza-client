@@ -35,6 +35,7 @@ export class AudioEngine {
   private active = 0;
   private eq: BiquadFilterNode[] = [];
   private master: GainNode | null = null;
+  private analyserNode: AnalyserNode | null = null;
   private mode: "unknown" | "webaudio" | "plain" = "unknown";
 
   private volume = 64;
@@ -100,7 +101,13 @@ export class AudioEngine {
     for (let i = 0; i < this.eq.length - 1; i++) this.eq[i].connect(this.eq[i + 1]);
     this.master = ctx.createGain();
     this.eq[this.eq.length - 1].connect(this.master);
-    this.master.connect(ctx.destination);
+    // Визуализатор (Stage 6): analyser в конце цепи — видит уже
+    // отэквалайзенный и отнормализованный сигнал, как его слышит юзер
+    this.analyserNode = ctx.createAnalyser();
+    this.analyserNode.fftSize = 2048;
+    this.analyserNode.smoothingTimeConstant = 0.82;
+    this.master.connect(this.analyserNode);
+    this.analyserNode.connect(ctx.destination);
     this.master.gain.value = volCurve(this.volume);
     for (const slot of this.slots) {
       slot.source = ctx.createMediaElementSource(slot.el);
@@ -246,6 +253,12 @@ export class AudioEngine {
     this.eqOn = on;
     this.eqBands = bands;
     this.applyEq();
+  }
+
+  /** Анализатор для визуализатора (Stage 6); null — plain-режим или граф
+   *  ещё не построен (демо-треки, браузер без CORS-чистого источника). */
+  analyser(): AnalyserNode | null {
+    return this.analyserNode;
   }
 
   /** Множитель нормализации по integrated loudness (EBU R128 → −14 LUFS). */

@@ -185,6 +185,21 @@ export interface RecsSettings {
   tauScaleMax: number;
 }
 
+// ── Маркетплейс тем (Stage 6) ──────────────────────────────────────
+
+/** Опубликованная тема оформления. payload — токены клиента (THEME_KEYS
+ *  + customCss); клиент фильтрует чужие поля при установке. */
+export interface MarketTheme {
+  id: string;
+  name: string;
+  author: string;
+  installs: number;
+  createdAt: string;
+  payload: Record<string, unknown>;
+  /** Опубликована текущим пользователем — можно снять с публикации. */
+  isMine: boolean;
+}
+
 // ── Админ-панель (Stage 5) ─────────────────────────────────────────
 
 export interface AdminOverview {

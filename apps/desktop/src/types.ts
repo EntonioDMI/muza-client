@@ -9,7 +9,38 @@ export interface Prefs {
   /** Hex свого акцента; остальные акцент-токены выводятся из него (lib/accent). */
   customAccent: string;
   radius: "mild" | "soft" | "round";
-  bgCover: boolean;
+  /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
+   *  картинка по URL. Старое поле bgCover=true мигрирует в "cover". */
+  bgType: "none" | "cover" | "color" | "gradient" | "image";
+  bgColor: string;
+  /** Второй цвет градиента (bgType=gradient). */
+  bgColor2: string;
+  /** URL картинки фона (bgType=image). */
+  bgImageUrl: string;
+  /** Затемнение фона поверх (0–80%): контент читается на любом фоне. */
+  bgDim: number;
+  /** Размытие фона-обложки/картинки, px (--blur-scenery). */
+  blurScenery: number;
+  /** Базовые bg-слои: графит (дефолт ДС) / тёплый / холодный / AMOLED. */
+  baseBg: "graphite" | "warm" | "cold" | "amoled";
+  /** Приглушение вторичного текста, % непрозрачности text-2 (40–80). */
+  textDim: number;
+  /** Масштаб интерфейса, % (85–125) — zoom на корне. */
+  uiScale: number;
+  /** Скорость анимаций: множитель к --dur-* (быстрее/стандарт/мягче). */
+  animSpeed: "fast" | "normal" | "slow";
+  /** Размер караоке-строки, px (--fs-karaoke). */
+  karaokeSize: number;
+  /** Ширины зон, px (узкое окно всё равно пережимает сайдбар). */
+  wSidebar: number;
+  wNowPlaying: number;
+  /** Экран при запуске. */
+  startView: "home" | "search" | "favorites" | "library";
+  /** CSS-тир (опасная зона): свой CSS поверх всех токенов. */
+  customCssOn: boolean;
+  customCss: string;
+  /** Визуализатор в режиме прослушивания (встроенное расширение). */
+  visualizer: "bars" | "wave" | "off";
   autostart: boolean;
   /** Иконка Muza в области уведомлений. */
   tray: boolean;
@@ -52,7 +83,23 @@ export const DEFAULT_PREFS: Prefs = {
   accent: "blue",
   customAccent: "#22c55e",
   radius: "soft",
-  bgCover: false,
+  bgType: "none",
+  bgColor: "#1a1815",
+  bgColor2: "#101418",
+  bgImageUrl: "",
+  bgDim: 40,
+  blurScenery: 64,
+  baseBg: "graphite",
+  textDim: 62,
+  uiScale: 100,
+  animSpeed: "normal",
+  karaokeSize: 56,
+  wSidebar: 280,
+  wNowPlaying: 340,
+  startView: "home",
+  customCssOn: false,
+  customCss: "",
+  visualizer: "bars",
   autostart: true,
   tray: true,
   closeToTray: true,

@@ -4,6 +4,7 @@ import {
   type AdminHealth,
   type AdminOverview,
   type AdminUsers,
+  type MarketTheme,
   type Annotation,
   type Annotations,
   type Credentials,
@@ -71,6 +72,28 @@ function trackFromWire(wire: TrackWire): Track {
     loudness: wire.loudness,
     localHash: wire.local_hash ?? null,
   });
+}
+
+interface MarketThemeWire {
+  id: string;
+  name: string;
+  author: string;
+  installs: number;
+  created_at: string;
+  payload: Record<string, unknown>;
+  is_mine: boolean;
+}
+
+function marketThemeFromWire(w: MarketThemeWire): MarketTheme {
+  return {
+    id: w.id,
+    name: w.name,
+    author: w.author,
+    installs: w.installs,
+    createdAt: w.created_at,
+    payload: w.payload ?? {},
+    isMine: w.is_mine,
+  };
 }
 
 interface RecsSettingsWire {
@@ -510,6 +533,34 @@ export class HttpMuzaApi implements MuzaApi {
         body: JSON.stringify(body),
       }),
     );
+  }
+
+  // ---------- Маркетплейс тем (Stage 6) ----------
+
+  async getMarketThemes(): Promise<MarketTheme[]> {
+    const out = await this.authedRequest<{ themes: MarketThemeWire[] }>("/market/themes");
+    return out.themes.map(marketThemeFromWire);
+  }
+
+  async publishMarketTheme(name: string, payload: Record<string, unknown>): Promise<MarketTheme> {
+    return marketThemeFromWire(
+      await this.authedRequest<MarketThemeWire>("/market/themes", {
+        method: "POST",
+        body: JSON.stringify({ name, payload }),
+      }),
+    );
+  }
+
+  async installMarketTheme(id: string): Promise<MarketTheme> {
+    return marketThemeFromWire(
+      await this.authedRequest<MarketThemeWire>(`/market/themes/${encodeURIComponent(id)}/install`, {
+        method: "POST",
+      }),
+    );
+  }
+
+  async deleteMarketTheme(id: string): Promise<void> {
+    await this.authedRequest(`/market/themes/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   // ---------- Админ-панель (Stage 5) ----------
