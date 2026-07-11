@@ -9,6 +9,8 @@ export interface SidebarPlaylist {
   name: string;
   meta: string;
   cover?: string;
+  /** Stage 7: совместный плейлист — иконка «люди» вместо нот. */
+  shared?: boolean;
 }
 
 const NAV_H = 48;
@@ -79,11 +81,13 @@ function PlaylistRow({
   cover,
   name,
   meta,
+  shared,
   onClick,
 }: {
   cover?: string;
   name: string;
   meta: string;
+  shared?: boolean;
   onClick?: () => void;
 }) {
   const [hover, setHover] = useState(false);
@@ -122,7 +126,7 @@ function PlaylistRow({
             justifyContent: "center",
           }}
         >
-          <Icon name="list-music" size={18} color="var(--accent-text)" />
+          <Icon name={shared ? "users" : "list-music"} size={18} color="var(--accent-text)" />
         </span>
       )}
       <span style={{ minWidth: 0 }}>
@@ -249,7 +253,7 @@ export function Sidebar({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", scrollbarWidth: "none" }}>
         {playlists.map((p) => (
-          <PlaylistRow key={p.id} cover={p.cover} name={p.name} meta={p.meta} onClick={() => onOpenPlaylist(p.id)} />
+          <PlaylistRow key={p.id} cover={p.cover} name={p.name} meta={p.meta} shared={p.shared} onClick={() => onOpenPlaylist(p.id)} />
         ))}
       </div>
       <div style={{ marginTop: "auto" }}>

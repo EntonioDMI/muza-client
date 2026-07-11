@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow } from "@muza/ui";
+import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, Tooltip } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { localList } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
+import { CollabDialog } from "../shell/CollabDialog";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
  *  переименование, удаление, убрать трек. Stage 3: клик — играет,
- *  очередь = плейлист. */
+ *  очередь = плейлист. Stage 7: совместный доступ по инвайт-коду. */
 export function PlaylistView({
   api,
   playlistId,
+  userId,
   likes,
   currentId,
   playing,
@@ -18,12 +20,15 @@ export function PlaylistView({
   onLike,
   onNotify,
   onVersions,
+  onShare,
   onSaveOffline,
   onChanged,
   onDeleted,
 }: {
   api: MuzaApi;
   playlistId: string;
+  /** id текущего пользователя (Stage 7: «(ты)» и выход из совместного). */
+  userId: string;
   likes: string[];
   currentId: string;
   playing: boolean;
@@ -33,6 +38,8 @@ export function PlaylistView({
   onNotify: (text: string, icon?: string) => void;
   /** Открыть «Версии и источники» трека (Stage 4). */
   onVersions: (t: Track) => void;
+  /** Шеринг-карточка плейлиста (Stage 7). */
+  onShare: (detail: PlaylistDetail) => void;
   /** «Сохранить оффлайн» весь плейлист (Stage 4): пины + фоновая догрузка. */
   onSaveOffline: (tracks: Track[]) => void;
   /** Состав/имя изменились — сайдбару пора перечитать список. */
@@ -52,6 +59,8 @@ export function PlaylistView({
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Stage 7: диалог «Совместный доступ» (код, участники, выход)
+  const [collabOpen, setCollabOpen] = useState(false);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: Track | null }>({
     open: false,
     x: 0,
@@ -135,9 +144,34 @@ export function PlaylistView({
             {detail?.name ?? "…"}
           </h1>
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-            {detail ? `${detail.tracks.length} тр. · ${offline ? "оффлайн-копия" : "синхронизируется"}` : "загрузка"}
+            {detail
+              ? [
+                  `${detail.tracks.length} тр.`,
+                  detail.isOwner
+                    ? detail.collaborators.length > 0
+                      ? `совместный · ${detail.collaborators.length + 1} уч.`
+                      : null
+                    : `совместный · от ${detail.ownerUsername}`,
+                  offline ? "оффлайн-копия" : "синхронизируется",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : "загрузка"}
           </div>
         </div>
+        <Tooltip label="Совместный доступ">
+          <IconButton icon="users" size="sm" label="Совместный доступ" onClick={() => setCollabOpen(true)} />
+        </Tooltip>
+        <Tooltip label="Поделиться">
+          <IconButton
+            icon="share-2"
+            size="sm"
+            label="Поделиться"
+            onClick={() => {
+              if (detail) onShare(detail);
+            }}
+          />
+        </Tooltip>
         <IconButton
           icon="download"
           size="sm"
@@ -146,16 +180,20 @@ export function PlaylistView({
             if (detail) onSaveOffline(detail.tracks);
           }}
         />
-        <IconButton
-          icon="pencil"
-          size="sm"
-          label="Переименовать"
-          onClick={() => {
-            setRenameValue(detail?.name ?? "");
-            setRenameOpen(true);
-          }}
-        />
-        <IconButton icon="trash-2" size="sm" label="Удалить плейлист" onClick={() => setDeleteOpen(true)} />
+        {detail?.isOwner !== false ? (
+          <>
+            <IconButton
+              icon="pencil"
+              size="sm"
+              label="Переименовать"
+              onClick={() => {
+                setRenameValue(detail?.name ?? "");
+                setRenameOpen(true);
+              }}
+            />
+            <IconButton icon="trash-2" size="sm" label="Удалить плейлист" onClick={() => setDeleteOpen(true)} />
+          </>
+        ) : null}
       </div>
 
       {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-body)" }}>{error}</div> : null}
@@ -164,13 +202,23 @@ export function PlaylistView({
         {(detail?.tracks ?? []).map((t, i) => {
           // локальный трек с другого устройства: файла здесь нет — серый
           const missingLocal = t.localHash !== null && !localHashes.has(t.localHash) && t.sources.every((s) => s === "local");
+          // Stage 7: в совместных плейлистах видно, кто добавил трек
+          const isShared = detail ? !detail.isOwner || detail.collaborators.length > 0 : false;
+          const adder = isShared ? detail?.addedBy[t.id] : undefined;
+          const artistLine = [
+            t.artist,
+            missingLocal ? "локальный, нет на этом устройстве" : null,
+            adder ? `добавил ${adder}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ");
           return (
             <div key={t.id} style={missingLocal ? { opacity: 0.45 } : undefined}>
               <TrackRow
                 index={i + 1}
                 cover={t.coverUrl ?? undefined}
                 title={t.title}
-                artist={missingLocal ? `${t.artist} · локальный, нет на этом устройстве` : t.artist}
+                artist={artistLine}
                 duration={fmtTime(t.durationSec)}
                 liked={likes.includes(t.id)}
                 active={currentId === t.id}
@@ -225,6 +273,25 @@ export function PlaylistView({
             },
           },
         ]}
+      />
+
+      <CollabDialog
+        api={api}
+        open={collabOpen}
+        playlistId={playlistId}
+        detail={detail}
+        myUserId={userId}
+        onClose={() => setCollabOpen(false)}
+        onNotify={onNotify}
+        onChanged={() => {
+          void load();
+          onChanged();
+        }}
+        onLeft={() => {
+          setCollabOpen(false);
+          onChanged();
+          onDeleted(); // страница закрывается, как при удалении
+        }}
       />
 
       <Dialog

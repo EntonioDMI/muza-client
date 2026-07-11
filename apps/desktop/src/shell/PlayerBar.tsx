@@ -69,6 +69,8 @@ export function PlayerBar({
   sleepActive,
   sleepLabel,
   onSleep,
+  jamActive,
+  onJam,
 }: {
   track: PlayerTrack;
   playing: boolean;
@@ -100,6 +102,9 @@ export function PlayerBar({
   sleepActive: boolean;
   sleepLabel: string;
   onSleep: () => void;
+  /** Jam (Stage 7): активная сессия подсвечивает кнопку. */
+  jamActive: boolean;
+  onJam: () => void;
 }) {
   const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
   return (
@@ -230,6 +235,9 @@ export function PlayerBar({
         </Tooltip>
         <Tooltip label="Текст">
           <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label="Текст" onClick={onLyrics} />
+        </Tooltip>
+        <Tooltip label={jamActive ? "Jam идёт — открыть" : "Jam: слушать вместе"}>
+          <IconButton icon="radio-tower" size="sm" active={jamActive} label="Jam: слушать вместе" onClick={onJam} />
         </Tooltip>
         <Tooltip label="Очередь">
           <IconButton icon="list-music" size="sm" active={queueOn} label="Очередь" onClick={onQueue} />

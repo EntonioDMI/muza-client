@@ -28,6 +28,7 @@ export function LibraryView({
   onAddToPlaylist,
   onAddLink,
   onImport,
+  onJoinCode,
   onNotify,
 }: {
   api: MuzaApi;
@@ -46,6 +47,8 @@ export function LibraryView({
   onAddLink: () => void;
   /** «Импорт плейлиста» (Stage 4, Spotify/YT/Apple). */
   onImport: () => void;
+  /** Вход в совместный плейлист по инвайт-коду (Stage 7). */
+  onJoinCode: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
   const chips = localAvailable()
@@ -109,6 +112,9 @@ export function LibraryView({
             </Button>
             <Button variant="secondary" icon="import" onClick={onImport}>
               Импорт плейлиста
+            </Button>
+            <Button variant="secondary" icon="users" onClick={onJoinCode}>
+              По коду
             </Button>
           </>
         ) : null}

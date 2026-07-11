@@ -82,12 +82,16 @@ export interface ImportReport {
  *  catalog — мгновенно, только по накопленной базе (живой ввод). */
 export type SearchScope = "full" | "catalog";
 
-/** Плейлист в списке (без треков). */
+/** Плейлист в списке (без треков). Stage 7: свои + совместные
+ *  (role=collaborator — вошёл по инвайт-коду). */
 export const PlaylistMetaSchema = z.object({
   id: z.string(),
   name: z.string(),
   trackCount: z.number(),
   createdAt: z.string(),
+  role: z.enum(["owner", "collaborator"]).default("owner"),
+  ownerUsername: z.string().default(""),
+  collaboratorsCount: z.number().default(0),
 });
 export type PlaylistMeta = z.infer<typeof PlaylistMetaSchema>;
 
@@ -95,6 +99,14 @@ export const PlaylistDetailSchema = z.object({
   id: z.string(),
   name: z.string(),
   tracks: z.array(TrackSchema),
+  // Stage 7: совместный доступ
+  isOwner: z.boolean().default(true),
+  ownerUsername: z.string().default(""),
+  /** Инвайт-код приходит только владельцу; null = кода нет / не владелец. */
+  inviteCode: z.string().nullable().default(null),
+  collaborators: z.array(z.object({ id: z.string(), username: z.string() })).default([]),
+  /** Кто добавил трек (совместным видно): trackId → username. */
+  addedBy: z.record(z.string(), z.string()).default({}),
 });
 export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>;
 
@@ -198,6 +210,64 @@ export interface MarketTheme {
   payload: Record<string, unknown>;
   /** Опубликована текущим пользователем — можно снять с публикации. */
   isMine: boolean;
+}
+
+// ── Jam: слушать вместе (Stage 7) ──────────────────────────────────
+
+export interface JamMember {
+  id: string;
+  username: string;
+}
+
+/** Состояние воспроизведения хоста. trackId=null — хост слушает трек,
+ *  недоступный гостям (демо/локальный): гость на паузе с подписью. */
+export interface JamState {
+  trackId: string | null;
+  title: string;
+  artist: string;
+  coverUrl: string | null;
+  durationSec: number;
+  posSec: number;
+  playing: boolean;
+  /** epoch ms сервера — гость экстраполирует позицию от этой отметки. */
+  updatedAt: number;
+}
+
+export interface JamSnapshot {
+  code: string;
+  host: JamMember;
+  members: JamMember[];
+  state: JamState | null;
+  isHost: boolean;
+}
+
+/** События SSE-потока jam. Первым всегда приходит snapshot. */
+export type JamEvent =
+  | { type: "snapshot"; snapshot: JamSnapshot }
+  | { type: "state"; state: JamState }
+  | { type: "members"; members: JamMember[] }
+  | { type: "queueAdd"; track: Track; by: string }
+  | { type: "ended" };
+
+// ── Wrapped «Итоги года» (Stage 7) ─────────────────────────────────
+
+export interface Wrapped {
+  year: number;
+  totalPlays: number;
+  totalMs: number;
+  uniqueTracks: number;
+  uniqueArtists: number;
+  activeDays: number;
+  longestStreakDays: number;
+  peakDay: { date: string; ms: number } | null;
+  /** Час суток (0–23, в поясе пользователя) с максимумом прослушиваний. */
+  topHour: number | null;
+  favoritesAdded: number;
+  topTracks: { track: Track; plays: number; playedMs: number }[];
+  topArtists: { artist: string; plays: number; playedMs: number }[];
+  /** Первый completed-трек года — «год начался с…». */
+  firstTrack: Track | null;
+  firstPlayAt: string | null;
 }
 
 // ── Админ-панель (Stage 5) ─────────────────────────────────────────

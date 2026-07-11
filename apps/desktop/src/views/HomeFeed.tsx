@@ -46,6 +46,7 @@ export function HomeFeed({
   onTrackMenu,
   onCatalogMenu,
   onOpen,
+  onOpenWrapped,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, лента недоступна. */
@@ -63,6 +64,8 @@ export function HomeFeed({
   /** «⋯» на каталожном треке (плейлист/версии/оффлайн/радио). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   onOpen: (v: View) => void;
+  /** Открыть Wrapped «Итоги года» (Stage 7); undefined у анонима. */
+  onOpenWrapped?: () => void;
 }) {
   // Честные состояния (UX-доводка): loading / live / offline-копия /
   // сервер недоступен / пустая лента нового аккаунта / демо (аноним)
@@ -116,6 +119,51 @@ export function HomeFeed({
 
       {feed.offline ? (
         <Notice icon="cloud-off" text="Оффлайн-копия ленты: сервер сейчас недоступен, показано последнее загруженное." action="Обновить" onAction={load} />
+      ) : null}
+
+      {/* Wrapped (Stage 7): баннер-вход в «Итоги года» при серверной сессии */}
+      {canSearch && onOpenWrapped ? (
+        <button
+          type="button"
+          onClick={onOpenWrapped}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--sp-4)",
+            padding: "var(--sp-4) var(--sp-5)",
+            border: "none",
+            borderRadius: "var(--r-md)",
+            background:
+              "linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, var(--surface-1)), var(--surface-1) 70%)",
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: "var(--r-sm)",
+              background: "var(--accent-soft)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flex: "none",
+            }}
+          >
+            <Icon name="sparkles" size={20} color="var(--accent-text)" />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 700, color: "var(--text-1)" }}>
+              Твои итоги {new Date().getFullYear()}
+            </span>
+            <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
+              Минуты, треки и артисты года — и карточка, которой не стыдно делиться
+            </span>
+          </span>
+          <Icon name="chevron-right" size={18} color="var(--text-3)" />
+        </button>
       ) : null}
 
       {feed.status === "loading" ? (

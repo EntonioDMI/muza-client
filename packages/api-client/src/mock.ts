@@ -9,6 +9,8 @@ import {
   type HistoryItem,
   type HomeSection,
   type ImportReport,
+  type JamEvent,
+  type JamSnapshot,
   type Lyrics,
   type MarketTheme,
   type PlaylistDetail,
@@ -21,6 +23,7 @@ import {
   SessionSchema,
   type Track,
   type TrackSource,
+  type Wrapped,
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
@@ -172,7 +175,15 @@ export class MockMuzaApi implements MuzaApi {
   }
 
   async createPlaylist(name: string): Promise<PlaylistMeta> {
-    const p: PlaylistMeta = { id: crypto.randomUUID(), name, trackCount: 0, createdAt: new Date().toISOString() };
+    const p: PlaylistMeta = {
+      id: crypto.randomUUID(),
+      name,
+      trackCount: 0,
+      createdAt: new Date().toISOString(),
+      role: "owner",
+      ownerUsername: "",
+      collaboratorsCount: 0,
+    };
     this.playlists.set(p.id, p);
     return p;
   }
@@ -180,7 +191,57 @@ export class MockMuzaApi implements MuzaApi {
   async getPlaylist(id: string): Promise<PlaylistDetail> {
     const p = this.playlists.get(id);
     if (!p) throw new Error("Плейлист не найден");
-    return { id: p.id, name: p.name, tracks: [] };
+    return {
+      id: p.id,
+      name: p.name,
+      tracks: [],
+      isOwner: true,
+      ownerUsername: "",
+      inviteCode: null,
+      collaborators: [],
+      addedBy: {},
+    };
+  }
+
+  // Совместные плейлисты и Jam живут на сервере (Stage 7)
+  async createPlaylistInvite(): Promise<{ code: string }> {
+    throw new Error("Мок: совместный доступ живёт на сервере");
+  }
+
+  async revokePlaylistInvite(): Promise<void> {}
+
+  async joinPlaylist(): Promise<PlaylistMeta> {
+    throw new Error("Мок: совместный доступ живёт на сервере");
+  }
+
+  async removePlaylistMember(): Promise<void> {}
+
+  async createJam(): Promise<JamSnapshot> {
+    throw new Error("Мок: Jam живёт на сервере");
+  }
+
+  async getJam(): Promise<JamSnapshot> {
+    throw new Error("Мок: Jam живёт на сервере");
+  }
+
+  async joinJam(): Promise<JamSnapshot> {
+    throw new Error("Мок: Jam живёт на сервере");
+  }
+
+  async leaveJam(): Promise<void> {}
+
+  async pushJamState(): Promise<void> {}
+
+  async addJamTrack(): Promise<void> {}
+
+  subscribeJamEvents(_code: string, onEvent: (event: JamEvent) => void): () => void {
+    // мок: событий нет — сразу честный финал
+    onEvent({ type: "ended" });
+    return () => undefined;
+  }
+
+  async getWrapped(): Promise<Wrapped> {
+    throw new Error("Мок: итоги живут на сервере");
   }
 
   async renamePlaylist(id: string, name: string): Promise<void> {

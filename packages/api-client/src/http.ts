@@ -11,9 +11,14 @@ import {
   type HistoryItem,
   type HomeSection,
   type ImportReport,
+  type JamEvent,
+  type JamSnapshot,
+  type JamState,
   type Lyrics,
   type PlaylistDetail,
+  PlaylistDetailSchema,
   type PlaylistMeta,
+  PlaylistMetaSchema,
   type RecipeEnvelope,
   type RecsSettings,
   type RegisterStatus,
@@ -26,6 +31,7 @@ import {
   TrackSchema,
   type TrackSource,
   TrackSourceSchema,
+  type Wrapped,
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
@@ -72,6 +78,94 @@ function trackFromWire(wire: TrackWire): Track {
     loudness: wire.loudness,
     localHash: wire.local_hash ?? null,
   });
+}
+
+/** Проводной формат плейлиста (Stage 7: роль/владелец/участники). */
+interface PlaylistMetaWire {
+  id: string;
+  name: string;
+  track_count: number;
+  created_at: string;
+  role?: "owner" | "collaborator";
+  owner_username?: string;
+  collaborators_count?: number;
+}
+
+function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
+  return PlaylistMetaSchema.parse({
+    id: w.id,
+    name: w.name,
+    trackCount: w.track_count,
+    createdAt: w.created_at,
+    role: w.role ?? "owner",
+    ownerUsername: w.owner_username ?? "",
+    collaboratorsCount: w.collaborators_count ?? 0,
+  });
+}
+
+/** Состояние jam (snake_case сервера) → JamState. */
+function jamStateFromWire(w: {
+  track_id: string | null;
+  title: string;
+  artist: string;
+  cover_url: string | null;
+  duration_sec: number;
+  pos_sec: number;
+  playing: boolean;
+  updated_at: number;
+}): JamState {
+  return {
+    trackId: w.track_id,
+    title: w.title,
+    artist: w.artist,
+    coverUrl: w.cover_url,
+    durationSec: w.duration_sec,
+    posSec: w.pos_sec,
+    playing: w.playing,
+    updatedAt: w.updated_at,
+  };
+}
+
+interface JamSnapshotWire {
+  code: string;
+  host: { id: string; username: string };
+  members: { id: string; username: string }[];
+  state: Parameters<typeof jamStateFromWire>[0] | null;
+  is_host: boolean;
+}
+
+function jamSnapshotFromWire(w: JamSnapshotWire): JamSnapshot {
+  return {
+    code: w.code,
+    host: w.host,
+    members: w.members,
+    state: w.state ? jamStateFromWire(w.state) : null,
+    isHost: w.is_host,
+  };
+}
+
+/** Кадр SSE → JamEvent; ping и мусор — null. */
+function parseJamEvent(data: string): JamEvent | null {
+  let wire: Record<string, unknown>;
+  try {
+    wire = JSON.parse(data) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  switch (wire.type) {
+    case "snapshot":
+      return { type: "snapshot", snapshot: jamSnapshotFromWire(wire.snapshot as JamSnapshotWire) };
+    case "state":
+      return { type: "state", state: jamStateFromWire(wire.state as Parameters<typeof jamStateFromWire>[0]) };
+    case "members":
+      return { type: "members", members: wire.members as { id: string; username: string }[] };
+    case "queue_add":
+      return { type: "queueAdd", track: trackFromWire(wire.track as TrackWire), by: wire.by as string };
+    case "ended":
+      return { type: "ended" };
+    default:
+      return null; // ping и неизвестные типы
+  }
 }
 
 interface MarketThemeWire {
@@ -327,18 +421,13 @@ export class HttpMuzaApi implements MuzaApi {
 
   async importPlaylist(url: string): Promise<ImportReport> {
     const out = await this.authedRequest<{
-      playlist: { id: string; name: string; track_count: number; created_at: string };
+      playlist: PlaylistMetaWire;
       total: number;
       matched: number;
       unmatched: { artist: string; title: string }[];
     }>("/me/playlists/import", { method: "POST", body: JSON.stringify({ url }) });
     return {
-      playlist: {
-        id: out.playlist.id,
-        name: out.playlist.name,
-        trackCount: out.playlist.track_count,
-        createdAt: out.playlist.created_at,
-      },
+      playlist: playlistMetaFromWire(out.playlist),
       total: out.total,
       matched: out.matched,
       unmatched: out.unmatched,
@@ -361,25 +450,67 @@ export class HttpMuzaApi implements MuzaApi {
   }
 
   async getPlaylists(): Promise<PlaylistMeta[]> {
-    const rows = await this.authedRequest<{ id: string; name: string; track_count: number; created_at: string }[]>(
-      "/me/playlists",
-    );
-    return rows.map((p) => ({ id: p.id, name: p.name, trackCount: p.track_count, createdAt: p.created_at }));
+    const rows = await this.authedRequest<PlaylistMetaWire[]>("/me/playlists");
+    return rows.map(playlistMetaFromWire);
   }
 
   async createPlaylist(name: string): Promise<PlaylistMeta> {
-    const p = await this.authedRequest<{ id: string; name: string; track_count: number; created_at: string }>(
-      "/me/playlists",
-      { method: "POST", body: JSON.stringify({ name }) },
-    );
-    return { id: p.id, name: p.name, trackCount: p.track_count, createdAt: p.created_at };
+    const p = await this.authedRequest<PlaylistMetaWire>("/me/playlists", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    return playlistMetaFromWire(p);
   }
 
   async getPlaylist(id: string): Promise<PlaylistDetail> {
-    const p = await this.authedRequest<{ id: string; name: string; tracks: TrackWire[] }>(
-      `/me/playlists/${encodeURIComponent(id)}`,
+    const p = await this.authedRequest<{
+      id: string;
+      name: string;
+      tracks: TrackWire[];
+      is_owner?: boolean;
+      owner_username?: string;
+      invite_code?: string | null;
+      collaborators?: { id: string; username: string }[];
+      added_by?: Record<string, string>;
+    }>(`/me/playlists/${encodeURIComponent(id)}`);
+    return PlaylistDetailSchema.parse({
+      id: p.id,
+      name: p.name,
+      tracks: p.tracks.map(trackFromWire),
+      isOwner: p.is_owner ?? true,
+      ownerUsername: p.owner_username ?? "",
+      inviteCode: p.invite_code ?? null,
+      collaborators: p.collaborators ?? [],
+      addedBy: p.added_by ?? {},
+    });
+  }
+
+  // ---------- Совместные плейлисты (Stage 7) ----------
+
+  async createPlaylistInvite(playlistId: string): Promise<{ code: string }> {
+    return this.authedRequest<{ code: string }>(
+      `/me/playlists/${encodeURIComponent(playlistId)}/invite`,
+      { method: "POST" },
     );
-    return { id: p.id, name: p.name, tracks: p.tracks.map(trackFromWire) };
+  }
+
+  async revokePlaylistInvite(playlistId: string): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(playlistId)}/invite`, { method: "DELETE" });
+  }
+
+  async joinPlaylist(code: string): Promise<PlaylistMeta> {
+    const p = await this.authedRequest<PlaylistMetaWire>("/me/playlists/join", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+    return playlistMetaFromWire(p);
+  }
+
+  async removePlaylistMember(playlistId: string, userId: string): Promise<void> {
+    await this.authedRequest(
+      `/me/playlists/${encodeURIComponent(playlistId)}/members/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async renamePlaylist(id: string, name: string): Promise<void> {
@@ -533,6 +664,166 @@ export class HttpMuzaApi implements MuzaApi {
         body: JSON.stringify(body),
       }),
     );
+  }
+
+  // ---------- Jam: слушать вместе (Stage 7) ----------
+
+  async createJam(): Promise<JamSnapshot> {
+    return jamSnapshotFromWire(await this.authedRequest<JamSnapshotWire>("/jam", { method: "POST" }));
+  }
+
+  async getJam(code: string): Promise<JamSnapshot> {
+    return jamSnapshotFromWire(await this.authedRequest<JamSnapshotWire>(`/jam/${encodeURIComponent(code)}`));
+  }
+
+  async joinJam(code: string): Promise<JamSnapshot> {
+    return jamSnapshotFromWire(
+      await this.authedRequest<JamSnapshotWire>(`/jam/${encodeURIComponent(code)}/join`, { method: "POST" }),
+    );
+  }
+
+  async leaveJam(code: string): Promise<void> {
+    await this.authedRequest(`/jam/${encodeURIComponent(code)}/leave`, { method: "POST" });
+  }
+
+  async pushJamState(
+    code: string,
+    state: {
+      trackId: string | null;
+      title: string;
+      artist: string;
+      coverUrl: string | null;
+      durationSec: number;
+      posSec: number;
+      playing: boolean;
+    },
+  ): Promise<void> {
+    await this.authedRequest(`/jam/${encodeURIComponent(code)}/state`, {
+      method: "PUT",
+      body: JSON.stringify({
+        track_id: state.trackId,
+        title: state.title,
+        artist: state.artist,
+        cover_url: state.coverUrl,
+        duration_sec: state.durationSec,
+        pos_sec: state.posSec,
+        playing: state.playing,
+      }),
+    });
+  }
+
+  async addJamTrack(code: string, trackId: string): Promise<void> {
+    await this.authedRequest(`/jam/${encodeURIComponent(code)}/queue`, {
+      method: "POST",
+      body: JSON.stringify({ track_id: trackId }),
+    });
+  }
+
+  /** SSE-ридер jam-событий: fetch-стрим (EventSource не умеет Authorization),
+   *  разбор text/event-stream руками, авто-переподключение через 2с.
+   *  404/`ended` — финал (jam завершён), подписчик получает ended один раз. */
+  subscribeJamEvents(code: string, onEvent: (event: JamEvent) => void): () => void {
+    let stopped = false;
+    let controller: AbortController | null = null;
+    const finish = () => {
+      if (stopped) return;
+      stopped = true;
+      onEvent({ type: "ended" });
+    };
+
+    const run = async () => {
+      while (!stopped) {
+        try {
+          let session = this.load();
+          if (!session || session.user.anonymous) return finish();
+          controller = new AbortController();
+          let res = await fetch(`${this.baseUrl}/jam/${encodeURIComponent(code)}/events`, {
+            headers: { Authorization: `Bearer ${session.accessToken}`, Accept: "text/event-stream" },
+            signal: controller.signal,
+          });
+          if (res.status === 401 && session.refreshToken) {
+            session = await this.refreshPair(session.refreshToken);
+            res = await fetch(`${this.baseUrl}/jam/${encodeURIComponent(code)}/events`, {
+              headers: { Authorization: `Bearer ${session.accessToken}`, Accept: "text/event-stream" },
+              signal: controller.signal,
+            });
+          }
+          if (res.status === 404) return finish();
+          if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let sep: number;
+            // событие SSE заканчивается пустой строкой
+            while ((sep = buf.indexOf("\n\n")) !== -1) {
+              const chunk = buf.slice(0, sep);
+              buf = buf.slice(sep + 2);
+              const data = chunk
+                .split("\n")
+                .filter((l) => l.startsWith("data:"))
+                .map((l) => l.slice(5).trim())
+                .join("\n");
+              if (!data) continue;
+              const event = parseJamEvent(data);
+              if (!event) continue;
+              if (event.type === "ended") return finish();
+              if (!stopped) onEvent(event);
+            }
+          }
+          // поток закрылся без ended — сервер перезапустился? переподключаемся
+        } catch {
+          if (stopped) return;
+        }
+        if (!stopped) await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+    void run();
+    return () => {
+      stopped = true;
+      controller?.abort();
+    };
+  }
+
+  async getWrapped(opts?: { year?: number }): Promise<Wrapped> {
+    const params = new URLSearchParams({ tz_offset_min: String(new Date().getTimezoneOffset()) });
+    if (opts?.year) params.set("year", String(opts.year));
+    const w = await this.authedRequest<{
+      year: number;
+      total_plays: number;
+      total_ms: number;
+      unique_tracks: number;
+      unique_artists: number;
+      active_days: number;
+      longest_streak_days: number;
+      peak_day: { date: string; ms: number } | null;
+      top_hour: number | null;
+      favorites_added: number;
+      top_tracks: { track: TrackWire; plays: number; played_ms: number }[];
+      top_artists: { artist: string; plays: number; played_ms: number }[];
+      first_track: TrackWire | null;
+      first_play_at: string | null;
+    }>(`/me/wrapped?${params}`);
+    return {
+      year: w.year,
+      totalPlays: w.total_plays,
+      totalMs: w.total_ms,
+      uniqueTracks: w.unique_tracks,
+      uniqueArtists: w.unique_artists,
+      activeDays: w.active_days,
+      longestStreakDays: w.longest_streak_days,
+      peakDay: w.peak_day,
+      topHour: w.top_hour,
+      favoritesAdded: w.favorites_added,
+      topTracks: w.top_tracks.map((t) => ({ track: trackFromWire(t.track), plays: t.plays, playedMs: t.played_ms })),
+      topArtists: w.top_artists.map((a) => ({ artist: a.artist, plays: a.plays, playedMs: a.played_ms })),
+      firstTrack: w.first_track ? trackFromWire(w.first_track) : null,
+      firstPlayAt: w.first_play_at,
+    };
   }
 
   // ---------- Маркетплейс тем (Stage 6) ----------

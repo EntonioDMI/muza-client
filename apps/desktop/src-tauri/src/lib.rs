@@ -4,6 +4,7 @@
 mod engine;
 mod local;
 mod rpc;
+mod share;
 mod tray;
 
 use tauri::Manager;
@@ -52,6 +53,7 @@ pub fn run() {
             local::local_forget,
             rpc::rpc_update,
             rpc::rpc_clear,
+            share::share_save_file,
             tray::tray_configure,
         ])
         .run(tauri::generate_context!())

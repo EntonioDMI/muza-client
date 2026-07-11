@@ -13,6 +13,8 @@ import type {
   HistoryItem,
   HomeSection,
   ImportReport,
+  JamEvent,
+  JamSnapshot,
   Lyrics,
   MarketTheme,
   PlaylistDetail,
@@ -26,6 +28,7 @@ import type {
   TelemetryStats,
   Track,
   TrackSource,
+  Wrapped,
 } from "./schemas";
 
 export * from "./schemas";
@@ -133,6 +136,46 @@ export interface MuzaApi {
   installMarketTheme(id: string): Promise<MarketTheme>;
   /** Снять с публикации (свою; админ — любую). */
   deleteMarketTheme(id: string): Promise<void>;
+
+  // Совместные плейлисты (Stage 7): инвайт-код → вход по коду → участник
+  // добавляет/убирает треки. Код видит и отзывает только владелец.
+  /** Создать (или вернуть существующий) инвайт-код плейлиста. */
+  createPlaylistInvite(playlistId: string): Promise<{ code: string }>;
+  /** Отозвать код: новые не войдут, вошедшие участники остаются. */
+  revokePlaylistInvite(playlistId: string): Promise<void>;
+  /** Войти в совместный плейлист по коду (идемпотентно). */
+  joinPlaylist(code: string): Promise<PlaylistMeta>;
+  /** Убрать участника: владелец — любого; участник — себя (выход). */
+  removePlaylistMember(playlistId: string, userId: string): Promise<void>;
+
+  // Jam — слушать вместе (Stage 7). Хост управляет, гости следуют и
+  // докидывают треки; каждый добывает аудио сам (клиент-«мускулы»).
+  createJam(): Promise<JamSnapshot>;
+  getJam(code: string): Promise<JamSnapshot>;
+  joinJam(code: string): Promise<JamSnapshot>;
+  /** Выход; хост выходит — jam завершается для всех. */
+  leaveJam(code: string): Promise<void>;
+  /** Пуш состояния (только хост): смена трека/паузы/сика + heartbeat. */
+  pushJamState(
+    code: string,
+    state: {
+      trackId: string | null;
+      title: string;
+      artist: string;
+      coverUrl: string | null;
+      durationSec: number;
+      posSec: number;
+      playing: boolean;
+    },
+  ): Promise<void>;
+  /** Докинуть трек в очередь хоста (любой участник). */
+  addJamTrack(code: string, trackId: string): Promise<void>;
+  /** SSE-поток событий jam (первым придёт snapshot). Возвращает отписку;
+   *  поток сам переподключается, «ended» — финал. */
+  subscribeJamEvents(code: string, onEvent: (event: JamEvent) => void): () => void;
+
+  /** Wrapped «Итоги года» (Stage 7): агрегаты прослушиваний за год. */
+  getWrapped(opts?: { year?: number }): Promise<Wrapped>;
 
   // Админ-панель (Stage 5). Доступ по users.is_admin (выдаётся вручную).
   /** true — текущий пользователь админ (по нему клиент показывает «Админку»). */

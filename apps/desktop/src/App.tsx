@@ -18,7 +18,9 @@ import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
 import { useMediaSession } from "./player/useMediaSession";
+import { useJam } from "./player/useJam";
 import { fromCatalog, fromDemo, fromLocalEntry } from "./player/types";
+import type { ShareData } from "./lib/shareCard";
 import { LoginScreen } from "./auth/LoginScreen";
 import { Sidebar } from "./shell/Sidebar";
 import { NowPlayingPanel } from "./shell/NowPlayingPanel";
@@ -29,6 +31,9 @@ import { MeaningDialog } from "./shell/MeaningDialog";
 import { VersionsDialog } from "./shell/VersionsDialog";
 import { AddLinkDialog } from "./shell/AddLinkDialog";
 import { ImportDialog } from "./shell/ImportDialog";
+import { JamDialog } from "./shell/JamDialog";
+import { JoinPlaylistDialog } from "./shell/JoinPlaylistDialog";
+import { ShareDialog } from "./shell/ShareDialog";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";
 import { FavoritesView } from "./views/FavoritesView";
@@ -36,6 +41,7 @@ import { PlaylistView } from "./views/PlaylistView";
 import { LibraryView } from "./views/LibraryView";
 import { AdminView } from "./views/AdminView";
 import { SettingsView, type SettingsIntent } from "./views/SettingsView";
+import { WrappedOverlay } from "./views/WrappedOverlay";
 
 export function App() {
   const api = useMemo(
@@ -153,6 +159,11 @@ function Player({
   // Stage 4: «Добавить по ссылке» (прямые источники) и импорт плейлистов
   const [addLinkOpen, setAddLinkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // Stage 7: соц — вход по коду, Jam, шеринг-карточка, Wrapped
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [jamOpen, setJamOpen] = useState(false);
+  const [shareData, setShareData] = useState<ShareData | null>(null);
+  const [wrappedOpen, setWrappedOpen] = useState(false);
   const [toast, setToast] = useState<{
     open: boolean;
     text: string;
@@ -175,6 +186,10 @@ function Player({
     localStorage.setItem(PREFS_KEY, JSON.stringify(p));
   };
 
+  // Jam-гость (Stage 7): бесконечное радио не должно спорить с хостом —
+  // ref, потому что onQueueEnd замыкается при создании usePlayback
+  const jamGuestRef = useRef(false);
+
   // Реальный плеер (Stage 3): очередь-контекст, добыча, кроссфейд, EQ
   const pbRaw = usePlayback({
     api,
@@ -196,6 +211,7 @@ function Player({
     // Бесконечное радио (Stage 5): каталожная очередь кончилась — продолжаем
     // похожими с сервера. Демо-очередь и аноним останавливаются как раньше.
     onQueueEnd: async (last) => {
+      if (jamGuestRef.current) return null; // гость jam: очередью правит хост
       if (!canSearch || !prefs.radioEndless || last.kind !== "catalog" || !/^\d+$/.test(last.id)) return null;
       try {
         const radio = await api.getRadio(last.id);
@@ -211,6 +227,26 @@ function Player({
   // Stage 4: честная галочка согласия (prefs.telemetry) — выключил и не шлём.
   const playCountersRef = useRef<PlayCounters>({ plays: 0, completed: 0 });
   useTelemetry(api, canSearch && prefs.telemetry, playCountersRef);
+
+  // Jam — слушать вместе (Stage 7): хост пушит состояние, гость следует
+  const jam = useJam({
+    api,
+    enabled: canSearch,
+    pb: {
+      track: pbRaw.track,
+      pos: pbRaw.pos,
+      playing: pbRaw.playing,
+      speed: pbRaw.speed,
+      playContext: pbRaw.playContext,
+      seek: pbRaw.seek,
+      pause: pbRaw.pause,
+      toggle: pbRaw.toggle,
+      insertInQueue: pbRaw.insertInQueue,
+      queueLength: pbRaw.queue.length,
+    },
+    onNotify: (m, icon) => showToast(m, icon),
+  });
+  jamGuestRef.current = jam.active && !jam.isHost;
 
   // Обложка без letterbox-полос YouTube-тумбов (canvas-кроп, кэш на сессию);
   // панели/бар/фон получают уже чистую
@@ -648,9 +684,20 @@ function Player({
     showToast("Плейлист создан", "list-music");
   };
 
-  // Сайдбар: серверная сессия видит настоящие плейлисты, аноним — демо
+  // Сайдбар: серверная сессия видит настоящие плейлисты (Stage 7: + совместные),
+  // аноним — демо
   const sidebarPlaylists = canSearch
-    ? srvPlaylists.map((p) => ({ id: p.id, name: p.name, meta: `${p.trackCount} тр.` }))
+    ? srvPlaylists.map((p) => ({
+        id: p.id,
+        name: p.name,
+        meta:
+          p.role === "collaborator"
+            ? `${p.trackCount} тр. · от ${p.ownerUsername}`
+            : p.collaboratorsCount > 0
+              ? `${p.trackCount} тр. · совместный`
+              : `${p.trackCount} тр.`,
+        shared: p.role === "collaborator" || p.collaboratorsCount > 0,
+      }))
     : playlists;
 
   const openPlaylist = (id: string) => {
@@ -791,6 +838,7 @@ function Player({
                 onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
                 onOpen={setView}
+                onOpenWrapped={canSearch ? () => setWrappedOpen(true) : undefined}
               />
             ) : view === "search" ? (
               <SearchView
@@ -823,6 +871,7 @@ function Player({
               <PlaylistView
                 api={api}
                 playlistId={openPlaylistId}
+                userId={userId}
                 likes={likes}
                 currentId={track.id}
                 playing={playing}
@@ -830,6 +879,15 @@ function Player({
                 onLike={toggleLike}
                 onNotify={showToast}
                 onVersions={setVersionsTrack}
+                onShare={(detail) =>
+                  setShareData({
+                    kind: "playlist",
+                    name: detail.name,
+                    trackCount: detail.tracks.length,
+                    owner: detail.ownerUsername,
+                    covers: detail.tracks.map((t) => t.coverUrl).filter((c): c is string => c !== null),
+                  })
+                }
                 onSaveOffline={(tracks) => void saveOfflinePlaylist(tracks)}
                 onChanged={() => void reloadServerPlaylists()}
                 onDeleted={() => {
@@ -850,6 +908,7 @@ function Player({
                 onAddToPlaylist={(t) => setPlPick(t)}
                 onAddLink={() => setAddLinkOpen(true)}
                 onImport={() => setImportOpen(true)}
+                onJoinCode={() => setJoinOpen(true)}
                 onNotify={showToast}
               />
             ) : view === "admin" ? (
@@ -928,6 +987,8 @@ function Player({
         sleepActive={sleep.mode !== "off"}
         sleepLabel={sleepLabel}
         onSleep={cycleSleep}
+        jamActive={jam.active}
+        onJam={() => setJamOpen(true)}
       />
 
       <Toast
@@ -966,7 +1027,8 @@ function Player({
         ]}
       />
 
-      {/* Меню каталожного трека (Stage 4): плейлист + версии/источники */}
+      {/* Меню каталожного трека (Stage 4): плейлист + версии/источники;
+          Stage 7: поделиться, гостю jam — докинуть трек хосту */}
       <Menu
         open={catMenu.open}
         x={catMenu.x}
@@ -985,6 +1047,25 @@ function Player({
             label: "В плейлист",
             onClick: () => {
               if (catMenu.track) setPlPick(catMenu.track);
+            },
+          },
+          ...(jam.active && !jam.isHost
+            ? [
+                {
+                  icon: "radio-tower",
+                  label: "В jam",
+                  onClick: () => {
+                    if (catMenu.track) void jam.addTrack(catMenu.track.id);
+                  },
+                },
+              ]
+            : []),
+          {
+            icon: "share-2",
+            label: "Поделиться",
+            onClick: () => {
+              const t = catMenu.track;
+              if (t) setShareData({ kind: "track", title: t.title, artist: t.artist, coverUrl: t.coverUrl });
             },
           },
           {
@@ -1029,6 +1110,34 @@ function Player({
           setOpenPlaylistId(report.playlist.id);
           setView("playlist");
         }}
+      />
+
+      {/* Вход в совместный плейлист по коду (Stage 7) */}
+      <JoinPlaylistDialog
+        api={api}
+        open={joinOpen}
+        onClose={() => setJoinOpen(false)}
+        onJoined={(p) => {
+          setJoinOpen(false);
+          void reloadServerPlaylists();
+          showToast(`Ты в плейлисте «${p.name}» (от ${p.ownerUsername})`, "users");
+          setOpenPlaylistId(p.id);
+          setView("playlist");
+        }}
+      />
+
+      {/* Jam — слушать вместе (Stage 7) */}
+      <JamDialog jam={jam} open={jamOpen} canUse={canSearch} onClose={() => setJamOpen(false)} onNotify={showToast} />
+
+      {/* Шеринг-карточка (Stage 7): трек/плейлист/Wrapped */}
+      <ShareDialog data={shareData} onClose={() => setShareData(null)} onNotify={showToast} />
+
+      {/* Wrapped «Итоги года» (Stage 7) */}
+      <WrappedOverlay
+        api={api}
+        open={wrappedOpen}
+        onClose={() => setWrappedOpen(false)}
+        onShare={setShareData}
       />
 
       <Dialog
