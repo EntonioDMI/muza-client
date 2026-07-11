@@ -21,6 +21,7 @@ import {
   type SearchScope,
   type Session,
   SessionSchema,
+  type StatsOverview,
   type Track,
   type TrackSource,
   type Wrapped,
@@ -242,6 +243,10 @@ export class MockMuzaApi implements MuzaApi {
 
   async getWrapped(): Promise<Wrapped> {
     throw new Error("Мок: итоги живут на сервере");
+  }
+
+  async getStatsOverview(): Promise<StatsOverview> {
+    throw new Error("Мок: статистика живёт на сервере");
   }
 
   async renamePlaylist(id: string, name: string): Promise<void> {

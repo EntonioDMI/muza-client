@@ -270,6 +270,31 @@ export interface Wrapped {
   firstPlayAt: string | null;
 }
 
+// ── Статистика: страница «Статистика» ─────────────────────────────
+
+export type StatsPeriod = "week" | "month" | "year" | "all";
+
+export interface StatsOverview {
+  period: StatsPeriod;
+  totalPlays: number;
+  totalMs: number;
+  uniqueTracks: number;
+  uniqueArtists: number;
+  /** Серия активности: вёдра-дни (week/month, YYYY-MM-DD) или месяцы
+   *  (year/all, YYYY-MM), пустые — нулями. */
+  series: { bucket: string; plays: number; ms: number }[];
+  /** Прослушивания по часам суток (24 значения, пояс пользователя). */
+  hours: number[];
+  topHour: number | null;
+  topTracks: { track: Track; plays: number; playedMs: number }[];
+  topArtists: { artist: string; plays: number; playedMs: number }[];
+  activeDays: number;
+  /** Текущая серия дней — по всей истории, не зависит от периода. */
+  currentStreakDays: number;
+  longestStreakDays: number;
+  favoritesAdded: number;
+}
+
 // ── Админ-панель (Stage 5) ─────────────────────────────────────────
 
 export interface AdminOverview {

@@ -25,6 +25,8 @@ import type {
   ScrobblingStatus,
   SearchScope,
   Session,
+  StatsOverview,
+  StatsPeriod,
   TelemetryStats,
   Track,
   TrackSource,
@@ -176,6 +178,10 @@ export interface MuzaApi {
 
   /** Wrapped «Итоги года» (Stage 7): агрегаты прослушиваний за год. */
   getWrapped(opts?: { year?: number }): Promise<Wrapped>;
+
+  /** Статистика за период (страница «Статистика»): суммы, серия
+   *  активности, часы, топы, серии дней. */
+  getStatsOverview(period: StatsPeriod): Promise<StatsOverview>;
 
   // Админ-панель (Stage 5). Доступ по users.is_admin (выдаётся вручную).
   /** true — текущий пользователь админ (по нему клиент показывает «Админку»). */

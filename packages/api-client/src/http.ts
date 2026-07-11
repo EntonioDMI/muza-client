@@ -26,6 +26,8 @@ import {
   type SearchScope,
   type Session,
   SessionSchema,
+  type StatsOverview,
+  type StatsPeriod,
   type TelemetryStats,
   type Track,
   TrackSchema,
@@ -823,6 +825,42 @@ export class HttpMuzaApi implements MuzaApi {
       topArtists: w.top_artists.map((a) => ({ artist: a.artist, plays: a.plays, playedMs: a.played_ms })),
       firstTrack: w.first_track ? trackFromWire(w.first_track) : null,
       firstPlayAt: w.first_play_at,
+    };
+  }
+
+  async getStatsOverview(period: StatsPeriod): Promise<StatsOverview> {
+    const params = new URLSearchParams({ period, tz_offset_min: String(new Date().getTimezoneOffset()) });
+    const s = await this.authedRequest<{
+      period: StatsPeriod;
+      total_plays: number;
+      total_ms: number;
+      unique_tracks: number;
+      unique_artists: number;
+      series: { bucket: string; plays: number; ms: number }[];
+      hours: number[];
+      top_hour: number | null;
+      top_tracks: { track: TrackWire; plays: number; played_ms: number }[];
+      top_artists: { artist: string; plays: number; played_ms: number }[];
+      active_days: number;
+      current_streak_days: number;
+      longest_streak_days: number;
+      favorites_added: number;
+    }>(`/me/stats/overview?${params}`);
+    return {
+      period: s.period,
+      totalPlays: s.total_plays,
+      totalMs: s.total_ms,
+      uniqueTracks: s.unique_tracks,
+      uniqueArtists: s.unique_artists,
+      series: s.series,
+      hours: s.hours,
+      topHour: s.top_hour,
+      topTracks: s.top_tracks.map((t) => ({ track: trackFromWire(t.track), plays: t.plays, playedMs: t.played_ms })),
+      topArtists: s.top_artists.map((a) => ({ artist: a.artist, plays: a.plays, playedMs: a.played_ms })),
+      activeDays: s.active_days,
+      currentStreakDays: s.current_streak_days,
+      longestStreakDays: s.longest_streak_days,
+      favoritesAdded: s.favorites_added,
     };
   }
 
