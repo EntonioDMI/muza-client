@@ -1,8 +1,11 @@
 import React from "react";
 import { Icon } from "../core/Icon.jsx";
 
-/** Toast — quiet frosted pill; slides up, never stacks more than one. */
-export function Toast({ open, message, icon, style }) {
+/** Toast — quiet frosted pill; slides up, never stacks more than one.
+ *  Optional action (undo etc.): actionLabel + onAction render a button —
+ *  the pill becomes interactive while open. */
+export function Toast({ open, message, icon, actionLabel, onAction, style }) {
+  const interactive = open && actionLabel && onAction;
   return (
     <div
       aria-live="polite"
@@ -23,13 +26,32 @@ export function Toast({ open, message, icon, style }) {
         whiteSpace: "nowrap",
         opacity: open ? 1 : 0,
         transform: open ? "translateY(0)" : "translateY(12px)",
-        pointerEvents: "none",
+        pointerEvents: interactive ? "auto" : "none",
         transition: "opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out)",
         ...style,
       }}
     >
       {icon ? <Icon name={icon} size={18} color="var(--accent-text)" /> : null}
       {message}
+      {actionLabel && onAction ? (
+        <button
+          type="button"
+          onClick={onAction}
+          style={{
+            border: "none",
+            background: "var(--surface-3)",
+            color: "var(--accent-text)",
+            fontFamily: "var(--font-ui)",
+            fontSize: "var(--fs-caption)",
+            fontWeight: "var(--fw-semibold)",
+            borderRadius: "var(--r-pill)",
+            padding: "6px 12px",
+            cursor: "pointer",
+          }}
+        >
+          {actionLabel}
+        </button>
+      ) : null}
     </div>
   );
 }

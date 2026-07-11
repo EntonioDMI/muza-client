@@ -1,20 +1,37 @@
 import React, { useState } from "react";
 import { IconButton } from "../core/IconButton.jsx";
 
-/** Media tile — soft rounded card with square cover; play pill appears on hover. */
+/** Media tile — soft rounded card with square cover; play pill appears on
+ *  hover AND keyboard focus. The tile itself is a keyboard target
+ *  (role=button, Enter/Space = onClick). */
 export function Tile({ cover, title, subtitle, width = 176, playing = false, onPlay, onClick }) {
   const [hover, setHover] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const lit = hover || focused;
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? title : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
+      }}
+      onKeyDown={(e) => {
+        if ((e.key === "Enter" || e.key === " ") && onClick && e.target === e.currentTarget) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       onClick={onClick}
       style={{
         width,
         flex: "none",
         padding: "var(--pad-tile)",
         borderRadius: "var(--r-md)",
-        background: hover ? "var(--surface-3)" : "var(--surface-2)",
+        background: lit ? "var(--surface-3)" : "var(--surface-2)",
         cursor: "pointer",
         transition: "background var(--dur-base) var(--ease-out)",
       }}
@@ -36,8 +53,8 @@ export function Tile({ cover, title, subtitle, width = 176, playing = false, onP
             position: "absolute",
             right: 8,
             bottom: 8,
-            opacity: hover || playing ? 1 : 0,
-            transform: hover || playing ? "translateY(0)" : "translateY(4px)",
+            opacity: lit || playing ? 1 : 0,
+            transform: lit || playing ? "translateY(0)" : "translateY(4px)",
             transition: "opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out)",
           }}
         >

@@ -124,20 +124,26 @@ export function PlayerBar({
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
         <Tooltip label="Режим прослушивания">
-          <img
-            key={track.id}
-            src={track.cover}
-            alt=""
-            className="muza-view"
-            style={{
-              width: "var(--size-cover-bar)",
-              height: "var(--size-cover-bar)",
-              borderRadius: "var(--r-sm)",
-              flex: "none",
-              cursor: "pointer",
-            }}
+          {/* настоящая кнопка: клавиатура открывает режим прослушивания */}
+          <button
+            type="button"
+            aria-label="Режим прослушивания"
             onClick={onExpand}
-          />
+            style={{ border: "none", background: "none", padding: 0, cursor: "pointer", flex: "none", display: "block" }}
+          >
+            <img
+              key={track.id}
+              src={track.cover}
+              alt=""
+              className="muza-view"
+              style={{
+                width: "var(--size-cover-bar)",
+                height: "var(--size-cover-bar)",
+                borderRadius: "var(--r-sm)",
+                display: "block",
+              }}
+            />
+          </button>
         </Tooltip>
         <div style={{ minWidth: 0 }}>
           <div
@@ -201,7 +207,14 @@ export function PlayerBar({
           >
             {fmtTime(pos)}
           </span>
-          <Slider value={pos} max={track.duration} onChange={onSeek} ariaLabel="Прогресс" style={{ flex: 1 }} />
+          <Slider
+            value={pos}
+            max={track.duration}
+            onChange={onSeek}
+            ariaLabel="Прогресс"
+            valueText={`${fmtTime(pos)} из ${fmtTime(track.duration)}`}
+            style={{ flex: 1 }}
+          />
           <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums", width: 36 }}>
             {fmtTime(track.duration)}
           </span>
@@ -231,7 +244,7 @@ export function PlayerBar({
           />
         </Tooltip>
         <div onWheel={(e) => onVol(Math.max(0, Math.min(100, vol + (e.deltaY < 0 ? 5 : -5))))} style={{ display: "flex" }}>
-          <Slider value={vol} onChange={onVol} ariaLabel="Громкость" style={{ width: 110 }} />
+          <Slider value={vol} onChange={onVol} ariaLabel="Громкость" valueText={`${Math.round(vol)} %`} style={{ width: 110 }} />
         </div>
         <Tooltip label="Во весь экран">
           <IconButton icon="maximize-2" size="sm" label="Режим прослушивания" onClick={onExpand} />

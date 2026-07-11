@@ -4,6 +4,7 @@ import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type Scrob
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { openExternal } from "../lib/system";
+import { HOTKEYS } from "../lib/hotkeysList";
 import {
   addTheme,
   applyTheme,
@@ -261,6 +262,8 @@ function SettingInput({
       type={type}
       value={value}
       placeholder={placeholder}
+      // placeholder — не имя поля: screen reader получает label явно
+      aria-label={placeholder}
       onChange={(e) => onChange(e.target.value)}
       style={{
         height: 36,
@@ -616,17 +619,7 @@ const TABS = [
   { key: "system", label: "Система" }, // «О приложении» — секция внутри Системы
 ];
 
-// Эти клавиши уже реально работают (обработчик в App); переназначение — позже
-const HOTKEYS: { action: string; combo: string }[] = [
-  { action: "Играть / пауза", combo: "Space" },
-  { action: "Следующий трек", combo: "Ctrl + →" },
-  { action: "Предыдущий трек", combo: "Ctrl + ←" },
-  { action: "Перемотка +5 с", combo: "→" },
-  { action: "Перемотка −5 с", combo: "←" },
-  { action: "Лайк", combo: "L" },
-  { action: "Без звука", combo: "M" },
-  { action: "Поиск", combo: "Ctrl + K" },
-];
+// Список клавиш общий с оверлеем «?» — lib/hotkeysList (обработчики в App)
 
 type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | null;
 

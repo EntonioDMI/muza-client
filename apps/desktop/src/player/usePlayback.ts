@@ -363,20 +363,85 @@ export function usePlayback({
     engineRef.current?.setVolume(v);
   };
 
-  const cycleSpeed = () => {
+  const cycleSpeed = (): number => {
     // шаги настраиваются владельцем (Prefs); текущего нет в списке → берём первый
     const steps = prefsRef.current.speedSteps.length > 0 ? prefsRef.current.speedSteps : [1];
     const i = steps.indexOf(stateRef.current.speed);
     const nextSpeed = steps[(i + 1) % steps.length];
     setSpeed(nextSpeed);
     engineRef.current?.setSpeed(nextSpeed);
+    return nextSpeed; // вызывающий показывает тост с новым значением
   };
 
-  const cycleRepeat = () => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
+  const cycleRepeat = (): RepeatMode => {
+    const next: RepeatMode = stateRef.current.repeat === "off" ? "all" : stateRef.current.repeat === "all" ? "one" : "off";
+    setRepeat(next);
+    return next;
+  };
   const toggleShuffle = () => setShuffle((s) => !s);
 
   /** Анализатор движка для визуализатора (Stage 6); null у демо/plain. */
   const getAnalyser = () => engineRef.current?.analyser() ?? null;
+
+  // ── Операции над очередью (UX-доводка 2026-07-11) ─────────────────
+  // Все правки идут через stateRef тем же приёмом, что playContext:
+  // стейт обновится этим же рендером, колбэки читают свежую очередь.
+
+  const patchQueue = (nextQueue: PlayerTrack[], nextIndex: number) => {
+    setQueue(nextQueue);
+    setIndex(nextIndex);
+    stateRef.current = { ...stateRef.current, queue: nextQueue, index: nextIndex };
+    preloadedRef.current = null; // сосед мог смениться — прогретый слот неактуален
+  };
+
+  /** Убрать трек из очереди. Возвращает данные для undo (insertInQueue).
+   *  Удалили играющий — стартует вставший на его место (или честный стоп). */
+  const removeFromQueue = (id: string): { track: PlayerTrack; index: number } | null => {
+    const s = stateRef.current;
+    const i = s.queue.findIndex((t) => t.id === id);
+    if (i === -1) return null;
+    const removed = s.queue[i];
+    const nextQueue = s.queue.filter((_, j) => j !== i);
+    if (i === s.index) {
+      patchQueue(nextQueue, Math.min(i, Math.max(nextQueue.length - 1, 0)));
+      if (nextQueue.length === 0) {
+        engine().stop();
+        setPlaying(false);
+        setPos(0);
+      } else {
+        void startAt(Math.min(i, nextQueue.length - 1));
+      }
+    } else {
+      patchQueue(nextQueue, i < s.index ? s.index - 1 : s.index);
+    }
+    return { track: removed, index: i };
+  };
+
+  /** Вернуть трек на позицию (undo удаления). */
+  const insertInQueue = (track: PlayerTrack, at: number) => {
+    const s = stateRef.current;
+    const i = Math.max(0, Math.min(at, s.queue.length));
+    const nextQueue = [...s.queue.slice(0, i), track, ...s.queue.slice(i)];
+    patchQueue(nextQueue, i <= s.index && s.queue.length > 0 ? s.index + 1 : s.index);
+  };
+
+  /** Переставить трек на шаг вверх/вниз (клавиатурная альтернатива DnD). */
+  const moveInQueue = (id: string, dir: 1 | -1) => {
+    const s = stateRef.current;
+    const i = s.queue.findIndex((t) => t.id === id);
+    const j = i + dir;
+    if (i === -1 || j < 0 || j >= s.queue.length) return;
+    const nextQueue = [...s.queue];
+    [nextQueue[i], nextQueue[j]] = [nextQueue[j], nextQueue[i]];
+    const idx = i === s.index ? j : j === s.index ? i : s.index;
+    patchQueue(nextQueue, idx);
+  };
+
+  /** Очистить хвост «Далее» (всё после текущего трека). */
+  const clearUpNext = () => {
+    const s = stateRef.current;
+    patchQueue(s.queue.slice(0, s.index + 1), s.index);
+  };
 
   // EQ и нормализация из Prefs — на движок
   useEffect(() => {
@@ -409,6 +474,10 @@ export function usePlayback({
       cycleRepeat,
       toggleShuffle,
       getAnalyser,
+      removeFromQueue,
+      insertInQueue,
+      moveInQueue,
+      clearUpNext,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [queue, track, index, playing, buffering, pos, vol, speed, repeat, shuffle],

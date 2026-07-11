@@ -8,6 +8,7 @@ import { openExternal } from "../lib/system";
 export function NowPlayingPanel({
   track,
   lyrics,
+  lyricsLoading = false,
   liked,
   onLike,
   activeLine,
@@ -18,6 +19,8 @@ export function NowPlayingPanel({
   track: PlayerTrack;
   /** Строки текста: демо — локальные, каталог — LRCLIB с сервера (слайс 4). */
   lyrics: LyricLine[];
+  /** Текст ещё грузится — «Ищем текст…» вместо «Текст не найден». */
+  lyricsLoading?: boolean;
   liked: boolean;
   onLike: () => void;
   activeLine: number;
@@ -113,7 +116,7 @@ export function NowPlayingPanel({
               fontSize: "var(--fs-caption)",
             }}
           >
-            Текст не найден
+            {lyricsLoading ? "Ищем текст…" : "Текст не найден"}
           </div>
         )}
         {noted ? (

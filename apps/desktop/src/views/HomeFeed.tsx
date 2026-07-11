@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChipGroup, Shelf, Tile, TrackRow } from "@muza/ui";
+import { Button, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { PLAYLISTS, RELEASES, TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
@@ -64,29 +64,39 @@ export function HomeFeed({
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   onOpen: (v: View) => void;
 }) {
-  const [chip, setChip] = useState("Всё");
-  // null — ещё грузим; [] — ленты нет (аноним/сбой/пусто) → демо
-  const [sections, setSections] = useState<HomeSection[] | null>(canSearch ? null : []);
+  // Честные состояния (UX-доводка): loading / live / offline-копия /
+  // сервер недоступен / пустая лента нового аккаунта / демо (аноним)
+  const [feed, setFeed] = useState<{
+    status: "loading" | "live" | "error" | "demo";
+    sections: HomeSection[];
+    /** Данные из оффлайн-снапшота — сверху честная плашка. */
+    offline: boolean;
+  }>(() => (canSearch ? { status: "loading", sections: [], offline: false } : { status: "demo", sections: [], offline: false }));
 
-  useEffect(() => {
+  const load = () => {
     if (!canSearch) {
-      setSections([]);
-      return;
+      setFeed({ status: "demo", sections: [], offline: false });
+      return () => undefined;
     }
     let alive = true;
+    setFeed({ status: "loading", sections: [], offline: false });
     withSnapshot("home", () => api.getHome())
-      .then(({ data }) => {
-        if (alive) setSections(data);
+      .then(({ data, offline }) => {
+        if (alive) setFeed({ status: "live", sections: data, offline });
       })
       .catch(() => {
-        if (alive) setSections([]); // сервер лёг и снапшота нет — демо-полки
+        // сервер лёг и снапшота нет — говорим прямо, а не притворяемся лентой
+        if (alive) setFeed({ status: "error", sections: [], offline: false });
       });
     return () => {
       alive = false;
     };
-  }, [api, canSearch]);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [api, canSearch]);
 
-  const live = sections !== null && sections.length > 0;
+  const live = feed.status === "live" && feed.sections.length > 0;
+  const sections = feed.sections;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -103,9 +113,52 @@ export function HomeFeed({
       >
         {greetName ? `${greeting()}, ${greetName}!` : greeting()}
       </h1>
-      <div style={{ display: "flex", gap: "var(--sp-2)" }}>
-        <ChipGroup items={["Всё", "Музыка", "Плейлисты", "С текстом"]} value={chip} onChange={setChip} />
-      </div>
+
+      {feed.offline ? (
+        <Notice icon="cloud-off" text="Оффлайн-копия ленты: сервер сейчас недоступен, показано последнее загруженное." action="Обновить" onAction={load} />
+      ) : null}
+
+      {feed.status === "loading" ? (
+        <FeedSkeleton />
+      ) : feed.status === "error" ? (
+        <>
+          <Notice
+            icon="server-off"
+            text="Сервер недоступен, а оффлайн-копии ленты ещё нет. Закреплённые оффлайн треки играют из кэша."
+            action="Повторить"
+            onAction={load}
+          />
+          <DemoShelves
+            labeled
+            currentId={currentId}
+            playing={playing}
+            likes={likes}
+            onPlayTrack={onPlayTrack}
+            onLike={onLike}
+            onTrackMenu={onTrackMenu}
+            onOpen={onOpen}
+          />
+        </>
+      ) : feed.status === "live" && sections.length === 0 ? (
+        <>
+          <Notice
+            icon="sparkles"
+            text="Лента появится после первых прослушиваний: включи что-нибудь через Поиск — рекомендации начнут собираться."
+            action="Открыть поиск"
+            onAction={() => onOpen("search")}
+          />
+          <DemoShelves
+            labeled
+            currentId={currentId}
+            playing={playing}
+            likes={likes}
+            onPlayTrack={onPlayTrack}
+            onLike={onLike}
+            onTrackMenu={onTrackMenu}
+            onOpen={onOpen}
+          />
+        </>
+      ) : null}
 
       {live ? (
         <>
@@ -152,59 +205,155 @@ export function HomeFeed({
           )}
           <div style={{ paddingBottom: "var(--sp-6)" }} />
         </>
-      ) : sections === null ? (
-        // грузим ленту — тихая пауза вместо демо-мигания
-        <div style={{ minHeight: 240 }} />
-      ) : (
-        <>
-          <Shelf title="Продолжить слушать">
-            {TRACKS.map((t) => (
-              <Tile
-                key={t.id}
-                cover={t.cover}
-                title={t.title}
-                subtitle={t.artist}
-                playing={currentId === t.id && playing}
-                onPlay={() => onPlayTrack(t.id)}
-                onClick={() => onPlayTrack(t.id)}
-              />
-            ))}
-          </Shelf>
-          <Shelf title="Собрано для тебя" onAction={() => onOpen("library")}>
-            {PLAYLISTS.map((p) => (
-              <Tile key={p.id} cover={p.cover} title={p.name} subtitle={p.meta} onPlay={() => onPlayTrack(TRACKS[0].id)} />
-            ))}
-          </Shelf>
-          <Shelf title="Новые релизы" onAction={() => onOpen("library")}>
-            {RELEASES.map((r) => (
-              <Tile key={r.id} cover={r.cover} title={r.name} subtitle={r.meta} onPlay={() => onPlayTrack(TRACKS[1].id)} />
-            ))}
-          </Shelf>
-          {/* Простой список под полками — «как библиотека», без тяжёлых плиток */}
-          <div style={{ paddingBottom: "var(--sp-6)" }}>
-            <h2 style={sectionH2}>Подборка</h2>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {TRACKS.map((t, i) => (
-                <TrackRow
-                  key={t.id}
-                  index={i + 1}
-                  cover={t.cover}
-                  title={t.title}
-                  artist={t.artist}
-                  duration={fmtTime(t.duration)}
-                  explicit={t.explicit}
-                  active={currentId === t.id}
-                  playing={currentId === t.id && playing}
-                  liked={likes.includes(t.id)}
-                  onPlay={() => onPlayTrack(t.id)}
-                  onLike={() => onLike(t.id)}
-                  onMore={(e: React.MouseEvent) => onTrackMenu(t, e)}
-                />
-              ))}
-            </div>
-          </div>
-        </>
-      )}
+      ) : feed.status === "demo" ? (
+        <DemoShelves
+          currentId={currentId}
+          playing={playing}
+          likes={likes}
+          onPlayTrack={onPlayTrack}
+          onLike={onLike}
+          onTrackMenu={onTrackMenu}
+          onOpen={onOpen}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** Плашка состояния: оффлайн-копия / сервер недоступен / пустая лента. */
+function Notice({
+  icon,
+  text,
+  action,
+  onAction,
+}: {
+  icon: string;
+  text: string;
+  action?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--sp-3)",
+        padding: "var(--sp-3) var(--sp-4)",
+        borderRadius: "var(--r-md)",
+        background: "var(--surface-2)",
+      }}
+    >
+      <Icon name={icon} size={18} color="var(--text-3)" />
+      <span style={{ flex: 1, fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{text}</span>
+      {action && onAction ? (
+        <Button variant="secondary" onClick={onAction} style={{ flex: "none" }}>
+          {action}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Скелетон ленты: заголовок + ряд плиток, три секции. Без анимации-мерцания
+ *  (ДС запрещает свечения) — просто тихие поверхности. */
+function FeedSkeleton() {
+  const tile = (
+    <div style={{ width: 176, flex: "none" }}>
+      <div style={{ width: "100%", aspectRatio: "1", borderRadius: "var(--r-md)", background: "var(--surface-2)" }} />
+      <div style={{ height: 12, width: "70%", marginTop: 10, borderRadius: 6, background: "var(--surface-2)" }} />
+      <div style={{ height: 10, width: "45%", marginTop: 6, borderRadius: 5, background: "var(--surface-1)" }} />
+    </div>
+  );
+  return (
+    <div aria-label="Загружаем ленту" role="status" style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
+      {[0, 1, 2].map((s) => (
+        <div key={s}>
+          <div style={{ height: 16, width: 160, borderRadius: 8, background: "var(--surface-2)", marginBottom: "var(--sp-4)" }} />
+          <div style={{ display: "flex", gap: "var(--sp-4)", overflow: "hidden" }}>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i}>{tile}</div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Демо-полки Stage 1. labeled — явная подпись, что это НЕ персональная
+ *  лента (сервер недоступен / истории ещё нет). */
+function DemoShelves({
+  labeled = false,
+  currentId,
+  playing,
+  likes,
+  onPlayTrack,
+  onLike,
+  onTrackMenu,
+  onOpen,
+}: {
+  labeled?: boolean;
+  currentId: string;
+  playing: boolean;
+  likes: string[];
+  onPlayTrack: (id: string) => void;
+  onLike: (id: string) => void;
+  onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
+  onOpen: (v: View) => void;
+}) {
+  return (
+    <>
+      {labeled ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+          Ниже — демо-каталог для знакомства с интерфейсом, не персональные рекомендации.
+        </div>
+      ) : null}
+      <Shelf title="Продолжить слушать">
+        {TRACKS.map((t) => (
+          <Tile
+            key={t.id}
+            cover={t.cover}
+            title={t.title}
+            subtitle={t.artist}
+            playing={currentId === t.id && playing}
+            onPlay={() => onPlayTrack(t.id)}
+            onClick={() => onPlayTrack(t.id)}
+          />
+        ))}
+      </Shelf>
+      <Shelf title="Собрано для тебя" onAction={() => onOpen("library")}>
+        {PLAYLISTS.map((p) => (
+          <Tile key={p.id} cover={p.cover} title={p.name} subtitle={p.meta} onPlay={() => onPlayTrack(TRACKS[0].id)} />
+        ))}
+      </Shelf>
+      <Shelf title="Новые релизы" onAction={() => onOpen("library")}>
+        {RELEASES.map((r) => (
+          <Tile key={r.id} cover={r.cover} title={r.name} subtitle={r.meta} onPlay={() => onPlayTrack(TRACKS[1].id)} />
+        ))}
+      </Shelf>
+      {/* Простой список под полками — «как библиотека», без тяжёлых плиток */}
+      <div style={{ paddingBottom: "var(--sp-6)" }}>
+        <h2 style={sectionH2}>Подборка</h2>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {TRACKS.map((t, i) => (
+            <TrackRow
+              key={t.id}
+              index={i + 1}
+              cover={t.cover}
+              title={t.title}
+              artist={t.artist}
+              duration={fmtTime(t.duration)}
+              explicit={t.explicit}
+              active={currentId === t.id}
+              playing={currentId === t.id && playing}
+              liked={likes.includes(t.id)}
+              onPlay={() => onPlayTrack(t.id)}
+              onLike={() => onLike(t.id)}
+              onMore={(e: React.MouseEvent) => onTrackMenu(t, e)}
+            />
+          ))}
+        </div>
+      </div>
+    </>
   );
 }

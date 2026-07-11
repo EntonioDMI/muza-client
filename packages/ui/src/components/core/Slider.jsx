@@ -1,7 +1,9 @@
 import React, { useRef, useState, useCallback } from "react";
 
-/** Progress / volume slider — thin pill track, accent fill, thumb on hover. */
-export function Slider({ value = 0, max = 100, onChange, ariaLabel, style }) {
+/** Progress / volume slider — thin pill track, accent fill, thumb on hover.
+ *  Keyboard: Arrows step (Shift ×5), Home/End, PageUp/PageDown — full ARIA
+ *  slider pattern. valueText announces a human value to screen readers. */
+export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, style }) {
   const ref = useRef(null);
   const [hover, setHover] = useState(false);
   const [drag, setDrag] = useState(false);
@@ -18,6 +20,23 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, style }) {
     [max, onChange]
   );
 
+  const step = Math.max(max / 100, 1);
+  const onKeyDown = (e) => {
+    if (!onChange) return;
+    const big = step * 5;
+    let next = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") next = value + (e.shiftKey ? big : step);
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") next = value - (e.shiftKey ? big : step);
+    else if (e.key === "PageUp") next = value + big;
+    else if (e.key === "PageDown") next = value - big;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = max;
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation(); // глобальные хоткеи (сик ←/→) не должны дублировать шаг
+    onChange(Math.max(0, Math.min(max, next)));
+  };
+
   return (
     <div
       ref={ref}
@@ -26,7 +45,9 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, style }) {
       aria-valuenow={Math.round(value)}
       aria-valuemin={0}
       aria-valuemax={max}
+      aria-valuetext={valueText}
       tabIndex={0}
+      onKeyDown={onKeyDown}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onPointerDown={(e) => {

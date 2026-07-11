@@ -1,7 +1,8 @@
 import React, { useRef, useState, useCallback } from "react";
 
 /** Vertical fader — эквалайзер, будущие миксер-панели. Значение в диапазоне
- *  min..max (по умолчанию −12..+12 дБ), ноль — посередине. */
+ *  min..max (по умолчанию −12..+12 дБ), ноль — посередине.
+ *  Клавиатура: стрелки ±1 (Shift ±3), Home/End, 0 — сброс в ноль. */
 export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, height = 140, disabled = false, style }) {
   const ref = useRef(null);
   const [hover, setHover] = useState(false);
@@ -19,6 +20,20 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
     [min, max, onChange, disabled]
   );
 
+  const onKeyDown = (e) => {
+    if (!onChange || disabled) return;
+    let next = null;
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") next = value + (e.shiftKey ? 3 : 1);
+    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") next = value - (e.shiftKey ? 3 : 1);
+    else if (e.key === "Home") next = max;
+    else if (e.key === "End") next = min;
+    else if (e.key === "0") next = 0;
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onChange(Math.max(min, Math.min(max, next)));
+  };
+
   return (
     <div
       ref={ref}
@@ -28,7 +43,9 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
       aria-valuenow={Math.round(value)}
       aria-valuemin={min}
       aria-valuemax={max}
+      aria-valuetext={`${value > 0 ? "+" : ""}${Math.round(value)} дБ`}
       tabIndex={disabled ? -1 : 0}
+      onKeyDown={onKeyDown}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onPointerDown={(e) => {

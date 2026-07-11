@@ -7,5 +7,7 @@ export interface SliderProps {
   onChange?: (value: number) => void;
   /** Accessible label (Russian), e.g. "Громкость". */
   ariaLabel?: string;
+  /** Human value for screen readers (aria-valuetext), e.g. "1:24 из 3:45". */
+  valueText?: string;
   style?: React.CSSProperties;
 }

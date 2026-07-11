@@ -11,6 +11,7 @@ import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useCoverArt } from "./lib/coverArt";
+import { HOTKEYS } from "./lib/hotkeysList";
 import { loadServerIds, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
@@ -149,7 +150,14 @@ function Player({
   // Stage 4: «Добавить по ссылке» (прямые источники) и импорт плейлистов
   const [addLinkOpen, setAddLinkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [toast, setToast] = useState({ open: false, text: "", icon: "check" });
+  const [toast, setToast] = useState<{
+    open: boolean;
+    text: string;
+    icon: string;
+    /** Кнопка в тосте (undo удаления из очереди и т.п.). */
+    actionLabel?: string;
+    onAction?: () => void;
+  }>({ open: false, text: "", icon: "check" });
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: DemoTrack | null }>({
     open: false,
     x: 0,
@@ -414,7 +422,7 @@ function Player({
   }, [sleep.mode, track.id]);
 
   // Тексты: демо — локальные строки, каталог — LRCLIB с сервера
-  const { lines: rawLyrics, synced: lyricsSynced } = useLyrics(api, track, canSearch);
+  const { lines: rawLyrics, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(api, track, canSearch);
 
   // «Режим смысла» (Stage 5): настоящие Genius-аннотации каталожного трека —
   // строкам с аннотацией ставится note (пунктир в Lyrics, карточка в панели);
@@ -444,6 +452,22 @@ function Player({
     toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 2400);
   };
 
+  /** Тост с кнопкой «Вернуть» (живёт дольше — юзер должен успеть). */
+  const showUndoToast = (text: string, icon: string, onUndo: () => void) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({
+      open: true,
+      text,
+      icon,
+      actionLabel: "Вернуть",
+      onAction: () => {
+        onUndo();
+        setToast((t) => ({ ...t, open: false }));
+      },
+    });
+    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 6000);
+  };
+
   /** Клик по демо-треку (главная/библиотека/демо-поиск): очередь = демо-каталог. */
   const playTrack = (id: string) => pb.playContext(DEMO_QUEUE, id);
   /** Клик по каталожному треку: очередь = список, из которого кликнули. */
@@ -465,6 +489,51 @@ function Player({
     setView("settings");
     setSettingsIntent({ sub: "equalizer", nonce: Date.now() });
   };
+
+  // Циклические кнопки бара тостят новое состояние (иконка меняется тонко)
+  const cycleSpeedWithToast = () => {
+    const next = pb.cycleSpeed();
+    showToast(`Скорость: ${next}×`, "gauge");
+  };
+  const cycleRepeatWithToast = () => {
+    const next = pb.cycleRepeat();
+    showToast(next === "off" ? "Повтор выключен" : next === "all" ? "Повтор очереди" : "Повтор трека", "repeat");
+  };
+
+  // ── Очередь (UX-доводка): операции + возврат фокуса ───────────────
+  /** Закрыть панель и вернуть фокус на кнопку очереди (клавиатурный путь). */
+  const closeQueue = () => {
+    setQueueOn(false);
+    (document.querySelector('button[aria-label="Очередь"]') as HTMLButtonElement | null)?.focus();
+  };
+
+  const removeQueueTrack = (id: string) => {
+    const removed = pb.removeFromQueue(id);
+    if (!removed) return;
+    showUndoToast(`«${removed.track.title}» убран из очереди`, "list-x", () =>
+      pb.insertInQueue(removed.track, removed.index),
+    );
+  };
+
+  const saveQueueAsPlaylist = async () => {
+    const catalog = pb.queue.filter((t) => isCatalogId(t.id));
+    if (catalog.length === 0) {
+      showToast("В очереди нет каталожных треков — сохранять нечего", "x");
+      return;
+    }
+    try {
+      const name = `Очередь ${new Date().toLocaleDateString("ru")}`;
+      const created = await api.createPlaylist(name);
+      for (const t of catalog) await api.addPlaylistTrack(created.id, t.id);
+      await reloadServerPlaylists();
+      showToast(`Сохранено: «${name}» · ${catalog.length} тр.`, "save");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Не удалось сохранить очередь", "x");
+    }
+  };
+
+  // Оверлей горячих клавиш (клавиша «?»)
+  const [hotkeysOpen, setHotkeysOpen] = useState(false);
 
   // Mute: клик по иконке громкости или клавиша M; помним прежний уровень
   const prevVolRef = useRef(64);
@@ -496,7 +565,10 @@ function Player({
     else if ((k === "k" || k === "л") && e.ctrlKey) {
       e.preventDefault();
       setView("search");
-    } else if (e.code === "Escape" && queueOn) setQueueOn(false);
+    } else if (e.key === "?") {
+      e.preventDefault();
+      setHotkeysOpen((v) => !v); // справка по клавишам (эвристика «Помощь»)
+    } else if (e.code === "Escape" && queueOn) closeQueue();
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => hotkeysRef.current(e);
@@ -790,6 +862,7 @@ function Player({
           <NowPlayingPanel
             track={track}
             lyrics={lyrics}
+            lyricsLoading={lyricsLoading}
             liked={likes.includes(track.id)}
             onLike={() => toggleLike(track.id)}
             activeLine={activeLine}
@@ -803,10 +876,18 @@ function Player({
       <QueuePanel
         open={queueOn}
         tracks={pb.queue}
-        currentId={track.id}
+        currentIndex={pb.index}
         playing={playing}
+        canSave={canSearch}
         onPlayTrack={(id) => pb.playContext(pb.queue, id)}
-        onClose={() => setQueueOn(false)}
+        onClose={closeQueue}
+        onRemove={removeQueueTrack}
+        onMove={pb.moveInQueue}
+        onClearUpNext={() => {
+          pb.clearUpNext();
+          showToast("Хвост очереди очищен", "list-x");
+        }}
+        onSaveAsPlaylist={() => void saveQueueAsPlaylist()}
       />
 
       <PlayerBar
@@ -825,9 +906,9 @@ function Player({
         shuffle={pb.shuffle}
         onShuffle={pb.toggleShuffle}
         repeat={pb.repeat}
-        onRepeat={pb.cycleRepeat}
+        onRepeat={cycleRepeatWithToast}
         speed={pb.speed}
-        onSpeed={pb.cycleSpeed}
+        onSpeed={cycleSpeedWithToast}
         lyricsOn={lyricsOn}
         onLyrics={() => setLyricsOn(!lyricsOn)}
         queueOn={queueOn}
@@ -844,6 +925,8 @@ function Player({
         open={toast.open}
         message={toast.text}
         icon={toast.icon}
+        actionLabel={toast.actionLabel}
+        onAction={toast.onAction}
         style={{
           position: "absolute",
           left: "50%",
@@ -982,10 +1065,37 @@ function Player({
         </div>
       </Dialog>
 
+      {/* Справка по клавишам: «?» или вкладка настроек */}
+      <Dialog open={hotkeysOpen} title="Горячие клавиши" onClose={() => setHotkeysOpen(false)}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 320 }}>
+          {HOTKEYS.map((h) => (
+            <div key={h.action} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
+              <span style={{ flex: 1, fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{h.action}</span>
+              <span
+                style={{
+                  fontSize: "var(--fs-caption)",
+                  fontVariantNumeric: "tabular-nums",
+                  color: "var(--text-1)",
+                  background: "var(--surface-3)",
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                }}
+              >
+                {h.combo}
+              </span>
+            </div>
+          ))}
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: "var(--sp-2)" }}>
+            Полный список и будущее переназначение — Настройки → Клавиши.
+          </div>
+        </div>
+      </Dialog>
+
       <ListeningMode
         open={expanded}
         track={track}
         lyrics={lyrics}
+        lyricsLoading={lyricsLoading}
         playing={playing}
         pos={pos}
         activeLine={activeLine}

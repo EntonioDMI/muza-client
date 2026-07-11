@@ -1,9 +1,13 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 
-/** Context / dropdown menu — frosted panel anchored at a point. */
+/** Context / dropdown menu — frosted panel anchored at a point.
+ *  Keyboard: focus jumps into the menu on open (and back on close),
+ *  Arrows/Home/End walk items, Enter activates, Escape closes. */
 export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   const [hoverIdx, setHoverIdx] = useState(null);
+  const panelRef = useRef(null);
+  const restoreRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -12,12 +16,43 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // фокус: на открытии — в первый пункт, на закрытии — туда, откуда пришли
+  useEffect(() => {
+    if (!open) return;
+    restoreRef.current = document.activeElement;
+    const first = panelRef.current?.querySelector('[role="menuitem"]');
+    if (first) first.focus();
+    return () => {
+      const el = restoreRef.current;
+      if (el && typeof el.focus === "function" && document.contains(el)) el.focus();
+    };
+  }, [open]);
+
+  const moveFocus = (delta, edge) => {
+    const nodes = [...(panelRef.current?.querySelectorAll('[role="menuitem"]') ?? [])];
+    if (nodes.length === 0) return;
+    if (edge === "first") { nodes[0].focus(); return; }
+    if (edge === "last") { nodes[nodes.length - 1].focus(); return; }
+    const i = nodes.indexOf(document.activeElement);
+    nodes[(i + delta + nodes.length) % nodes.length].focus();
+  };
+
+  const onMenuKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); moveFocus(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); moveFocus(-1); }
+    else if (e.key === "Home") { e.preventDefault(); moveFocus(0, "first"); }
+    else if (e.key === "End") { e.preventDefault(); moveFocus(0, "last"); }
+    else if (e.key === "Tab") { e.preventDefault(); moveFocus(e.shiftKey ? -1 : 1); }
+  };
+
   if (!open) return null;
   return (
     <div onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose && onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 150 }}>
       <div
+        ref={panelRef}
         role="menu"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onMenuKeyDown}
         style={{
           position: "absolute",
           left: x,
@@ -46,6 +81,8 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
               onClick={() => { if (it.onClick) it.onClick(); if (onClose) onClose(); }}
               onMouseEnter={() => setHoverIdx(i)}
               onMouseLeave={() => setHoverIdx(null)}
+              onFocus={() => setHoverIdx(i)}
+              onBlur={() => setHoverIdx(null)}
               style={{
                 display: "flex",
                 alignItems: "center",

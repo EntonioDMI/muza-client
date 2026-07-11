@@ -10,6 +10,7 @@ export function ListeningMode({
   open,
   track,
   lyrics,
+  lyricsLoading = false,
   playing,
   pos,
   activeLine,
@@ -26,6 +27,8 @@ export function ListeningMode({
   track: PlayerTrack;
   /** Строки текста (демо — локальные, каталог — LRCLIB, слайс 4). */
   lyrics: LyricLine[];
+  /** Текст ещё грузится — «Ищем текст…» вместо «Текст не найден». */
+  lyricsLoading?: boolean;
   playing: boolean;
   pos: number;
   activeLine: number;
@@ -166,7 +169,7 @@ export function ListeningMode({
               fontSize: "var(--fs-strong)",
             }}
           >
-            Текст не найден
+            {lyricsLoading ? "Ищем текст…" : "Текст не найден"}
           </div>
         )}
       </div>
