@@ -19,6 +19,7 @@ export function ListeningMode({
   onNext,
   onSeek,
   onSeekLine,
+  onExplain,
   onClose,
   visualizer = "off",
   getAnalyser,
@@ -37,6 +38,8 @@ export function ListeningMode({
   onNext: () => void;
   onSeek: (v: number) => void;
   onSeekLine: (i: number) => void;
+  /** Открыть общую модалку смысла для выделенной строки. */
+  onExplain: (index: number) => void;
   onClose: () => void;
   /** Визуализатор (Stage 6): бары/волна поверх сцены, за контентом. */
   visualizer?: "bars" | "wave" | "off";
@@ -59,7 +62,9 @@ export function ListeningMode({
     if (!open) return;
     wake();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // Модалка смысла живёт поверх режима прослушивания и сама обрабатывает
+      // Escape. Пока dialog открыт, нижний оверлей не должен закрываться следом.
+      if (e.key === "Escape" && !document.querySelector('[role="dialog"]')) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -157,7 +162,7 @@ export function ListeningMode({
           </div>
         </div>
         {lyrics.length > 0 ? (
-          <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" onSeek={onSeekLine} style={{ height: "100%" }} />
+          <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" onSeek={onSeekLine} onExplain={onExplain} style={{ height: "100%" }} />
         ) : (
           <div
             style={{

@@ -5,15 +5,22 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
 /** Modal dialog — frosted glass panel over a deep scrim. Use sparingly.
  *  Focus: jumps inside on open (first field or button), Tab loops within,
  *  Escape closes, focus returns to the opener on close. */
-export function Dialog({ open, title, children, actions, onClose, width = 440 }) {
+export function Dialog({ open, title, headerAction, children, actions, onClose, width = 440 }) {
   const panelRef = useRef(null);
   const restoreRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e) => { if (e.key === "Escape" && onClose) onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onKey = (e) => {
+      if (e.key === "Escape" && onClose) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    // Capture: модалка перехватывает Escape раньше оверлеев под ней.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
 
   // фокус внутрь при открытии (первое поле, иначе первая кнопка) и назад при закрытии
@@ -77,8 +84,11 @@ export function Dialog({ open, title, children, actions, onClose, width = 440 })
         }}
       >
         <style>{"@keyframes muzaFadeIn{from{opacity:0}}@keyframes muzaRiseIn{from{opacity:0;transform:translateY(14px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=dialog]{animation:none!important}}"}</style>
-        {title ? (
-          <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)", letterSpacing: "-0.01em" }}>{title}</div>
+        {title || headerAction ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
+            <div style={{ flex: 1, fontFamily: "var(--font-ui)", fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)", letterSpacing: "-0.01em" }}>{title}</div>
+            {headerAction}
+          </div>
         ) : null}
         <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>{children}</div>
         {actions ? (

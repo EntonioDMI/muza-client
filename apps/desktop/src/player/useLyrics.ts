@@ -9,12 +9,14 @@ import type { PlayerTrack } from "./types";
 
 export interface TrackLyrics {
   lines: LyricLine[];
+  /** id трека, которому принадлежат lines; защищает соседние хуки от гонки при смене трека. */
+  trackId: string | null;
   /** true — строки с таймкодами (LRC): активная строка и сик по строке живут. */
   synced: boolean;
   loading: boolean;
 }
 
-const EMPTY: TrackLyrics = { lines: [], synced: false, loading: false };
+const EMPTY: TrackLyrics = { lines: [], trackId: null, synced: false, loading: false };
 
 export function useLyrics(api: MuzaApi, track: PlayerTrack, canFetch: boolean): TrackLyrics {
   const [state, setState] = useState<TrackLyrics>(EMPTY);
@@ -24,7 +26,7 @@ export function useLyrics(api: MuzaApi, track: PlayerTrack, canFetch: boolean): 
   useEffect(() => {
     if (track.kind === "demo") {
       const lines = TRACKS.find((t) => t.id === track.id)?.lyrics ?? [];
-      setState({ lines, synced: true, loading: false });
+      setState({ lines, trackId: track.id, synced: true, loading: false });
       return;
     }
     if (!canFetch) {
@@ -37,16 +39,17 @@ export function useLyrics(api: MuzaApi, track: PlayerTrack, canFetch: boolean): 
       return;
     }
     let alive = true;
-    setState({ lines: [], synced: false, loading: true });
+    setState({ lines: [], trackId: null, synced: false, loading: true });
     api
       .getLyrics(track.id)
       .then((lyrics) => {
         let out: TrackLyrics;
         if (lyrics.synced && lyrics.synced.length > 0) {
-          out = { lines: lyrics.synced.map((l) => ({ t: l.t, text: l.line })), synced: true, loading: false };
+          out = { lines: lyrics.synced.map((l) => ({ t: l.t, text: l.line })), trackId: track.id, synced: true, loading: false };
         } else if (lyrics.plain) {
           out = {
             lines: lyrics.plain.split("\n").map((text) => ({ t: 0, text })),
+            trackId: track.id,
             synced: false,
             loading: false,
           };

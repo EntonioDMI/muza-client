@@ -83,6 +83,9 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
           <div
             key={i}
             ref={isActive ? activeRef : null}
+            role={hasNote ? "button" : undefined}
+            tabIndex={hasNote ? 0 : undefined}
+            aria-label={hasNote ? `Смысл строки: ${line.text}` : undefined}
             onClick={() => {
               if (hasNote) {
                 onExplain(i);
@@ -93,6 +96,12 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
                 // клик = «нашёл нужную строчку»: сразу возвращаем автоследование
                 if (manualTimer.current) clearTimeout(manualTimer.current);
                 setManual(false);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (hasNote && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                onExplain(i);
               }
             }}
             style={{
@@ -107,13 +116,17 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
               opacity,
               transform: `scale(${scale})`,
               transformOrigin: "left center",
-              cursor: onSeek ? "pointer" : "default",
+              cursor: hasNote || onSeek ? "pointer" : "default",
               pointerEvents: hidden ? "none" : "auto",
-              transition: "color var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
+              transition: "color var(--dur-slow) var(--ease-out), background var(--dur-fast) var(--ease-out), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
               textWrap: "balance",
+              background: hasNote ? "var(--accent-soft)" : "transparent",
+              boxShadow: hasNote ? "inset 3px 0 0 var(--accent)" : "none",
+              borderRadius: hasNote ? "var(--r-sm)" : 0,
+              padding: hasNote ? (karaoke ? "var(--sp-3) var(--sp-4)" : "var(--sp-2) var(--sp-3)") : 0,
               textDecorationLine: hasNote ? "underline" : "none",
               textDecorationStyle: "dotted",
-              textDecorationColor: "var(--text-3)",
+              textDecorationColor: "var(--accent-text)",
               textDecorationThickness: 1,
               textUnderlineOffset: 6,
             }}

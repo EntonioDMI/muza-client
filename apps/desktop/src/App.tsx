@@ -16,6 +16,7 @@ import { loadServerIds, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
+import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
 import { useMediaSession } from "./player/useMediaSession";
 import { fromCatalog, fromDemo, fromLocalEntry } from "./player/types";
 import { LoginScreen } from "./auth/LoginScreen";
@@ -24,6 +25,7 @@ import { NowPlayingPanel } from "./shell/NowPlayingPanel";
 import { PlayerBar } from "./shell/PlayerBar";
 import { QueuePanel } from "./shell/QueuePanel";
 import { ListeningMode } from "./shell/ListeningMode";
+import { MeaningDialog } from "./shell/MeaningDialog";
 import { VersionsDialog } from "./shell/VersionsDialog";
 import { AddLinkDialog } from "./shell/AddLinkDialog";
 import { ImportDialog } from "./shell/ImportDialog";
@@ -131,6 +133,7 @@ function Player({
   const [lyricsOn, setLyricsOn] = useState(true);
   const [queueOn, setQueueOn] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [meaningLine, setMeaningLine] = useState<number | null>(null);
   const [playlists, setPlaylists] = useState<DemoCollection[]>(PLAYLISTS);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [plName, setPlName] = useState("");
@@ -422,24 +425,26 @@ function Player({
   }, [sleep.mode, track.id]);
 
   // Тексты: демо — локальные строки, каталог — LRCLIB с сервера
-  const { lines: rawLyrics, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(api, track, canSearch);
+  const { lines: rawLyrics, trackId: lyricsTrackId, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(api, track, canSearch);
 
   // «Режим смысла» (Stage 5): настоящие Genius-аннотации каталожного трека —
   // строкам с аннотацией ставится note (пунктир в Lyrics, карточка в панели);
   // индексы аннотаций привязаны к synced-строкам, plain не размечаем.
   // Тумблер prefs.meaningMode (Тексты) выключает и Genius, и демо-note.
-  const { notes: annotationNotes, geniusUrl } = useAnnotations(api, track, canSearch && prefs.meaningMode);
-  const lyrics = useMemo(() => {
-    if (!prefs.meaningMode) {
-      // выключено: строки без note — Lyrics не подчёркивает, карточек нет
-      return rawLyrics.some((l) => l.note) ? rawLyrics.map((l) => ({ ...l, note: undefined })) : rawLyrics;
-    }
-    if (!lyricsSynced || annotationNotes.size === 0) return rawLyrics;
-    return rawLyrics.map((l, i) => {
-      const a = annotationNotes.get(i);
-      return a ? { ...l, note: a.body } : l;
-    });
-  }, [rawLyrics, lyricsSynced, annotationNotes, prefs.meaningMode]);
+  const canFetchAnnotations = shouldFetchAnnotations(
+    canSearch,
+    prefs.meaningMode,
+    lyricsLoading,
+    lyricsTrackId,
+    track.id,
+    rawLyrics.length,
+  );
+  const { notes: annotationNotes, geniusUrl } = useAnnotations(api, track, canFetchAnnotations);
+  const lyrics = useMemo(
+    () => decorateLyrics(rawLyrics, annotationNotes, prefs.meaningMode),
+    [rawLyrics, annotationNotes, prefs.meaningMode],
+  );
+  useEffect(() => setMeaningLine(null), [track.id, prefs.meaningMode]);
 
   // Активная строка — только у синхронизированного текста (plain не подсвечиваем)
   const activeLine = useMemo(() => {
@@ -872,8 +877,7 @@ function Player({
             onLike={() => toggleLike(track.id)}
             activeLine={activeLine}
             onSeekLine={seekLine}
-            annotations={annotationNotes}
-            geniusUrl={geniusUrl}
+            onExplain={setMeaningLine}
           />
         ) : null}
       </div>
@@ -1109,9 +1113,17 @@ function Player({
         onNext={pb.next}
         onSeek={pb.seek}
         onSeekLine={seekLine}
+        onExplain={setMeaningLine}
         onClose={() => setExpanded(false)}
         visualizer={prefs.visualizer}
         getAnalyser={pb.getAnalyser}
+      />
+      <MeaningDialog
+        open={meaningLine !== null}
+        line={meaningLine !== null ? lyrics[meaningLine] ?? null : null}
+        annotation={meaningLine !== null ? annotationNotes.get(meaningLine) : undefined}
+        geniusUrl={geniusUrl}
+        onClose={() => setMeaningLine(null)}
       />
     </div>
   );

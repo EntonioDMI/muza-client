@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Annotation, MuzaApi } from "@muza/api-client";
 import type { PlayerTrack } from "./types";
+import { buildAnnotationNotes } from "./annotations";
 
 export interface TrackNotes {
   /** Индекс строки synced-текста → аннотация (первая, если строк несколько). */
@@ -34,13 +35,7 @@ export function useAnnotations(api: MuzaApi, track: PlayerTrack, canFetch: boole
     api
       .getAnnotations(track.id)
       .then(({ geniusUrl, annotations }) => {
-        const notes = new Map<number, Annotation>();
-        for (const a of annotations ?? []) {
-          const idxs = a.lineIdxs.length > 0 ? a.lineIdxs : a.lineIdx !== null ? [a.lineIdx] : [];
-          for (const i of idxs) {
-            if (!notes.has(i)) notes.set(i, a);
-          }
-        }
+        const notes = buildAnnotationNotes(annotations);
         const out: TrackNotes = { notes, geniusUrl };
         cacheRef.current.set(track.id, out);
         if (alive) setState(out);
