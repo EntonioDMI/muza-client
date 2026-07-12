@@ -452,10 +452,12 @@ function MarketThemeCard({
   theme,
   onInstall,
   onRemove,
+  onReport,
 }: {
   theme: MarketTheme;
   onInstall: () => void;
   onRemove?: () => void;
+  onReport?: () => void;
 }) {
   const p = theme.payload as { accent?: string; customAccent?: string; bgColor?: string; baseBg?: string; bgType?: string; customCss?: string };
   const accent =
@@ -493,6 +495,7 @@ function MarketThemeCard({
         <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{theme.name}</div>
         <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
           {theme.author} · {theme.installs} устан.{hasCss ? " · содержит CSS" : ""}
+          {theme.hidden ? <span style={{ color: "var(--danger)" }}> · скрыта модерацией</span> : null}
         </div>
       </div>
       <div style={{ display: "flex", gap: "var(--sp-2)" }}>
@@ -500,6 +503,7 @@ function MarketThemeCard({
           Установить
         </Button>
         {onRemove ? <IconButton icon="trash-2" label="Снять с публикации" onClick={onRemove} /> : null}
+        {onReport ? <IconButton icon="flag" label="Пожаловаться" onClick={onReport} /> : null}
       </div>
     </div>
   );
@@ -866,6 +870,15 @@ export function SettingsView({
       onNotify("Тема снята с публикации", "trash-2");
     } catch {
       onNotify("Не удалось снять тему", "x");
+    }
+  };
+
+  const reportTheme = async (t: MarketTheme) => {
+    try {
+      await api.reportMarketTheme(t.id);
+      onNotify("Жалоба отправлена — спасибо", "flag");
+    } catch (e) {
+      onNotify(e instanceof ApiError ? e.message : "Не удалось отправить жалобу", "x");
     }
   };
 
@@ -1676,6 +1689,7 @@ export function SettingsView({
                 theme={t}
                 onInstall={() => void installTheme(t)}
                 onRemove={t.isMine ? () => void unpublishTheme(t) : undefined}
+                onReport={!t.isMine ? () => void reportTheme(t) : undefined}
               />
             ))}
           </div>

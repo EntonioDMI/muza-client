@@ -178,6 +178,7 @@ interface MarketThemeWire {
   created_at: string;
   payload: Record<string, unknown>;
   is_mine: boolean;
+  hidden?: boolean;
 }
 
 function marketThemeFromWire(w: MarketThemeWire): MarketTheme {
@@ -189,6 +190,7 @@ function marketThemeFromWire(w: MarketThemeWire): MarketTheme {
     createdAt: w.created_at,
     payload: w.payload ?? {},
     isMine: w.is_mine,
+    hidden: w.hidden ?? false,
   };
 }
 
@@ -901,6 +903,10 @@ export class HttpMuzaApi implements MuzaApi {
 
   async deleteMarketTheme(id: string): Promise<void> {
     await this.authedRequest(`/market/themes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async reportMarketTheme(id: string): Promise<void> {
+    await this.authedRequest(`/market/themes/${encodeURIComponent(id)}/report`, { method: "POST" });
   }
 
   // ---------- Админ-панель (Stage 5) ----------

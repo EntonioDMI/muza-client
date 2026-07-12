@@ -324,6 +324,8 @@ export class MockMuzaApi implements MuzaApi {
 
   async deleteMarketTheme(): Promise<void> {}
 
+  async reportMarketTheme(): Promise<void> {}
+
   // Админка в моке недоступна
   async adminPing(): Promise<boolean> {
     return false;

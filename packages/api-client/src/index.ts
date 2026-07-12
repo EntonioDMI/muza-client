@@ -142,6 +142,8 @@ export interface MuzaApi {
   installMarketTheme(id: string): Promise<MarketTheme>;
   /** Снять с публикации (свою; админ — любую). */
   deleteMarketTheme(id: string): Promise<void>;
+  /** Пожаловаться на чужую тему (порог жалоб авто-скрывает её). */
+  reportMarketTheme(id: string): Promise<void>;
 
   // Совместные плейлисты (Stage 7): инвайт-код → вход по коду → участник
   // добавляет/убирает треки. Код видит и отзывает только владелец.
