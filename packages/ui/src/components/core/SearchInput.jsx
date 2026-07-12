@@ -15,7 +15,8 @@ export function SearchInput({ value, onChange, placeholder = "Поиск", icon 
         gap: "var(--sp-3)",
         height: 44,
         padding: "0 var(--sp-4)",
-        borderRadius: "var(--r-pill)",
+        /* «скругление по типам»: поле поиска — поле; дефолт — пилюля */
+        borderRadius: "var(--r-field, var(--r-pill))",
         background: focus ? "var(--surface-4)" : hover ? "var(--surface-3)" : "var(--surface-2)",
         color: focus ? "var(--text-1)" : "var(--text-2)",
         cursor: "text",

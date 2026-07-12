@@ -26,3 +26,21 @@ export function customAccentVars(hex: string, light = false): Record<string, str
     "--accent-soft": `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${light ? 0.14 : 0.16})`,
   };
 }
+
+/** Роли акцента: отдельные цвета для play-кнопок, слайдеров и активного трека.
+ *  Компоненты ДС читают ролевые переменные с фолбэком на общий --accent
+ *  (var(--accent-play, var(--accent)) и т.п.) — без ролей ничего не меняется.
+ *  Для активного трека выводится text-вариант (та же коррекция читаемости,
+ *  что у customAccentVars). */
+export function accentRoleVars(
+  roles: { play: string; slider: string; active: string },
+  light = false,
+): Record<string, string> {
+  const target = light ? 0 : 255;
+  return {
+    "--accent-play": roles.play,
+    "--accent-play-hover": mixTo(hexToRgb(roles.play), target, 0.15),
+    "--accent-slider": roles.slider,
+    "--accent-active-text": mixTo(hexToRgb(roles.active), target, light ? 0.32 : 0.4),
+  };
+}

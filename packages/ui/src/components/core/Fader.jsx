@@ -91,7 +91,7 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
           transition: "width var(--dur-fast) var(--ease-out)",
         }}
       >
-        <div style={{ width: "100%", height: pct + "%", background: "var(--accent)", borderRadius: "var(--r-pill)" }}></div>
+        <div style={{ width: "100%", height: pct + "%", background: "var(--accent-slider, var(--accent))", borderRadius: "var(--r-pill)" }}></div>
       </div>
       <div
         style={{

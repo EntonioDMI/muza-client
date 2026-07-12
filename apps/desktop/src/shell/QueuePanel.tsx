@@ -188,7 +188,8 @@ export function QueuePanel({
         width: 380,
         maxHeight: 460,
         borderRadius: "var(--r-lg)",
-        background: "var(--glass-panel)",
+        // очередь визуально принадлежит плееру — то же зональное стекло
+        background: "var(--glass-player, var(--glass-panel))",
         backdropFilter: "blur(var(--blur-glass))",
         WebkitBackdropFilter: "blur(var(--blur-glass))",
         padding: "var(--sp-4)",

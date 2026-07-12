@@ -77,7 +77,8 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
           height: 40,
           padding: "0 var(--sp-3) 0 var(--sp-4)",
           border: "none",
-          borderRadius: "var(--r-md)",
+          /* «скругление по типам»: поле селекта — поле; дефолт — md */
+          borderRadius: "var(--r-field, var(--r-md))",
           background: open || hover ? "var(--surface-4)" : "var(--surface-3)",
           color: "var(--text-1)",
           fontFamily: "var(--font-ui)",
@@ -138,7 +139,8 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
               overflowY: "auto",
               padding: "var(--sp-2)",
               borderRadius: "var(--r-md)",
-              background: "var(--glass-panel)",
+              /* выпадающая панель — то же стекло, что у меню */
+              background: "var(--glass-menu, var(--glass-panel))",
               backdropFilter: "blur(var(--blur-glass))",
               WebkitBackdropFilter: "blur(var(--blur-glass))",
               boxSizing: "border-box",

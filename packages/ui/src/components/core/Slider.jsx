@@ -107,7 +107,8 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
             width: pct + "%",
             height: "100%",
             borderRadius: "var(--r-pill)",
-            background: "var(--accent)",
+            /* роль акцента «слайдеры»: свой цвет, фолбэк — общий акцент */
+            background: "var(--accent-slider, var(--accent))",
           }}
         ></div>
       </div>

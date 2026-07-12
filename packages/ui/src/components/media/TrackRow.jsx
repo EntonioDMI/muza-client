@@ -66,7 +66,8 @@ export function TrackRow({
             border: "none",
             borderRadius: "var(--r-pill)",
             background: lit ? "var(--surface-3)" : "transparent",
-            color: active ? "var(--accent-text)" : lit ? "var(--text-1)" : "var(--text-3)",
+            /* роль акцента «активный трек»: свой цвет, фолбэк — общий акцент */
+            color: active ? "var(--accent-active-text, var(--accent-text))" : lit ? "var(--text-1)" : "var(--text-3)",
             fontFamily: "var(--font-ui)",
             fontSize: "var(--fs-caption)",
             fontVariantNumeric: "tabular-nums",
@@ -77,7 +78,7 @@ export function TrackRow({
           {lit ? (
             <Icon name={active && playing ? "pause" : "play"} size={16} color="currentColor" />
           ) : active && playing ? (
-            <Icon name="audio-lines" size={18} color="var(--accent-text)" />
+            <Icon name="audio-lines" size={18} color="var(--accent-active-text, var(--accent-text))" />
           ) : (
             <span>{index}</span>
           )}
@@ -92,7 +93,7 @@ export function TrackRow({
             style={{
               fontSize: "var(--fs-body)",
               fontWeight: "var(--fw-medium)",
-              color: active ? "var(--accent-text)" : "var(--text-1)",
+              color: active ? "var(--accent-active-text, var(--accent-text))" : "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",

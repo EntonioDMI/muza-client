@@ -22,7 +22,8 @@ export function IconButton({
 
   const bg =
     variant === "accent"
-      ? hover ? "var(--accent-hover)" : "var(--accent)"
+      /* роль акцента «play»: свой цвет play-кнопок, фолбэк — общий акцент */
+      ? hover ? "var(--accent-play-hover, var(--accent-hover))" : "var(--accent-play, var(--accent))"
       : variant === "surface"
         ? hover ? "var(--surface-4)" : "var(--surface-3)"
         : hover ? "var(--surface-2)" : "transparent";
@@ -52,7 +53,8 @@ export function IconButton({
         height: d,
         flex: "none",
         border: "none",
-        borderRadius: "var(--r-pill)",
+        /* «скругление по типам» может квадратить кнопки; дефолт — пилюля */
+        borderRadius: "var(--r-control, var(--r-pill))",
         background: bg,
         color: fg,
         cursor: disabled ? "default" : "pointer",

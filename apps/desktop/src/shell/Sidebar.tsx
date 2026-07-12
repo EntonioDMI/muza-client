@@ -215,7 +215,10 @@ export function Sidebar({
         gap: "var(--sp-2)",
         padding: "var(--pad-zone)",
         borderRadius: "var(--r-lg)",
-        background: "var(--surface-1)",
+        // зональная прозрачность: своя плотность поверхности + blur (вкл. зонами)
+        background: "var(--glass-sidebar, var(--surface-1))",
+        backdropFilter: "var(--bf-zone, none)",
+        WebkitBackdropFilter: "var(--bf-zone, none)",
         overflow: "hidden",
       }}
     >

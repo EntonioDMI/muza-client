@@ -25,7 +25,20 @@ export interface Prefs {
   accent: "blue" | "red" | "bolt" | "custom";
   /** Hex свого акцента; остальные акцент-токены выводятся из него (lib/accent). */
   customAccent: string;
+  /** Роли акцента: отдельные цвета для play-кнопок, слайдеров и активного
+   *  трека (--accent-play/-slider/-active-text, фолбэк — общий --accent). */
+  accentRolesOn: boolean;
+  accentPlay: string;
+  accentSlider: string;
+  accentActive: string;
   radius: "mild" | "soft" | "round";
+  /** Скругление по типам поверх пресета radius: плитки/строки и панели —
+   *  множитель к пресету; кнопки и поля — переопределение формы
+   *  (--r-control/--r-field, фолбэк — пилюля/пресет). */
+  radiusTiles: "sharper" | "preset" | "rounder";
+  radiusPanels: "sharper" | "preset" | "rounder";
+  radiusControls: "pill" | "soft" | "sharp";
+  radiusFields: "preset" | "soft" | "sharp";
   /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
    *  картинка по URL. Старое поле bgCover=true мигрирует в "cover". */
   bgType: "none" | "cover" | "color" | "gradient" | "image";
@@ -36,6 +49,17 @@ export interface Prefs {
   bgImageUrl: string;
   /** Затемнение фона поверх (0–80%): контент читается на любом фоне. */
   bgDim: number;
+  /** Реакция фона на обложку: --bg-0/1 подкрашиваются доминирующим цветом
+   *  обложки текущего трека (lib/coverTint). */
+  bgTint: boolean;
+  /** Прозрачность/фон по зонам: своя плотность стекла у плеера, меню,
+   *  диалогов, сайдбара и «Сейчас играет» (--glass-<зона>, % плотности). */
+  glassZonesOn: boolean;
+  glassPlayer: number;
+  glassMenu: number;
+  glassDialog: number;
+  glassSidebar: number;
+  glassNowPlaying: number;
   /** Размытие фона-обложки/картинки, px (--blur-scenery). */
   blurScenery: number;
   /** Базовые bg-слои: графит (дефолт ДС) / тёплый / холодный / AMOLED. */
@@ -126,12 +150,27 @@ export const DEFAULT_PREFS: Prefs = {
   theme: "dark",
   accent: "blue",
   customAccent: "#22c55e",
+  accentRolesOn: false,
+  accentPlay: "#3b82f6",
+  accentSlider: "#3b82f6",
+  accentActive: "#3b82f6",
   radius: "soft",
+  radiusTiles: "preset",
+  radiusPanels: "preset",
+  radiusControls: "pill",
+  radiusFields: "preset",
   bgType: "none",
   bgColor: "#1a1815",
   bgColor2: "#101418",
   bgImageUrl: "",
   bgDim: 40,
+  bgTint: false,
+  glassZonesOn: false,
+  glassPlayer: 62,
+  glassMenu: 62,
+  glassDialog: 100,
+  glassSidebar: 4,
+  glassNowPlaying: 4,
   blurScenery: 64,
   baseBg: "graphite",
   textDim: 62,

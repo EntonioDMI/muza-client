@@ -45,7 +45,8 @@ export function Button({
         height: h,
         padding: "0 " + (size === "lg" ? "26px" : "20px"),
         border: "none",
-        borderRadius: "var(--r-pill)",
+        /* «скругление по типам» может квадратить кнопки; дефолт — пилюля */
+        borderRadius: "var(--r-control, var(--r-pill))",
         background: bg,
         color: fg,
         fontFamily: "var(--font-ui)",

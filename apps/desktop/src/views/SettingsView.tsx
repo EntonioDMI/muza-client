@@ -1065,6 +1065,12 @@ export function SettingsView({
     { key: "graphite", name: "Графит", hint: "Молния · строже", accent: "bolt" as const, accentColor: "#327ad9", radius: "mild" as const },
   ];
 
+  // Текущий hex акцента — им сеются роли акцента при включении
+  const currentAccentHex =
+    prefs.accent === "custom"
+      ? prefs.customAccent
+      : (presets.find((p) => p.accent === prefs.accent)?.accentColor ?? "#3b82f6");
+
   // ── Под-экраны (тяжёлые пункты — не строки) ──────────────────────
 
   const customizePane = (
@@ -1084,9 +1090,58 @@ export function SettingsView({
           onChange={(v) => set({ blurScenery: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Прозрачность по зонам" hint="Плеер, «сейчас играет», меню, диалоги, сайдбар (позже)" chevron>
-        <RowValue>Общая</RowValue>
+      <SettingRow title="Прозрачность по зонам" hint="Своя плотность фона у плеера, меню, диалогов, сайдбара и «Сейчас играет»">
+        <Switch checked={prefs.glassZonesOn} onChange={(glassZonesOn: boolean) => set({ glassZonesOn })} label="Прозрачность по зонам" />
       </SettingRow>
+      {prefs.glassZonesOn ? (
+        <>
+          <SettingRow title="Плеер" hint="Стекло плеер-бара и очереди">
+            <LiveSlider
+              value={prefs.glassPlayer}
+              max={100}
+              label="Плотность стекла плеера"
+              suffix={`${prefs.glassPlayer} %`}
+              onChange={(v) => set({ glassPlayer: Math.round(v) })}
+            />
+          </SettingRow>
+          <SettingRow title="Меню" hint="Контекстные меню и выпадающие списки">
+            <LiveSlider
+              value={prefs.glassMenu}
+              max={100}
+              label="Плотность стекла меню"
+              suffix={`${prefs.glassMenu} %`}
+              onChange={(v) => set({ glassMenu: Math.round(v) })}
+            />
+          </SettingRow>
+          <SettingRow title="Диалоги" hint="100 % — глухая панель, меньше — стекло">
+            <LiveSlider
+              value={prefs.glassDialog}
+              max={100}
+              label="Плотность окна диалога"
+              suffix={`${prefs.glassDialog} %`}
+              onChange={(v) => set({ glassDialog: Math.round(v) })}
+            />
+          </SettingRow>
+          <SettingRow title="Сайдбар" hint="Плотность поверхности слева (дефолт лёгкий — 4 %)">
+            <LiveSlider
+              value={prefs.glassSidebar}
+              max={100}
+              label="Плотность поверхности сайдбара"
+              suffix={`${prefs.glassSidebar} %`}
+              onChange={(v) => set({ glassSidebar: Math.round(v) })}
+            />
+          </SettingRow>
+          <SettingRow title="«Сейчас играет»" hint="Правая панель с текстом">
+            <LiveSlider
+              value={prefs.glassNowPlaying}
+              max={100}
+              label="Плотность панели «Сейчас играет»"
+              suffix={`${prefs.glassNowPlaying} %`}
+              onChange={(v) => set({ glassNowPlaying: Math.round(v) })}
+            />
+          </SettingRow>
+        </>
+      ) : null}
 
       <GroupTitle>Цвета и слои</GroupTitle>
       <SettingRow title="Базовый фон" hint="Тон и температура bg-слоёв">
@@ -1101,9 +1156,34 @@ export function SettingsView({
           onChange={(k: string) => set({ baseBg: k as Prefs["baseBg"] })}
         />
       </SettingRow>
-      <SettingRow title="Роли акцента" hint="Отдельно для play, слайдеров, активного трека (позже)" chevron>
-        <RowValue>Единый</RowValue>
+      <SettingRow title="Роли акцента" hint="Отдельные цвета для play-кнопок, слайдеров и активного трека">
+        <Switch
+          checked={prefs.accentRolesOn}
+          onChange={(on: boolean) =>
+            // включение сеет роли текущим акцентом — WYSIWYG: ничего не мигает,
+            // дальше цвета разводятся пикерами
+            set(
+              on
+                ? { accentRolesOn: true, accentPlay: currentAccentHex, accentSlider: currentAccentHex, accentActive: currentAccentHex }
+                : { accentRolesOn: false },
+            )
+          }
+          label="Роли акцента"
+        />
       </SettingRow>
+      {prefs.accentRolesOn ? (
+        <>
+          <SettingRow title="Кнопки play" hint="Play в плеере, плитках и режиме прослушивания">
+            <ColorDot color={prefs.accentPlay} label="Цвет play-кнопок" onPick={(accentPlay) => set({ accentPlay })} />
+          </SettingRow>
+          <SettingRow title="Слайдеры" hint="Прогресс, громкость, эквалайзер">
+            <ColorDot color={prefs.accentSlider} label="Цвет слайдеров" onPick={(accentSlider) => set({ accentSlider })} />
+          </SettingRow>
+          <SettingRow title="Активный трек" hint="Подсветка играющего трека в списках">
+            <ColorDot color={prefs.accentActive} label="Цвет активного трека" onPick={(accentActive) => set({ accentActive })} />
+          </SettingRow>
+        </>
+      ) : null}
       <SettingRow title="Приглушение текста" hint="Яркость вторичного текста (подписи, хинты)">
         <LiveSlider
           value={prefs.textDim - 40}
@@ -1115,8 +1195,49 @@ export function SettingsView({
       </SettingRow>
 
       <GroupTitle>Форма и размеры</GroupTitle>
-      <SettingRow title="Скругление по типам" hint="Плитки, кнопки, поля, панели отдельно (позже)" chevron>
-        <RowValue>Пресет</RowValue>
+      <SettingRow title="Плитки и строки" hint="Обложки, карточки, строки треков — поверх пресета «Скругление»">
+        <Tabs
+          items={[
+            { key: "sharper", label: "Строже" },
+            { key: "preset", label: "Пресет" },
+            { key: "rounder", label: "Круглее" },
+          ]}
+          value={prefs.radiusTiles}
+          onChange={(k: string) => set({ radiusTiles: k as Prefs["radiusTiles"] })}
+        />
+      </SettingRow>
+      <SettingRow title="Кнопки" hint="Форма кнопок: пилюля (дефолт ДС) или прямее">
+        <Tabs
+          items={[
+            { key: "pill", label: "Пилюля" },
+            { key: "soft", label: "Мягкие" },
+            { key: "sharp", label: "Строгие" },
+          ]}
+          value={prefs.radiusControls}
+          onChange={(k: string) => set({ radiusControls: k as Prefs["radiusControls"] })}
+        />
+      </SettingRow>
+      <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля">
+        <Tabs
+          items={[
+            { key: "preset", label: "Пресет" },
+            { key: "soft", label: "Мягче" },
+            { key: "sharp", label: "Строже" },
+          ]}
+          value={prefs.radiusFields}
+          onChange={(k: string) => set({ radiusFields: k as Prefs["radiusFields"] })}
+        />
+      </SettingRow>
+      <SettingRow title="Панели и зоны" hint="Сайдбар, плеер, диалоги — поверх пресета «Скругление»">
+        <Tabs
+          items={[
+            { key: "sharper", label: "Строже" },
+            { key: "preset", label: "Пресет" },
+            { key: "rounder", label: "Круглее" },
+          ]}
+          value={prefs.radiusPanels}
+          onChange={(k: string) => set({ radiusPanels: k as Prefs["radiusPanels"] })}
+        />
       </SettingRow>
       <SettingRow title="Плотность интерфейса" hint="Отступы зон и высота строк трека">
         <Tabs
@@ -1234,9 +1355,6 @@ export function SettingsView({
           <SettingInput value={prefs.bgImageUrl} onChange={(bgImageUrl) => set({ bgImageUrl })} placeholder="https://…" width={260} />
         </SettingRow>
       ) : null}
-      <SettingRow title="Фон по зонам" hint="Глобально или отдельно для зон (позже)" chevron>
-        <RowValue>Глобально</RowValue>
-      </SettingRow>
       <SettingRow title="Затемнение фона" hint="Чтобы контент читался поверх">
         <LiveSlider
           value={prefs.bgDim}
@@ -1246,8 +1364,8 @@ export function SettingsView({
           onChange={(v) => set({ bgDim: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Реакция на обложку" hint="Фон подстраивается под цвет трека (позже)">
-        <Switch checked={false} disabled label="Реакция на обложку" />
+      <SettingRow title="Реакция на обложку" hint="Базовый фон подкрашивается доминирующим цветом обложки трека">
+        <Switch checked={prefs.bgTint} onChange={(bgTint: boolean) => set({ bgTint })} label="Реакция на обложку" />
       </SettingRow>
 
       <GroupTitle>Поведение</GroupTitle>
@@ -1340,15 +1458,27 @@ export function SettingsView({
           onClick={() =>
             set({
               accent: DEFAULT_PREFS.accent,
+              accentRolesOn: DEFAULT_PREFS.accentRolesOn,
               radius: DEFAULT_PREFS.radius,
+              radiusTiles: DEFAULT_PREFS.radiusTiles,
+              radiusPanels: DEFAULT_PREFS.radiusPanels,
+              radiusControls: DEFAULT_PREFS.radiusControls,
+              radiusFields: DEFAULT_PREFS.radiusFields,
               blur: DEFAULT_PREFS.blur,
               glassOpacity: DEFAULT_PREFS.glassOpacity,
+              glassZonesOn: DEFAULT_PREFS.glassZonesOn,
+              glassPlayer: DEFAULT_PREFS.glassPlayer,
+              glassMenu: DEFAULT_PREFS.glassMenu,
+              glassDialog: DEFAULT_PREFS.glassDialog,
+              glassSidebar: DEFAULT_PREFS.glassSidebar,
+              glassNowPlaying: DEFAULT_PREFS.glassNowPlaying,
               anims: DEFAULT_PREFS.anims,
               bgType: DEFAULT_PREFS.bgType,
               bgColor: DEFAULT_PREFS.bgColor,
               bgColor2: DEFAULT_PREFS.bgColor2,
               bgImageUrl: DEFAULT_PREFS.bgImageUrl,
               bgDim: DEFAULT_PREFS.bgDim,
+              bgTint: DEFAULT_PREFS.bgTint,
               blurScenery: DEFAULT_PREFS.blurScenery,
               baseBg: DEFAULT_PREFS.baseBg,
               textDim: DEFAULT_PREFS.textDim,

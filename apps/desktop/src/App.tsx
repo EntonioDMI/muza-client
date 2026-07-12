@@ -3,7 +3,8 @@ import { Button, Dialog, Icon, Menu, SearchInput, Toast } from "@muza/ui";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, type Prefs, type View } from "./types";
-import { customAccentVars } from "./lib/accent";
+import { accentRoleVars, customAccentVars } from "./lib/accent";
+import { dominantColor, mixHex } from "./lib/coverTint";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
 import { exportCachedTrack } from "./lib/dragOut";
@@ -109,6 +110,26 @@ const BASE_BG: Record<Prefs["baseBg"], { bg0: string; bg1: string } | null> = {
 
 /** Множители скорости анимаций к базовым 150/220/400мс. */
 const ANIM_SPEED: Record<Prefs["animSpeed"], number> = { fast: 0.6, normal: 1, slow: 1.7 };
+
+/** Базовые значения шкалы радиусов по пресету [data-radius] (radius.css ДС) —
+ *  «скругление по типам» умножает их и переопределяет токены inline. */
+const RADIUS_BASE: Record<Prefs["radius"], { xs: number; sm: number; md: number; lg: number; xl: number }> = {
+  mild: { xs: 6, sm: 8, md: 12, lg: 16, xl: 20 },
+  soft: { xs: 10, sm: 14, md: 20, lg: 28, xl: 36 },
+  round: { xs: 14, sm: 18, md: 26, lg: 36, xl: 48 },
+};
+/** Множитель per-type скругления к пресету (плитки/строки, панели). */
+const RADIUS_TYPE_MULT: Record<Prefs["radiusTiles"], number> = { sharper: 0.5, preset: 1, rounder: 1.6 };
+/** Форма кнопок/полей: переопределение в px (pill/preset = фолбэк токена). */
+const RADIUS_CONTROLS: Record<Prefs["radiusControls"], string | null> = { pill: null, soft: "14px", sharp: "8px" };
+const RADIUS_FIELDS: Record<Prefs["radiusFields"], string | null> = { preset: null, soft: "16px", sharp: "8px" };
+
+/** Дефолтные --bg-0/1 тем (colors.css / themes.css ДС) — база для тонировки
+ *  обложкой, когда baseBg-пресет не активен. */
+const BG_DEFAULTS = {
+  dark: { bg0: "#121110", bg1: "#171614" },
+  light: { bg0: "#f3f1ed", bg1: "#faf9f6" },
+};
 
 /** Межстрочный UI-текст (--lh-ui, дефолт ДС 1.4). */
 const LINE_SPACING: Record<Prefs["lineSpacing"], string> = { tight: "1.25", normal: "1.4", relaxed: "1.6" };
@@ -265,6 +286,24 @@ function Player({
   // Обложка без letterbox-полос YouTube-тумбов (canvas-кроп, кэш на сессию);
   // панели/бар/фон получают уже чистую
   const cleanCover = useCoverArt(pbRaw.track.cover);
+
+  // Реакция фона на обложку: доминирующий цвет чищенной обложки → тонировка
+  // --bg-0/1 в rootStyle. Обложка чищенная (letterbox уже срезан) — чёрные
+  // полосы ytimg не перекашивают доминанту.
+  const [coverTint, setCoverTint] = useState<string | null>(null);
+  useEffect(() => {
+    if (!prefs.bgTint || !cleanCover) {
+      setCoverTint(null);
+      return;
+    }
+    let alive = true;
+    dominantColor(cleanCover).then((hex) => {
+      if (alive) setCoverTint(hex);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [prefs.bgTint, cleanCover]);
   const pb = useMemo(
     () => ({ ...pbRaw, track: { ...pbRaw.track, cover: cleanCover } }),
     [pbRaw, cleanCover],
@@ -845,6 +884,22 @@ function Player({
   // светлая = тёмный текст на светлом стекле (иначе инлайн перебил бы [data-theme])
   const textBase = isLight ? "28, 26, 23" : "244, 243, 241";
   const glassBase = isLight ? "250, 249, 246" : "23, 22, 20";
+  // Поверхности зон (сайдбар/«сейчас играет»): тёмная тема — translucent-white,
+  // светлая — translucent-black (логика слоёв themes.css)
+  const surfaceBase = isLight ? "20, 18, 15" : "255, 255, 255";
+  // Скругление по типам: плитки/панели — множитель к пресету, кнопки/поля — px
+  const rBase = RADIUS_BASE[prefs.radius];
+  const rTilesMult = RADIUS_TYPE_MULT[prefs.radiusTiles];
+  const rPanelsMult = RADIUS_TYPE_MULT[prefs.radiusPanels];
+  const rControl = RADIUS_CONTROLS[prefs.radiusControls];
+  const rField = RADIUS_FIELDS[prefs.radiusFields];
+  // Тонировка фона обложкой поверх действующей пары bg-слоёв
+  const bgPair = baseBg ?? BG_DEFAULTS[isLight ? "light" : "dark"];
+  const tintStrength = isLight ? 0.12 : 0.22;
+  const tintedBg =
+    prefs.bgTint && coverTint
+      ? { bg0: mixHex(bgPair.bg0, coverTint, tintStrength), bg1: mixHex(bgPair.bg1, coverTint, tintStrength) }
+      : null;
   const rootStyle = {
     position: "absolute",
     inset: 0,
@@ -855,8 +910,44 @@ function Player({
     "--glass-panel": `rgba(${glassBase}, ${prefs.glassOpacity / 100})`,
     // свой акцент: все четыре акцент-токена выводятся из выбранного hex (theme-aware)
     ...(prefs.accent === "custom" ? customAccentVars(prefs.customAccent, isLight) : {}),
+    // роли акцента: play/слайдеры/активный трек отдельно (фолбэк — --accent)
+    ...(prefs.accentRolesOn
+      ? accentRoleVars({ play: prefs.accentPlay, slider: prefs.accentSlider, active: prefs.accentActive }, isLight)
+      : {}),
+    // скругление по типам поверх пресета [data-radius]
+    ...(prefs.radiusTiles !== "preset"
+      ? {
+          "--r-xs": `${Math.round(rBase.xs * rTilesMult)}px`,
+          "--r-sm": `${Math.round(rBase.sm * rTilesMult)}px`,
+          "--r-md": `${Math.round(rBase.md * rTilesMult)}px`,
+        }
+      : {}),
+    ...(prefs.radiusPanels !== "preset"
+      ? {
+          "--r-lg": `${Math.round(rBase.lg * rPanelsMult)}px`,
+          "--r-xl": `${Math.round(rBase.xl * rPanelsMult)}px`,
+        }
+      : {}),
+    ...(rControl ? { "--r-control": rControl } : {}),
+    ...(rField ? { "--r-field": rField } : {}),
+    // прозрачность по зонам: своя плотность стекла у каждой зоны + backdrop-blur
+    // для зон, которые без этого — плоские surface (сайдбар, «сейчас играет»)
+    ...(prefs.glassZonesOn
+      ? {
+          "--glass-player": `rgba(${glassBase}, ${prefs.glassPlayer / 100})`,
+          "--glass-menu": `rgba(${glassBase}, ${prefs.glassMenu / 100})`,
+          "--glass-dialog": `rgba(${glassBase}, ${prefs.glassDialog / 100})`,
+          "--glass-sidebar": `rgba(${surfaceBase}, ${prefs.glassSidebar / 100})`,
+          "--glass-nowplaying": `rgba(${surfaceBase}, ${prefs.glassNowPlaying / 100})`,
+          "--bf-zone": "blur(var(--blur-glass))",
+        }
+      : {}),
     // Stage 6 (продвинутая кастомизация): токен-уровневые переопределения
-    ...(baseBg ? { "--bg-0": baseBg.bg0, "--bg-1": baseBg.bg1 } : {}),
+    ...(tintedBg
+      ? { "--bg-0": tintedBg.bg0, "--bg-1": tintedBg.bg1 }
+      : baseBg
+        ? { "--bg-0": baseBg.bg0, "--bg-1": baseBg.bg1 }
+        : {}),
     "--text-2": `rgba(${textBase}, ${(prefs.textDim / 100).toFixed(2)})`,
     "--text-3": `rgba(${textBase}, ${Math.max(0.2, prefs.textDim / 100 - 0.24).toFixed(2)})`,
     "--blur-scenery": `${prefs.blurScenery}px`,

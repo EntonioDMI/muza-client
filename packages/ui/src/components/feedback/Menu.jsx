@@ -60,7 +60,8 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           minWidth: 220,
           padding: "var(--sp-2)",
           borderRadius: "var(--r-md)",
-          background: "var(--glass-panel)",
+          /* зональная прозрачность: своё стекло меню, фолбэк — общее */
+          background: "var(--glass-menu, var(--glass-panel))",
           backdropFilter: "blur(var(--blur-glass))",
           WebkitBackdropFilter: "blur(var(--blur-glass))",
           display: "flex",

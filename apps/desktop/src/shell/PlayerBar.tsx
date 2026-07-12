@@ -125,7 +125,8 @@ export function PlayerBar({
         bottom: "var(--gap-zone)",
         height: "var(--h-playerbar)",
         borderRadius: "var(--r-lg)",
-        background: "var(--glass-panel)",
+        // зональная прозрачность: своё стекло плеера, фолбэк — общее
+        background: "var(--glass-player, var(--glass-panel))",
         backdropFilter: "blur(var(--blur-glass))",
         WebkitBackdropFilter: "blur(var(--blur-glass))",
         display: "grid",
