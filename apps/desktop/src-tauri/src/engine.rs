@@ -563,6 +563,36 @@ pub fn engine_cache_stats(app: AppHandle, state: State<'_, EngineState>) -> Resu
     })
 }
 
+/// Экспорт кэш-файла с человеческим именем (drag-out на рабочий стол):
+/// копия во временный каталог `muza-export` → путь отдаётся нативному drag.
+/// Ошибка «нет в кэше» честная — тащить можно то, что уже добыто.
+#[tauri::command]
+pub fn engine_export_cached(app: AppHandle, track_id: String, file_name: String) -> Result<String, String> {
+    let dir = cache_dir(&app)?;
+    let src = find_cached(&dir, &track_id).ok_or("Трека нет в кэше — сначала сыграй его")?;
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("webm")
+        .to_string();
+    // чистим запрещённые для имён Windows символы
+    let clean: String = file_name
+        .chars()
+        .map(|c| if "\\/:*?\"<>|".contains(c) { ' ' } else { c })
+        .collect();
+    let clean = clean.trim();
+    let stem = if clean.is_empty() { track_id.as_str() } else { clean };
+    let out_dir = app
+        .path()
+        .temp_dir()
+        .map_err(|e| format!("нет temp_dir: {e}"))?
+        .join("muza-export");
+    fs::create_dir_all(&out_dir).map_err(|e| format!("не создался экспорт-каталог: {e}"))?;
+    let dest = out_dir.join(format!("{stem}.{ext}"));
+    fs::copy(&src, &dest).map_err(|e| format!("копия не удалась: {e}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
 /// Выбить один трек из кэша (Stage 4): пользователь выбрал другую
 /// версию/источник — старый файл не должен отдаваться кэш-хитом.
 #[tauri::command]

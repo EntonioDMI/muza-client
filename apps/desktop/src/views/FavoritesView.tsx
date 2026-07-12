@@ -4,6 +4,7 @@ import type { MuzaApi, Track } from "@muza/api-client";
 import { TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
+import { startTrackDrag } from "../lib/dnd";
 
 /** «Любимое»: при серверной сессии — настоящее избранное с сервера
  *  (слайс 4, переживает переустановку); демо-лайки показываются отдельной
@@ -59,20 +60,22 @@ export function FavoritesView({
 
       <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
         {(server ?? []).map((t, i) => (
-          <TrackRow
-            key={t.id}
-            index={i + 1}
-            cover={t.coverUrl ?? undefined}
-            title={t.title}
-            artist={t.artist}
-            duration={fmtTime(t.durationSec)}
-            active={currentId === t.id}
-            playing={currentId === t.id && playing}
-            liked
-            onPlay={() => onPlayCatalog(server ?? [], t.id)}
-            onLike={() => onLike(t.id)}
-            onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
-          />
+          // draggable: любимое можно унести в плейлист сайдбара
+          <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
+            <TrackRow
+              index={i + 1}
+              cover={t.coverUrl ?? undefined}
+              title={t.title}
+              artist={t.artist}
+              duration={fmtTime(t.durationSec)}
+              active={currentId === t.id}
+              playing={currentId === t.id && playing}
+              liked
+              onPlay={() => onPlayCatalog(server ?? [], t.id)}
+              onLike={() => onLike(t.id)}
+              onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
+            />
+          </div>
         ))}
 
         {demoLiked.length > 0 ? (

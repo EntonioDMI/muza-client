@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Icon, IconButton, Slider, Tooltip } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
 import type { RepeatMode } from "../types";
 import { fmtTime } from "../lib/format";
+import { startTrackFileDrag } from "../lib/dragOut";
 
 /** Кнопка скорости: текст «1×», клик циклит пресеты (как в голосовых Telegram).
  *  Частая настройка — живёт прямо в баре, а не в недрах настроек. */
@@ -71,6 +72,7 @@ export function PlayerBar({
   onSleep,
   jamActive,
   onJam,
+  onCoverDragOut,
 }: {
   track: PlayerTrack;
   playing: boolean;
@@ -105,8 +107,15 @@ export function PlayerBar({
   /** Jam (Stage 7): активная сессия подсвечивает кнопку. */
   jamActive: boolean;
   onJam: () => void;
+  /** Drag-out: подготовить файл трека для нативного драга (null = не вышло,
+   *  тост уже показан снаружи). undefined — жест недоступен (браузер/аноним). */
+  onCoverDragOut?: () => Promise<string | null>;
 }) {
   const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
+  // Жест drag-out с обложки: pointerdown взводит экспорт, движение >12px
+  // запускает нативный драг, клик без движения — обычный «Режим прослушивания»
+  const dragRef = useRef<{ x: number; y: number; file: Promise<string | null>; started: boolean } | null>(null);
+  const draggedRef = useRef(false);
   return (
     <div
       style={{
@@ -128,12 +137,45 @@ export function PlayerBar({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
-        <Tooltip label="Режим прослушивания">
-          {/* настоящая кнопка: клавиатура открывает режим прослушивания */}
+        <Tooltip label={onCoverDragOut ? "Режим прослушивания · тяни на рабочий стол" : "Режим прослушивания"}>
+          {/* настоящая кнопка: клавиатура открывает режим прослушивания;
+              с зажатой ЛКМ обложка утаскивается файлом (drag-out) */}
           <button
             type="button"
             aria-label="Режим прослушивания"
-            onClick={onExpand}
+            onClick={() => {
+              if (draggedRef.current) {
+                draggedRef.current = false; // это был drag, не клик
+                return;
+              }
+              onExpand();
+            }}
+            onPointerDown={
+              onCoverDragOut
+                ? (e) => {
+                    if (e.button !== 0) return;
+                    draggedRef.current = false;
+                    dragRef.current = { x: e.clientX, y: e.clientY, file: onCoverDragOut(), started: false };
+                  }
+                : undefined
+            }
+            onPointerMove={
+              onCoverDragOut
+                ? (e) => {
+                    const d = dragRef.current;
+                    if (!d || d.started) return;
+                    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 12) return;
+                    d.started = true;
+                    draggedRef.current = true;
+                    void d.file
+                      .then((path) => (path ? startTrackFileDrag(path) : undefined))
+                      .catch(() => undefined);
+                  }
+                : undefined
+            }
+            onPointerUp={() => {
+              dragRef.current = null;
+            }}
             style={{ border: "none", background: "none", padding: 0, cursor: "pointer", flex: "none", display: "block" }}
           >
             <img

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
+import { isTrackDrag, readTrackDrag } from "../lib/dnd";
 import type { View } from "../types";
 
 /** Пункт списка плейлистов: демо (с обложкой) или серверный (без — плейсхолдер). */
@@ -83,20 +84,45 @@ function PlaylistRow({
   meta,
   shared,
   onClick,
+  onDropTrack,
 }: {
   cover?: string;
   name: string;
   meta: string;
   shared?: boolean;
   onClick?: () => void;
+  /** Дроп перетаскиваемого трека на этот плейлист (undefined = не таргет). */
+  onDropTrack?: (trackId: string) => void;
 }) {
   const [hover, setHover] = useState(false);
+  const [dropLit, setDropLit] = useState(false);
   return (
     <button
       type="button"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onDragOver={
+        onDropTrack
+          ? (e) => {
+              if (!isTrackDrag(e)) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              setDropLit(true);
+            }
+          : undefined
+      }
+      onDragLeave={onDropTrack ? () => setDropLit(false) : undefined}
+      onDrop={
+        onDropTrack
+          ? (e) => {
+              e.preventDefault();
+              setDropLit(false);
+              const data = readTrackDrag(e);
+              if (data) onDropTrack(data.id);
+            }
+          : undefined
+      }
       style={{
         display: "flex",
         alignItems: "center",
@@ -104,7 +130,9 @@ function PlaylistRow({
         padding: "var(--sp-2)",
         border: "none",
         borderRadius: "var(--r-sm)",
-        background: hover ? "var(--surface-2)" : "transparent",
+        background: dropLit ? "var(--accent-soft)" : hover ? "var(--surface-2)" : "transparent",
+        outline: dropLit ? "var(--focus-ring)" : undefined,
+        outlineOffset: -2,
         cursor: "pointer",
         textAlign: "left",
         transition: "background var(--dur-fast) var(--ease-out)",
@@ -158,6 +186,7 @@ export function Sidebar({
   playlists,
   onCreatePlaylist,
   onOpenPlaylist,
+  onDropTrack,
   isAdmin = false,
 }: {
   view: View;
@@ -165,6 +194,8 @@ export function Sidebar({
   playlists: SidebarPlaylist[];
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
+  /** DnD: трек уронили на плейлист (только серверные списки). */
+  onDropTrack?: (playlistId: string, trackId: string) => void;
   /** Показывает пункт «Админка» (Stage 5); true только после adminPing. */
   isAdmin?: boolean;
 }) {
@@ -254,7 +285,15 @@ export function Sidebar({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", scrollbarWidth: "none" }}>
         {playlists.map((p) => (
-          <PlaylistRow key={p.id} cover={p.cover} name={p.name} meta={p.meta} shared={p.shared} onClick={() => onOpenPlaylist(p.id)} />
+          <PlaylistRow
+            key={p.id}
+            cover={p.cover}
+            name={p.name}
+            meta={p.meta}
+            shared={p.shared}
+            onClick={() => onOpenPlaylist(p.id)}
+            onDropTrack={onDropTrack ? (trackId) => onDropTrack(p.id, trackId) : undefined}
+          />
         ))}
       </div>
       <div style={{ marginTop: "auto" }}>

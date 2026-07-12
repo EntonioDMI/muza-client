@@ -8,6 +8,7 @@ import type { MuzaApi } from "@muza/api-client";
 import type { Prefs, RepeatMode } from "../types";
 import { engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
 import { localResolve } from "../lib/localFiles";
+import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
 import type { PlayerTrack } from "./types";
 
@@ -102,6 +103,8 @@ export function usePlayback({
           if (s.track.kind === "demo") return;
           setPos(sec);
           tickPlayed(sec);
+          // «Продолжить с места»: троттленная запись позиции текущего трека
+          if (prefsRef.current.resumePosition && sec > 5) resumeStore.save(s.track.id, sec);
           const remaining = s.track.duration - sec;
           // преднагрузка следующего + ранний кроссфейд
           if (remaining <= PRELOAD_AHEAD_SEC) void preloadNext();
@@ -226,6 +229,15 @@ export function usePlayback({
       preloadedRef.current = null;
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
       await engine().play(url, norm, opts?.crossfade ? CROSSFADE_SEC : 0);
+      // «Продолжить с места»: если сохранена осмысленная позиция (не у начала
+      // и не у конца) — досикиваем. Ручной старт с 0 через seek не трогаем.
+      if (prefsRef.current.resumePosition) {
+        const saved = resumeStore.get(t.id);
+        if (saved > 5 && saved < t.duration - 10 && playSeqRef.current === seq) {
+          engine().seek(saved);
+          setPos(saved);
+        }
+      }
     } catch (e) {
       if (playSeqRef.current !== seq) return;
       setPlaying(false);

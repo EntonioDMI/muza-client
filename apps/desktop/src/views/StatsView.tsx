@@ -4,7 +4,7 @@
  *  prefs.statsPeriod. Графики — div-бары на токенах ДС, без библиотек. */
 
 import { useEffect, useState } from "react";
-import { Button, Icon, IconButton, Tabs, Tooltip, TrackRow } from "@muza/ui";
+import { Button, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muza/ui";
 import type { MuzaApi, StatsOverview, StatsPeriod, Track } from "@muza/api-client";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { hourLabel } from "../lib/hourLabel";
@@ -178,13 +178,16 @@ export function StatsView({
   const load = () => {
     if (!canSearch) return () => undefined;
     let alive = true;
-    setState({ status: "loading", data: null, offline: false });
+    // Держим прежние данные видимыми во время загрузки — иначе на смене периода
+    // контент мигает скелетоном (fetch часто мгновенный из кэша/снапшота).
+    setState((prev) => ({ status: "loading", data: prev.data, offline: prev.offline }));
     withSnapshot(`stats:${period}`, () => api.getStatsOverview(period))
       .then(({ data, offline }) => {
         if (alive) setState({ status: "live", data, offline });
       })
       .catch(() => {
-        if (alive) setState({ status: "error", data: null, offline: false });
+        // ошибка при уже показанных данных — сохраняем их (плашку рисуем ниже)
+        if (alive) setState((prev) => ({ status: "error", data: prev.data, offline: prev.offline }));
       });
     return () => {
       alive = false;
@@ -427,6 +430,8 @@ export function StatsView({
         </h1>
         {canSearch ? (
           <>
+            {/* тонкий индикатор обновления — контент при этом остаётся на месте */}
+            {state.status === "loading" && d ? <Spinner size={16} color="var(--text-3)" /> : null}
             <Tabs items={PERIOD_TABS} value={period} onChange={(k: string) => setPeriod(k as StatsPeriod)} />
             <Tooltip label="Настроить блоки">
               <IconButton icon="settings-2" label="Настроить блоки статистики" onClick={onCustomize} />
@@ -440,16 +445,19 @@ export function StatsView({
           icon="user-round"
           text="Статистика считается на сервере по истории аккаунта. Войди с аккаунтом — и здесь появятся минуты, топы и серии."
         />
-      ) : state.status === "loading" ? (
-        <StatsSkeleton />
-      ) : state.status === "error" ? (
-        <Notice
-          icon="server-off"
-          text="Сервер недоступен, а оффлайн-копии статистики ещё нет."
-          action="Повторить"
-          onAction={load}
-        />
-      ) : d && d.totalPlays === 0 && d.totalMs === 0 ? (
+      ) : !d ? (
+        // данных ещё нет вообще: первый заход — скелетон, глухая ошибка — плашка
+        state.status === "error" ? (
+          <Notice
+            icon="server-off"
+            text="Сервер недоступен, а оффлайн-копии статистики ещё нет."
+            action="Повторить"
+            onAction={load}
+          />
+        ) : (
+          <StatsSkeleton />
+        )
+      ) : d.totalPlays === 0 && d.totalMs === 0 ? (
         <>
           {state.offline ? (
             <Notice
@@ -463,7 +471,10 @@ export function StatsView({
         </>
       ) : (
         <>
-          {state.offline ? (
+          {/* данные есть — рисуем их; при неудачном обновлении показываем прежние + плашку */}
+          {state.status === "error" ? (
+            <Notice icon="server-off" text="Не удалось обновить — показаны прежние данные." action="Повторить" onAction={load} />
+          ) : state.offline ? (
             <Notice
               icon="cloud-off"
               text="Оффлайн-копия: сервер сейчас недоступен, показано последнее загруженное."

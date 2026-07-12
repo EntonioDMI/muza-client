@@ -1,3 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+# sharp — опциональная зависимость Next (оптимизация картинок); вебу со
+# static export её нативные build-скрипты не нужны — не выполняем.
+allowBuilds:
+  sharp: false

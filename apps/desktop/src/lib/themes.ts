@@ -8,6 +8,7 @@ import { DEFAULT_PREFS, type Prefs } from "../types";
  *  радио, EQ и т.п.) темой не переносится — чужая тема не должна менять
  *  ничего, кроме внешности. */
 export const THEME_KEYS = [
+  "theme",
   "accent",
   "customAccent",
   "radius",

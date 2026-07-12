@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, ChipGroup, Dialog, Fader, Icon, IconButton, Slider, Switch, Tabs } from "@muza/ui";
+import { Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
 import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
 import { DEFAULT_PREFS, type Prefs, type StatsBlockKey } from "../types";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { openExternal } from "../lib/system";
-import { HOTKEYS } from "../lib/hotkeysList";
+import { checkForUpdate, updaterAvailable, type FoundUpdate } from "../lib/updater";
+import {
+  comboFromEvent,
+  DEFAULT_HOTKEYS,
+  formatCombo,
+  HOTKEY_ACTIONS,
+  type HotkeyAction,
+} from "../lib/hotkeys";
 import {
   addTheme,
   applyTheme,
@@ -223,24 +230,63 @@ function GroupTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Плашка-клавиша для раздела горячих клавиш. */
-function Kbd({ children }: { children: React.ReactNode }) {
+/** Строка переназначения хоткея: клик по плашке → режим захвата (ловит
+ *  следующую клавишу по e.code), Esc отменяет, конфликт подсвечен. */
+function HotkeyRow({
+  label,
+  combo,
+  conflict,
+  onCapture,
+}: {
+  label: string;
+  combo: string;
+  conflict: boolean;
+  onCapture: (combo: string) => void;
+}) {
+  const [capturing, setCapturing] = useState(false);
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === "Escape") {
+        setCapturing(false);
+        return;
+      }
+      const c = comboFromEvent(e);
+      if (!c) return; // голый модификатор — ждём полную комбинацию
+      onCapture(c);
+      setCapturing(false);
+    };
+    // capture-фаза: перехватываем ДО глобального плеер-хоткея
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturing, onCapture]);
+
   return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "4px 10px",
-        borderRadius: "var(--r-xs)",
-        background: "var(--surface-3)",
-        color: "var(--text-1)",
-        fontSize: "var(--fs-caption)",
-        fontWeight: 600,
-        fontVariantNumeric: "tabular-nums",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </span>
+    <SettingRow title={label} hint={conflict ? "⚠ конфликт: комбинация занята другим действием" : undefined}>
+      <button
+        type="button"
+        onClick={() => setCapturing((v) => !v)}
+        style={{
+          minWidth: 96,
+          padding: "6px 12px",
+          border: "none",
+          borderRadius: "var(--r-sm)",
+          background: capturing ? "var(--accent-soft)" : "var(--surface-3)",
+          color: capturing ? "var(--accent-text)" : conflict ? "var(--danger)" : "var(--text-1)",
+          fontFamily: "var(--font-ui)",
+          fontSize: "var(--fs-caption)",
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          cursor: "pointer",
+          outline: conflict ? "1px solid var(--danger)" : "none",
+          transition: "background var(--dur-fast) var(--ease-out)",
+        }}
+      >
+        {capturing ? "Нажми клавишу…" : formatCombo(combo)}
+      </button>
+    </SettingRow>
   );
 }
 
@@ -331,6 +377,8 @@ function StepsEditor({
 }
 
 /** Свотч «свой цвет»: нативный пикер, замаскированный под кружок с пипеткой. */
+/** Свотч «свой акцент» — теперь тонкая обёртка над ДС ColorPicker
+ *  (компонент родился здесь и уехал в дизайн-систему). */
 function CustomAccentSwatch({
   color,
   selected,
@@ -340,65 +388,12 @@ function CustomAccentSwatch({
   selected: boolean;
   onPick: (hex: string) => void;
 }) {
-  return (
-    <label
-      title="Свой цвет"
-      style={{
-        position: "relative",
-        width: 44,
-        height: 44,
-        borderRadius: "var(--r-pill)",
-        background: color,
-        cursor: "pointer",
-        outline: selected ? "2px solid var(--text-1)" : "2px solid transparent",
-        outlineOffset: 3,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        transition: "outline-color var(--dur-base) var(--ease-out)",
-      }}
-    >
-      <Icon name="pipette" size={16} color="rgba(255,255,255,.9)" />
-      <input
-        type="color"
-        value={color}
-        aria-label="Свой акцентный цвет"
-        onChange={(e) => onPick(e.target.value)}
-        style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-      />
-    </label>
-  );
+  return <ColorPicker value={color} selected={selected} size={44} label="Свой акцентный цвет" onChange={onPick} />;
 }
 
-/** Цветовая точка с нативным пикером (реюз механики CustomAccentSwatch). */
+/** Цветовая точка фона — тоже ДС ColorPicker. */
 function ColorDot({ color, label, onPick }: { color: string; label: string; onPick: (hex: string) => void }) {
-  return (
-    <label
-      title={label}
-      style={{
-        position: "relative",
-        width: 36,
-        height: 36,
-        borderRadius: "var(--r-pill)",
-        background: color,
-        cursor: "pointer",
-        outline: "2px solid var(--surface-4)",
-        outlineOffset: 2,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Icon name="pipette" size={14} color="rgba(255,255,255,.85)" />
-      <input
-        type="color"
-        value={color}
-        aria-label={label}
-        onChange={(e) => onPick(e.target.value)}
-        style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-      />
-    </label>
-  );
+  return <ColorPicker value={color} size={36} label={label} onChange={onPick} />;
 }
 
 /** Карточка витрины маркетплейса: тема (градиент-превью) или плагин (иконка). */
@@ -620,7 +615,7 @@ const TABS = [
   { key: "system", label: "Система" }, // «О приложении» — секция внутри Системы
 ];
 
-// Список клавиш общий с оверлеем «?» — lib/hotkeysList (обработчики в App)
+// Хоткеи переназначаемы — определения/дефолты в lib/hotkeys, биндинги в prefs.hotkeys
 
 type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | "stats" | null;
 
@@ -734,6 +729,32 @@ export function SettingsView({
   const openMarket = (filter: string) => {
     setMarketFilter(filter);
     setSub("market");
+  };
+
+  // ── Автообновление (Stage 8): GitHub Releases через tauri-plugin-updater ──
+  const [updState, setUpdState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
+  const [updFound, setUpdFound] = useState<FoundUpdate | null>(null);
+  const [updPct, setUpdPct] = useState(-1);
+  const checkUpdates = async () => {
+    setUpdState("checking");
+    try {
+      const found = await checkForUpdate();
+      setUpdFound(found);
+      setUpdState(found ? "found" : "none");
+    } catch {
+      setUpdState("error");
+    }
+  };
+  const installUpdate = async () => {
+    if (!updFound) return;
+    setUpdState("installing");
+    setUpdPct(-1);
+    try {
+      await updFound.install(setUpdPct); // дальше relaunch — код ниже не выполнится
+    } catch {
+      setUpdState("error");
+      onNotify("Не удалось установить обновление", "x");
+    }
   };
 
   // ── Темы как объекты + CSS-тир (Stage 6) ─────────────────────────
@@ -1026,12 +1047,17 @@ export function SettingsView({
     bytes >= 1024 * 1024 * 1024
       ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} ГБ`
       : `${Math.round(bytes / (1024 * 1024))} МБ`;
-  // Первый рендер — без своей анимации (вход анимирует обёртка в App).
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-  }, []);
-  const paneClass = mounted.current ? "muza-view" : undefined;
+  // Анимация панели — только при переключении вкладки/под-экрана пользователем.
+  // Вход в сами настройки анимирует обёртка <main> в App, поэтому первую панель
+  // НЕ анимируем. Старый `mounted`-ref был багом: он переключался в true при
+  // первом же async-ререндере (загрузка скробблинга/тем/кэша) и добавлял
+  // muza-view к уже показанной панели → анимация играла второй раз. Ключ —
+  // сравнение с ПЕРВОЙ панелью, устойчивое к async-ререндерам без смены вкладки.
+  const paneKey = sub ?? tab;
+  const initialPaneKey = useRef(paneKey);
+  const switchedRef = useRef(false);
+  if (paneKey !== initialPaneKey.current) switchedRef.current = true;
+  const paneClass = switchedRef.current ? "muza-view" : undefined;
 
   const presets = [
     { key: "muza", name: "Муза", hint: "Синий · мягкие углы", accent: "blue" as const, accentColor: "#3b82f6", radius: "soft" as const },
@@ -1092,8 +1118,16 @@ export function SettingsView({
       <SettingRow title="Скругление по типам" hint="Плитки, кнопки, поля, панели отдельно (позже)" chevron>
         <RowValue>Пресет</RowValue>
       </SettingRow>
-      <SettingRow title="Плотность интерфейса" hint="Отступы и высота строк (позже)">
-        <RowValue>Просторно</RowValue>
+      <SettingRow title="Плотность интерфейса" hint="Отступы зон и высота строк трека">
+        <Tabs
+          items={[
+            { key: "compact", label: "Плотно" },
+            { key: "normal", label: "Стандарт" },
+            { key: "spacious", label: "Просторно" },
+          ]}
+          value={prefs.density}
+          onChange={(k: string) => set({ density: k as Prefs["density"] })}
+        />
       </SettingRow>
       <SettingRow title="Ширина сайдбара" hint="На узком окне сайдбар всё равно ужимается">
         <LiveSlider
@@ -1115,8 +1149,25 @@ export function SettingsView({
       </SettingRow>
 
       <GroupTitle>Типографика</GroupTitle>
-      <SettingRow title="Размер текста" hint="Базовый размер — через «Масштаб интерфейса» во Внешнем виде">
-        <RowValue>{prefs.uiScale} %</RowValue>
+      <SettingRow title="Размер текста" hint="Только текст (масштаб всего интерфейса — «Масштаб интерфейса» выше)">
+        <LiveSlider
+          value={prefs.fontScale - 85}
+          max={40}
+          label="Размер текста"
+          suffix={`${prefs.fontScale} %`}
+          onChange={(v) => set({ fontScale: 85 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title="Межстрочный интервал" hint="Плотность строк UI-текста">
+        <Tabs
+          items={[
+            { key: "tight", label: "Плотно" },
+            { key: "normal", label: "Стандарт" },
+            { key: "relaxed", label: "Свободно" },
+          ]}
+          value={prefs.lineSpacing}
+          onChange={(k: string) => set({ lineSpacing: k as Prefs["lineSpacing"] })}
+        />
       </SettingRow>
       <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания">
         <LiveSlider
@@ -1155,13 +1206,14 @@ export function SettingsView({
 
       <GroupTitle>Фон</GroupTitle>
       <SettingRow title="Тип фона" hint="Что за интерфейсом">
-        <Tabs
+        <Select
+          ariaLabel="Тип фона"
           items={[
-            { key: "none", label: "Выкл" },
-            { key: "cover", label: "Обложка" },
-            { key: "color", label: "Цвет" },
-            { key: "gradient", label: "Градиент" },
-            { key: "image", label: "Картинка" },
+            { key: "none", label: "Выкл", icon: "circle-off" },
+            { key: "cover", label: "Обложка трека", icon: "image" },
+            { key: "color", label: "Цвет", icon: "paintbrush" },
+            { key: "gradient", label: "Градиент", icon: "blend" },
+            { key: "image", label: "Картинка по URL", icon: "link" },
           ]}
           value={prefs.bgType}
           onChange={(k: string) => set({ bgType: k as Prefs["bgType"] })}
@@ -1203,12 +1255,13 @@ export function SettingsView({
         <RowValue>Играть</RowValue>
       </SettingRow>
       <SettingRow title="Стартовый экран" hint="Что открывается при запуске">
-        <Tabs
+        <Select
+          ariaLabel="Стартовый экран"
           items={[
-            { key: "home", label: "Главная" },
-            { key: "search", label: "Поиск" },
-            { key: "favorites", label: "Любимое" },
-            { key: "library", label: "Библиотека" },
+            { key: "home", label: "Главная", icon: "home" },
+            { key: "search", label: "Поиск", icon: "search" },
+            { key: "favorites", label: "Любимое", icon: "heart" },
+            { key: "library", label: "Библиотека", icon: "library-big" },
           ]}
           value={prefs.startView}
           onChange={(k: string) => set({ startView: k as Prefs["startView"] })}
@@ -1687,8 +1740,15 @@ export function SettingsView({
             />
           ))}
         </div>
-        <SettingRow title="Тема" hint="Светлая — позже">
-          <RowValue>Тёмная</RowValue>
+        <SettingRow title="Тема" hint="Светлая инвертирует слои оформления — фон, поверхности, текст">
+          <Tabs
+            items={[
+              { key: "dark", label: "Тёмная" },
+              { key: "light", label: "Светлая" },
+            ]}
+            value={prefs.theme}
+            onChange={(k: string) => set({ theme: k as Prefs["theme"] })}
+          />
         </SettingRow>
         <SettingRow title="Акцентный цвет" hint="Готовые или любой свой — пипетка справа">
           <div style={{ display: "flex", gap: "var(--sp-3)" }}>
@@ -1776,8 +1836,12 @@ export function SettingsView({
         </SettingRow>
         <GroupTitle>Рекомендации</GroupTitle>
         <RecsTuning api={api} enabled={serverSession} onNotify={onNotify} />
-        <SettingRow title="Запоминать позицию трека" hint="Продолжать с места остановки (позже)">
-          <Switch checked disabled label="Запоминать позицию" />
+        <SettingRow title="Запоминать позицию трека" hint="Продолжать с места остановки при повторном запуске трека">
+          <Switch
+            checked={prefs.resumePosition}
+            onChange={(resumePosition: boolean) => set({ resumePosition })}
+            label="Запоминать позицию"
+          />
         </SettingRow>
         <GroupTitle>Стрим</GroupTitle>
         <SettingRow title="Качество стрима" hint="Максимум или эконом (позже; сейчас — лучший формат по рецепту)">
@@ -1968,18 +2032,36 @@ export function SettingsView({
         </SettingRow>
       </div>
     ) : tab === "hotkeys" ? (
-      <div key="hotkeys" className={paneClass} style={paneStyle}>
-        {HOTKEYS.map((h) => (
-          <SettingRow key={h.action} title={h.action} hint="Работает уже сейчас · переназначение — позже">
-            <Kbd>{h.combo}</Kbd>
-          </SettingRow>
-        ))}
-        <div style={{ marginTop: "var(--sp-2)" }}>
-          <Button variant="ghost" icon="rotate-ccw" disabled>
-            Сбросить все
-          </Button>
-        </div>
-      </div>
+      (() => {
+        // combo, встречающиеся у >1 действия — конфликт (обе строки красные)
+        const counts = new Map<string, number>();
+        for (const a of HOTKEY_ACTIONS) counts.set(prefs.hotkeys[a.id], (counts.get(prefs.hotkeys[a.id]) ?? 0) + 1);
+        const setKey = (id: HotkeyAction, combo: string) => set({ hotkeys: { ...prefs.hotkeys, [id]: combo } });
+        return (
+          <div key="hotkeys" className={paneClass} style={paneStyle}>
+            {HOTKEY_ACTIONS.map((a) => (
+              <HotkeyRow
+                key={a.id}
+                label={a.label}
+                combo={prefs.hotkeys[a.id]}
+                conflict={(counts.get(prefs.hotkeys[a.id]) ?? 0) > 1}
+                onCapture={(combo) => setKey(a.id, combo)}
+              />
+            ))}
+            <SettingRow title="Помощь / закрыть" hint="Фиксированные — не переназначаются">
+              <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+                <Kbd>?</Kbd>
+                <Kbd>Esc</Kbd>
+              </div>
+            </SettingRow>
+            <div style={{ marginTop: "var(--sp-2)" }}>
+              <Button variant="ghost" icon="rotate-ccw" onClick={() => set({ hotkeys: { ...DEFAULT_HOTKEYS } })}>
+                Сбросить все
+              </Button>
+            </div>
+          </div>
+        );
+      })()
     ) : tab === "extensions" ? (
       <div key="extensions" className={paneClass} style={paneStyle}>
         <GroupTitle>Встроенные</GroupTitle>
@@ -2057,12 +2139,44 @@ export function SettingsView({
             />
           </div>
         </SettingRow>
-        <SettingRow title="Автообновление" hint="Подписанные обновления — к первому релизу">
+        <SettingRow
+          title="Автообновление"
+          hint={
+            updaterAvailable()
+              ? "GitHub Releases: подписанные сборки, стабильный канал"
+              : "Работает только в приложении (не в браузере)"
+          }
+        >
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-            <RowValue>Стабильный канал</RowValue>
-            <Button variant="ghost" icon="refresh-cw" disabled>
-              Проверить
-            </Button>
+            <RowValue>
+              {updState === "checking"
+                ? "Проверяем…"
+                : updState === "none"
+                  ? "Актуальная версия"
+                  : updState === "found"
+                    ? `Доступна ${updFound?.version ?? ""}`
+                    : updState === "installing"
+                      ? updPct >= 0
+                        ? `Скачиваем… ${updPct}%`
+                        : "Скачиваем…"
+                      : updState === "error"
+                        ? "Не получилось проверить"
+                        : "Стабильный канал"}
+            </RowValue>
+            {updState === "found" || updState === "installing" ? (
+              <Button variant="primary" icon="download" disabled={updState === "installing"} onClick={() => void installUpdate()}>
+                {updState === "installing" ? "Ставим…" : "Установить"}
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                icon="refresh-cw"
+                disabled={!updaterAvailable() || updState === "checking"}
+                onClick={() => void checkUpdates()}
+              >
+                Проверить
+              </Button>
+            )}
           </div>
         </SettingRow>
         <SettingRow title="Мини-плеер" hint="Компактное окно поверх всех (позже)">

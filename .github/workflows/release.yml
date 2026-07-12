@@ -1,0 +1,66 @@
+# Релиз десктопа (Stage 8): тег v* → NSIS-установщик + updater-артефакты +
+# latest.json → draft GitHub Release. Публикация релиза — руками владельца
+# (кнопка Publish превращает draft в то, что увидит updater всех установок).
+#
+# Секреты репозитория (Settings → Secrets → Actions), заводит владелец:
+#   TAURI_SIGNING_PRIVATE_KEY          — содержимое secrets/muza-updater.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD — пароль ключа
+#
+# ⚠️ Код-сайнинг Authenticode (SmartScreen) сюда НЕ вписан: нужен OV-сертификат
+# в cloud HSM (Azure Key Vault + AzureSignTool) — действие владельца, см.
+# docs/release.md в репо памяти проекта. До сертификата установщик будет
+# пугать SmartScreen'ом — для беты приемлемо, для публичного релиза нет.
+#
+# yt-dlp-сайдкар: в репо его нет (gitignored) — качаем официальный релиз
+# в src-tauri/bin/ прямо в раннере (тот же порядок, что в bin/README.md).
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write # tauri-action создаёт draft release и грузит артефакты
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Установка зависимостей
+        run: pnpm install --frozen-lockfile
+
+      - name: yt-dlp-сайдкар (движок добычи)
+        shell: pwsh
+        run: |
+          $triple = "x86_64-pc-windows-msvc"
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" `
+            -OutFile "apps/desktop/src-tauri/bin/yt-dlp-$triple.exe"
+
+      - name: Сборка и draft-релиз
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Muza ${{ github.ref_name }}"
+          releaseBody: "Что нового — см. коммиты. Установщик проверяет подпись обновлений автоматически."
+          releaseDraft: true
+          includeUpdaterJson: true

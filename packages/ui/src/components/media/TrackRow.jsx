@@ -31,11 +31,20 @@ export function TrackRow({
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
       }}
       onDoubleClick={onPlay}
+      // ПКМ = то же меню, что «⋯» (нативное браузерное меню в плеере — мусор)
+      onContextMenu={
+        onMore
+          ? (e) => {
+              e.preventDefault();
+              onMore(e);
+            }
+          : undefined
+      }
       style={{
         display: "flex",
         alignItems: "center",
         gap: "var(--sp-4)",
-        height: 60,
+        height: "var(--h-trackrow, 60px)",
         padding: "0 var(--sp-4)",
         borderRadius: "var(--r-sm)",
         background: active ? "var(--surface-3)" : lit ? "var(--surface-2)" : "transparent",
@@ -75,7 +84,7 @@ export function TrackRow({
         </button>
       </div>
       {cover ? (
-        <img src={cover} alt="" style={{ width: 42, height: 42, borderRadius: "var(--r-xs)", objectFit: "cover", flex: "none" }} />
+        <img src={cover} alt="" loading="lazy" style={{ width: 42, height: 42, borderRadius: "var(--r-xs)", objectFit: "cover", flex: "none" }} />
       ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>

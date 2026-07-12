@@ -1,6 +1,11 @@
 /** Аудио-движок Stage 3: два <audio>-слота (кроссфейд и преднагрузка
  *  следующего трека) → Web Audio-граф (пер-слотовый гейн = фейд × нормализация
- *  лаудности → общий 10-полосный EQ → мастер-громкость).
+ *  лаудности → преамп → общий 10-полосный EQ → мастер-громкость → лимитер).
+ *
+ *  Gain staging (ресёрч 2026-07-12, отчёт #9): преамп ПЕРЕД EQ даёт хедрум под
+ *  буст полос (авто = −макс.положительный гейн, приём Wavelet), лимитер ПОСЛЕ
+ *  мастера — страховка от клиппинга (буст EQ + буст нормализации лаудности
+ *  вместе легко выходят за 0 dBFS). Так «буст полос клиппит» больше не случается.
  *
  *  Fallback «plain»: MediaElementSource без CORS-чистого источника выдаёт
  *  тишину — перед постройкой графа источник проверяется fetch-пробой; если
@@ -13,6 +18,23 @@ const TARGET_LUFS = -14;
 const dbToLin = (db: number) => Math.pow(10, db / 20);
 /** Перцептивная кривая громкости: слайдер 0–100 → квадрат. */
 const volCurve = (vol: number) => Math.pow(Math.max(0, Math.min(100, vol)) / 100, 2);
+
+/** Equal-power кривые кроссфейда (ресёрч, отчёт #4): linear даёт −3 дБ провал
+ *  на стыке разных треков; sin/cos держат суммарную мощность постоянной. */
+const XFADE_STEPS = 128;
+const XFADE_OUT = new Float32Array(XFADE_STEPS); // 1→0
+const XFADE_IN = new Float32Array(XFADE_STEPS); // 0→1
+for (let i = 0; i < XFADE_STEPS; i++) {
+  const t = i / (XFADE_STEPS - 1);
+  XFADE_OUT[i] = Math.cos((t * Math.PI) / 2);
+  XFADE_IN[i] = Math.sin((t * Math.PI) / 2);
+}
+/** Масштабированная копия кривой (setValueCurveAtTime берёт абсолютные значения). */
+const scaledCurve = (base: Float32Array, factor: number): Float32Array => {
+  const out = new Float32Array(base.length);
+  for (let i = 0; i < base.length; i++) out[i] = base[i] * factor;
+  return out;
+};
 
 interface Slot {
   el: HTMLAudioElement;
@@ -34,7 +56,9 @@ export class AudioEngine {
   private slots: Slot[] = [];
   private active = 0;
   private eq: BiquadFilterNode[] = [];
+  private preamp: GainNode | null = null;
   private master: GainNode | null = null;
+  private limiter: DynamicsCompressorNode | null = null;
   private analyserNode: AnalyserNode | null = null;
   private mode: "unknown" | "webaudio" | "plain" = "unknown";
 
@@ -49,6 +73,9 @@ export class AudioEngine {
     const el = new Audio();
     el.preload = "auto";
     el.crossOrigin = "anonymous"; // asset-протокол отвечает CORS-заголовками
+    // Скорость с сохранением тона: preservesPitch по умолчанию true, но выставляем
+    // явно — гарантия «без бурундука» независимо от версии WebView2 (Chromium WSOLA)
+    el.preservesPitch = true;
     // В DOM (скрыто): видно в инспекторе/тестах, и WebView стабильнее держит элемент
     el.style.display = "none";
     el.dataset.muzaSlot = String(document.querySelectorAll("audio[data-muza-slot]").length);
@@ -99,14 +126,27 @@ export class AudioEngine {
       return f;
     });
     for (let i = 0; i < this.eq.length - 1; i++) this.eq[i].connect(this.eq[i + 1]);
+    // Преамп ПЕРЕД EQ: точка микса обоих слотов + хедрум под буст полос
+    this.preamp = ctx.createGain();
+    this.preamp.connect(this.eq[0]);
     this.master = ctx.createGain();
     this.eq[this.eq.length - 1].connect(this.master);
-    // Визуализатор (Stage 6): analyser в конце цепи — видит уже
-    // отэквалайзенный и отнормализованный сигнал, как его слышит юзер
+    // Лимитер ПОСЛЕ мастера (последний перед выходом): страховка от клиппинга
+    // при бусте EQ + бусте нормализации. Не true-peak (нет lookahead/oversampling),
+    // но ловит явный клип; апгрейд до AudioWorklet-brickwall — если услышим pumping.
+    this.limiter = ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -2; // dBFS
+    this.limiter.knee.value = 0; // жёсткое колено
+    this.limiter.ratio.value = 20; // ≈ лимитер
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.1;
+    this.master.connect(this.limiter);
+    // Визуализатор (Stage 6): analyser в конце цепи — видит финальный сигнал,
+    // как его слышит юзер (после EQ, нормализации и лимитера)
     this.analyserNode = ctx.createAnalyser();
     this.analyserNode.fftSize = 2048;
     this.analyserNode.smoothingTimeConstant = 0.82;
-    this.master.connect(this.analyserNode);
+    this.limiter.connect(this.analyserNode);
     this.analyserNode.connect(ctx.destination);
     this.master.gain.value = volCurve(this.volume);
     for (const slot of this.slots) {
@@ -114,7 +154,7 @@ export class AudioEngine {
       slot.gain = ctx.createGain();
       slot.gain.gain.value = 0;
       slot.source.connect(slot.gain);
-      slot.gain.connect(this.eq[0]);
+      slot.gain.connect(this.preamp);
     }
     this.applyEq();
   }
@@ -123,6 +163,12 @@ export class AudioEngine {
     this.eq.forEach((f, i) => {
       f.gain.value = this.eqOn ? (this.eqBands[i] ?? 0) : 0;
     });
+    // Авто-преамп = −(макс. положительный буст полос): громкая полоса садится
+    // к unity, EQ больше не выталкивает сигнал за 0 dBFS (приём Wavelet).
+    if (this.preamp) {
+      const maxBoost = this.eqOn ? Math.max(0, ...this.eqBands) : 0;
+      this.preamp.gain.value = dbToLin(-maxBoost);
+    }
   }
 
   /** Громкость слота: webaudio — гейн (норма может бустить >1),
@@ -158,12 +204,12 @@ export class AudioEngine {
 
     if (fade && this.ctx && current.gain && slot.gain) {
       const t = this.ctx.currentTime;
+      // Equal-power кривые (не linear): уходящий трек по cos от текущего уровня,
+      // входящий по sin к своей норме — суммарная мощность на стыке постоянна
       current.gain.gain.cancelScheduledValues(t);
-      current.gain.gain.setValueAtTime(current.gain.gain.value, t);
-      current.gain.gain.linearRampToValueAtTime(0, t + crossfadeSec);
+      current.gain.gain.setValueCurveAtTime(scaledCurve(XFADE_OUT, current.gain.gain.value), t, crossfadeSec);
       slot.gain.gain.cancelScheduledValues(t);
-      slot.gain.gain.setValueAtTime(0, t);
-      slot.gain.gain.linearRampToValueAtTime(slot.norm, t + crossfadeSec);
+      slot.gain.gain.setValueCurveAtTime(scaledCurve(XFADE_IN, slot.norm), t, crossfadeSec);
       const old = current;
       setTimeout(() => {
         // к этому моменту слот мог снова стать активным — не трогаем тогда

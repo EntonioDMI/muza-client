@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Menu, SearchInput, Toast } from "@muza/ui";
+import { Button, Dialog, Icon, Menu, SearchInput, Toast } from "@muza/ui";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, type Prefs, type View } from "./types";
 import { customAccentVars } from "./lib/accent";
 import { useMediaQuery } from "./lib/useMediaQuery";
-import { applyRecipe, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
+import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
+import { exportCachedTrack } from "./lib/dragOut";
 import { syncAutostart, trayConfigure } from "./lib/system";
+import { autoCheckForUpdate } from "./lib/updater";
 import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useCoverArt } from "./lib/coverArt";
-import { HOTKEYS } from "./lib/hotkeysList";
-import { loadServerIds, type LocalEntry } from "./lib/localFiles";
+import { comboFromEvent, matchAction, formatCombo, HOTKEY_ACTIONS } from "./lib/hotkeys";
+import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
@@ -107,6 +109,17 @@ const BASE_BG: Record<Prefs["baseBg"], { bg0: string; bg1: string } | null> = {
 
 /** Множители скорости анимаций к базовым 150/220/400мс. */
 const ANIM_SPEED: Record<Prefs["animSpeed"], number> = { fast: 0.6, normal: 1, slow: 1.7 };
+
+/** Межстрочный UI-текст (--lh-ui, дефолт ДС 1.4). */
+const LINE_SPACING: Record<Prefs["lineSpacing"], string> = { tight: "1.25", normal: "1.4", relaxed: "1.6" };
+
+/** Плотность: отступ зоны (--pad-zone дефолт 20) + высота строки трека
+ *  (--h-trackrow, TrackRow читает с фолбэком 60). */
+const DENSITY: Record<Prefs["density"], { pad: number; row: number }> = {
+  compact: { pad: 14, row: 52 },
+  normal: { pad: 20, row: 60 },
+  spacious: { pad: 26, row: 68 },
+};
 
 /** Демо-очередь по умолчанию: главная/библиотека живут на демо-каталоге. */
 const DEMO_QUEUE = TRACKS.map(fromDemo);
@@ -274,6 +287,14 @@ function Player({
   useEffect(() => {
     void trayConfigure(prefs.tray, prefs.closeToTray);
   }, [prefs.tray, prefs.closeToTray]);
+  // Размер текста: font-size на <html> масштабирует rem-токены шрифтов (только
+  // текст, не отступы — те в px). rem резолвится от корня, а не от app-div.
+  useEffect(() => {
+    document.documentElement.style.fontSize = prefs.fontScale === 100 ? "" : `${prefs.fontScale}%`;
+    return () => {
+      document.documentElement.style.fontSize = "";
+    };
+  }, [prefs.fontScale]);
 
   // Серверная сессия: подтягиваем плейлисты и избранное (лайки каталожных
   // треков живут на сервере; демо-треки — по-прежнему локально).
@@ -515,6 +536,73 @@ function Player({
     toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 6000);
   };
 
+  // Drag-and-drop файлов из проводника: Tauri-события (HTML5 не отдаёт пути) —
+  // полноэкранный оверлей, скан local_scan, регистрация на сервере при сессии
+  const [fileDropLit, setFileDropLit] = useState(false);
+  const handleFileDropRef = useRef<(paths: string[]) => Promise<void>>(async () => {});
+  handleFileDropRef.current = async (paths: string[]) => {
+    try {
+      const entries = await localScanPaths(paths);
+      if (entries.length === 0) {
+        showToast("Аудиофайлов среди брошенного не нашлось", "x");
+        return;
+      }
+      if (canSearch) await registerLocalTracks(api, entries);
+      showToast(`Добавлено локальных треков: ${entries.length}`, "folder-down");
+      setView("library");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Не удалось добавить файлы", "x");
+    }
+  };
+  useEffect(() => {
+    if (!engineAvailable()) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
+      const un = await getCurrentWebview().onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter") {
+          if (p.paths.length > 0) setFileDropLit(true);
+        } else if (p.type === "leave") {
+          setFileDropLit(false);
+        } else if (p.type === "drop") {
+          setFileDropLit(false);
+          if (p.paths.length > 0) void handleFileDropRef.current(p.paths);
+        }
+      });
+      if (disposed) un();
+      else unlisten = un;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Автопроверка обновлений (Stage 8): через 30с после старта, не чаще раза в
+  // сутки; нашлось — тост с «Установить» (скачивание → перезапуск сам)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void autoCheckForUpdate().then((found) => {
+        if (!found) return;
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        setToast({
+          open: true,
+          text: `Доступна Muza ${found.version}`,
+          icon: "download",
+          actionLabel: "Установить",
+          onAction: () => {
+            setToast({ open: true, text: "Скачиваем обновление — Muza перезапустится сама…", icon: "download" });
+            found.install(() => undefined).catch(() => showToast("Не удалось установить обновление", "x"));
+          },
+        });
+        toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 12000);
+      });
+    }, 30_000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Клик по демо-треку (главная/библиотека/демо-поиск): очередь = демо-каталог. */
   const playTrack = (id: string) => pb.playContext(DEMO_QUEUE, id);
   /** Клик по каталожному треку: очередь = список, из которого кликнули. */
@@ -593,29 +681,55 @@ function Player({
     }
   };
 
-  // Глобальные горячие клавиши — база нативности десктоп-плеера.
-  // Слушатель один на маунт, актуальные значения — через ref (без стейл-замыканий).
+  // Глобальные горячие клавиши — база нативности десктоп-плеера. Биндинги
+  // переназначаемы (prefs.hotkeys, по e.code → layout-независимо). Слушатель
+  // один на маунт, актуальные значения — через ref (без стейл-замыканий).
   const hotkeysRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
   hotkeysRef.current = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
     if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
-    const k = e.key.toLowerCase();
-    if (e.code === "Space") {
-      e.preventDefault(); // иначе скроллит страницу / жмёт сфокусированную кнопку
-      pb.toggle();
-    } else if (e.code === "ArrowRight" && e.ctrlKey) pb.next();
-    else if (e.code === "ArrowLeft" && e.ctrlKey) pb.prev();
-    else if (e.code === "ArrowRight") pb.seek(Math.min(pos + 5, track.duration));
-    else if (e.code === "ArrowLeft") pb.seek(Math.max(pos - 5, 0));
-    else if (k === "m" || k === "ь") toggleMute();
-    else if (k === "l" || k === "д") toggleLike(track.id);
-    else if ((k === "k" || k === "л") && e.ctrlKey) {
+    // Фиксированные (нередактируемые) клавиши помощи/закрытия
+    if (e.key === "?") {
       e.preventDefault();
-      setView("search");
-    } else if (e.key === "?") {
-      e.preventDefault();
-      setHotkeysOpen((v) => !v); // справка по клавишам (эвристика «Помощь»)
-    } else if (e.code === "Escape" && queueOn) closeQueue();
+      setHotkeysOpen((v) => !v);
+      return;
+    }
+    if (e.code === "Escape" && queueOn) {
+      closeQueue();
+      return;
+    }
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    const action = matchAction(combo, prefs.hotkeys);
+    if (!action) return;
+    switch (action) {
+      case "playPause":
+        e.preventDefault(); // иначе скроллит / жмёт сфокусированную кнопку
+        pb.toggle();
+        break;
+      case "next":
+        pb.next();
+        break;
+      case "prev":
+        pb.prev();
+        break;
+      case "seekFwd":
+        pb.seek(Math.min(pos + 5, track.duration));
+        break;
+      case "seekBack":
+        pb.seek(Math.max(pos - 5, 0));
+        break;
+      case "mute":
+        toggleMute();
+        break;
+      case "like":
+        toggleLike(track.id);
+        break;
+      case "search":
+        e.preventDefault();
+        setView("search");
+        break;
+    }
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => hotkeysRef.current(e);
@@ -723,8 +837,14 @@ function Player({
   };
 
   const accentAttr = prefs.accent === "blue" || prefs.accent === "custom" ? undefined : prefs.accent;
-  const baseBg = BASE_BG[prefs.baseBg];
+  const isLight = prefs.theme === "light";
+  // baseBg-пресеты (тёплый/холодный/AMOLED) заточены под тёмную — в светлой не применяем
+  const baseBg = isLight ? null : BASE_BG[prefs.baseBg];
   const animMult = ANIM_SPEED[prefs.animSpeed];
+  // База текста/стекла зависит от темы: тёмная = белый текст на тёмном стекле,
+  // светлая = тёмный текст на светлом стекле (иначе инлайн перебил бы [data-theme])
+  const textBase = isLight ? "28, 26, 23" : "244, 243, 241";
+  const glassBase = isLight ? "250, 249, 246" : "23, 22, 20";
   const rootStyle = {
     position: "absolute",
     inset: 0,
@@ -732,16 +852,21 @@ function Player({
     overflow: "hidden",
     fontFamily: "var(--font-ui)",
     "--blur-glass": `${prefs.blur}px`,
-    "--glass-panel": `rgba(23, 22, 20, ${prefs.glassOpacity / 100})`,
-    // свой акцент: все четыре акцент-токена выводятся из выбранного hex
-    ...(prefs.accent === "custom" ? customAccentVars(prefs.customAccent) : {}),
+    "--glass-panel": `rgba(${glassBase}, ${prefs.glassOpacity / 100})`,
+    // свой акцент: все четыре акцент-токена выводятся из выбранного hex (theme-aware)
+    ...(prefs.accent === "custom" ? customAccentVars(prefs.customAccent, isLight) : {}),
     // Stage 6 (продвинутая кастомизация): токен-уровневые переопределения
     ...(baseBg ? { "--bg-0": baseBg.bg0, "--bg-1": baseBg.bg1 } : {}),
-    "--text-2": `rgba(244, 243, 241, ${(prefs.textDim / 100).toFixed(2)})`,
-    "--text-3": `rgba(244, 243, 241, ${Math.max(0.2, prefs.textDim / 100 - 0.24).toFixed(2)})`,
+    "--text-2": `rgba(${textBase}, ${(prefs.textDim / 100).toFixed(2)})`,
+    "--text-3": `rgba(${textBase}, ${Math.max(0.2, prefs.textDim / 100 - 0.24).toFixed(2)})`,
     "--blur-scenery": `${prefs.blurScenery}px`,
     "--fs-karaoke": `${prefs.karaokeSize}px`,
     "--w-nowplaying": `${prefs.wNowPlaying}px`,
+    // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ
+    // зоны + высота строки трека; размер шрифта — через root font-size (эффект ниже)
+    "--lh-ui": LINE_SPACING[prefs.lineSpacing],
+    "--pad-zone": `${DENSITY[prefs.density].pad}px`,
+    "--h-trackrow": `${DENSITY[prefs.density].row}px`,
     // zoom масштабирует весь UI (WebView2/Chromium); 100% — без свойства
     ...(prefs.uiScale !== 100 ? { zoom: prefs.uiScale / 100 } : {}),
     ...(wideEnoughForSidebar ? { "--w-sidebar": `${prefs.wSidebar}px` } : { "--w-sidebar": "220px" }),
@@ -794,7 +919,7 @@ function Player({
     ) : null;
 
   return (
-    <div data-accent={accentAttr} data-radius={prefs.radius} style={rootStyle}>
+    <div data-theme={prefs.theme} data-accent={accentAttr} data-radius={prefs.radius} style={rootStyle}>
       {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
       {backdrop}
@@ -819,6 +944,21 @@ function Player({
           playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
           onOpenPlaylist={openPlaylist}
+          // DnD: строка трека брошена на плейлист (только серверные списки)
+          onDropTrack={
+            canSearch
+              ? (playlistId, trackId) => {
+                  const name = sidebarPlaylists.find((p) => p.id === playlistId)?.name ?? "плейлист";
+                  api
+                    .addPlaylistTrack(playlistId, trackId)
+                    .then(async () => {
+                      await reloadServerPlaylists();
+                      showToast(`Добавлено в «${name}»`, "list-music");
+                    })
+                    .catch((e: unknown) => showToast(e instanceof Error ? e.message : "Не удалось добавить", "x"));
+                }
+              : undefined
+          }
           isAdmin={isAdmin}
         />
         {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
@@ -1007,7 +1147,63 @@ function Player({
         onSleep={cycleSleep}
         jamActive={jam.active}
         onJam={() => setJamOpen(true)}
+        // drag-out: обложка утаскивается на рабочий стол файлом из кэша
+        onCoverDragOut={
+          engineAvailable()
+            ? async () => {
+                try {
+                  return await exportCachedTrack(track.id, track.artist, track.title);
+                } catch (e) {
+                  showToast(e instanceof Error ? e.message : "Не удалось подготовить файл", "x");
+                  return null;
+                }
+              }
+            : undefined
+        }
       />
+
+      {/* Оверлей drag-and-drop файлов: «отпусти — добавим» (события идут
+          нативно через Tauri, слой только визуальный) */}
+      {fileDropLit ? (
+        <div
+          className="muza-fade"
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 90,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--glass-deep)",
+            backdropFilter: "blur(var(--blur-glass))",
+            WebkitBackdropFilter: "blur(var(--blur-glass))",
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--sp-4)", textAlign: "center" }}>
+            <span
+              style={{
+                width: 96,
+                height: 96,
+                borderRadius: "50%",
+                background: "var(--accent-soft)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Icon name="folder-down" size={42} color="var(--accent-text)" />
+            </span>
+            <span style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 700, color: "var(--text-1)" }}>
+              Отпусти — добавим в Muza
+            </span>
+            <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+              Аудиофайлы и папки станут локальными треками
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <Toast
         open={toast.open}
@@ -1204,7 +1400,11 @@ function Player({
       {/* Справка по клавишам: «?» или вкладка настроек */}
       <Dialog open={hotkeysOpen} title="Горячие клавиши" onClose={() => setHotkeysOpen(false)}>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 320 }}>
-          {HOTKEYS.map((h) => (
+          {[
+            ...HOTKEY_ACTIONS.map((a) => ({ action: a.label, combo: formatCombo(prefs.hotkeys[a.id]) })),
+            { action: "Поиск / закрыть оверлей", combo: "Esc" },
+            { action: "Эта справка", combo: "?" },
+          ].map((h) => (
             <div key={h.action} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
               <span style={{ flex: 1, fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{h.action}</span>
               <span
@@ -1222,7 +1422,7 @@ function Player({
             </div>
           ))}
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: "var(--sp-2)" }}>
-            Полный список и будущее переназначение — Настройки → Клавиши.
+            Переназначить — Настройки → Клавиши.
           </div>
         </div>
       </Dialog>

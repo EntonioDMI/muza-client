@@ -32,3 +32,10 @@ tauri-plugin-dialog = "2.7.1"
 tauri-plugin-autostart = "2"
 # Открытие внешних ссылок в системном браузере (Last.fm-авторизация и т.п.)
 tauri-plugin-opener = "2"
+# Автообновление с GitHub Releases (Stage 8): подпись updater-ключом,
+# pubkey и endpoint — в tauri.conf.json; process — для relaunch после установки
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# Нативный drag-out: перетаскивание трека из приложения на рабочий стол
+# (файл из кэша добычи с человеческим именем; CrabNebula drag-rs)
+tauri-plugin-drag = "2.1.1"

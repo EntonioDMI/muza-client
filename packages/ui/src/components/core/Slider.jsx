@@ -2,13 +2,23 @@ import React, { useRef, useState, useCallback } from "react";
 
 /** Progress / volume slider — thin pill track, accent fill, thumb on hover.
  *  Keyboard: Arrows step (Shift ×5), Home/End, PageUp/PageDown — full ARIA
- *  slider pattern. valueText announces a human value to screen readers. */
-export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, style }) {
+ *  slider pattern. valueText announces a human value to screen readers.
+ *  hoverLabel(v) включает скраб-превью: морозный пузырёк над курсором
+ *  («куда я сикну») — прогресс-бары передают форматтер тайм-кода. */
+export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, hoverLabel, style }) {
   const ref = useRef(null);
   const [hover, setHover] = useState(false);
   const [drag, setDrag] = useState(false);
+  const [scrub, setScrub] = useState(null); // { pct, v } под курсором
 
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
+
+  const scrubFromEvent = (e) => {
+    if (!hoverLabel || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    setScrub({ pct: p * 100, v: p * max });
+  };
 
   const setFromEvent = useCallback(
     (e) => {
@@ -49,13 +59,17 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, s
       tabIndex={0}
       onKeyDown={onKeyDown}
       onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseLeave={() => {
+        setHover(false);
+        setScrub(null);
+      }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         setDrag(true);
         setFromEvent(e);
       }}
       onPointerMove={(e) => {
+        scrubFromEvent(e);
         if (!drag) return;
         // pointerup мог потеряться (отпустили вне окна, потеря capture) —
         // без зажатой кнопки не «прилипаем» к мыши
@@ -110,6 +124,31 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, s
           pointerEvents: "none",
         }}
       ></div>
+      {hoverLabel && scrub && (hover || drag) ? (
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: scrub.pct + "%",
+            bottom: "calc(100% + 6px)",
+            transform: "translateX(-50%)",
+            padding: "3px 8px",
+            borderRadius: "var(--r-xs)",
+            background: "var(--glass-panel)",
+            backdropFilter: "blur(var(--blur-glass))",
+            WebkitBackdropFilter: "blur(var(--blur-glass))",
+            color: "var(--text-1)",
+            fontFamily: "var(--font-ui)",
+            fontSize: "var(--fs-caption)",
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+        >
+          {hoverLabel(scrub.v)}
+        </span>
+      ) : null}
     </div>
   );
 }

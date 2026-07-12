@@ -54,6 +54,13 @@ export async function localForget(hash: string): Promise<void> {
   await invoke("local_forget", { hash });
 }
 
+/** Скан готового списка путей (drag-and-drop файлов/папок из проводника —
+ *  та же механика, что у диалога, но без диалога). */
+export async function localScanPaths(paths: string[]): Promise<LocalEntry[]> {
+  if (paths.length === 0) return [];
+  return invoke<LocalEntry[]>("local_scan", { paths });
+}
+
 /** Диалог выбора аудиофайлов/папки → скан (теги, хэш, реестр, asset-scope).
  *  null — пользователь передумал. */
 export async function localPickAndScan(kind: "files" | "folder"): Promise<LocalEntry[] | null> {

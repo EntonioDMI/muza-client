@@ -40,6 +40,7 @@ export function Tile({ cover, title, subtitle, width = 176, playing = false, onP
         <img
           src={cover}
           alt=""
+          loading="lazy"
           style={{
             display: "block",
             width: "100%",

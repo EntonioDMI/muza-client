@@ -4,6 +4,7 @@ import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { localList } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
+import { startTrackDrag } from "../lib/dnd";
 import { CollabDialog } from "../shell/CollabDialog";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
@@ -213,7 +214,13 @@ export function PlaylistView({
             .filter(Boolean)
             .join(" · ");
           return (
-            <div key={t.id} style={missingLocal ? { opacity: 0.45 } : undefined}>
+            // draggable: из плейлиста можно унести в другой плейлист сайдбара
+            <div
+              key={t.id}
+              draggable={!missingLocal}
+              onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}
+              style={missingLocal ? { opacity: 0.45 } : undefined}
+            >
               <TrackRow
                 index={i + 1}
                 cover={t.coverUrl ?? undefined}

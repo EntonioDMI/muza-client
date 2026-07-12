@@ -42,3 +42,8 @@ Thumbs.db
 
 # локальные артефакты ревью-сессий
 .impeccable/
+
+# Next.js (apps/web)
+.next/
+out/
+next-env.d.ts

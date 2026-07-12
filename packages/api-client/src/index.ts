@@ -67,6 +67,10 @@ export interface MuzaApi {
   /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
    *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */
   getTrackSources(id: string): Promise<TrackSource[]>;
+  /** Стрим-ссылка серверного резолвера (Stage 8, веб): подписанный URL с TTL —
+   *  его можно отдавать прямо в `<audio src>`. Десктоп добывает сам и этим
+   *  не пользуется (серверный путь — фолбэк, architecture.md). */
+  getStreamUrl(trackId: string): Promise<{ url: string; expiresAt: number }>;
 
   // Источники и версии (Stage 4).
   /** Запомнить явный выбор источника трека (per-user; матчинг не перебивает). */

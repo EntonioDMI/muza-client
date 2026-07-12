@@ -358,6 +358,17 @@ export class HttpMuzaApi implements MuzaApi {
     return trackFromWire(await this.authedRequest<TrackWire>(`/tracks/${encodeURIComponent(id)}`));
   }
 
+  async getStreamUrl(trackId: string): Promise<{ url: string; expiresAt: number }> {
+    const out = await this.authedRequest<{ st: string; expires_at: number }>(
+      `/tracks/${encodeURIComponent(trackId)}/stream-url`,
+    );
+    // URL собирается здесь: baseUrl знает клиент, серверу свой публичный адрес неизвестен
+    return {
+      url: `${this.baseUrl}/tracks/${encodeURIComponent(trackId)}/stream?st=${encodeURIComponent(out.st)}`,
+      expiresAt: out.expires_at,
+    };
+  }
+
   async getTrackSources(id: string): Promise<TrackSource[]> {
     const out = await this.authedRequest<{
       sources: {

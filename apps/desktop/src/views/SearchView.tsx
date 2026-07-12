@@ -3,6 +3,7 @@ import { Button, SearchInput, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { TRACKS, type DemoTrack } from "../data/demo";
 import { fmtTime } from "../lib/format";
+import { startTrackDrag } from "../lib/dnd";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
  *  каталогу (scope=catalog), Enter/кнопка — полный с провайдерами (scope=full,
@@ -119,20 +120,22 @@ export function SearchView({
           ) : null}
           <div style={{ display: "flex", flexDirection: "column" }}>
             {(results ?? []).map((t, i) => (
-              <TrackRow
-                key={t.id}
-                index={i + 1}
-                cover={t.coverUrl ?? undefined}
-                title={t.title}
-                artist={t.artist}
-                duration={fmtTime(t.durationSec)}
-                active={currentId === t.id}
-                playing={currentId === t.id && playing}
-                liked={likes.includes(t.id)}
-                onPlay={() => onPlayCatalog(results ?? [], t.id)}
-                onLike={() => onLike(t.id)}
-                onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
-              />
+              // draggable: строку можно унести в плейлист сайдбара
+              <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
+                <TrackRow
+                  index={i + 1}
+                  cover={t.coverUrl ?? undefined}
+                  title={t.title}
+                  artist={t.artist}
+                  duration={fmtTime(t.durationSec)}
+                  active={currentId === t.id}
+                  playing={currentId === t.id && playing}
+                  liked={likes.includes(t.id)}
+                  onPlay={() => onPlayCatalog(results ?? [], t.id)}
+                  onLike={() => onLike(t.id)}
+                  onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
+                />
+              </div>
             ))}
             {results !== null && results.length === 0 && !busy ? (
               <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)" }}>

@@ -15,3 +15,55 @@
   --accent-text:  #7fb0ec;
   --accent-soft:  rgba(50, 122, 217, 0.16);
 }
+
+/* ── Light theme ──────────────────────────────────────────────────
+   НЕ флип: тёмная ДС стоит на translucent-WHITE surfaces поверх тёмного фона —
+   на светлом они невидимы. Здесь инвертирована логика слоёв: translucent-BLACK
+   surfaces на тёплом off-white фоне, тёмная текстовая рампа, светлое стекло,
+   accent-text темнее (AA на светлом). Применяется [data-theme="light"] на корне.
+   Часть токенов (--bg-0/1, --text-2/3, --glass-panel) App выставляет inline с
+   учётом темы (зависят от prefs textDim/glassOpacity/baseBg) — здесь дефолты. */
+
+[data-theme="light"] {
+  --bg-0: #f3f1ed;           /* warm off-white, low chroma — light inverse of graphite */
+  --bg-1: #faf9f6;           /* raised zone — toward white */
+
+  --surface-1: rgba(20, 18, 15, 0.04);   /* zone: sidebar, panels */
+  --surface-2: rgba(20, 18, 15, 0.06);   /* tile / row resting */
+  --surface-3: rgba(20, 18, 15, 0.09);   /* hover, input fields */
+  --surface-4: rgba(20, 18, 15, 0.13);   /* active / selected / pressed */
+
+  --glass-panel: rgba(250, 249, 246, 0.72);
+  --glass-deep:  rgba(248, 246, 243, 0.86);
+  --glass-light: rgba(20, 18, 15, 0.06);
+
+  --text-1: #1c1a17;
+  --text-2: rgba(28, 26, 23, 0.62);
+  --text-3: rgba(28, 26, 23, 0.42);
+  --text-on-accent: #ffffff;
+
+  --accent:       #2f6fe0;   /* blue, a touch deeper for buttons on light */
+  --accent-hover: #2a63c8;
+  --accent-text:  #1d5fd4;   /* accent AS text on light bg — AA ~5:1 */
+  --accent-soft:  rgba(47, 111, 224, 0.13);
+
+  --danger: #d13c3a;
+
+  color-scheme: light;
+}
+
+/* Акцент × светлая тема: text-варианты акцентов рассчитаны на тёмный фон
+   (светлые) — на светлом их надо затемнить для читаемости. */
+[data-theme="light"][data-accent="red"] {
+  --accent:       #e2413f;
+  --accent-hover: #cf3634;
+  --accent-text:  #c2302e;
+  --accent-soft:  rgba(226, 65, 63, 0.14);
+}
+
+[data-theme="light"][data-accent="bolt"] {
+  --accent:       #2f6fce;
+  --accent-hover: #2961bb;
+  --accent-text:  #215bb0;
+  --accent-soft:  rgba(47, 111, 206, 0.14);
+}

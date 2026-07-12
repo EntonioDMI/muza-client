@@ -144,6 +144,10 @@ export class MockMuzaApi implements MuzaApi {
     return []; // мок: источников нет
   }
 
+  async getStreamUrl(): Promise<{ url: string; expiresAt: number }> {
+    throw new Error("Мок: серверный стриминг недоступен");
+  }
+
   async chooseTrackSource(): Promise<void> {}
 
   async resetTrackSource(): Promise<void> {}

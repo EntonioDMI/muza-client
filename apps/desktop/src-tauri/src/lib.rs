@@ -15,6 +15,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        // Автообновление (Stage 8): подпись артефактов updater-ключом,
+        // endpoint GitHub Releases — tauri.conf.json; process — relaunch
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        // drag-out: трек из бара утаскивается на рабочий стол файлом
+        .plugin(tauri_plugin_drag::init())
         .manage(engine::EngineState::default())
         .manage(local::LocalState::default())
         .manage(rpc::RpcState::default())
@@ -41,6 +47,7 @@ pub fn run() {
             engine::engine_resolve,
             engine::engine_cache_stats,
             engine::engine_cache_remove,
+            engine::engine_export_cached,
             engine::engine_cache_clear,
             engine::engine_set_cache_limit,
             engine::engine_pin,

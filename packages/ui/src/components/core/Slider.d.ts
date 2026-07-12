@@ -9,5 +9,8 @@ export interface SliderProps {
   ariaLabel?: string;
   /** Human value for screen readers (aria-valuetext), e.g. "1:24 из 3:45". */
   valueText?: string;
+  /** Enables the scrub-preview bubble over the cursor; return the label for
+   *  a hovered value, e.g. (v) => fmtTime(v). Progress bars pass this. */
+  hoverLabel?: (value: number) => string;
   style?: React.CSSProperties;
 }

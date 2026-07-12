@@ -1,3 +1,5 @@
+import { DEFAULT_HOTKEYS, type HotkeyAction } from "./lib/hotkeys";
+
 export type View = "home" | "search" | "favorites" | "library" | "stats" | "playlist" | "settings" | "admin";
 
 /** Режим повтора: выкл → вся очередь → один трек. */
@@ -17,6 +19,8 @@ export const STATS_BLOCK_KEYS = [
 export type StatsBlockKey = (typeof STATS_BLOCK_KEYS)[number];
 
 export interface Prefs {
+  /** Тема оформления: тёмная (дефолт ДС) / светлая (инверсия слоёв). */
+  theme: "dark" | "light";
   /** custom — произвольный цвет из customAccent (пикер в настройках). */
   accent: "blue" | "red" | "bolt" | "custom";
   /** Hex свого акцента; остальные акцент-токены выводятся из него (lib/accent). */
@@ -98,9 +102,28 @@ export interface Prefs {
   statsBlocks: { key: StatsBlockKey; on: boolean }[];
   /** Период, с которым открывается страница статистики. */
   statsPeriod: "week" | "month" | "year" | "all";
+
+  // ── Типографика (продвинутая кастомизация) ──
+  /** Размер текста, % (85–125) — root font-size; токены в rem → масштабируется
+   *  только текст, не отступы (в отличие от uiScale=zoom). */
+  fontScale: number;
+  /** Межстрочный интервал UI-текста (--lh-ui). */
+  lineSpacing: "tight" | "normal" | "relaxed";
+
+  // ── Плотность (продвинутая кастомизация) ──
+  /** Отступы зон + высота строки трека: компактно / стандарт / просторно. */
+  density: "compact" | "normal" | "spacious";
+
+  // ── Поведение ──
+  /** Продолжать трек с места остановки (позиция per-track в localStorage). */
+  resumePosition: boolean;
+
+  // ── Горячие клавиши: actionId → combo (по e.code, layout-независимо) ──
+  hotkeys: Record<HotkeyAction, string>;
 }
 
 export const DEFAULT_PREFS: Prefs = {
+  theme: "dark",
   accent: "blue",
   customAccent: "#22c55e",
   radius: "soft",
@@ -144,4 +167,9 @@ export const DEFAULT_PREFS: Prefs = {
   discordBtnUrl: "https://muza.lol",
   statsBlocks: STATS_BLOCK_KEYS.map((key) => ({ key, on: true })),
   statsPeriod: "month",
+  fontScale: 100,
+  lineSpacing: "normal",
+  density: "normal",
+  resumePosition: false,
+  hotkeys: DEFAULT_HOTKEYS,
 };
