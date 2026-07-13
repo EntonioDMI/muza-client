@@ -27,6 +27,7 @@ export interface PlayEndInfo {
 export function usePlayback({
   api,
   initialQueue,
+  initialPos = 24,
   prefs,
   onError,
   onPlayEnd,
@@ -34,6 +35,12 @@ export function usePlayback({
 }: {
   api: MuzaApi;
   initialQueue: PlayerTrack[];
+  /** Позиция плеер-бара до первого взаимодействия. 24 — как в демо Stage 1
+   *  («уже населённый» бар); при восстановлении последнего трека после
+   *  релонча (App.tsx, prefs.resumePosition) — сохранённая позиция. Playing
+   *  НИКОГДА не наследуется отсюда — см. playing ниже (T2: защита от
+   *  «песни сами играют»). */
+  initialPos?: number;
   prefs: Prefs;
   /** Показ ошибок добычи/воспроизведения (тост). */
   onError: (message: string) => void;
@@ -46,9 +53,15 @@ export function usePlayback({
 }) {
   const [queue, setQueue] = useState<PlayerTrack[]>(initialQueue);
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  // Плеер НИКОГДА не стартует играющим сам — только по явному действию
+  // пользователя (клик/toggle). Раньше здесь было true «как в демо Stage 1»;
+  // с тех пор playing доехало до Discord RPC/mediaSession(SMTC)/мини-плеера,
+  // и любой релонч (в т.ч. тихий рестарт tauri dev на правку src-tauri/**)
+  // выглядел как «песня сама заиграла» (T2-расследование, живой репро
+  // подтвердил механизм). Восстановление трека — см. initialQueue/initialPos.
+  const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
-  const [pos, setPos] = useState(24); // как в демо Stage 1 — трек «уже играет»
+  const [pos, setPos] = useState(initialPos);
   const [vol, setVolState] = useState(64);
   const [speed, setSpeed] = useState(1);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
@@ -205,6 +218,10 @@ export function usePlayback({
     setPlaying(true);
     autoAdvancedRef.current = false;
     rememberPlayed(t.id);
+    // «Последний активный трек» — материал для восстановления при следующем
+    // запуске (App.tsx). Пишем на каждый реальный старт (клик/авто-переход),
+    // не только на клик — чтобы «трек готов» после релонча был актуальным.
+    if (prefsRef.current.resumePosition) resumeStore.saveLast(t);
 
     if (t.kind === "demo") {
       engine().stop();

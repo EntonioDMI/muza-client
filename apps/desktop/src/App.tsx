@@ -7,6 +7,7 @@ import { accentRoleVars, customAccentVars } from "./lib/accent";
 import { dominantColor, mixHex } from "./lib/coverTint";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
 import { applySourcePolicy } from "./lib/sources";
+import { resumeStore } from "./lib/resumeStore";
 import { miniHide, miniListen, miniSendState, miniShow, type MiniCommand, type MiniState } from "./lib/miniBridge";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
@@ -25,7 +26,7 @@ import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
 import { useMediaSession } from "./player/useMediaSession";
 import { useJam } from "./player/useJam";
-import { fromCatalog, fromDemo, fromLocalEntry } from "./player/types";
+import { fromCatalog, fromDemo, fromLocalEntry, type PlayerTrack } from "./player/types";
 import type { ShareData } from "./lib/shareCard";
 import { LoginScreen } from "./auth/LoginScreen";
 import { Sidebar } from "./shell/Sidebar";
@@ -147,6 +148,23 @@ const densityRow = (d: number) => 52 + Math.round((16 * d) / 100);
 /** Демо-очередь по умолчанию: главная/библиотека живут на демо-каталоге. */
 const DEMO_QUEUE = TRACKS.map(fromDemo);
 
+/** Восстановление плеера при старте (T2: защита от «песни сами играют»).
+ *  Плеер НИКОГДА не стартует играющим сам (usePlayback.playing начинается с
+ *  false) — здесь решаем только ЧТО показать «готовым»: если владелец включил
+ *  «Запоминать позицию трека» и есть последний активный трек — очередь из
+ *  него на сохранённой позиции; иначе — прежний демо-заглушечный бар. */
+function initialPlaybackState(): { queue: PlayerTrack[]; pos: number } {
+  const prefs = loadPrefs();
+  if (prefs.resumePosition) {
+    const last = resumeStore.getLast();
+    if (last) {
+      const saved = resumeStore.get(last.id);
+      return { queue: [last], pos: saved > 0 ? saved : 0 };
+    }
+  }
+  return { queue: DEMO_QUEUE, pos: 24 }; // 24 — как в демо Stage 1, «уже населённый» бар
+}
+
 /** Каркас плеера. Stage 3: реальное воспроизведение каталожных треков
  *  (добыча на своём IP → LRU-кэш → Web Audio), демо-треки — симуляция. */
 function Player({
@@ -227,10 +245,15 @@ function Player({
   // ref, потому что onQueueEnd замыкается при создании usePlayback
   const jamGuestRef = useRef(false);
 
+  // T2: восстановление трека/позиции при старте, БЕЗ автозапуска (playing
+  // всегда стартует false в usePlayback) — считаем один раз при монтировании
+  const [initialPlayback] = useState(initialPlaybackState);
+
   // Реальный плеер (Stage 3): очередь-контекст, добыча, кроссфейд, EQ
   const pbRaw = usePlayback({
     api,
-    initialQueue: DEMO_QUEUE,
+    initialQueue: initialPlayback.queue,
+    initialPos: initialPlayback.pos,
     prefs,
     onError: (m) => showToast(m, "x"),
     // Скробблинг: каталожные прослушивания — в историю сервера (демо — нет)
