@@ -162,7 +162,13 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
     setHexText(raw);
     const parsed = parseHex(raw);
     if (parsed) {
-      setHsv(hexToHsv(parsed));
+      const next = hexToHsv(parsed);
+      // Ахроматичный hex (r=g=b: чёрный/белый/серый) → rgbToHsv всегда даёт h=0
+      // (оттенок математически не определён при s=0). Раньше это дёргало
+      // hue-слайдер в красный на каждый такой ввод — сохраняем текущий hue,
+      // меняем только s/v. На маунте/revert так не делаем: там нет "текущего"
+      // контекста, h=0 — нормальный дефолт.
+      setHsv(next.s === 0 ? { ...next, h: hsv.h } : next);
       if (onChange) onChange(parsed);
     }
   };
@@ -332,7 +338,12 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
             onBlur={onHexBlur}
             onFocus={(e) => e.target.select()}
             onKeyDown={(e) => {
-              e.stopPropagation();
+              // Раньше здесь стоял безусловный e.stopPropagation() — идея была
+              // защитить ввод в hex-поле от глобальных хоткеев плеера. Он ни от
+              // чего реального не защищал (глобальный обработчик в App.tsx сам
+              // игнорирует INPUT/TEXTAREA/contentEditable) и попутно глушил
+              // Escape, не давая ему дойти до window-слушателя ниже, который
+              // закрывает попап — поэтому убран целиком.
               if (e.key === "Enter") e.currentTarget.blur();
             }}
             aria-label="Hex-код цвета"
