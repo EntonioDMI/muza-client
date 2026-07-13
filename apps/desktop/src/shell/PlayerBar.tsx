@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
-import { Icon, IconButton, Slider, Tooltip } from "@muza/ui";
+import { IconButton, Slider, Tooltip } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
-import type { RepeatMode } from "../types";
+import type { BarButtonKey, RepeatMode } from "../types";
+import { normalizeBarButtons, type BarButtonPref } from "../lib/barButtons";
 import { fmtTime } from "../lib/format";
 import { startTrackFileDrag } from "../lib/dragOut";
 
@@ -73,6 +74,7 @@ export function PlayerBar({
   jamActive,
   onJam,
   onCoverDragOut,
+  buttons,
 }: {
   track: PlayerTrack;
   playing: boolean;
@@ -110,8 +112,16 @@ export function PlayerBar({
   /** Drag-out: подготовить файл трека для нативного драга (null = не вышло,
    *  тост уже показан снаружи). undefined — жест недоступен (браузер/аноним). */
   onCoverDragOut?: () => Promise<string | null>;
+  /** Компоновка (настройки → «Кнопки плеер-бара»): состав и порядок.
+   *  Несъёмное — обложка/инфо/лайк, prev/play/next, прогресс. */
+  buttons?: BarButtonPref[];
 }) {
   const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
+  // Компоновка: shuffle/repeat живут в центре вокруг транспорта, остальные —
+  // справа в порядке массива; выключенное не рендерится
+  const layout = normalizeBarButtons(buttons ?? []);
+  const barOn = (key: BarButtonKey) => layout.find((b) => b.key === key)?.on !== false;
+  const rightOrder = layout.filter((b) => b.on && b.key !== "shuffle" && b.key !== "repeat");
   // Жест drag-out с обложки: pointerdown взводит экспорт, движение >12px
   // запускает нативный драг, клик без движения — обычный «Режим прослушивания»
   const dragRef = useRef<{ x: number; y: number; file: Promise<string | null>; started: boolean } | null>(null);
@@ -224,9 +234,11 @@ export function PlayerBar({
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-          <Tooltip label="Перемешать">
-            <IconButton icon="shuffle" size="sm" active={shuffle} label="Перемешать" onClick={onShuffle} />
-          </Tooltip>
+          {barOn("shuffle") ? (
+            <Tooltip label="Перемешать">
+              <IconButton icon="shuffle" size="sm" active={shuffle} label="Перемешать" onClick={onShuffle} />
+            </Tooltip>
+          ) : null}
           <Tooltip label="Предыдущий">
             <IconButton icon="skip-back" label="Предыдущий" onClick={onPrev} />
           </Tooltip>
@@ -239,15 +251,17 @@ export function PlayerBar({
           <Tooltip label="Следующий">
             <IconButton icon="skip-forward" label="Следующий" onClick={onNext} />
           </Tooltip>
-          <Tooltip label={repeatLabel}>
-            <IconButton
-              icon={repeat === "one" ? "repeat-1" : "repeat"}
-              size="sm"
-              active={repeat !== "off"}
-              label={repeatLabel}
-              onClick={onRepeat}
-            />
-          </Tooltip>
+          {barOn("repeat") ? (
+            <Tooltip label={repeatLabel}>
+              <IconButton
+                icon={repeat === "one" ? "repeat-1" : "repeat"}
+                size="sm"
+                active={repeat !== "off"}
+                label={repeatLabel}
+                onClick={onRepeat}
+              />
+            </Tooltip>
+          ) : null}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", width: 480 }}>
           <span
@@ -269,37 +283,67 @@ export function PlayerBar({
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}>
-        <Tooltip label={sleepLabel}>
-          <IconButton icon="moon" size="sm" active={sleepActive} label={sleepLabel} onClick={onSleep} />
-        </Tooltip>
-        <SpeedButton speed={speed} onClick={onSpeed} />
-        <Tooltip label="Эквалайзер">
-          <IconButton icon="sliders-vertical" size="sm" label="Эквалайзер" onClick={onEqualizer} />
-        </Tooltip>
-        <Tooltip label="Текст">
-          <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label="Текст" onClick={onLyrics} />
-        </Tooltip>
-        <Tooltip label={jamActive ? "Jam идёт — открыть" : "Jam: слушать вместе"}>
-          <IconButton icon="radio-tower" size="sm" active={jamActive} label="Jam: слушать вместе" onClick={onJam} />
-        </Tooltip>
-        <Tooltip label="Очередь">
-          <IconButton icon="list-music" size="sm" active={queueOn} label="Очередь" onClick={onQueue} />
-        </Tooltip>
-        {/* клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость */}
-        <Tooltip label={vol === 0 ? "Включить звук" : "Без звука"}>
-          <IconButton
-            icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
-            size="sm"
-            label={vol === 0 ? "Включить звук" : "Без звука"}
-            onClick={onMute}
-          />
-        </Tooltip>
-        <div onWheel={(e) => onVol(Math.max(0, Math.min(100, vol + (e.deltaY < 0 ? 5 : -5))))} style={{ display: "flex" }}>
-          <Slider value={vol} onChange={onVol} ariaLabel="Громкость" valueText={`${Math.round(vol)} %`} style={{ width: 110 }} />
-        </div>
-        <Tooltip label="Во весь экран">
-          <IconButton icon="maximize-2" size="sm" label="Режим прослушивания" onClick={onExpand} />
-        </Tooltip>
+        {rightOrder.map(({ key }) => {
+          switch (key) {
+            case "sleep":
+              return (
+                <Tooltip key={key} label={sleepLabel}>
+                  <IconButton icon="moon" size="sm" active={sleepActive} label={sleepLabel} onClick={onSleep} />
+                </Tooltip>
+              );
+            case "speed":
+              return <SpeedButton key={key} speed={speed} onClick={onSpeed} />;
+            case "equalizer":
+              return (
+                <Tooltip key={key} label="Эквалайзер">
+                  <IconButton icon="sliders-vertical" size="sm" label="Эквалайзер" onClick={onEqualizer} />
+                </Tooltip>
+              );
+            case "lyrics":
+              return (
+                <Tooltip key={key} label="Текст">
+                  <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label="Текст" onClick={onLyrics} />
+                </Tooltip>
+              );
+            case "jam":
+              return (
+                <Tooltip key={key} label={jamActive ? "Jam идёт — открыть" : "Jam: слушать вместе"}>
+                  <IconButton icon="radio-tower" size="sm" active={jamActive} label="Jam: слушать вместе" onClick={onJam} />
+                </Tooltip>
+              );
+            case "queue":
+              return (
+                <Tooltip key={key} label="Очередь">
+                  <IconButton icon="list-music" size="sm" active={queueOn} label="Очередь" onClick={onQueue} />
+                </Tooltip>
+              );
+            case "volume":
+              // клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                  <Tooltip label={vol === 0 ? "Включить звук" : "Без звука"}>
+                    <IconButton
+                      icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
+                      size="sm"
+                      label={vol === 0 ? "Включить звук" : "Без звука"}
+                      onClick={onMute}
+                    />
+                  </Tooltip>
+                  <div onWheel={(e) => onVol(Math.max(0, Math.min(100, vol + (e.deltaY < 0 ? 5 : -5))))} style={{ display: "flex" }}>
+                    <Slider value={vol} onChange={onVol} ariaLabel="Громкость" valueText={`${Math.round(vol)} %`} style={{ width: 110 }} />
+                  </div>
+                </div>
+              );
+            case "fullscreen":
+              return (
+                <Tooltip key={key} label="Во весь экран">
+                  <IconButton icon="maximize-2" size="sm" label="Режим прослушивания" onClick={onExpand} />
+                </Tooltip>
+              );
+            default:
+              return null;
+          }
+        })}
       </div>
     </div>
   );

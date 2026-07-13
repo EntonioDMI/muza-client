@@ -18,6 +18,8 @@ export function PlaylistView({
   currentId,
   playing,
   onPlayCatalog,
+  onQueueCatalog,
+  rowShow,
   onLike,
   onNotify,
   onVersions,
@@ -35,6 +37,10 @@ export function PlaylistView({
   playing: boolean;
   /** Играть трек в контексте плейлиста (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
+  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
+  onQueueCatalog?: (t: Track) => void;
+  /** Строка трека (настройка «Строка трека»): что показывать. */
+  rowShow?: { cover: boolean; duration: boolean };
   onLike: (id: string) => void;
   onNotify: (text: string, icon?: string) => void;
   /** Открыть «Версии и источники» трека (Stage 4). */
@@ -223,10 +229,11 @@ export function PlaylistView({
             >
               <TrackRow
                 index={i + 1}
-                cover={t.coverUrl ?? undefined}
+                cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
                 title={t.title}
                 artist={artistLine}
                 duration={fmtTime(t.durationSec)}
+                showDuration={rowShow?.duration !== false}
                 liked={likes.includes(t.id)}
                 active={currentId === t.id}
                 playing={currentId === t.id && playing}
@@ -237,6 +244,7 @@ export function PlaylistView({
                   }
                   onPlayCatalog(detail?.tracks ?? [], t.id);
                 }}
+                onRowDoubleClick={onQueueCatalog && !missingLocal ? () => onQueueCatalog(t) : undefined}
                 onLike={() => onLike(t.id)}
                 onMore={(e: React.MouseEvent) => {
                   e.stopPropagation();

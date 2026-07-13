@@ -15,8 +15,13 @@ export function SearchView({
   currentId,
   playing,
   likes,
+  instantSearch = true,
+  searchScope = "all",
   onPlayTrack,
   onPlayCatalog,
+  onQueueCatalog,
+  onQueueDemo,
+  rowShow,
   onLike,
   onTrackMenu,
   onNotify,
@@ -28,9 +33,18 @@ export function SearchView({
   currentId: string;
   playing: boolean;
   likes: string[];
+  /** Живой каталожный поиск при вводе (выкл = только по Enter/кнопке). */
+  instantSearch?: boolean;
+  /** «Где искать»: каталог + источники или только каталог (без yt-dlp). */
+  searchScope?: "all" | "catalog";
   onPlayTrack: (id: string) => void;
   /** Играть каталожный трек в контексте списка (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
+  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
+  onQueueCatalog?: (t: Track) => void;
+  onQueueDemo?: (id: string) => void;
+  /** Строка трека (настройка «Строка трека»): что показывать. */
+  rowShow?: { cover: boolean; duration: boolean };
   onLike: (id: string) => void;
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   onNotify: (text: string, icon?: string) => void;
@@ -46,7 +60,7 @@ export function SearchView({
 
   const query = q.trim();
 
-  // живой каталожный поиск с debounce
+  // живой каталожный поиск с debounce («Мгновенный поиск»; выкл = по Enter)
   useEffect(() => {
     if (!canSearch) return;
     if (query.length < 2) {
@@ -56,6 +70,7 @@ export function SearchView({
       setBusy(false);
       return;
     }
+    if (!instantSearch) return;
     const seq = ++seqRef.current;
     const t = setTimeout(() => {
       api
@@ -66,15 +81,15 @@ export function SearchView({
         .catch(() => undefined); // живой ввод ошибок не показывает — есть полный поиск
     }, 250);
     return () => clearTimeout(t);
-  }, [api, query, canSearch]);
+  }, [api, query, canSearch, instantSearch]);
 
-  const fullSearch = async () => {
+  const runSearch = async (scope: "catalog" | "full") => {
     if (!canSearch || query.length < 2 || busy) return;
     const seq = ++seqRef.current;
     setBusy(true);
     setError(null);
     try {
-      const found = await api.search(query, { scope: "full" });
+      const found = await api.search(query, { scope });
       if (seqRef.current === seq) setResults(found);
     } catch (e) {
       if (seqRef.current === seq) setError(e instanceof Error ? e.message : "Что-то пошло не так");
@@ -82,6 +97,8 @@ export function SearchView({
       if (seqRef.current === seq) setBusy(false);
     }
   };
+  // Enter/кнопка: «только каталог» не запускает yt-dlp на сервере
+  const fullSearch = () => runSearch(searchScope === "catalog" ? "catalog" : "full");
 
   const showServerResults = canSearch && query.length >= 2;
   const demoFound = TRACKS.filter(
@@ -97,7 +114,7 @@ export function SearchView({
         }}
       >
         <SearchInput value={q} onChange={setQ} placeholder="Трек, артист, альбом" autoFocus style={{ maxWidth: 520, flex: 1 }} />
-        {showServerResults ? (
+        {showServerResults && searchScope !== "catalog" ? (
           <Button variant="secondary" icon="search" disabled={busy} onClick={() => void fullSearch()}>
             {busy ? "Ищем…" : "Искать в источниках"}
           </Button>
@@ -124,14 +141,16 @@ export function SearchView({
               <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
                 <TrackRow
                   index={i + 1}
-                  cover={t.coverUrl ?? undefined}
+                  cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
                   title={t.title}
                   artist={t.artist}
                   duration={fmtTime(t.durationSec)}
+                  showDuration={rowShow?.duration !== false}
                   active={currentId === t.id}
                   playing={currentId === t.id && playing}
                   liked={likes.includes(t.id)}
                   onPlay={() => onPlayCatalog(results ?? [], t.id)}
+                  onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(t) : undefined}
                   onLike={() => onLike(t.id)}
                   onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
                 />
@@ -159,15 +178,17 @@ export function SearchView({
               <TrackRow
                 key={t.id}
                 index={i + 1}
-                cover={t.cover}
+                cover={rowShow?.cover === false ? undefined : t.cover}
                 title={t.title}
                 artist={t.artist}
                 duration={fmtTime(t.duration)}
+                showDuration={rowShow?.duration !== false}
                 explicit={t.explicit}
                 active={currentId === t.id}
                 playing={currentId === t.id && playing}
                 liked={likes.includes(t.id)}
                 onPlay={() => onPlayTrack(t.id)}
+                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(t.id) : undefined}
                 onLike={() => onLike(t.id)}
                 onMore={(e: React.MouseEvent) => onTrackMenu(t, e)}
               />

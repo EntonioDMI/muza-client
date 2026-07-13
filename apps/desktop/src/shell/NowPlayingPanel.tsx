@@ -9,6 +9,7 @@ export function NowPlayingPanel({
   liked,
   onLike,
   activeLine,
+  lyricsAutoScroll = true,
   onSeekLine,
   onExplain,
 }: {
@@ -20,6 +21,8 @@ export function NowPlayingPanel({
   liked: boolean;
   onLike: () => void;
   activeLine: number;
+  /** Настройка «Автоскролл» (Тексты): следовать ли за активной строкой. */
+  lyricsAutoScroll?: boolean;
   onSeekLine: (i: number) => void;
   /** Открыть общую модалку смысла для выделенной строки. */
   onExplain: (index: number) => void;
@@ -92,6 +95,7 @@ export function NowPlayingPanel({
           <Lyrics
             lines={lyrics}
             activeIndex={activeLine}
+            autoScroll={lyricsAutoScroll}
             onSeek={onSeekLine}
             onExplain={onExplain}
             style={{ height: "100%" }}

@@ -18,6 +18,30 @@ export const STATS_BLOCK_KEYS = [
 ] as const;
 export type StatsBlockKey = (typeof STATS_BLOCK_KEYS)[number];
 
+/** Сентинел «переопределение выключено» для radiusControls/radiusFields:
+ *  токен не ставится, форма кнопок/полей — как в ДС (пилюля/пресет). */
+export const RADIUS_OVERRIDE_OFF = 999;
+
+/** Настраиваемые кнопки плеер-бара: порядок массива = дефолтный порядок.
+ *  Несъёмное (обложка/инфо/лайк, prev/play/next, прогресс) сюда не входит. */
+export const BAR_BUTTON_KEYS = [
+  "shuffle",
+  "repeat",
+  "sleep",
+  "speed",
+  "equalizer",
+  "lyrics",
+  "jam",
+  "queue",
+  "volume",
+  "fullscreen",
+] as const;
+export type BarButtonKey = (typeof BAR_BUTTON_KEYS)[number];
+
+/** Вкладки сайдбара, доступные компоновке (админка/настройки — вне её). */
+export const NAV_ITEM_KEYS = ["home", "search", "favorites", "library", "stats"] as const;
+export type NavItemKey = (typeof NAV_ITEM_KEYS)[number];
+
 export interface Prefs {
   /** Тема оформления: тёмная (дефолт ДС) / светлая (инверсия слоёв). */
   theme: "dark" | "light";
@@ -33,12 +57,14 @@ export interface Prefs {
   accentActive: string;
   radius: "mild" | "soft" | "round";
   /** Скругление по типам поверх пресета radius: плитки/строки и панели —
-   *  множитель к пресету; кнопки и поля — переопределение формы
-   *  (--r-control/--r-field, фолбэк — пилюля/пресет). */
-  radiusTiles: "sharper" | "preset" | "rounder";
-  radiusPanels: "sharper" | "preset" | "rounder";
-  radiusControls: "pill" | "soft" | "sharp";
-  radiusFields: "preset" | "soft" | "sharp";
+   *  ПРОЦЕНТ от пресета (50–160, 100 = как пресет); кнопки и поля — px
+   *  6–26 либо RADIUS_OVERRIDE_OFF (999) = «как в ДС» (пилюля/пресет,
+   *  токен --r-control/--r-field не ставится). Старые строковые пресеты
+   *  мигрируются в числа (lib/legacyPrefs). */
+  radiusTiles: number;
+  radiusPanels: number;
+  radiusControls: number;
+  radiusFields: number;
   /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
    *  картинка по URL. Старое поле bgCover=true мигрирует в "cover". */
   bgType: "none" | "cover" | "color" | "gradient" | "image";
@@ -68,8 +94,9 @@ export interface Prefs {
   textDim: number;
   /** Масштаб интерфейса, % (85–125) — zoom на корне. */
   uiScale: number;
-  /** Скорость анимаций: множитель к --dur-* (быстрее/стандарт/мягче). */
-  animSpeed: "fast" | "normal" | "slow";
+  /** Скорость анимаций, % длительности --dur-* (60–170: влево быстрее,
+   *  вправо мягче; 100 = дефолт ДС). Старые fast/normal/slow мигрируются. */
+  animSpeed: number;
   /** Размер караоке-строки, px (--fs-karaoke). */
   karaokeSize: number;
   /** Ширины зон, px (узкое окно всё равно пережимает сайдбар). */
@@ -121,6 +148,19 @@ export interface Prefs {
   discordBtnOn: boolean;
   discordBtnLabel: string;
   discordBtnUrl: string;
+  /** Обложка трека в активности Discord. */
+  discordShowCover: boolean;
+  /** Шаблоны строк активности; подстановки {track} {artist} {album}. */
+  discordLine1: string;
+  discordLine2: string;
+  /** Кнопки плеер-бара: состав и порядок (порядок массива = порядок в баре;
+   *  shuffle/repeat живут в центре вокруг транспорта, остальное — справа). */
+  barButtons: { key: BarButtonKey; on: boolean }[];
+  /** Вкладки сайдбара: состав, порядок и переименование (label = своё имя,
+   *  пусто/нет — дефолт). Главную выключить нельзя (normalizeNavItems). */
+  navItems: { key: NavItemKey; on: boolean; label?: string }[];
+  /** Строка трека: что показывать (альбом/источник появятся с данными). */
+  rowShow: { cover: boolean; duration: boolean };
   /** Страница «Статистика»: видимость и порядок блоков (порядок массива =
    *  порядок на странице; новые блоки дописываются включёнными). */
   statsBlocks: { key: StatsBlockKey; on: boolean }[];
@@ -131,16 +171,41 @@ export interface Prefs {
   /** Размер текста, % (85–125) — root font-size; токены в rem → масштабируется
    *  только текст, не отступы (в отличие от uiScale=zoom). */
   fontScale: number;
-  /** Межстрочный интервал UI-текста (--lh-ui). */
-  lineSpacing: "tight" | "normal" | "relaxed";
+  /** Межстрочный интервал UI-текста ×100 (125–160 → --lh-ui 1.25–1.60).
+   *  Старые tight/normal/relaxed мигрируются. */
+  lineSpacing: number;
 
   // ── Плотность (продвинутая кастомизация) ──
-  /** Отступы зон + высота строки трека: компактно / стандарт / просторно. */
-  density: "compact" | "normal" | "spacious";
+  /** «Просторность» 0–100: отступы зон 14–26px + высота строки трека
+   *  52–68px (0 = компактно, 50 = стандарт). Старые compact/normal/spacious
+   *  мигрируются. */
+  density: number;
 
   // ── Поведение ──
   /** Продолжать трек с места остановки (позиция per-track в localStorage). */
   resumePosition: boolean;
+  /** Двойной клик по строке трека: играть или добавить в очередь. */
+  doubleClickAction: "play" | "queue";
+  /** Медиаклавиши/SMTC Windows (useMediaSession). */
+  mediaKeys: boolean;
+  /** Живой каталожный поиск при вводе (выкл = только по Enter). */
+  instantSearch: boolean;
+  /** Где искать: каталог + источники (yt-dlp) или только накопленный каталог.
+   *  Локальные файлы в поиске не участвуют (живут в Библиотеке). */
+  searchScope: "all" | "catalog";
+  /** Синхронизированный текст (выкл = plain-список без подсветки/автоследования). */
+  syncedLyrics: boolean;
+  /** Автоследование за активной строкой текста (выкл = свободный скролл). */
+  lyricsAutoScroll: boolean;
+  /** Качество стрима: auto = лестница рецепта, econom = меньший битрейт
+   *  (движок ставит низкобитрейтные форматы в голову лестницы yt-dlp). */
+  streamQuality: "auto" | "econom";
+  /** Вкл/выкл провайдеров при добыче (фильтр источников перед resolve;
+   *  локальные файлы не фильтруются; всё выключить нельзя). */
+  sourcesEnabled: { youtube: boolean; soundcloud: boolean; bandcamp: boolean };
+  /** Политика выбора источника: порядок сервера (официальное первым)
+   *  или SoundCloud вперёд. */
+  sourcePolicy: "official" | "soundcloudFirst";
 
   // ── Горячие клавиши: actionId → combo (по e.code, layout-независимо) ──
   hotkeys: Record<HotkeyAction, string>;
@@ -155,10 +220,10 @@ export const DEFAULT_PREFS: Prefs = {
   accentSlider: "#3b82f6",
   accentActive: "#3b82f6",
   radius: "soft",
-  radiusTiles: "preset",
-  radiusPanels: "preset",
-  radiusControls: "pill",
-  radiusFields: "preset",
+  radiusTiles: 100,
+  radiusPanels: 100,
+  radiusControls: RADIUS_OVERRIDE_OFF,
+  radiusFields: RADIUS_OVERRIDE_OFF,
   bgType: "none",
   bgColor: "#1a1815",
   bgColor2: "#101418",
@@ -175,7 +240,7 @@ export const DEFAULT_PREFS: Prefs = {
   baseBg: "graphite",
   textDim: 62,
   uiScale: 100,
-  animSpeed: "normal",
+  animSpeed: 100,
   karaokeSize: 56,
   wSidebar: 280,
   wNowPlaying: 340,
@@ -204,11 +269,26 @@ export const DEFAULT_PREFS: Prefs = {
   discordBtnOn: false,
   discordBtnLabel: "Открыть в Muza",
   discordBtnUrl: "https://muza.lol",
+  discordShowCover: true,
+  discordLine1: "{track}",
+  discordLine2: "{artist}",
+  barButtons: BAR_BUTTON_KEYS.map((key) => ({ key, on: true })),
+  navItems: NAV_ITEM_KEYS.map((key) => ({ key, on: true })),
+  rowShow: { cover: true, duration: true },
   statsBlocks: STATS_BLOCK_KEYS.map((key) => ({ key, on: true })),
   statsPeriod: "month",
   fontScale: 100,
-  lineSpacing: "normal",
-  density: "normal",
+  lineSpacing: 140,
+  density: 50,
   resumePosition: false,
+  doubleClickAction: "play",
+  mediaKeys: true,
+  instantSearch: true,
+  searchScope: "all",
+  syncedLyrics: true,
+  lyricsAutoScroll: true,
+  streamQuality: "auto",
+  sourcesEnabled: { youtube: true, soundcloud: true, bandcamp: true },
+  sourcePolicy: "official",
   hotkeys: DEFAULT_HOTKEYS,
 };

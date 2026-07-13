@@ -13,5 +13,7 @@ export interface LyricsProps {
   onSeek?: (index: number) => void;
   /** Клик по строке с note открывает объяснение (вместо seek). */
   onExplain?: (index: number) => void;
+  /** false — не следовать за активной строкой (весь текст, свободный скролл). */
+  autoScroll?: boolean;
   style?: React.CSSProperties;
 }

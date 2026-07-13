@@ -18,28 +18,33 @@ export function useMediaSession(
   playing: boolean,
   pos: number,
   controls: MediaSessionControls,
+  enabled = true,
 ) {
   // Метаданные трека (название/артист/обложка в оверлее)
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
+    if (!enabled) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
       artist: track.artist,
       album: track.album,
       artwork: track.cover ? [{ src: track.cover, sizes: "512x512" }] : [],
     });
-  }, [track]);
+  }, [track, enabled]);
 
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
+    if (!("mediaSession" in navigator) || !enabled) return;
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
-  }, [playing]);
+  }, [playing, enabled]);
 
   // Позиция в оверлее (целые секунды, чтобы не дёргать API 4 раза в секунду)
   const wholePos = Math.floor(pos);
   useEffect(() => {
     if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState) return;
-    if (track.duration <= 0) return;
+    if (!enabled || track.duration <= 0) return;
     try {
       navigator.mediaSession.setPositionState({
         duration: track.duration,
@@ -50,11 +55,11 @@ export function useMediaSession(
       /* некорректные значения на границах треков — не критично */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wholePos, track.duration]);
+  }, [wholePos, track.duration, enabled]);
 
-  // Обработчики: медиаклавиши и кнопки оверлея
+  // Обработчики: медиаклавиши и кнопки оверлея (выключено — сняты)
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
+    if (!("mediaSession" in navigator) || !enabled) return;
     const ms = navigator.mediaSession;
     ms.setActionHandler("play", () => controls.toggle());
     ms.setActionHandler("pause", () => controls.pause());
@@ -71,5 +76,5 @@ export function useMediaSession(
       ms.setActionHandler("seekto", null);
     };
     // controls — свежие замыкания каждого рендера; перевесить хендлеры дёшево
-  }, [controls]);
+  }, [controls, enabled]);
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { isTrackDrag, readTrackDrag } from "../lib/dnd";
+import { NAV_ITEM_META, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import type { View } from "../types";
 
 /** Пункт списка плейлистов: демо (с обложкой) или серверный (без — плейсхолдер). */
@@ -188,6 +189,7 @@ export function Sidebar({
   onOpenPlaylist,
   onDropTrack,
   isAdmin = false,
+  navItems,
 }: {
   view: View;
   setView: (v: View) => void;
@@ -198,14 +200,14 @@ export function Sidebar({
   onDropTrack?: (playlistId: string, trackId: string) => void;
   /** Показывает пункт «Админка» (Stage 5); true только после adminPing. */
   isAdmin?: boolean;
+  /** Компоновка (настройки → «Вкладки сайдбара»): состав/порядок/имена. */
+  navItems?: NavItemPref[];
 }) {
-  const mainNav = [
-    { key: "home" as const, icon: "home", label: "Главная" },
-    { key: "search" as const, icon: "search", label: "Поиск" },
-    { key: "favorites" as const, icon: "heart", label: "Любимое" },
-    { key: "library" as const, icon: "library-big", label: "Библиотека" },
-    { key: "stats" as const, icon: "chart-line", label: "Статистика" },
-  ];
+  // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
+  // индикатор гаснет, контент остаётся доступен), label — своё имя
+  const mainNav = normalizeNavItems(navItems ?? [])
+    .filter((n) => n.on)
+    .map((n) => ({ key: n.key, icon: NAV_ITEM_META[n.key].icon, label: n.label || NAV_ITEM_META[n.key].label }));
   const idx = mainNav.findIndex((n) => n.key === view);
   return (
     <aside

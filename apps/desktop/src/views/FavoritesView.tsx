@@ -17,6 +17,9 @@ export function FavoritesView({
   playing,
   onPlayTrack,
   onPlayCatalog,
+  onQueueCatalog,
+  onQueueDemo,
+  rowShow,
   onLike,
   onTrackMenu,
   onCatalogMenu,
@@ -29,6 +32,11 @@ export function FavoritesView({
   onPlayTrack: (id: string) => void;
   /** Играть серверный трек в контексте избранного (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
+  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
+  onQueueCatalog?: (t: Track) => void;
+  onQueueDemo?: (id: string) => void;
+  /** Строка трека (настройка «Строка трека»): что показывать. */
+  rowShow?: { cover: boolean; duration: boolean };
   onLike: (id: string) => void;
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
@@ -64,14 +72,16 @@ export function FavoritesView({
           <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
             <TrackRow
               index={i + 1}
-              cover={t.coverUrl ?? undefined}
+              cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
               title={t.title}
               artist={t.artist}
               duration={fmtTime(t.durationSec)}
+              showDuration={rowShow?.duration !== false}
               active={currentId === t.id}
               playing={currentId === t.id && playing}
               liked
               onPlay={() => onPlayCatalog(server ?? [], t.id)}
+              onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(t) : undefined}
               onLike={() => onLike(t.id)}
               onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
             />
@@ -98,15 +108,17 @@ export function FavoritesView({
               <TrackRow
                 key={t.id}
                 index={(server?.length ?? 0) + i + 1}
-                cover={t.cover}
+                cover={rowShow?.cover === false ? undefined : t.cover}
                 title={t.title}
                 artist={t.artist}
                 duration={fmtTime(t.duration)}
+                showDuration={rowShow?.duration !== false}
                 explicit={t.explicit}
                 active={currentId === t.id}
                 playing={currentId === t.id && playing}
                 liked
                 onPlay={() => onPlayTrack(t.id)}
+                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(t.id) : undefined}
                 onLike={() => onLike(t.id)}
                 onMore={(e: React.MouseEvent) => onTrackMenu(t, e)}
               />

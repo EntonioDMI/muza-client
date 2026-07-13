@@ -11,11 +11,13 @@ export function TrackRow({
   title,
   artist,
   duration,
+  showDuration = true,
   active = false,
   playing = false,
   liked = false,
   explicit = false,
   onPlay,
+  onRowDoubleClick,
   onLike,
   onMore,
 }) {
@@ -30,7 +32,8 @@ export function TrackRow({
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
       }}
-      onDoubleClick={onPlay}
+      // дабл-клик по строке настраивается («играть»/«в очередь»); кнопка-номер — всегда play
+      onDoubleClick={onRowDoubleClick ?? onPlay}
       // ПКМ = то же меню, что «⋯» (нативное браузерное меню в плеере — мусор)
       onContextMenu={
         onMore
@@ -113,7 +116,9 @@ export function TrackRow({
         ) : (
           <span style={{ width: 36 }}></span>
         )}
-        <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", fontVariantNumeric: "tabular-nums", width: 40, textAlign: "right" }}>{duration}</span>
+        {showDuration ? (
+          <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", fontVariantNumeric: "tabular-nums", width: 40, textAlign: "right" }}>{duration}</span>
+        ) : null}
         {onMore ? (
           lit ? (
             <IconButton icon="ellipsis" size="sm" label="Ещё" onClick={onMore} />

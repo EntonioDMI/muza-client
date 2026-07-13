@@ -34,14 +34,24 @@ export interface ResolveResult {
   provider: string | null;
 }
 
+/** Качество добычи: auto — лестница форматов рецепта, econom — движок ставит
+ *  низкобитрейтные форматы в голову лестницы (меньше трафика/диска). Кэш
+ *  ключуется track_id: уже добытый HQ-файл играет и в эконом-режиме. */
+export type StreamQuality = "auto" | "econom";
+
 /** Добыть трек: LRU-кэш → yt-dlp по лестнице «источники × клиенты рецепта».
  *  sources — с сервера (getTrackSources), уже по убыванию priority. */
-export async function resolveTrack(trackId: string, sources: TrackSource[]): Promise<ResolveResult> {
+export async function resolveTrack(
+  trackId: string,
+  sources: TrackSource[],
+  quality: StreamQuality = "auto",
+): Promise<ResolveResult> {
   const out = await invoke<{ path: string; from_cache: boolean; provider: string | null }>(
     "engine_resolve",
     {
       trackId,
       sources: sources.map((s) => ({ provider: s.provider, sourceId: s.sourceId, url: s.url })),
+      quality,
     },
   );
   return { url: convertFileSrc(out.path), fromCache: out.from_cache, provider: out.provider };
@@ -51,7 +61,11 @@ export async function resolveTrack(trackId: string, sources: TrackSource[]): Pro
  *  это файл на устройстве (sourceId = sha256), в yt-dlp ему нельзя.
  *  Локальный, стоящий первым (выбор пользователя или единственный источник),
  *  пробуем с диска; нет файла и есть стриминговые — падаем на них. */
-export async function resolvePlayable(trackId: string, sources: TrackSource[]): Promise<ResolveResult> {
+export async function resolvePlayable(
+  trackId: string,
+  sources: TrackSource[],
+  quality: StreamQuality = "auto",
+): Promise<ResolveResult> {
   const locals = sources.filter((s) => s.provider === "local");
   const remotes = sources.filter((s) => s.provider !== "local");
   if (locals.length > 0 && (sources[0]?.provider === "local" || remotes.length === 0)) {
@@ -62,7 +76,7 @@ export async function resolvePlayable(trackId: string, sources: TrackSource[]): 
     }
   }
   // пустая лестница тоже осмысленна: Rust сперва смотрит кэш добычи (оффлайн)
-  return resolveTrack(trackId, remotes);
+  return resolveTrack(trackId, remotes, quality);
 }
 
 export interface CacheStats {

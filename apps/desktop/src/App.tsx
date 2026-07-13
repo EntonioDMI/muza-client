@@ -2,16 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, Menu, SearchInput, Toast } from "@muza/ui";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
-import { DEFAULT_PREFS, type Prefs, type View } from "./types";
+import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
 import { accentRoleVars, customAccentVars } from "./lib/accent";
 import { dominantColor, mixHex } from "./lib/coverTint";
+import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
+import { applySourcePolicy } from "./lib/sources";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
 import { exportCachedTrack } from "./lib/dragOut";
 import { syncAutostart, trayConfigure } from "./lib/system";
 import { autoCheckForUpdate } from "./lib/updater";
 import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
-import { clearDiscordActivity, updateDiscordActivity } from "./lib/discord";
+import { clearDiscordActivity, formatTemplate, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useCoverArt } from "./lib/coverArt";
 import { comboFromEvent, matchAction, formatCombo, HOTKEY_ACTIONS } from "./lib/hotkeys";
@@ -94,6 +96,17 @@ function loadPrefs(): Prefs {
     const prefs = { ...DEFAULT_PREFS, ...stored };
     // миграция Stage 6: старый bgCover=true → bgType="cover"
     if (stored.bgCover && stored.bgType === undefined) prefs.bgType = "cover";
+    // вложенные объекты мерджатся глубже: новое под-поле не теряет соседей
+    prefs.sourcesEnabled = { ...DEFAULT_PREFS.sourcesEnabled, ...stored.sourcesEnabled };
+    prefs.rowShow = { ...DEFAULT_PREFS.rowShow, ...stored.rowShow };
+    // миграция «пресеты → ползунки»: строковые значения старых сохранений
+    // («sharper», «compact»…) конвертируются в числа, мусор — к дефолту
+    for (const key of MIGRATED_PREF_KEYS) {
+      const v = (stored as Record<string, unknown>)[key];
+      if (v === undefined) continue;
+      (prefs as Record<string, unknown>)[key] =
+        migrateLegacyValue(key, v) ?? DEFAULT_PREFS[key as keyof Prefs];
+    }
     return prefs;
   } catch {
     return DEFAULT_PREFS;
@@ -108,21 +121,14 @@ const BASE_BG: Record<Prefs["baseBg"], { bg0: string; bg1: string } | null> = {
   amoled: { bg0: "#000000", bg1: "#0b0b0b" },
 };
 
-/** Множители скорости анимаций к базовым 150/220/400мс. */
-const ANIM_SPEED: Record<Prefs["animSpeed"], number> = { fast: 0.6, normal: 1, slow: 1.7 };
-
 /** Базовые значения шкалы радиусов по пресету [data-radius] (radius.css ДС) —
- *  «скругление по типам» умножает их и переопределяет токены inline. */
+ *  «скругление по типам» (ползунки-проценты) умножает их и переопределяет
+ *  токены inline. */
 const RADIUS_BASE: Record<Prefs["radius"], { xs: number; sm: number; md: number; lg: number; xl: number }> = {
   mild: { xs: 6, sm: 8, md: 12, lg: 16, xl: 20 },
   soft: { xs: 10, sm: 14, md: 20, lg: 28, xl: 36 },
   round: { xs: 14, sm: 18, md: 26, lg: 36, xl: 48 },
 };
-/** Множитель per-type скругления к пресету (плитки/строки, панели). */
-const RADIUS_TYPE_MULT: Record<Prefs["radiusTiles"], number> = { sharper: 0.5, preset: 1, rounder: 1.6 };
-/** Форма кнопок/полей: переопределение в px (pill/preset = фолбэк токена). */
-const RADIUS_CONTROLS: Record<Prefs["radiusControls"], string | null> = { pill: null, soft: "14px", sharp: "8px" };
-const RADIUS_FIELDS: Record<Prefs["radiusFields"], string | null> = { preset: null, soft: "16px", sharp: "8px" };
 
 /** Дефолтные --bg-0/1 тем (colors.css / themes.css ДС) — база для тонировки
  *  обложкой, когда baseBg-пресет не активен. */
@@ -131,16 +137,11 @@ const BG_DEFAULTS = {
   light: { bg0: "#f3f1ed", bg1: "#faf9f6" },
 };
 
-/** Межстрочный UI-текст (--lh-ui, дефолт ДС 1.4). */
-const LINE_SPACING: Record<Prefs["lineSpacing"], string> = { tight: "1.25", normal: "1.4", relaxed: "1.6" };
-
-/** Плотность: отступ зоны (--pad-zone дефолт 20) + высота строки трека
- *  (--h-trackrow, TrackRow читает с фолбэком 60). */
-const DENSITY: Record<Prefs["density"], { pad: number; row: number }> = {
-  compact: { pad: 14, row: 52 },
-  normal: { pad: 20, row: 60 },
-  spacious: { pad: 26, row: 68 },
-};
+/** Плотность (ползунок 0–100) → отступ зоны 14–26px (--pad-zone, дефолт 20
+ *  при 50) + высота строки трека 52–68px (--h-trackrow, TrackRow читает с
+ *  фолбэком 60). Межстрочный: prefs.lineSpacing 125–160 → --lh-ui 1.25–1.60. */
+const densityPad = (d: number) => 14 + Math.round((12 * d) / 100);
+const densityRow = (d: number) => 52 + Math.round((16 * d) / 100);
 
 /** Демо-очередь по умолчанию: главная/библиотека живут на демо-каталоге. */
 const DEMO_QUEUE = TRACKS.map(fromDemo);
@@ -378,7 +379,8 @@ function Player({
     if (t.sources.every((s) => s === "local")) return; // локальный и так на диске
     try {
       const sources = await api.getTrackSources(t.id);
-      await resolvePlayable(t.id, sources);
+      // оффлайн-копия — всегда в полном качестве и по политике источников
+      await resolvePlayable(t.id, applySourcePolicy(sources, prefs));
       return true;
     } catch {
       return false; // пин остался — докачается при первом прослушивании
@@ -440,32 +442,50 @@ function Player({
   const showNowPlaying = lyricsOn && wideEnoughForPanel;
 
   // Медиаклавиши и системный медиа-оверлей (SMTC) через Media Session API
-  useMediaSession(track, playing, pos, {
-    toggle: pb.toggle,
-    next: pb.next,
-    prev: pb.prev,
-    seek: pb.seek,
-    pause: pb.pause,
-  });
+  useMediaSession(
+    track,
+    playing,
+    pos,
+    {
+      toggle: pb.toggle,
+      next: pb.next,
+      prev: pb.prev,
+      seek: pb.seek,
+      pause: pb.pause,
+    },
+    prefs.mediaKeys,
+  );
 
   // Discord Rich Presence: активность на смену трека/паузу (RPC живёт в Rust;
-  // Discord не запущен или client_id не настроен — no-op)
+  // Discord не запущен или client_id не настроен — no-op). Строки — из
+  // шаблонов настроек ({track}/{artist}/{album}; альбома у каталожных нет).
   useEffect(() => {
     if (!prefs.discordRpcOn || !playing) {
       void clearDiscordActivity();
       return;
     }
+    const vars = { track: track.title, artist: track.artist, album: track.album };
     void updateDiscordActivity({
-      details: track.title,
-      state: track.artist,
-      coverUrl: track.cover.startsWith("https") ? track.cover : null,
+      details: formatTemplate(prefs.discordLine1, vars) || track.title,
+      state: formatTemplate(prefs.discordLine2, vars) || track.artist,
+      coverUrl: prefs.discordShowCover && track.cover.startsWith("https") ? track.cover : null,
       startTs: Math.floor(Date.now() / 1000 - pos),
       buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
       buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
     });
     // pos нарочно не в deps: активность шлём на смену трека/состояния, не каждый тик
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track.id, playing, prefs.discordRpcOn, prefs.discordBtnOn, prefs.discordBtnLabel, prefs.discordBtnUrl]);
+  }, [
+    track.id,
+    playing,
+    prefs.discordRpcOn,
+    prefs.discordBtnOn,
+    prefs.discordBtnLabel,
+    prefs.discordBtnUrl,
+    prefs.discordShowCover,
+    prefs.discordLine1,
+    prefs.discordLine2,
+  ]);
 
   // Таймер сна: луна в баре циклит выкл → пресеты из настроек → конец трека
   // (mode: "off" | "track" | число минут из prefs.sleepPresets)
@@ -543,21 +563,37 @@ function Player({
   );
   useEffect(() => setMeaningLine(null), [track.id, prefs.meaningMode]);
 
-  // Активная строка — только у синхронизированного текста (plain не подсвечиваем)
+  // Активная строка — только у синхронизированного текста (plain не подсвечиваем);
+  // выключенный prefs.syncedLyrics превращает synced в plain-список (-1)
   const activeLine = useMemo(() => {
-    if (!lyricsSynced) return -1;
+    if (!lyricsSynced || !prefs.syncedLyrics) return -1;
     let a = 0;
     lyrics.forEach((l, i) => {
       if (l.t <= pos) a = i;
     });
     return a;
-  }, [pos, lyrics, lyricsSynced]);
+  }, [pos, lyrics, lyricsSynced, prefs.syncedLyrics]);
 
   const showToast = (text: string, icon = "check") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ open: true, text, icon });
     toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 2400);
   };
+
+  // Дабл-клик по строке = «в очередь» (настройка «Действие по двойному клику»);
+  // при "play" вьюхи получают undefined — TrackRow оставляет dblclick = play
+  const queueCatalog = (t: CatalogTrack) => {
+    pbRaw.insertInQueue(fromCatalog(t), pbRaw.queue.length);
+    showToast(`В очередь: ${t.title}`, "list-music");
+  };
+  const queueDemo = (id: string) => {
+    const t = TRACKS.find((x) => x.id === id);
+    if (!t) return;
+    pbRaw.insertInQueue(fromDemo(t), pbRaw.queue.length);
+    showToast(`В очередь: ${t.title}`, "list-music");
+  };
+  const onQueueCatalog = prefs.doubleClickAction === "queue" ? queueCatalog : undefined;
+  const onQueueDemo = prefs.doubleClickAction === "queue" ? queueDemo : undefined;
 
   /** Тост с кнопкой «Вернуть» (живёт дольше — юзер должен успеть). */
   const showUndoToast = (text: string, icon: string, onUndo: () => void) => {
@@ -879,7 +915,7 @@ function Player({
   const isLight = prefs.theme === "light";
   // baseBg-пресеты (тёплый/холодный/AMOLED) заточены под тёмную — в светлой не применяем
   const baseBg = isLight ? null : BASE_BG[prefs.baseBg];
-  const animMult = ANIM_SPEED[prefs.animSpeed];
+  const animMult = prefs.animSpeed / 100;
   // База текста/стекла зависит от темы: тёмная = белый текст на тёмном стекле,
   // светлая = тёмный текст на светлом стекле (иначе инлайн перебил бы [data-theme])
   const textBase = isLight ? "28, 26, 23" : "244, 243, 241";
@@ -887,12 +923,13 @@ function Player({
   // Поверхности зон (сайдбар/«сейчас играет»): тёмная тема — translucent-white,
   // светлая — translucent-black (логика слоёв themes.css)
   const surfaceBase = isLight ? "20, 18, 15" : "255, 255, 255";
-  // Скругление по типам: плитки/панели — множитель к пресету, кнопки/поля — px
+  // Скругление по типам: плитки/панели — процент от пресета, кнопки/поля — px
+  // (RADIUS_OVERRIDE_OFF = токен не ставим, форма как в ДС)
   const rBase = RADIUS_BASE[prefs.radius];
-  const rTilesMult = RADIUS_TYPE_MULT[prefs.radiusTiles];
-  const rPanelsMult = RADIUS_TYPE_MULT[prefs.radiusPanels];
-  const rControl = RADIUS_CONTROLS[prefs.radiusControls];
-  const rField = RADIUS_FIELDS[prefs.radiusFields];
+  const rTilesMult = prefs.radiusTiles / 100;
+  const rPanelsMult = prefs.radiusPanels / 100;
+  const rControl = prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusControls}px`;
+  const rField = prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusFields}px`;
   // Тонировка фона обложкой поверх действующей пары bg-слоёв
   const bgPair = baseBg ?? BG_DEFAULTS[isLight ? "light" : "dark"];
   const tintStrength = isLight ? 0.12 : 0.22;
@@ -915,14 +952,14 @@ function Player({
       ? accentRoleVars({ play: prefs.accentPlay, slider: prefs.accentSlider, active: prefs.accentActive }, isLight)
       : {}),
     // скругление по типам поверх пресета [data-radius]
-    ...(prefs.radiusTiles !== "preset"
+    ...(prefs.radiusTiles !== 100
       ? {
           "--r-xs": `${Math.round(rBase.xs * rTilesMult)}px`,
           "--r-sm": `${Math.round(rBase.sm * rTilesMult)}px`,
           "--r-md": `${Math.round(rBase.md * rTilesMult)}px`,
         }
       : {}),
-    ...(prefs.radiusPanels !== "preset"
+    ...(prefs.radiusPanels !== 100
       ? {
           "--r-lg": `${Math.round(rBase.lg * rPanelsMult)}px`,
           "--r-xl": `${Math.round(rBase.xl * rPanelsMult)}px`,
@@ -955,9 +992,9 @@ function Player({
     "--w-nowplaying": `${prefs.wNowPlaying}px`,
     // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ
     // зоны + высота строки трека; размер шрифта — через root font-size (эффект ниже)
-    "--lh-ui": LINE_SPACING[prefs.lineSpacing],
-    "--pad-zone": `${DENSITY[prefs.density].pad}px`,
-    "--h-trackrow": `${DENSITY[prefs.density].row}px`,
+    "--lh-ui": (prefs.lineSpacing / 100).toFixed(2),
+    "--pad-zone": `${densityPad(prefs.density)}px`,
+    "--h-trackrow": `${densityRow(prefs.density)}px`,
     // zoom масштабирует весь UI (WebView2/Chromium); 100% — без свойства
     ...(prefs.uiScale !== 100 ? { zoom: prefs.uiScale / 100 } : {}),
     ...(wideEnoughForSidebar ? { "--w-sidebar": `${prefs.wSidebar}px` } : { "--w-sidebar": "220px" }),
@@ -1032,6 +1069,7 @@ function Player({
         <Sidebar
           view={view}
           setView={setView}
+          navItems={prefs.navItems}
           playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
           onOpenPlaylist={openPlaylist}
@@ -1066,6 +1104,9 @@ function Player({
                 likes={likes}
                 onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
+                onQueueCatalog={onQueueCatalog}
+                onQueueDemo={onQueueDemo}
+                rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
@@ -1079,8 +1120,13 @@ function Player({
                 currentId={track.id}
                 playing={playing}
                 likes={likes}
+                instantSearch={prefs.instantSearch}
+                searchScope={prefs.searchScope}
                 onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
+                onQueueCatalog={onQueueCatalog}
+                onQueueDemo={onQueueDemo}
+                rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onNotify={showToast}
@@ -1095,6 +1141,9 @@ function Player({
                 playing={playing}
                 onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
+                onQueueCatalog={onQueueCatalog}
+                onQueueDemo={onQueueDemo}
+                rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
@@ -1108,6 +1157,8 @@ function Player({
                 currentId={track.id}
                 playing={playing}
                 onPlayCatalog={playCatalog}
+                onQueueCatalog={onQueueCatalog}
+                rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onNotify={showToast}
                 onVersions={setVersionsTrack}
@@ -1184,6 +1235,7 @@ function Player({
             liked={likes.includes(track.id)}
             onLike={() => toggleLike(track.id)}
             activeLine={activeLine}
+            lyricsAutoScroll={prefs.lyricsAutoScroll}
             onSeekLine={seekLine}
             onExplain={setMeaningLine}
           />
@@ -1210,6 +1262,7 @@ function Player({
       <PlayerBar
         track={track}
         playing={playing}
+        buttons={prefs.barButtons}
         buffering={pb.buffering}
         onTogglePlay={pb.toggle}
         onPrev={pb.prev}
@@ -1526,6 +1579,7 @@ function Player({
         playing={playing}
         pos={pos}
         activeLine={activeLine}
+        lyricsAutoScroll={prefs.lyricsAutoScroll}
         onTogglePlay={pb.toggle}
         onPrev={pb.prev}
         onNext={pb.next}

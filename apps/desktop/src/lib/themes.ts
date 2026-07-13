@@ -3,6 +3,7 @@
  *  JSON через буфер (файловый экспорт — беклог) и маркетплейс (сервер). */
 
 import { DEFAULT_PREFS, type Prefs } from "../types";
+import { LEGACY_ENUM_TO_NUMBER, migrateLegacyValue } from "./legacyPrefs";
 
 /** Ключи Prefs, входящие в тему: ТОЛЬКО оформление. Поведение (телеметрия,
  *  радио, EQ и т.п.) темой не переносится — чужая тема не должна менять
@@ -132,12 +133,17 @@ export function applyTheme(tokens: ThemeTokens, prefs: Prefs): Prefs {
 }
 
 /** Отфильтровать токены: только THEME_KEYS и только тип, совпадающий с
- *  дефолтом (грубая рантайм-валидация чужого JSON). */
+ *  дефолтом (грубая рантайм-валидация чужого JSON). Ключи-ползунки, бывшие
+ *  строковыми пресетами (radiusTiles и т.п.), мигрируются ДО typeof-фильтра —
+ *  иначе старые темы молча теряли бы эти ключи. */
 export function sanitizeTokens(raw: unknown): ThemeTokens {
   const out: Record<string, unknown> = {};
   if (typeof raw !== "object" || raw === null) return out as ThemeTokens;
   for (const k of THEME_KEYS) {
-    const v = (raw as Record<string, unknown>)[k];
+    let v = (raw as Record<string, unknown>)[k];
+    if (v !== undefined && k in LEGACY_ENUM_TO_NUMBER) {
+      v = migrateLegacyValue(k, v); // строка-пресет/мусор → число или undefined
+    }
     if (v !== undefined && typeof v === typeof DEFAULT_PREFS[k]) out[k] = v;
   }
   return out as ThemeTokens;

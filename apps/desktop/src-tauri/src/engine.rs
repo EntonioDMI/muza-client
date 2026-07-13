@@ -409,14 +409,22 @@ fn is_pinned(path: &Path, pins: &HashSet<String>) -> bool {
         .unwrap_or(false)
 }
 
+/// Эконом-лестница форматов: низкий битрейт в голове (250/249 = opus 64/48k,
+/// 139 = AAC 48k), обычная лестница рецепта в хвосте — не-YouTube источники
+/// и треки без низкобитрейтных форматов не ломаются.
+const ECONOM_FORMATS: &str = "250/249/139/bestaudio[abr<=64]";
+
 /// Резолв трека: кэш → yt-dlp по лестнице «источники × player_clients из
 /// рецепта». sources приходят с сервера уже по убыванию priority.
+/// quality: "econom" — сначала эконом-форматы (кэш общий: добытый HQ-файл
+/// играет и в экономе — ключ кэша только track_id).
 #[tauri::command]
 pub async fn engine_resolve(
     app: AppHandle,
     state: State<'_, EngineState>,
     track_id: String,
     sources: Vec<SourceIn>,
+    quality: Option<String>,
 ) -> Result<ResolveOut, String> {
     // id каталога числовой; заодно это защита имени файла кэша
     if track_id.is_empty() || !track_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
@@ -448,7 +456,7 @@ pub async fn engine_resolve(
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .filter(|v: &Vec<String>| !v.is_empty())
             .unwrap_or_else(|| vec!["tv".into(), "web_music".into()]);
-        let format_str = recipe["youtube"]["format_priority"]
+        let mut format_str = recipe["youtube"]["format_priority"]
             .as_array()
             .map(|a| {
                 a.iter()
@@ -460,6 +468,9 @@ pub async fn engine_resolve(
                     .join("/")
             })
             .unwrap_or_else(|| "251/140/bestaudio".to_string());
+        if quality.as_deref() == Some("econom") {
+            format_str = format!("{ECONOM_FORMATS}/{format_str}");
+        }
         (clients, format_str)
     };
 

@@ -8,6 +8,8 @@ export interface TrackRowProps {
   artist: string;
   /** "3:47" */
   duration?: string;
+  /** false — скрыть колонку длительности (настройка «Строка трека»). */
+  showDuration?: boolean;
   /** This row is the current track (accent title). */
   active?: boolean;
   /** Playback running (equalizer glyph instead of index). */
@@ -16,6 +18,8 @@ export interface TrackRowProps {
   /** Quiet "E" mark — lyrics themselves are never censored. */
   explicit?: boolean;
   onPlay?: () => void;
+  /** Двойной клик по строке (не по кнопке play); не задан — dblclick = onPlay. */
+  onRowDoubleClick?: () => void;
   onLike?: () => void;
   /** Shows an ellipsis button on hover — open a <Menu /> from it. */
   onMore?: (e: React.MouseEvent) => void;

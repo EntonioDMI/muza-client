@@ -7,6 +7,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MuzaApi } from "@muza/api-client";
 import type { Prefs, RepeatMode } from "../types";
 import { engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
+import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
@@ -179,15 +180,17 @@ export function usePlayback({
       return { url: convertFileSrc(path), fromCache: true, provider: "local" };
     }
     const sources = await api.getTrackSources(t.id).catch(() => null);
+    const quality = prefsRef.current.streamQuality;
     if (sources === null) {
       if (t.localHash) {
         const path = await localResolve(t.localHash);
         if (path) return { url: convertFileSrc(path), fromCache: true, provider: "local" };
       }
       // оффлайн: кэш добычи отдаёт файл и без сети (пустая лестница = только кэш)
-      return resolvePlayable(t.id, []);
+      return resolvePlayable(t.id, [], quality);
     }
-    return resolvePlayable(t.id, sources);
+    // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
+    return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality);
   };
 
   /** Запустить трек очереди по индексу. Кроссфейд — только на авто-переходе. */

@@ -7,7 +7,7 @@ import React, { useEffect, useRef, useState } from "react";
  *  масштаб по удалению — 100% / 90% / 80%; дальние строки скрыты. Ручной
  *  скролл показывает весь текст, через 2.5с бездействия окно возвращается
  *  к активной строке. */
-export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, style }) {
+export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, autoScroll = true, style }) {
   const wrapRef = useRef(null);
   const activeRef = useRef(null);
   // Пользователь листает сам: показываем весь текст и не дёргаем автоскролл
@@ -17,6 +17,9 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
   const karaoke = mode === "karaoke";
   const synced = activeIndex >= 0; // plain-текст без таймкодов — обычный список
   const radius = karaoke ? 2 : 1;
+  // autoScroll=false — постоянный «ручной» режим: весь текст, свободный скролл,
+  // активная строка подсвечивается, но окно за ней не едет
+  const freeScroll = manual || !autoScroll;
 
   const centerActive = (behavior) => {
     const wrap = wrapRef.current;
@@ -27,12 +30,12 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
   };
 
   useEffect(() => {
-    if (synced && !manual) centerActive();
+    if (synced && autoScroll && !manual) centerActive();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIndex, manual, synced]);
+  }, [activeIndex, manual, synced, autoScroll]);
 
   const wake = () => {
-    if (!synced) return;
+    if (!synced || !autoScroll) return;
     setManual(true);
     if (manualTimer.current) clearTimeout(manualTimer.current);
     manualTimer.current = setTimeout(() => setManual(false), 2500);
@@ -66,13 +69,14 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
         const hasNote = !!line.note && !!onExplain;
         // масштаб по удалению: 100% / 90% / 80%
         const scale = isActive ? 1 : d === 1 ? 0.9 : 0.8;
-        // в покое видно только окно (radius); при ручном скролле — весь текст
-        const hidden = synced && !manual && d > radius;
+        // в покое видно только окно (radius); при ручном скролле/выключенном
+        // автоследовании — весь текст
+        const hidden = synced && !freeScroll && d > radius;
         const opacity = !synced
           ? 0.8
           : isActive
             ? 1
-            : manual
+            : freeScroll
               ? 0.6
               : hidden
                 ? 0

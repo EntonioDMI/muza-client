@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
 import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
-import { DEFAULT_PREFS, type Prefs, type StatsBlockKey } from "../types";
+import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
+import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
+import { NAV_ITEM_META, normalizeNavItems } from "../lib/navItems";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
+import { formatTemplate } from "../lib/discord";
 import { openExternal } from "../lib/system";
 import { checkForUpdate, updaterAvailable, type FoundUpdate } from "../lib/updater";
 import {
@@ -25,6 +28,9 @@ import {
   tokensFromPrefs,
   type SavedTheme,
 } from "../lib/themes";
+
+/** Демо-значения для предпросмотра шаблонов Discord-активности. */
+const DISCORD_PREVIEW_VARS = { track: "Кометы над городом", artist: "Северный ветер", album: "Полночь" };
 
 /* Структура и состав — docs/notes/2026-07-10-настройки-спецификация.md:
    11 вкладок-разделов; «Внешний вид» = простые (пресеты) + под-экран
@@ -621,7 +627,25 @@ const TABS = [
 
 // Хоткеи переназначаемы — определения/дефолты в lib/hotkeys, биндинги в prefs.hotkeys
 
-type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | "stats" | null;
+type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | "stats" | "licenses" | "bar" | "nav" | null;
+
+/** Открытый код внутри клиента: имя · лицензия · сайт (под-экран «Лицензии»). */
+const OSS_LICENSES: { name: string; license: string; url: string }[] = [
+  { name: "React / React DOM", license: "MIT", url: "https://react.dev" },
+  { name: "Tauri (ядро и плагины)", license: "MIT / Apache-2.0", url: "https://tauri.app" },
+  { name: "Vite", license: "MIT", url: "https://vite.dev" },
+  { name: "TypeScript", license: "Apache-2.0", url: "https://www.typescriptlang.org" },
+  { name: "lucide (иконки)", license: "ISC", url: "https://lucide.dev" },
+  { name: "Golos Text (шрифт)", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Golos+Text" },
+  { name: "Unbounded (шрифт)", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Unbounded" },
+  { name: "Zod", license: "MIT", url: "https://zod.dev" },
+  { name: "yt-dlp (сайдкар добычи)", license: "Unlicense", url: "https://github.com/yt-dlp/yt-dlp" },
+  { name: "Deno (JS-рантайм добычи)", license: "MIT", url: "https://deno.com" },
+  { name: "serde (Rust)", license: "MIT / Apache-2.0", url: "https://serde.rs" },
+  { name: "ed25519-dalek (Rust)", license: "BSD-3-Clause", url: "https://github.com/dalek-cryptography/curve25519-dalek" },
+  { name: "lofty (Rust, теги)", license: "MIT / Apache-2.0", url: "https://github.com/Serial-ATA/lofty-rs" },
+  { name: "vitest", license: "MIT", url: "https://vitest.dev" },
+];
 
 /** Запрос извне открыть под-экран (кнопка эквалайзера в плеер-баре). */
 export interface SettingsIntent {
@@ -637,6 +661,9 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   market: "extensions",
   data: "account",
   stats: "library",
+  licenses: "system",
+  bar: "appearance",
+  nav: "appearance",
 };
 
 /** Витрина маркетплейса (демо-каталог; установка — Stage 6). */
@@ -1208,59 +1235,49 @@ export function SettingsView({
       </SettingRow>
 
       <GroupTitle>Форма и размеры</GroupTitle>
-      <SettingRow title="Плитки и строки" hint="Обложки, карточки, строки треков — поверх пресета «Скругление»">
-        <Tabs
-          items={[
-            { key: "sharper", label: "Строже" },
-            { key: "preset", label: "Пресет" },
-            { key: "rounder", label: "Круглее" },
-          ]}
-          value={prefs.radiusTiles}
-          onChange={(k: string) => set({ radiusTiles: k as Prefs["radiusTiles"] })}
+      <SettingRow title="Плитки и строки" hint="Обложки, карточки, строки треков — процент от пресета «Скругление»">
+        <LiveSlider
+          value={prefs.radiusTiles - 50}
+          max={110}
+          label="Скругление плиток и строк"
+          suffix={`${prefs.radiusTiles} %`}
+          onChange={(v) => set({ radiusTiles: 50 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Кнопки" hint="Форма кнопок: пилюля (дефолт ДС) или прямее">
-        <Tabs
-          items={[
-            { key: "pill", label: "Пилюля" },
-            { key: "soft", label: "Мягкие" },
-            { key: "sharp", label: "Строгие" },
-          ]}
-          value={prefs.radiusControls}
-          onChange={(k: string) => set({ radiusControls: k as Prefs["radiusControls"] })}
+      <SettingRow title="Кнопки" hint="Форма кнопок: от строгих углов до пилюли (правый край, дефолт ДС)">
+        <LiveSlider
+          value={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? 21 : prefs.radiusControls - 6}
+          max={21}
+          label="Скругление кнопок"
+          suffix={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? "пилюля" : `${prefs.radiusControls} px`}
+          onChange={(v) => set({ radiusControls: Math.round(v) >= 21 ? RADIUS_OVERRIDE_OFF : 6 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля">
-        <Tabs
-          items={[
-            { key: "preset", label: "Пресет" },
-            { key: "soft", label: "Мягче" },
-            { key: "sharp", label: "Строже" },
-          ]}
-          value={prefs.radiusFields}
-          onChange={(k: string) => set({ radiusFields: k as Prefs["radiusFields"] })}
+      <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля; правый край — как в пресете">
+        <LiveSlider
+          value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 21 : prefs.radiusFields - 6}
+          max={21}
+          label="Скругление полей ввода"
+          suffix={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? "пресет" : `${prefs.radiusFields} px`}
+          onChange={(v) => set({ radiusFields: Math.round(v) >= 21 ? RADIUS_OVERRIDE_OFF : 6 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Панели и зоны" hint="Сайдбар, плеер, диалоги — поверх пресета «Скругление»">
-        <Tabs
-          items={[
-            { key: "sharper", label: "Строже" },
-            { key: "preset", label: "Пресет" },
-            { key: "rounder", label: "Круглее" },
-          ]}
-          value={prefs.radiusPanels}
-          onChange={(k: string) => set({ radiusPanels: k as Prefs["radiusPanels"] })}
+      <SettingRow title="Панели и зоны" hint="Сайдбар, плеер, диалоги — процент от пресета «Скругление»">
+        <LiveSlider
+          value={prefs.radiusPanels - 50}
+          max={110}
+          label="Скругление панелей и зон"
+          suffix={`${prefs.radiusPanels} %`}
+          onChange={(v) => set({ radiusPanels: 50 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Плотность интерфейса" hint="Отступы зон и высота строк трека">
-        <Tabs
-          items={[
-            { key: "compact", label: "Плотно" },
-            { key: "normal", label: "Стандарт" },
-            { key: "spacious", label: "Просторно" },
-          ]}
+      <SettingRow title="Плотность интерфейса" hint="Отступы зон и высота строк трека: влево плотнее, вправо просторнее">
+        <LiveSlider
           value={prefs.density}
-          onChange={(k: string) => set({ density: k as Prefs["density"] })}
+          max={100}
+          label="Плотность интерфейса"
+          suffix={`${52 + Math.round((16 * prefs.density) / 100)} px`}
+          onChange={(v) => set({ density: Math.round(v) })}
         />
       </SettingRow>
       <SettingRow title="Ширина сайдбара" hint="На узком окне сайдбар всё равно ужимается">
@@ -1293,14 +1310,12 @@ export function SettingsView({
         />
       </SettingRow>
       <SettingRow title="Межстрочный интервал" hint="Плотность строк UI-текста">
-        <Tabs
-          items={[
-            { key: "tight", label: "Плотно" },
-            { key: "normal", label: "Стандарт" },
-            { key: "relaxed", label: "Свободно" },
-          ]}
-          value={prefs.lineSpacing}
-          onChange={(k: string) => set({ lineSpacing: k as Prefs["lineSpacing"] })}
+        <LiveSlider
+          value={prefs.lineSpacing - 125}
+          max={35}
+          label="Межстрочный интервал"
+          suffix={(prefs.lineSpacing / 100).toFixed(2).replace(".", ",")}
+          onChange={(v) => set({ lineSpacing: 125 + Math.round(v) })}
         />
       </SettingRow>
       <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания">
@@ -1317,26 +1332,35 @@ export function SettingsView({
       <SettingRow title="Анимации" hint="Плавные переходы интерфейса">
         <Switch checked={prefs.anims} onChange={(anims: boolean) => set({ anims })} label="Анимации" />
       </SettingRow>
-      <SettingRow title="Скорость анимаций" hint="Быстрее или мягче">
+      <SettingRow title="Скорость анимаций" hint="Влево быстрее, вправо мягче (процент длительности)">
         <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
-          <Tabs
-            items={[
-              { key: "fast", label: "Быстрее" },
-              { key: "normal", label: "Стандарт" },
-              { key: "slow", label: "Мягче" },
-            ]}
-            value={prefs.animSpeed}
-            onChange={(k: string) => set({ animSpeed: k as Prefs["animSpeed"] })}
+          <LiveSlider
+            value={prefs.animSpeed - 60}
+            max={110}
+            label="Скорость анимаций"
+            suffix={`${prefs.animSpeed} %`}
+            onChange={(v) => set({ animSpeed: 60 + Math.round(v) })}
           />
         </div>
       </SettingRow>
 
       <GroupTitle>Компоновка и элементы</GroupTitle>
-      <SettingRow title="Кнопки плеер-бара" hint="Состав и порядок (позже)" chevron>
-        <RowValue>Стандарт</RowValue>
+      <SettingRow title="Кнопки плеер-бара" hint="Состав и порядок кнопок бара" onClick={() => setSub("bar")} chevron></SettingRow>
+      <SettingRow title="Вкладки сайдбара" hint="Состав, порядок и свои имена вкладок" onClick={() => setSub("nav")} chevron></SettingRow>
+      <SettingRow title="Строка трека: обложка" hint="Мини-обложка слева в списках">
+        <Switch
+          checked={prefs.rowShow.cover}
+          onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, cover: on } })}
+          label="Обложка в строке трека"
+        />
       </SettingRow>
-      <SettingRow title="Вкладки сайдбара" hint="Состав, порядок, переименование (позже)" chevron></SettingRow>
-      <SettingRow title="Строка трека" hint="Обложка, альбом, длительность, источник (позже)" chevron></SettingRow>
+      <SettingRow title="Строка трека: длительность" hint="Тайм-код справа; альбом и источник появятся вместе с данными каталога">
+        <Switch
+          checked={prefs.rowShow.duration}
+          onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, duration: on } })}
+          label="Длительность в строке трека"
+        />
+      </SettingRow>
 
       <GroupTitle>Фон</GroupTitle>
       <SettingRow title="Тип фона" hint="Что за интерфейсом">
@@ -1382,8 +1406,15 @@ export function SettingsView({
       </SettingRow>
 
       <GroupTitle>Поведение</GroupTitle>
-      <SettingRow title="Действие по двойному клику" hint="Что делает даблклик по треку (позже)">
-        <RowValue>Играть</RowValue>
+      <SettingRow title="Действие по двойному клику" hint="Дабл-клик по строке трека; кнопка-номер всегда играет">
+        <Tabs
+          items={[
+            { key: "play", label: "Играть" },
+            { key: "queue", label: "В очередь" },
+          ]}
+          value={prefs.doubleClickAction}
+          onChange={(k: string) => set({ doubleClickAction: k as Prefs["doubleClickAction"] })}
+        />
       </SettingRow>
       <SettingRow title="Стартовый экран" hint="Что открывается при запуске">
         <Select
@@ -1566,11 +1597,14 @@ export function SettingsView({
         <Switch checked={prefs.discordRpcOn} onChange={(discordRpcOn: boolean) => set({ discordRpcOn })} label="Discord RPC" />
       </SettingRow>
       <GroupTitle>Что показывать</GroupTitle>
-      <SettingRow title="Название и артист">
-        <Switch checked disabled label="Название и артист" />
+      <SettingRow title="Обложка трека" hint="Discord тянет обложку по https-ссылке сам">
+        <Switch checked={prefs.discordShowCover} onChange={(discordShowCover: boolean) => set({ discordShowCover })} label="Обложка" />
       </SettingRow>
-      <SettingRow title="Обложка трека">
-        <Switch checked disabled label="Обложка" />
+      <SettingRow title="Первая строка" hint="Подстановки: {track}, {artist}, {album}; альбома у каталожных пока нет">
+        <SettingInput value={prefs.discordLine1} placeholder="{track}" onChange={(v) => set({ discordLine1: v.slice(0, 128) })} />
+      </SettingRow>
+      <SettingRow title="Вторая строка" hint="Пустые подстановки подчищаются вместе с разделителями">
+        <SettingInput value={prefs.discordLine2} placeholder="{artist}" onChange={(v) => set({ discordLine2: v.slice(0, 128) })} />
       </SettingRow>
       <GroupTitle>Кнопка в активности</GroupTitle>
       <SettingRow title="Показывать кнопку" hint="Кнопка под статусом в профиле Discord; заработает вместе с RPC">
@@ -1590,13 +1624,6 @@ export function SettingsView({
           width={260}
           onChange={(v) => set({ discordBtnUrl: v })}
         />
-      </SettingRow>
-      <GroupTitle>Шаблон строк (Stage 3)</GroupTitle>
-      <SettingRow title="Первая строка" hint="Подстановки: {track}, {artist}, {album}">
-        <RowValue>{"{track}"}</RowValue>
-      </SettingRow>
-      <SettingRow title="Вторая строка">
-        <RowValue>{"{artist} — {album}"}</RowValue>
       </SettingRow>
       <GroupTitle>Предпросмотр</GroupTitle>
       {/* Карточка активности как в профиле Discord */}
@@ -1630,8 +1657,12 @@ export function SettingsView({
             <Icon name="disc-3" size={24} color="var(--accent-text)" />
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)" }}>Кометы над городом</div>
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>Северный ветер — Полночь</div>
+            <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)" }}>
+              {formatTemplate(prefs.discordLine1, DISCORD_PREVIEW_VARS) || "Кометы над городом"}
+            </div>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
+              {formatTemplate(prefs.discordLine2, DISCORD_PREVIEW_VARS) || "Северный ветер"}
+            </div>
           </div>
         </div>
         {prefs.discordBtnOn ? (
@@ -1652,7 +1683,7 @@ export function SettingsView({
             {prefs.discordBtnLabel.trim() || "Открыть в Muza"}
           </div>
         ) : null}
-        <div style={{ fontSize: 11, color: "var(--text-3)" }}>Предпросмотр · RPC подключится в Stage 3</div>
+        <div style={{ fontSize: 11, color: "var(--text-3)" }}>Предпросмотр карточки активности</div>
       </div>
     </div>
   );
@@ -1757,6 +1788,113 @@ export function SettingsView({
     </div>
   );
 
+  // Под-экран «Лицензии»: открытый код внутри клиента (честный список руками —
+  // полная машинная выжимка сотен транзитивных пакетов тут никому не помогает)
+  const licensesPane = (
+    <div key="licenses" className={paneClass} style={paneStyle}>
+      <SubHeader title="Лицензии открытого кода" onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        Muza построена на открытом коде. Ниже — ключевые зависимости клиента и их лицензии; клик открывает сайт проекта.
+      </div>
+      {OSS_LICENSES.map((d) => (
+        <SettingRow key={d.name} title={d.name} hint={d.url.replace("https://", "")} onClick={() => void openExternal(d.url)} chevron>
+          <RowValue>{d.license}</RowValue>
+        </SettingRow>
+      ))}
+    </div>
+  );
+
+  // Под-экраны компоновки (волна 3): кнопки бара и вкладки сайдбара —
+  // тот же паттерн, что statsBlocks (Switch + ↑/↓, порядок массива = порядок в UI)
+  const barButtons = normalizeBarButtons(prefs.barButtons);
+  const barToggle = (key: BarButtonKey, on: boolean) =>
+    set({ barButtons: barButtons.map((b) => (b.key === key ? { ...b, on } : b)) });
+  const barMove = (i: number, delta: -1 | 1) => {
+    const j = i + delta;
+    if (j < 0 || j >= barButtons.length) return;
+    const next = [...barButtons];
+    [next[i], next[j]] = [next[j], next[i]];
+    set({ barButtons: next });
+  };
+  const barPane = (
+    <div key="bar" className={paneClass} style={paneStyle}>
+      <SubHeader title="Кнопки плеер-бара" onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        Порядок действует на правую часть бара; «Перемешать» и «Повтор» живут вокруг транспорта. Обложка, лайк,
+        prev/play/next и прогресс несъёмные.
+      </div>
+      {barButtons.map((b, i) => (
+        <SettingRow key={b.key} title={BAR_BUTTON_META[b.key].label} hint={BAR_BUTTON_META[b.key].hint}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+            <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
+              <IconButton icon="chevron-up" size="sm" label={`Выше: ${BAR_BUTTON_META[b.key].label}`} onClick={() => barMove(i, -1)} />
+            </span>
+            <span style={{ opacity: i === barButtons.length - 1 ? 0.3 : 1 }}>
+              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${BAR_BUTTON_META[b.key].label}`} onClick={() => barMove(i, 1)} />
+            </span>
+            <Switch checked={b.on} onChange={(on: boolean) => barToggle(b.key, on)} label={BAR_BUTTON_META[b.key].label} />
+          </div>
+        </SettingRow>
+      ))}
+      <div>
+        <Button variant="ghost" icon="rotate-ccw" onClick={() => set({ barButtons: DEFAULT_PREFS.barButtons })}>
+          Сбросить компоновку бара
+        </Button>
+      </div>
+    </div>
+  );
+
+  const navItems = normalizeNavItems(prefs.navItems);
+  const navToggle = (key: NavItemKey, on: boolean) =>
+    set({ navItems: navItems.map((n) => (n.key === key ? { ...n, on } : n)) });
+  const navRename = (key: NavItemKey, label: string) =>
+    set({ navItems: navItems.map((n) => (n.key === key ? { ...n, label: label || undefined } : n)) });
+  const navMove = (i: number, delta: -1 | 1) => {
+    const j = i + delta;
+    if (j < 0 || j >= navItems.length) return;
+    const next = [...navItems];
+    [next[i], next[j]] = [next[j], next[i]];
+    set({ navItems: next });
+  };
+  const navPane = (
+    <div key="nav" className={paneClass} style={paneStyle}>
+      <SubHeader title="Вкладки сайдбара" onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        Скрытая вкладка не исчезает из приложения — её экран остаётся доступен (стартовый экран, хоткеи). Пустое имя
+        возвращает стандартное. «Настройки» и «Админка» живут отдельно, внизу.
+      </div>
+      {navItems.map((n, i) => (
+        <SettingRow key={n.key} title={NAV_ITEM_META[n.key].label} hint={n.key === "home" ? "Дом выключить нельзя" : undefined}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+            <SettingInput
+              value={n.label ?? ""}
+              placeholder={NAV_ITEM_META[n.key].label}
+              width={140}
+              onChange={(v) => navRename(n.key, v.trim().slice(0, 24))}
+            />
+            <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
+              <IconButton icon="chevron-up" size="sm" label={`Выше: ${NAV_ITEM_META[n.key].label}`} onClick={() => navMove(i, -1)} />
+            </span>
+            <span style={{ opacity: i === navItems.length - 1 ? 0.3 : 1 }}>
+              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${NAV_ITEM_META[n.key].label}`} onClick={() => navMove(i, 1)} />
+            </span>
+            <Switch
+              checked={n.on}
+              disabled={n.key === "home"}
+              onChange={(on: boolean) => navToggle(n.key, on)}
+              label={NAV_ITEM_META[n.key].label}
+            />
+          </div>
+        </SettingRow>
+      ))}
+      <div>
+        <Button variant="ghost" icon="rotate-ccw" onClick={() => set({ navItems: DEFAULT_PREFS.navItems })}>
+          Сбросить вкладки
+        </Button>
+      </div>
+    </div>
+  );
+
   // Под-экран «Статистика»: видимость и порядок блоков страницы + период.
   // Порядок массива prefs.statsBlocks = порядок на странице.
   const statsBlocks = normalizeStatsBlocks(prefs.statsBlocks);
@@ -1829,6 +1967,12 @@ export function SettingsView({
       marketPane
     ) : sub === "data" ? (
       dataPane
+    ) : sub === "licenses" ? (
+      licensesPane
+    ) : sub === "bar" ? (
+      barPane
+    ) : sub === "nav" ? (
+      navPane
     ) : tab === "account" ? (
       <div key="account" className={paneClass} style={paneStyle}>
         <SettingRow title="Профиль" hint={username}>
@@ -1988,8 +2132,15 @@ export function SettingsView({
           />
         </SettingRow>
         <GroupTitle>Стрим</GroupTitle>
-        <SettingRow title="Качество стрима" hint="Максимум или эконом (позже; сейчас — лучший формат по рецепту)">
-          <RowValue>Авто</RowValue>
+        <SettingRow title="Качество стрима" hint="Эконом добывает форматы поменьше (меньше трафика и диска); уже скачанное играет как есть">
+          <Tabs
+            items={[
+              { key: "auto", label: "Авто" },
+              { key: "econom", label: "Эконом" },
+            ]}
+            value={prefs.streamQuality}
+            onChange={(k: string) => set({ streamQuality: k as Prefs["streamQuality"] })}
+          />
         </SettingRow>
         <SettingRow title="Sleep timer" hint="Пресеты луны в баре: выкл → эти минуты → конец трека">
           <StepsEditor
@@ -2005,28 +2156,54 @@ export function SettingsView({
       </div>
     ) : tab === "sources" ? (
       <div key="sources" className={paneClass} style={paneStyle}>
-        <SettingRow title="Что предпочитать" hint="Глобальная политика — позже; выбрать версию у трека уже можно: «⋯ → Версии и источники»">
-          <RowValue>Официальное</RowValue>
+        <SettingRow title="Что предпочитать" hint="Глобальный порядок добычи; выбранная версия трека («⋯ → Версии и источники») сильнее">
+          <Tabs
+            items={[
+              { key: "official", label: "Официальное" },
+              { key: "soundcloudFirst", label: "SoundCloud вперёд" },
+            ]}
+            value={prefs.sourcePolicy}
+            onChange={(k: string) => set({ sourcePolicy: k as Prefs["sourcePolicy"] })}
+          />
         </SettingRow>
         <GroupTitle>Источники по приоритету</GroupTitle>
-        <SettingRow title="YT Music" hint="Официальный каталог — основной">
-          <Switch checked disabled label="YT Music" />
+        <SettingRow title="YouTube / YT Music" hint="Официальный каталог — основной источник добычи">
+          <Switch
+            checked={prefs.sourcesEnabled.youtube}
+            disabled={prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.bandcamp}
+            onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, youtube: on } })}
+            label="YouTube / YT Music"
+          />
         </SettingRow>
-        <SettingRow title="YouTube" hint="Фолбэк основного">
-          <Switch checked disabled label="YouTube" />
+        <SettingRow title="SoundCloud" hint="Фолбэк; политикой выше можно поставить вперёд">
+          <Switch
+            checked={prefs.sourcesEnabled.soundcloud}
+            disabled={prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.bandcamp}
+            onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, soundcloud: on } })}
+            label="SoundCloud"
+          />
         </SettingRow>
-        <SettingRow title="SoundCloud" hint="Фолбэк">
-          <Switch checked disabled label="SoundCloud" />
-        </SettingRow>
-        <SettingRow title="Bandcamp" hint="В поиске — позже; по прямой ссылке уже работает">
-          <Switch checked={false} disabled label="Bandcamp" />
+        <SettingRow title="Bandcamp" hint="По прямой ссылке уже работает; в поиске — позже">
+          <Switch
+            checked={prefs.sourcesEnabled.bandcamp}
+            disabled={prefs.sourcesEnabled.bandcamp && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud}
+            onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, bandcamp: on } })}
+            label="Bandcamp"
+          />
         </SettingRow>
         <GroupTitle>Поиск</GroupTitle>
-        <SettingRow title="Где искать" hint="Каталог, источники, локальное (позже)">
-          <RowValue>Везде</RowValue>
+        <SettingRow title="Где искать" hint="«Только каталог» не запускает yt-dlp на сервере; локальные файлы — в Библиотеке">
+          <Tabs
+            items={[
+              { key: "all", label: "Каталог и источники" },
+              { key: "catalog", label: "Только каталог" },
+            ]}
+            value={prefs.searchScope}
+            onChange={(k: string) => set({ searchScope: k as Prefs["searchScope"] })}
+          />
         </SettingRow>
-        <SettingRow title="Мгновенный поиск" hint="Каталог при вводе, источники — по Enter">
-          <Switch checked disabled label="Мгновенный поиск" />
+        <SettingRow title="Мгновенный поиск" hint="Каталог при вводе; выкл — поиск только по Enter">
+          <Switch checked={prefs.instantSearch} onChange={(instantSearch: boolean) => set({ instantSearch })} label="Мгновенный поиск" />
         </SettingRow>
         <SettingRow title="Прямые и локальные источники" hint="Работает: файлы, папки и ссылки — в Медиатеке">
           <RowValue>Медиатека → Локальные / По ссылке</RowValue>
@@ -2035,11 +2212,11 @@ export function SettingsView({
     ) : tab === "lyrics" ? (
       <div key="lyrics" className={paneClass} style={paneStyle}>
         <GroupTitle>Отображение</GroupTitle>
-        <SettingRow title="Синхро-текст" hint="Караоке-строки в такт — работает">
-          <Switch checked disabled label="Синхро-текст" />
+        <SettingRow title="Синхро-текст" hint="Караоке-строки в такт; выкл — обычный список без подсветки">
+          <Switch checked={prefs.syncedLyrics} onChange={(syncedLyrics: boolean) => set({ syncedLyrics })} label="Синхро-текст" />
         </SettingRow>
-        <SettingRow title="Автоскролл" hint="Следовать за текущей строкой — работает">
-          <Switch checked disabled label="Автоскролл" />
+        <SettingRow title="Автоскролл" hint="Следовать за текущей строкой; выкл — свободный скролл всего текста">
+          <Switch checked={prefs.lyricsAutoScroll} onChange={(lyricsAutoScroll: boolean) => set({ lyricsAutoScroll })} label="Автоскролл" />
         </SettingRow>
         <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания (тот же слайдер — в Кастомизации)">
           <LiveSlider
@@ -2108,7 +2285,7 @@ export function SettingsView({
       </div>
     ) : tab === "integrations" ? (
       <div key="integrations" className={paneClass} style={paneStyle}>
-        <SettingRow title="Discord Rich Presence" hint="Статус и кнопка работают (нужен Application ID из Dev Portal); шаблоны строк — позже" onClick={() => setSub("discord")} chevron>
+        <SettingRow title="Discord Rich Presence" hint="Статус, кнопка, обложка и шаблоны строк (нужен Application ID из Dev Portal)" onClick={() => setSub("discord")} chevron>
           <RowValue>Выкл</RowValue>
         </SettingRow>
         <SettingRow
@@ -2171,8 +2348,8 @@ export function SettingsView({
             <RowValue>Не подключён</RowValue>
           )}
         </SettingRow>
-        <SettingRow title="Медиаклавиши" hint="Play/Pause/Next с клавиатуры — работают">
-          <Switch checked disabled label="Медиаклавиши" />
+        <SettingRow title="Медиаклавиши" hint="Play/Pause/Next с клавиатуры и системный медиа-оверлей (SMTC)">
+          <Switch checked={prefs.mediaKeys} onChange={(mediaKeys: boolean) => set({ mediaKeys })} label="Медиаклавиши" />
         </SettingRow>
       </div>
     ) : tab === "hotkeys" ? (
@@ -2333,8 +2510,9 @@ export function SettingsView({
         <SettingRow title="Версия" hint="Muza · сборка разработки">
           <RowValue>0.1.0</RowValue>
         </SettingRow>
-        <SettingRow title="Лицензии открытого кода" hint="Что внутри и под чем (к релизу)" chevron></SettingRow>
-        <SettingRow title="Сайт и исходники клиента" hint="muza.lol · GitHub (к релизу)" chevron></SettingRow>
+        <SettingRow title="Лицензии открытого кода" hint="Что внутри и под чем" onClick={() => setSub("licenses")} chevron></SettingRow>
+        <SettingRow title="Сайт" hint="muza.lol — лендинг и веб-плеер" onClick={() => void openExternal("https://muza.lol")} chevron></SettingRow>
+        <SettingRow title="Исходники клиента" hint="github.com/EntonioDMI/muza-client" onClick={() => void openExternal("https://github.com/EntonioDMI/muza-client")} chevron></SettingRow>
       </div>
     );
 

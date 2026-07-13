@@ -14,6 +14,25 @@ export interface DiscordActivity {
   buttonUrl: string | null;
 }
 
+/** Шаблон строки активности: подстановки {track}/{artist}/{album}. Пустые
+ *  значения подчищаются вместе с висячими разделителями (« — », «·»…):
+ *  "{artist} — {album}" без альбома отдаёт просто артиста. Лимит Discord —
+ *  128 символов. */
+export function formatTemplate(
+  tpl: string,
+  vars: { track: string; artist: string; album?: string },
+): string {
+  const out = tpl
+    .replaceAll("{track}", vars.track)
+    .replaceAll("{artist}", vars.artist)
+    .replaceAll("{album}", vars.album ?? "")
+    // разделители, повисшие на месте пустой подстановки
+    .replace(/^[\s\-—–·|:]+/, "")
+    .replace(/[\s\-—–·|:]+$/, "")
+    .replace(/\s{2,}/g, " ");
+  return out.slice(0, 128);
+}
+
 export async function updateDiscordActivity(a: DiscordActivity): Promise<boolean> {
   if (!isTauri()) return false;
   try {
