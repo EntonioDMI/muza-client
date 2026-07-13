@@ -313,6 +313,22 @@ export function WrappedOverlay({
                   <>
                     <h1 className="wrapped__primary">{String(recap.topHour).padStart(2, "0")}:00</h1>
                     <p>Твой любимый час · {hourLabel(recap.topHour)}</p>
+                    {/* Ось суток 00→24 с отметкой пикового часа: осмысленный
+                        график (не случайная линия) — заливка растёт до пика,
+                        точка = любимый час. Данные — recap.topHour. */}
+                    <div className="wrapped__dayline">
+                      <div className="wrapped__dayline-track" aria-hidden="true">
+                        <span className="wrapped__dayline-fill" style={{ width: `${(recap.topHour / 24) * 100}%` }} />
+                        <span className="wrapped__dayline-peak" style={{ left: `${(recap.topHour / 24) * 100}%` }} />
+                      </div>
+                      <div className="wrapped__dayline-scale" aria-hidden="true">
+                        <span>00</span>
+                        <span>06</span>
+                        <span>12</span>
+                        <span>18</span>
+                        <span>24</span>
+                      </div>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -321,8 +337,6 @@ export function WrappedOverlay({
                   </>
                 )}
               </div>
-
-              <div className="wrapped__timeline" aria-hidden="true"><span /></div>
 
               <div className="wrapped__rhythm-facts">
                 {recap.topHour !== null ? (

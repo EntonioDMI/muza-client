@@ -776,24 +776,53 @@
   line-height: 1.45;
 }
 
-.wrapped__timeline {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 56%;
-  height: 1px;
-  overflow: hidden;
-  background: var(--surface-3);
-  transform: rotate(-4deg);
-  transform-origin: center;
+/* Ось суток: 00→24 с отметкой пикового часа. Заливка растёт слева до пика,
+   точка = любимый час — осмысленный график вместо случайной диагонали. */
+.wrapped__dayline {
+  max-width: 320px;
+  margin-top: 26px;
 }
 
-.wrapped__timeline span {
-  display: block;
-  width: 62%;
-  height: 100%;
+.wrapped__dayline-track {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+}
+
+.wrapped__dayline-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  min-width: 6px;
+  border-radius: inherit;
   background: var(--accent);
+  opacity: 0.55;
+  transform-origin: left;
   animation: wrappedLineIn 720ms var(--ease-out) both;
+}
+
+.wrapped__dayline-peak {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  outline: 3px solid rgba(18, 17, 16, 0.92);
+  transform: translate(-50%, -50%);
+  animation: wrappedDaylinePeak 420ms var(--ease-out) 300ms both;
+}
+
+.wrapped__dayline-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 11px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
 }
 
 .wrapped__rhythm-facts {
@@ -1017,6 +1046,10 @@
   from { transform: scaleX(0); transform-origin: left; }
 }
 
+@keyframes wrappedDaylinePeak {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+}
+
 @keyframes wrappedLoading {
   from { transform: translateX(-10%); }
   to { transform: translateX(145%); }
@@ -1161,7 +1194,8 @@
   .wrapped__art,
   .wrapped__track-list li,
   .wrapped__artist-list li,
-  .wrapped__timeline span,
+  .wrapped__dayline-fill,
+  .wrapped__dayline-peak,
   .wrapped__loading-line span {
     animation: none;
   }
