@@ -7,7 +7,8 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "desktop": "pnpm --filter muza-desktop tauri dev"
+    "desktop": "pnpm --filter muza-desktop tauri dev --config src-tauri/tauri.dev.conf.json",
+    "trust:artifacts": "node scripts/release-gate.mjs artifacts apps/desktop/dist apps/web/out"
   },
   "packageManager": "pnpm@11.10.0",
   "devDependencies": {
