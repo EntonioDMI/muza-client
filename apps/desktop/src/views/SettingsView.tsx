@@ -1560,11 +1560,21 @@ export function SettingsView({
             { key: "color", label: "Цвет", icon: "paintbrush" },
             { key: "gradient", label: "Градиент", icon: "blend" },
             { key: "image", label: "Картинка по URL", icon: "link" },
+            { key: "animated", label: "Анимированный", icon: "sparkles" },
           ]}
           value={prefs.bgType}
           onChange={(k: string) => set({ bgType: k as Prefs["bgType"] })}
         />
       </SettingRow>
+      {prefs.bgType === "animated" ? (
+        <SettingRow title="Инвертировать направление" hint="Поменять местами, куда крутится левый и правый диск">
+          <Switch
+            checked={prefs.bgAnimatedInvert}
+            onChange={(bgAnimatedInvert: boolean) => set({ bgAnimatedInvert })}
+            label="Инвертировать направление вращения"
+          />
+        </SettingRow>
+      ) : null}
       {prefs.bgType === "color" || prefs.bgType === "gradient" ? (
         <SettingRow title={prefs.bgType === "gradient" ? "Цвета градиента" : "Цвет фона"} hint="Пипетка открывает пикер">
           <div style={{ display: "flex", gap: "var(--sp-3)" }}>
@@ -1712,6 +1722,7 @@ export function SettingsView({
               bgImageUrl: DEFAULT_PREFS.bgImageUrl,
               bgDim: DEFAULT_PREFS.bgDim,
               bgTint: DEFAULT_PREFS.bgTint,
+              bgAnimatedInvert: DEFAULT_PREFS.bgAnimatedInvert,
               blurScenery: DEFAULT_PREFS.blurScenery,
               baseBg: DEFAULT_PREFS.baseBg,
               textDim: DEFAULT_PREFS.textDim,

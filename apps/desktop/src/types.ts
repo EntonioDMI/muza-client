@@ -70,8 +70,9 @@ export interface Prefs {
    *  не ставится). Та же схема, что у radiusControls/radiusFields. */
   radiusTabs: number;
   /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
-   *  картинка по URL. Старое поле bgCover=true мигрирует в "cover". */
-  bgType: "none" | "cover" | "color" | "gradient" | "image";
+   *  картинка по URL / анимированный (T15: две обложки вращаются навстречу
+   *  друг другу к центру). Старое поле bgCover=true мигрирует в "cover". */
+  bgType: "none" | "cover" | "color" | "gradient" | "image" | "animated";
   bgColor: string;
   /** Второй цвет градиента (bgType=gradient). */
   bgColor2: string;
@@ -82,6 +83,9 @@ export interface Prefs {
   /** Реакция фона на обложку: --bg-0/1 подкрашиваются доминирующим цветом
    *  обложки текущего трека (lib/coverTint). */
   bgTint: boolean;
+  /** T15 (bgType=animated): направления вращения наоборот (левый диск —
+   *  против часовой, правый — по часовой; по умолчанию наоборот). */
+  bgAnimatedInvert: boolean;
   /** Прозрачность/фон по зонам: своя плотность стекла у плеера, меню,
    *  диалогов, сайдбара и «Сейчас играет» (--glass-<зона>, % плотности). */
   glassZonesOn: boolean;
@@ -242,6 +246,7 @@ export const DEFAULT_PREFS: Prefs = {
   bgImageUrl: "",
   bgDim: 40,
   bgTint: false,
+  bgAnimatedInvert: false,
   glassZonesOn: false,
   glassPlayer: 62,
   glassMenu: 62,

@@ -464,6 +464,8 @@ function Player({
   const wideEnoughForPanel = useMediaQuery("(min-width: 1200px)");
   const wideEnoughForSidebar = useMediaQuery("(min-width: 950px)");
   const showNowPlaying = lyricsOn && wideEnoughForPanel;
+  // T15 (bgType=animated): OS-уровень reduced-motion — реактивно, как остальной адаптив.
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
   // Медиаклавиши и системный медиа-оверлей (SMTC) через Media Session API
   useMediaSession(
@@ -1101,6 +1103,11 @@ function Player({
       : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
   } as React.CSSProperties;
 
+  // T15: вращение диска включено только когда общий anims включён и OS не
+  // просит reduced-motion (двойная защита — как bassShake в ListeningMode).
+  // Выключено → диски остаются на месте (статичная версия), не пропадают.
+  const orbitActive = prefs.anims && !reducedMotion;
+
   // Фон за интерфейсом (Stage 6): тип + затемнение поверх (читаемость)
   const backdrop =
     prefs.bgType === "cover" ? (
@@ -1119,6 +1126,78 @@ function Player({
           opacity: 0.22,
         }}
       />
+    ) : prefs.bgType === "animated" ? (
+      // Два диска-обложки вращаются навстречу друг другу к центру (левый —
+      // по умолчанию по часовой, правый — против; invert меняет пары).
+      // ПЕРФ: blur/opacity — ОДИН раз на общем контейнере (не по слою на
+      // картинку); вращение — только transform на обёртке БЕЗ key, картинка
+      // внутри — key={track.cover} только на ней, поэтому смена трека
+      // ремонтирует (и фейдит через muza-fade) только img, а идущая CSS-
+      // анимация вращения на обёртке не прерывается и угол не сбрасывается.
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          overflow: "hidden",
+          filter: "blur(var(--blur-scenery))",
+          opacity: 0.22,
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "-20%",
+            height: "140%",
+            aspectRatio: "1",
+            transform: "translateY(-50%)",
+            borderRadius: "50%",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            className={
+              orbitActive ? (prefs.bgAnimatedInvert ? "muza-orb-spin--ccw" : "muza-orb-spin--cw") : undefined
+            }
+            style={{ width: "100%", height: "100%" }}
+          >
+            <img
+              key={track.cover}
+              src={track.cover}
+              alt=""
+              className="muza-fade"
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+          </div>
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            right: "-20%",
+            height: "140%",
+            aspectRatio: "1",
+            transform: "translateY(-50%)",
+            borderRadius: "50%",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            className={
+              orbitActive ? (prefs.bgAnimatedInvert ? "muza-orb-spin--cw" : "muza-orb-spin--ccw") : undefined
+            }
+            style={{ width: "100%", height: "100%" }}
+          >
+            <img
+              key={track.cover}
+              src={track.cover}
+              alt=""
+              className="muza-fade"
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+          </div>
+        </div>
+      </div>
     ) : prefs.bgType === "color" ? (
       <div style={{ position: "absolute", inset: 0, background: prefs.bgColor }} />
     ) : prefs.bgType === "gradient" ? (

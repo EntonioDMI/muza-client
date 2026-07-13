@@ -28,6 +28,7 @@ export const THEME_KEYS = [
   "bgImageUrl",
   "bgDim",
   "bgTint",
+  "bgAnimatedInvert",
   "blurScenery",
   "baseBg",
   "textDim",

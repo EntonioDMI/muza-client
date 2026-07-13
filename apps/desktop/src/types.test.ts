@@ -19,3 +19,14 @@ describe("bassShake pref (T14)", () => {
     expect(merged.bassShake).toBe(false);
   });
 });
+
+describe("bgType=animated + bgAnimatedInvert (T15)", () => {
+  it("bgType допускает 'animated', bgAnimatedInvert выключен по умолчанию", () => {
+    expect(DEFAULT_PREFS.bgType).toBe("none");
+    expect(DEFAULT_PREFS.bgAnimatedInvert).toBe(false);
+  });
+
+  it("bgAnimatedInvert входит в THEME_KEYS — это оформление (направление вращения фона), а не поведение", () => {
+    expect((THEME_KEYS as readonly string[]).includes("bgAnimatedInvert")).toBe(true);
+  });
+});
