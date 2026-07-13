@@ -27,6 +27,7 @@ const NAV = [
   { href: "/search", icon: "search", label: "Поиск" },
   { href: "/favorites", icon: "heart", label: "Любимое" },
   { href: "/library", icon: "library-big", label: "Библиотека" },
+  { href: "/stats", icon: "bar-chart-3", label: "Статистика" },
 ];
 
 function NavLink({ href, icon, label, active }: { href: string; icon: string; label: string; active: boolean }) {
