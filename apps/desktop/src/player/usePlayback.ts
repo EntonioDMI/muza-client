@@ -11,10 +11,9 @@ import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
+import { pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
 import type { PlayerTrack } from "./types";
 
-/** Длительность кроссфейда при естественном переходе (prefs.crossfade). */
-const CROSSFADE_SEC = 4;
 /** За сколько секунд до конца начинать преднагрузку следующего трека. */
 const PRELOAD_AHEAD_SEC = 20;
 
@@ -105,7 +104,7 @@ export function usePlayback({
   const preloadedRef = useRef<{ id: string; url: string } | null>(null);
   // Отбрасываем результаты устаревших resolve при быстром переключении
   const playSeqRef = useRef(0);
-  // Кроссфейд на естественном переходе уже запущен для этого pos
+  // Ранний стык (кроссфейд/gapless) на естественном переходе уже запущен для этого pos
   const autoAdvancedRef = useRef(false);
   // id трека, чей URL реально загружен в движок (успешный engine().play()).
   // T2: очередь при монтировании может содержать восстановленный трек, для
@@ -125,22 +124,23 @@ export function usePlayback({
           // «Продолжить с места»: троттленная запись позиции текущего трека
           if (prefsRef.current.resumePosition && sec > 5) resumeStore.save(s.track.id, sec);
           const remaining = s.track.duration - sec;
-          // преднагрузка следующего + ранний кроссфейд
+          // преднагрузка следующего + ранний стык (кроссфейд ИЛИ gapless — см. gaplessPlan.ts)
           if (remaining <= PRELOAD_AHEAD_SEC) void preloadNext();
-          if (
-            prefsRef.current.crossfade &&
-            s.repeat !== "one" &&
-            remaining <= CROSSFADE_SEC &&
-            remaining > 0.5 &&
-            !autoAdvancedRef.current &&
-            nextIndexFor(1, true) !== null
-          ) {
+          const plan = planAutoAdvance({
+            remaining,
+            crossfadeEnabled: prefsRef.current.crossfade,
+            gaplessEnabled: prefsRef.current.gapless,
+            repeatOne: s.repeat === "one",
+            hasNext: nextIndexFor(1, true) !== null,
+            alreadyAdvanced: autoAdvancedRef.current,
+          });
+          if (plan.trigger) {
             autoAdvancedRef.current = true;
             void advance(1, true);
           }
         },
         onEnded: () => {
-          if (autoAdvancedRef.current) return; // кроссфейд уже увёл дальше
+          if (autoAdvancedRef.current) return; // ранний стык (кроссфейд/gapless) уже увёл дальше
           handleTrackEnd();
         },
         onError: (message) => {
@@ -211,8 +211,9 @@ export function usePlayback({
     return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality);
   };
 
-  /** Запустить трек очереди по индексу. Кроссфейд — только на авто-переходе. */
-  const startAt = async (i: number, opts?: { crossfade?: boolean }) => {
+  /** Запустить трек очереди по индексу. fadeSec>0 (кроссфейд/gapless) —
+   *  только на авто-переходе, см. advance(). */
+  const startAt = async (i: number, opts?: { fadeSec?: number }) => {
     const s = stateRef.current;
     const t = s.queue[i];
     if (!t) return;
@@ -253,7 +254,7 @@ export function usePlayback({
       if (playSeqRef.current !== seq) return; // уже переключили дальше
       preloadedRef.current = null;
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
-      await engine().play(url, norm, opts?.crossfade ? CROSSFADE_SEC : 0);
+      await engine().play(url, norm, opts?.fadeSec ?? 0);
       startedIdRef.current = t.id; // движок реально держит URL этого трека
       // «Продолжить с места»: если сохранена осмысленная позиция (не у начала
       // и не у конца) — досикиваем. Ручной старт с 0 через seek не трогаем.
@@ -312,7 +313,7 @@ export function usePlayback({
           const nextQueue = [...s.queue, ...more];
           setQueue(nextQueue);
           stateRef.current = { ...stateRef.current, queue: nextQueue };
-          await startAt(s.queue.length, { crossfade: false });
+          await startAt(s.queue.length, { fadeSec: 0 });
           return;
         }
       }
@@ -321,7 +322,11 @@ export function usePlayback({
       setPos(s.track.duration);
       return;
     }
-    await startAt(ni, { crossfade: auto && prefsRef.current.crossfade });
+    // fadeSec пересчитывается здесь заново (не переносится из onTime-триггера):
+    // если ранний триггер не сработал (окно timeupdate проскочили) и advance
+    // пришёл сюда из onEnded, всё равно просим движок попробовать фейд — он
+    // молча откатится на мгновенный переход, раз текущий слот уже не играет.
+    await startAt(ni, { fadeSec: auto ? pickAutoFadeSec(prefsRef.current) : 0 });
   };
 
   const handleTrackEnd = () => {

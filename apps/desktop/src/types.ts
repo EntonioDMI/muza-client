@@ -135,6 +135,12 @@ export interface Prefs {
   closeToTray: boolean;
   normalize: boolean;
   crossfade: boolean;
+  /** Честный gapless-стык (T19): вместо длинного слышимого кроссфейда —
+   *  короткий (~50мс) micro-fade на границе треков, запланированный заранее
+   *  по timeupdate (см. player/gaplessPlan.ts). Взаимоисключим с crossfade —
+   *  если оба включены, работает crossfade (его длинная кривая надёжнее
+   *  прячет джиттер таймингов). Поведенческий преф — НЕ в THEME_KEYS. */
+  gapless: boolean;
   blur: number;
   glassOpacity: number;
   anims: boolean;
@@ -272,6 +278,7 @@ export const DEFAULT_PREFS: Prefs = {
   closeToTray: true,
   normalize: true,
   crossfade: false,
+  gapless: false,
   blur: 28,
   glassOpacity: 62,
   anims: true,

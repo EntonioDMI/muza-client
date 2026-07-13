@@ -20,6 +20,23 @@ describe("bassShake pref (T14)", () => {
   });
 });
 
+describe("gapless pref (T19)", () => {
+  it("выключен по умолчанию", () => {
+    expect(DEFAULT_PREFS.gapless).toBe(false);
+  });
+
+  it("не входит в THEME_KEYS — поведенческий преф, не оформление", () => {
+    expect((THEME_KEYS as readonly string[]).includes("gapless")).toBe(false);
+  });
+
+  it("мигрирует через обычный DEFAULT_PREFS-мердж без спец-миграции", () => {
+    const stored = { ...DEFAULT_PREFS } as Partial<typeof DEFAULT_PREFS>;
+    delete stored.gapless;
+    const merged = { ...DEFAULT_PREFS, ...stored };
+    expect(merged.gapless).toBe(false);
+  });
+});
+
 describe("bgType=animated + bgAnimatedInvert (T15)", () => {
   it("bgType допускает 'animated', bgAnimatedInvert выключен по умолчанию", () => {
     expect(DEFAULT_PREFS.bgType).toBe("none");

@@ -2393,8 +2393,15 @@ export function SettingsView({
         <SettingRow title="Кроссфейд" hint="Плавный переход между треками (4 секунды)">
           <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label="Кроссфейд" />
         </SettingRow>
-        <SettingRow title="Gapless" hint="Преднагрузка следующего трека уже работает; идеальный стык — позже">
-          <Switch checked disabled label="Gapless" />
+        <SettingRow
+          title="Gapless"
+          hint={
+            prefs.crossfade
+              ? "Экспериментально: стык без паузы вместо обычного переключения. Пока включён «Кроссфейд» выше — работает он, Gapless не участвует"
+              : "Экспериментально: следующий трек стартует без паузы, но последние ~1–1,5с текущего трека при этом не звучат (обычно это хвостовая тишина — но не всегда)"
+          }
+        >
+          <Switch checked={prefs.gapless} onChange={(v: boolean) => set({ gapless: v })} label="Gapless" />
         </SettingRow>
         <GroupTitle>Звук</GroupTitle>
         <SettingRow title="Эквалайзер" hint="Пресеты и свои полосы — звук живой" onClick={() => setSub("equalizer")} chevron>
