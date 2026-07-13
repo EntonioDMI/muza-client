@@ -7,6 +7,7 @@ import {
   type Annotations,
   type Credentials,
   type EmailChangeStartResult,
+  type GroupedSearchResult,
   type HistoryItem,
   type HomeSection,
   type ImportReport,
@@ -30,6 +31,22 @@ import {
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
+
+/** T41: фикстур-трек для grouped-мока (каталога в моке нет — search() отдаёт
+ *  [], но searchGrouped() должен показать саму ФОРМУ ответа сборщикам UI). */
+function mockTrack(id: string, artist: string, title: string): Track {
+  return {
+    id,
+    artist,
+    title,
+    durationSec: 210,
+    coverUrl: null,
+    isCached: false,
+    sources: ["youtube"],
+    loudness: null,
+    localHash: null,
+  };
+}
 
 function makeSession(username: string | null, anonymous: boolean): Session {
   return {
@@ -155,6 +172,25 @@ export class MockMuzaApi implements MuzaApi {
 
   async search(_query: string, _opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]> {
     return []; // мок: каталога нет
+  }
+
+  /** T41: демонстрирует форму grouped-ответа (1 группа с 2 версиями + 1
+   *  нераспознанный single в хвосте) — независимо от query/opts, как и
+   *  плоский search() выше; настоящий каталог/группировка живут на сервере. */
+  async searchGrouped(_query: string, _opts?: { scope?: SearchScope; limit?: number }): Promise<GroupedSearchResult[]> {
+    return [
+      {
+        kind: "group",
+        canonical: mockTrack("mock-canon-1", "Mock Artist", "Mock Song"),
+        hasOriginal: true,
+        canonicalVariantType: null,
+        variants: [
+          { track: mockTrack("mock-remix-1", "Mock Artist", "Mock Song (Remix)"), variantType: "remix" },
+          { track: mockTrack("mock-spedup-1", "Mock Artist", "Mock Song (Sped Up)"), variantType: "sped_up" },
+        ],
+      },
+      { kind: "single", track: mockTrack("mock-single-1", "Other Artist", "Unrelated Track (Edit)") },
+    ];
   }
 
   async getTrack(id: string): Promise<Track> {

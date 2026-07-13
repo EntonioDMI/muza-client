@@ -10,6 +10,9 @@ import {
   type Credentials,
   type EmailChangeStartResult,
   EmailChangeStartResultSchema,
+  type GroupedSearchResult,
+  GroupedSearchResultSchema,
+  type VariantType,
   type HistoryItem,
   type HomeSection,
   type ImportReport,
@@ -82,6 +85,40 @@ function trackFromWire(wire: TrackWire): Track {
     sources: wire.sources,
     loudness: wire.loudness,
     localHash: wire.local_hash ?? null,
+  });
+}
+
+/** Проводная форма одного варианта внутри группы (snake_case сервера). */
+interface GroupVariantWire {
+  track: TrackWire;
+  variant_type: VariantType;
+}
+
+/** Проводная форма ДВУХ видов элемента grouped-поиска — зеркало
+ *  muza-server/src/catalog/dto.ts (GroupResultOut/SingleResultOut). */
+interface GroupResultWire {
+  kind: "group";
+  canonical: TrackWire;
+  has_original: boolean;
+  canonical_variant_type: VariantType | null;
+  variants: GroupVariantWire[];
+}
+interface SingleResultWire {
+  kind: "single";
+  track: TrackWire;
+}
+type GroupedResultWire = GroupResultWire | SingleResultWire;
+
+function groupedResultFromWire(wire: GroupedResultWire): GroupedSearchResult {
+  if (wire.kind === "single") {
+    return GroupedSearchResultSchema.parse({ kind: "single", track: trackFromWire(wire.track) });
+  }
+  return GroupedSearchResultSchema.parse({
+    kind: "group",
+    canonical: trackFromWire(wire.canonical),
+    hasOriginal: wire.has_original,
+    canonicalVariantType: wire.canonical_variant_type,
+    variants: wire.variants.map((v) => ({ track: trackFromWire(v.track), variantType: v.variant_type })),
   });
 }
 
@@ -359,6 +396,23 @@ export class HttpMuzaApi implements MuzaApi {
     if (opts?.limit) params.set("limit", String(opts.limit));
     const out = await this.authedRequest<{ query: string; results: TrackWire[] }>(`/search?${params}`);
     return out.results.map(trackFromWire);
+  }
+
+  /** T41: тот же поиск, но с группировкой ремиксов/версий (T36 сервера,
+   *  ?group=1&offset=0 — сервер поддерживает group=1 ТОЛЬКО на первой
+   *  странице, растущий limit — рекомендованный способ «загрузить ещё»).
+   *  Отдельный метод, а не флаг/оверлоад в search(): форма ответа другая
+   *  (GroupedSearchResult[], не Track[]) — оверлоад на одном имени размыл бы
+   *  типы существующих плоских вызывателей (десктоп) без всякой выгоды. */
+  async searchGrouped(
+    query: string,
+    opts?: { scope?: SearchScope; limit?: number },
+  ): Promise<GroupedSearchResult[]> {
+    const params = new URLSearchParams({ q: query, group: "1", offset: "0" });
+    if (opts?.scope) params.set("scope", opts.scope);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const out = await this.authedRequest<{ query: string; results: GroupedResultWire[] }>(`/search?${params}`);
+    return out.results.map(groupedResultFromWire);
   }
 
   async getTrack(id: string): Promise<Track> {

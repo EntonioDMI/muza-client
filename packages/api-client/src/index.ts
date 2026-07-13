@@ -11,6 +11,7 @@ import type {
   Annotations,
   Credentials,
   EmailChangeStartResult,
+  GroupedSearchResult,
   HistoryItem,
   HomeSection,
   ImportReport,
@@ -82,6 +83,11 @@ export interface MuzaApi {
   // Каталог (Stage 2, слайс 3). Требует серверной сессии (аноним — локальный,
   // сервер его не знает → поиск недоступен).
   search(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]>;
+  /** T41: тот же поиск, но с группировкой ремиксов/версий (T36 сервера,
+   *  ?group=1) — оригинал/канон + variants одной карточкой; нераспознанные
+   *  декорированные одиночки остаются как kind:"single" в хвосте. offset
+   *  на сервере фиксирован в 0 — «ещё» растит limit, как и у search(). */
+  searchGrouped(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<GroupedSearchResult[]>;
   getTrack(id: string): Promise<Track>;
   /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
    *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */
