@@ -794,11 +794,20 @@ export function SettingsView({
   const [emailNew, setEmailNew] = useState("");
   const [emailErr, setEmailErr] = useState<string | null>(null);
   const [emailBusy, setEmailBusy] = useState(false);
+  // T3: dev-фолбэк сервера (SMTP выключен) — письмо реально не уходит,
+  // но сервер отдаёт ссылку подтверждения в ответе; без этого её негде
+  // увидеть кроме серверного лога.
+  const [emailConfirmUrl, setEmailConfirmUrl] = useState<string | null>(null);
   const openEmailChange = () => {
     setEmailPwd("");
     setEmailNew("");
     setEmailErr(null);
+    setEmailConfirmUrl(null);
     setEmailOpen(true);
+  };
+  const closeEmailChange = () => {
+    setEmailOpen(false);
+    setEmailConfirmUrl(null);
   };
   const submitEmailChange = async () => {
     if (!emailNew.includes("@")) {
@@ -808,11 +817,19 @@ export function SettingsView({
     setEmailBusy(true);
     setEmailErr(null);
     try {
-      await api.changeEmail(emailPwd, emailNew.trim());
-      setEmailOpen(false);
-      onNotify("Письмо отправлено на новую почту — подтверди по ссылке", "mail");
+      const { confirmUrl } = await api.changeEmail(emailPwd, emailNew.trim());
+      if (confirmUrl) {
+        // Dev: реальной отправки не было — держим диалог открытым со ссылкой
+        setEmailConfirmUrl(confirmUrl);
+      } else {
+        setEmailOpen(false);
+        onNotify("Письмо отправлено на новую почту — подтверди по ссылке", "mail");
+      }
     } catch (e) {
-      setEmailErr(e instanceof ApiError ? e.message : "Не удалось отправить письмо");
+      // generic-текст + деталь от сервера (429 rate-limit / 502 SMTP / занятая
+      // почта и т.п.), когда она есть — иначе просто generic
+      const detail = e instanceof ApiError ? e.message : null;
+      setEmailErr(detail ? `Не удалось отправить письмо: ${detail}` : "Не удалось отправить письмо");
     } finally {
       setEmailBusy(false);
     }
@@ -2796,33 +2813,57 @@ export function SettingsView({
         </div>
       </Dialog>
 
-      {/* Смена почты (C1): пароль + новая почта → письмо на новый адрес */}
+      {/* Смена почты (C1): пароль + новая почта → письмо на новый адрес.
+          T3: dev-фолбэк сервера (SMTP выключен) — вместо тоста показываем
+          ссылку подтверждения прямо в диалоге, иначе её негде увидеть. */}
       <Dialog
         open={emailOpen}
         title="Сменить почту"
-        onClose={() => setEmailOpen(false)}
+        onClose={closeEmailChange}
         actions={
-          <>
-            <Button variant="ghost" onClick={() => setEmailOpen(false)}>
-              Отмена
+          emailConfirmUrl ? (
+            <Button variant="primary" onClick={closeEmailChange}>
+              Готово
             </Button>
-            <Button variant="primary" icon="mail" disabled={emailBusy} onClick={() => void submitEmailChange()}>
-              {emailBusy ? "Отправляем…" : "Отправить письмо"}
-            </Button>
-          </>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={closeEmailChange}>
+                Отмена
+              </Button>
+              <Button variant="primary" icon="mail" disabled={emailBusy} onClick={() => void submitEmailChange()}>
+                {emailBusy ? "Отправляем…" : "Отправить письмо"}
+              </Button>
+            </>
+          )
         }
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
-          <SettingInput type="password" value={emailPwd} onChange={setEmailPwd} placeholder="Пароль аккаунта" width={300} />
-          <SettingInput value={emailNew} onChange={setEmailNew} placeholder="Новая почта" width={300} />
-          {emailErr ? (
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{emailErr}</div>
-          ) : (
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              На новую почту придёт письмо — адрес сменится после клика по ссылке из него.
+        {emailConfirmUrl ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
+              Письма в dev не уходят — открой ссылку подтверждения, чтобы завершить смену почты.
             </div>
-          )}
-        </div>
+            <Button
+              variant="ghost"
+              icon="external-link"
+              onClick={() => void openExternal(emailConfirmUrl)}
+              style={{ alignSelf: "flex-start" }}
+            >
+              Открыть ссылку подтверждения
+            </Button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
+            <SettingInput type="password" value={emailPwd} onChange={setEmailPwd} placeholder="Пароль аккаунта" width={300} />
+            <SettingInput value={emailNew} onChange={setEmailNew} placeholder="Новая почта" width={300} />
+            {emailErr ? (
+              <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{emailErr}</div>
+            ) : (
+              <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+                На новую почту придёт письмо — адрес сменится после клика по ссылке из него.
+              </div>
+            )}
+          </div>
+        )}
       </Dialog>
 
       {/* Удаление аккаунта (C3): двухшаговое — кнопка в под-экране, тут пароль */}

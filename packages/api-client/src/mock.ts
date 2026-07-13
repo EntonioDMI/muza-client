@@ -6,6 +6,7 @@ import {
   type AdminUsers,
   type Annotations,
   type Credentials,
+  type EmailChangeStartResult,
   type HistoryItem,
   type HomeSection,
   type ImportReport,
@@ -109,8 +110,9 @@ export class MockMuzaApi implements MuzaApi {
     // мок: пароля нет — делаем вид, что сменили
   }
 
-  async changeEmail(): Promise<void> {
-    // мок: почты нет
+  async changeEmail(): Promise<EmailChangeStartResult> {
+    // мок: почты нет, ссылки подтверждения тоже
+    return {};
   }
 
   async listSessions(): Promise<SessionInfo[]> {

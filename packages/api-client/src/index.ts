@@ -10,6 +10,7 @@ import type {
   AdminUsers,
   Annotations,
   Credentials,
+  EmailChangeStartResult,
   HistoryItem,
   HomeSection,
   ImportReport,
@@ -62,8 +63,10 @@ export interface MuzaApi {
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
 
   /** Смена/привязка почты: пароль + новая почта → письмо-подтверждение
-   *  на НОВЫЙ адрес (почта меняется по клику из письма). */
-  changeEmail(password: string, newEmail: string): Promise<void>;
+   *  на НОВЫЙ адрес (почта меняется по клику из письма). confirmUrl в
+   *  результате — dev-фолбэк сервера (SMTP выключен, письмо не ушло
+   *  реально); в production и при реальной отправке — undefined. */
+  changeEmail(password: string, newEmail: string): Promise<EmailChangeStartResult>;
 
   /** Сессии и устройства: активные refresh-сессии (текущая помечена). */
   listSessions(): Promise<SessionInfo[]>;

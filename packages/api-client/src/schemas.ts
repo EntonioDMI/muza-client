@@ -32,6 +32,15 @@ export const EmailSchema = z.email();
 export const RegisterStatusSchema = z.enum(["pending", "verified", "expired", "notfound"]);
 export type RegisterStatus = z.infer<typeof RegisterStatusSchema>;
 
+/** Результат POST /auth/email/start (T3). confirmUrl приходит ТОЛЬКО в
+ *  dev-фолбэке сервера — SMTP выключен (нет пароля) и NODE_ENV не production,
+ *  реальное письмо не ушло, ссылку иначе негде увидеть кроме серверного лога.
+ *  В production и при реальной отправке — поле отсутствует. */
+export const EmailChangeStartResultSchema = z.object({
+  confirmUrl: z.string().optional(),
+});
+export type EmailChangeStartResult = z.infer<typeof EmailChangeStartResultSchema>;
+
 /** Канонический трек каталога (одна строка на реальную песню; id — строка,
  *  BigInt сервера не влезает в number). */
 export const TrackSchema = z.object({

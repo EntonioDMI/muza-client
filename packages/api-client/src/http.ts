@@ -8,6 +8,8 @@ import {
   type Annotation,
   type Annotations,
   type Credentials,
+  type EmailChangeStartResult,
+  EmailChangeStartResultSchema,
   type HistoryItem,
   type HomeSection,
   type ImportReport,
@@ -1117,11 +1119,12 @@ export class HttpMuzaApi implements MuzaApi {
     });
   }
 
-  async changeEmail(password: string, newEmail: string): Promise<void> {
-    await this.authedRequest("/auth/email/start", {
+  async changeEmail(password: string, newEmail: string): Promise<EmailChangeStartResult> {
+    const out = await this.authedRequest<{ confirm_url?: string } | undefined>("/auth/email/start", {
       method: "POST",
       body: JSON.stringify({ password, new_email: newEmail }),
     });
+    return EmailChangeStartResultSchema.parse({ confirmUrl: out?.confirm_url });
   }
 
   async listSessions(): Promise<SessionInfo[]> {
