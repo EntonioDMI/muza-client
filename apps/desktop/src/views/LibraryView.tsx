@@ -15,6 +15,7 @@ import {
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { maybeAltFileDrag } from "../lib/dragOut";
+import { playlistIconSrc } from "../lib/playlistIcon";
 
 /** «Твоя медиатека» (Stage 4): настоящие серверные плейлисты, локальные файлы
  *  (device-bound), добавление по ссылке и импорт; демо-контент остаётся
@@ -215,7 +216,8 @@ export function LibraryView({
           {srvPlaylists.map((p) => (
             <Tile
               key={p.id}
-              cover={NEW_PLAYLIST_COVER}
+              // T47b: иконка-обложка плейлиста (манифест @muza/core), фолбэк — прежняя демо-обложка
+              cover={playlistIconSrc(p.icon) ?? NEW_PLAYLIST_COVER}
               title={p.name}
               subtitle={`${p.trackCount} тр. · синхронизируется`}
               width="auto"

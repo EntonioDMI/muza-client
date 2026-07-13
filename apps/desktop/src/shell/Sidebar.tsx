@@ -5,7 +5,9 @@ import { isTrackDrag, readTrackDrag } from "../lib/dnd";
 import { NAV_ITEM_META, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import type { View } from "../types";
 
-/** Пункт списка плейлистов: демо (с обложкой) или серверный (без — плейсхолдер). */
+/** Пункт списка плейлистов: демо (с обложкой) или серверный — T47b: тоже с
+ *  cover, если у плейлиста есть валидная иконка манифеста @muza/core;
+ *  иначе (или нет иконки) — плейсхолдер (users/list-music по shared). */
 export interface SidebarPlaylist {
   id: string;
   name: string;

@@ -19,6 +19,7 @@ const ownerDetail: PlaylistDetail = {
   inviteCode: null,
   collaborators: [],
   addedBy: {},
+  icon: null,
 };
 
 /** Ключ снапшота повторяет формат offlineSnapshot.ts: PREFIX+scope+key.
@@ -44,6 +45,7 @@ function renderView(api: MuzaApi) {
       onSaveOffline={noop}
       onChanged={noop}
       onDeleted={noop}
+      onChangeIcon={noop}
     />,
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, Menu, SearchInput, Toast } from "@muza/ui";
+import { pickRandomPlaylistIcon } from "@muza/core";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
@@ -32,6 +33,7 @@ import {
   type HistoryState,
 } from "./lib/historyStack";
 import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
+import { playlistIconSrc } from "./lib/playlistIcon";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
@@ -52,6 +54,7 @@ import { AddLinkDialog } from "./shell/AddLinkDialog";
 import { ImportDialog } from "./shell/ImportDialog";
 import { JamDialog } from "./shell/JamDialog";
 import { JoinPlaylistDialog } from "./shell/JoinPlaylistDialog";
+import { PlaylistIconPicker } from "./shell/PlaylistIconPicker";
 import { ShareDialog } from "./shell/ShareDialog";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";
@@ -267,6 +270,10 @@ function Player({
   // переименование открытого прямо сейчас плейлиста: bump ремоунтит PlaylistView,
   // чтобы шапка перечитала имя (сама страница о переименовании извне не знает)
   const [plBump, setPlBump] = useState(0);
+  // T47b: пикер иконки плейлиста — открывается ПКМ на плейлисте (сайдбар/медиатека)
+  // ИЛИ ПКМ на треке внутри PlaylistView; id — независимо от того, что сейчас открыто.
+  const [iconPicker, setIconPicker] = useState<{ id: string; icon: string | null } | null>(null);
+  const [iconPickerBusy, setIconPickerBusy] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Кастомизация переживает перезапуск: без этого все настройки слетали
   const [prefs, setPrefsState] = useState<Prefs>(loadPrefs);
@@ -480,6 +487,10 @@ function Player({
 
   /** Каталожный (серверный) id — числовой; демо-ид вида "t1". */
   const isCatalogId = (id: string) => /^\d+$/.test(id);
+
+  /** Иконки, уже занятые плейлистами пользователя — pickRandomPlaylistIcon
+   *  старается не повторяться, пока в манифесте есть свободные (T47b). */
+  const usedPlaylistIcons = () => srvPlaylists.map((p) => p.icon).filter((id): id is string => id !== null);
 
   /** «Радио по треку» (Stage 5): очередь = трек + похожие с сервера. */
   const startRadio = async (t: CatalogTrack) => {
@@ -851,7 +862,8 @@ function Player({
     }
     try {
       const name = `Очередь ${new Date().toLocaleDateString("ru")}`;
-      const created = await api.createPlaylist(name);
+      // T47b: тоже создание нового плейлиста — та же случайная иконка, что и из «+» сайдбара
+      const created = await api.createPlaylist(name, pickRandomPlaylistIcon(usedPlaylistIcons()));
       for (const t of catalog) await api.addPlaylistTrack(created.id, t.id);
       await reloadServerPlaylists();
       showToast(`Сохранено: «${name}» · ${catalog.length} тр.`, "save");
@@ -1044,7 +1056,8 @@ function Player({
     const name = plName.trim() || "Новый плейлист";
     if (canSearch) {
       try {
-        const created = await api.createPlaylist(name);
+        const icon = pickRandomPlaylistIcon(usedPlaylistIcons());
+        const created = await api.createPlaylist(name, icon);
         await reloadServerPlaylists();
         setDialogOpen(false);
         setPlName("");
@@ -1062,6 +1075,34 @@ function Player({
     showToast("Плейлист создан", "list-music");
   };
 
+  /** T47b: ПКМ на плейлисте (сайдбар/медиатека) ИЛИ ПКМ на треке внутри
+   *  PlaylistView — оба ведут сюда, id плейлиста разный только по источнику клика. */
+  const openIconPicker = (id: string) => {
+    const icon = srvPlaylists.find((p) => p.id === id)?.icon ?? null;
+    setIconPicker({ id, icon });
+  };
+
+  const changePlaylistIcon = async (icon: string) => {
+    const target = iconPicker;
+    if (!target) return;
+    setIconPickerBusy(true);
+    try {
+      await api.setPlaylistIcon(target.id, icon);
+      // патчим локальный список вместо полного reloadServerPlaylists — быстрее,
+      // и сразу видно в сайдбаре/медиатеке без лишнего запроса
+      setSrvPlaylists((ps) => ps.map((p) => (p.id === target.id ? { ...p, icon } : p)));
+      // открытая страница этого же плейлиста сама иконку не знает — ремоунт
+      // перечитает detail.icon (как renameFromMenu делает для имени)
+      if (openPlaylistId === target.id) setPlBump((v) => v + 1);
+      setIconPicker(null);
+      showToast("Иконка изменена", "image");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Не удалось сменить иконку", "x");
+    } finally {
+      setIconPickerBusy(false);
+    }
+  };
+
   // Сайдбар: серверная сессия видит настоящие плейлисты (Stage 7: + совместные),
   // аноним — демо
   const sidebarPlaylists = canSearch
@@ -1075,6 +1116,9 @@ function Player({
               ? `${p.trackCount} тр. · совместный`
               : `${p.trackCount} тр.`,
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
+        // T47b: иконка-обложка из манифеста @muza/core; нет/невалидна — PlaylistRow
+        // сама рисует прежний фолбэк (users/list-music), как для демо-плейлистов без cover
+        cover: playlistIconSrc(p.icon) ?? undefined,
       }))
     : playlists;
 
@@ -1513,6 +1557,7 @@ function Player({
                   setOpenPlaylistId(null);
                   navigate("home");
                 }}
+                onChangeIcon={() => openIconPicker(openPlaylistId)}
               />
             ) : view === "library" ? (
               <LibraryView
@@ -1808,6 +1853,13 @@ function Player({
                     setPlRename(pl);
                   },
                 },
+                {
+                  icon: "image",
+                  label: "Сменить иконку",
+                  onClick: () => {
+                    if (plMenu.pl) openIconPicker(plMenu.pl.id);
+                  },
+                },
                 "-",
                 {
                   icon: "trash-2",
@@ -1862,6 +1914,16 @@ function Player({
             : `«${plDelete?.name}» исчезнет из сайдбара.`}
         </div>
       </Dialog>
+
+      {/* T47b: пикер иконки плейлиста — обе ПКМ-точки (плейлист в сайдбаре/
+          медиатеке И трек внутри PlaylistView) заводят один и тот же диалог */}
+      <PlaylistIconPicker
+        open={iconPicker !== null}
+        currentIcon={iconPicker?.icon ?? null}
+        busy={iconPickerBusy}
+        onClose={() => setIconPicker(null)}
+        onPick={(icon) => void changePlaylistIcon(icon)}
+      />
 
       <VersionsDialog api={api} track={versionsTrack} onClose={() => setVersionsTrack(null)} onNotify={showToast} />
 
@@ -1947,9 +2009,7 @@ function Player({
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 280 }}>
           {srvPlaylists.map((p) => (
-            <Button key={p.id} variant="secondary" icon="list-music" onClick={() => void addToPlaylist(p.id, p.name)} style={{ justifyContent: "flex-start" }}>
-              {p.name}
-            </Button>
+            <PlaylistPickRow key={p.id} icon={p.icon} name={p.name} onClick={() => void addToPlaylist(p.id, p.name)} />
           ))}
           {srvPlaylists.length === 0 ? (
             <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.5 }}>
@@ -2022,5 +2082,46 @@ function Player({
         onClose={() => setMeaningLine(null)}
       />
     </div>
+  );
+}
+
+/** Строка плейлиста в диалоге «⋯ → В плейлист» (T47b): та же обложка-иконка,
+ *  что в сайдбаре/медиатеке/шапке, вместо статичной "list-music" у всех подряд.
+ *  Кнопка @muza/ui поддерживает только именованный Lucide-icon (не картинку) —
+ *  поэтому здесь свой pill-баттон в стиле Button variant="secondary". */
+function PlaylistPickRow({ icon, name, onClick }: { icon: string | null; name: string; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  const src = playlistIconSrc(icon);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--sp-3)",
+        height: 40,
+        padding: "0 var(--sp-4)",
+        border: "none",
+        borderRadius: "var(--r-control, var(--r-pill))",
+        background: hover ? "var(--surface-4)" : "var(--surface-3)",
+        color: "var(--text-1)",
+        fontFamily: "var(--font-ui)",
+        fontSize: "var(--fs-body)",
+        fontWeight: 600,
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "background var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      {src ? (
+        <img src={src} alt="" width={20} height={20} style={{ borderRadius: "var(--r-xs)", flex: "none", display: "block" }} />
+      ) : (
+        <Icon name="list-music" size={18} color="currentColor" />
+      )}
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+    </button>
   );
 }

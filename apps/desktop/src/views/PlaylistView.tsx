@@ -6,6 +6,7 @@ import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
+import { playlistIconSrc } from "../lib/playlistIcon";
 import { CollabDialog } from "../shell/CollabDialog";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
@@ -28,6 +29,7 @@ export function PlaylistView({
   onSaveOffline,
   onChanged,
   onDeleted,
+  onChangeIcon,
 }: {
   api: MuzaApi;
   playlistId: string;
@@ -53,6 +55,9 @@ export function PlaylistView({
   /** Состав/имя изменились — сайдбару пора перечитать список. */
   onChanged: () => void;
   onDeleted: () => void;
+  /** ПКМ на треке → «Сменить иконку плейлиста» (T47b): открывает пикер
+   *  App-уровня для ТЕКУЩЕГО плейлиста (не трека). */
+  onChangeIcon: () => void;
 }) {
   const [detail, setDetail] = useState<PlaylistDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +124,12 @@ export function PlaylistView({
     onChanged();
   };
 
+  // T47b: иконка-обложка плейлиста в шапке — валидный icon манифеста @muza/core,
+  // иначе прежний фолбэк "list-music". Смену иконки может запускать только
+  // владелец живого (не оффлайн-снапшот) плейлиста — как переименование/удаление выше.
+  const iconSrc = playlistIconSrc(detail?.icon);
+  const canChangeIcon = detail !== null && detail.isOwner && !offline;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
@@ -133,9 +144,14 @@ export function PlaylistView({
             alignItems: "center",
             justifyContent: "center",
             flex: "none",
+            overflow: "hidden",
           }}
         >
-          <Icon name="list-music" size={26} color="var(--accent-text)" />
+          {iconSrc ? (
+            <img src={iconSrc} alt="" width={56} height={56} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <Icon name="list-music" size={26} color="var(--accent-text)" />
+          )}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1
@@ -305,6 +321,12 @@ export function PlaylistView({
               if (menu.track) onVersions(menu.track);
             },
           },
+          // T47b: ПКМ на треке ВНУТРИ плейлиста — тот же пикер, что и ПКМ на
+          // самом плейлисте в сайдбаре/медиатеке; меняет иконку плейлиста,
+          // не трека. Только владелец живого плейлиста (как выше в шапке).
+          ...(canChangeIcon
+            ? ([{ icon: "image", label: "Сменить иконку плейлиста", onClick: () => onChangeIcon() }] as const)
+            : []),
           "-",
           {
             icon: "list-x",
