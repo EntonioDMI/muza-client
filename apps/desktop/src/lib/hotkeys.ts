@@ -15,7 +15,9 @@ export type HotkeyAction =
   | "seekBack"
   | "like"
   | "mute"
-  | "search";
+  | "search"
+  | "navBack"
+  | "navForward";
 
 /** Порядок = порядок в настройках и справке. */
 export const HOTKEY_ACTIONS: { id: HotkeyAction; label: string }[] = [
@@ -27,6 +29,8 @@ export const HOTKEY_ACTIONS: { id: HotkeyAction; label: string }[] = [
   { id: "like", label: "Лайк" },
   { id: "mute", label: "Без звука" },
   { id: "search", label: "Поиск" },
+  { id: "navBack", label: "Назад по вкладкам" },
+  { id: "navForward", label: "Вперёд по вкладкам" },
 ];
 
 export const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
@@ -38,6 +42,8 @@ export const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
   like: "KeyL",
   mute: "KeyM",
   search: "Ctrl+KeyK",
+  navBack: "Alt+ArrowLeft",
+  navForward: "Alt+ArrowRight",
 };
 
 /** Combo из события: модификаторы (кроме Meta) + физический код. Голые

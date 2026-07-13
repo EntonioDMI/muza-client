@@ -18,7 +18,19 @@ import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, formatTemplate, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useCoverArt } from "./lib/coverArt";
-import { comboFromEvent, matchAction, formatCombo, HOTKEY_ACTIONS } from "./lib/hotkeys";
+import { comboFromEvent, matchAction, formatCombo, withDefaults, HOTKEY_ACTIONS } from "./lib/hotkeys";
+import {
+  canGoBack,
+  canGoForward,
+  createHistory,
+  currentEntry,
+  goBack,
+  goForward,
+  pushHistory,
+  type HistoryEntry,
+  type HistoryPayload,
+  type HistoryState,
+} from "./lib/historyStack";
 import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
@@ -101,6 +113,9 @@ function loadPrefs(): Prefs {
     // вложенные объекты мерджатся глубже: новое под-поле не теряет соседей
     prefs.sourcesEnabled = { ...DEFAULT_PREFS.sourcesEnabled, ...stored.sourcesEnabled };
     prefs.rowShow = { ...DEFAULT_PREFS.rowShow, ...stored.rowShow };
+    // хоткеи — так же: новое действие (напр. T16 navBack/navForward) не теряется
+    // в старых сохранениях, где его ещё не было (иначе бинд молча пуст, "—" в хелпе)
+    prefs.hotkeys = withDefaults(stored.hotkeys);
     // миграция «пресеты → ползунки»: строковые значения старых сохранений
     // («sharper», «compact»…) конвертируются в числа, мусор — к дефолту
     for (const key of MIGRATED_PREF_KEYS) {
@@ -201,6 +216,10 @@ function Player({
   // Слайс 4: серверные плейлисты и открытая страница плейлиста
   const [srvPlaylists, setSrvPlaylists] = useState<PlaylistMeta[]>([]);
   const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
+  // T16: история переходов между вкладками (Alt+←/→, боковые кнопки мыши) —
+  // чистый стек в lib/historyStack; ref, а не state — сама история не рендерит
+  // UI (кнопок «назад»/«вперёд» нет), нужна только актуальность в колбэках.
+  const historyRef = useRef<HistoryState<View>>(createHistory<View>({ view }));
   // выбор плейлиста для «В плейлист» из поиска
   const [plPick, setPlPick] = useState<CatalogTrack | null>(null);
   // Stage 4: меню каталожного трека («⋯») и диалог «Версии и источники»
@@ -708,7 +727,7 @@ function Player({
       }
       if (canSearch) await registerLocalTracks(api, entries);
       showToast(`Добавлено локальных треков: ${entries.length}`, "folder-down");
-      setView("library");
+      navigate("library");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Не удалось добавить файлы", "x");
     }
@@ -780,7 +799,7 @@ function Player({
   };
 
   const openEqualizer = () => {
-    setView("settings");
+    navigate("settings");
     setSettingsIntent({ sub: "equalizer", nonce: Date.now() });
   };
 
@@ -889,7 +908,15 @@ function Player({
         break;
       case "search":
         e.preventDefault();
-        setView("search");
+        navigate("search");
+        break;
+      case "navBack":
+        e.preventDefault();
+        navBack();
+        break;
+      case "navForward":
+        e.preventDefault();
+        navForward();
         break;
     }
   };
@@ -947,8 +974,7 @@ function Player({
         setDialogOpen(false);
         setPlName("");
         showToast("Плейлист создан", "list-music");
-        setOpenPlaylistId(created.id);
-        setView("playlist");
+        navigate("playlist", { playlistId: created.id });
         return;
       } catch (e) {
         showToast(e instanceof Error ? e.message : "Не удалось создать плейлист", "x");
@@ -977,13 +1003,63 @@ function Player({
       }))
     : playlists;
 
+  // T16: обычный переход (НЕ назад/вперёд) — пушит в историю и опционально
+  // синкает payload параметрических вью (сейчас только id открытого плейлиста).
+  // Все клики по вкладкам должны идти через navigate(), а не голый setView,
+  // иначе история не узнает о переходе.
+  const navigate = (next: View, payload?: HistoryPayload) => {
+    historyRef.current = pushHistory(historyRef.current, { view: next, payload });
+    if (payload && "playlistId" in payload) setOpenPlaylistId(payload.playlistId ?? null);
+    setView(next);
+  };
+
+  /** Применить уже существующую запись истории (после goBack/goForward) —
+   *  никакого пуша, просто синк view + openPlaylistId с записью стека. */
+  const applyHistoryEntry = (entry: HistoryEntry<View>) => {
+    setView(entry.view);
+    setOpenPlaylistId(entry.payload?.playlistId ?? null);
+  };
+
+  const navBack = () => {
+    if (!canGoBack(historyRef.current)) return;
+    historyRef.current = goBack(historyRef.current);
+    applyHistoryEntry(currentEntry(historyRef.current));
+  };
+
+  const navForward = () => {
+    if (!canGoForward(historyRef.current)) return;
+    historyRef.current = goForward(historyRef.current);
+    applyHistoryEntry(currentEntry(historyRef.current));
+  };
+
+  // Боковые кнопки мыши (XButton1/2 = «назад»/«вперёд»): проверено живьём в
+  // T16 через OS-level SendInput (WM_XBUTTONUP) поверх реального окна Tauri —
+  // WebView2 НЕ перехватывает их для своей навигации, до DOM долетает обычный
+  // 'mouseup' с e.button===3|4 (а не 'auxclick' — его не проверяли, mouseup
+  // достаточно). Гейт engineAvailable() — фича только в приложении; в вебе
+  // (vite dev без Tauri) поведение отдаём браузеру, если он вообще так умеет.
+  useEffect(() => {
+    if (!engineAvailable()) return;
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        navBack();
+      } else if (e.button === 4) {
+        e.preventDefault();
+        navForward();
+      }
+    };
+    window.addEventListener("mouseup", onMouseUp);
+    return () => window.removeEventListener("mouseup", onMouseUp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openPlaylist = (id: string) => {
     if (!canSearch) {
-      setView("library"); // демо-плейлисты без страниц
+      navigate("library"); // демо-плейлисты без страниц
       return;
     }
-    setOpenPlaylistId(id);
-    setView("playlist");
+    navigate("playlist", { playlistId: id });
   };
 
   const addToPlaylist = async (playlistId: string, playlistName: string) => {
@@ -1239,7 +1315,7 @@ function Player({
       >
         <Sidebar
           view={view}
-          setView={setView}
+          setView={navigate}
           navItems={prefs.navItems}
           playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
@@ -1282,7 +1358,7 @@ function Player({
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
-                onOpen={setView}
+                onOpen={navigate}
                 onOpenWrapped={canSearch ? () => setWrappedOpen(true) : undefined}
               />
             ) : view === "search" ? (
@@ -1347,7 +1423,7 @@ function Player({
                 onChanged={() => void reloadServerPlaylists()}
                 onDeleted={() => {
                   setOpenPlaylistId(null);
-                  setView("home");
+                  navigate("home");
                 }}
               />
             ) : view === "library" ? (
@@ -1379,7 +1455,7 @@ function Player({
                 onCatalogMenu={openCatalogMenu}
                 onOpenWrapped={() => setWrappedOpen(true)}
                 onCustomize={() => {
-                  setView("settings");
+                  navigate("settings");
                   setSettingsIntent({ sub: "stats", nonce: Date.now() });
                 }}
               />
@@ -1638,8 +1714,7 @@ function Player({
         onNotify={showToast}
         onImported={(report) => {
           void reloadServerPlaylists();
-          setOpenPlaylistId(report.playlist.id);
-          setView("playlist");
+          navigate("playlist", { playlistId: report.playlist.id });
         }}
       />
 
@@ -1652,8 +1727,7 @@ function Player({
           setJoinOpen(false);
           void reloadServerPlaylists();
           showToast(`Ты в плейлисте «${p.name}» (от ${p.ownerUsername})`, "users");
-          setOpenPlaylistId(p.id);
-          setView("playlist");
+          navigate("playlist", { playlistId: p.id });
         }}
       />
 
