@@ -91,10 +91,10 @@ export default function LibraryPage() {
           Библиотека
         </h1>
         <div style={{ display: "flex", gap: "var(--sp-2)" }}>
-          <Button variant="ghost" icon="users" onClick={() => setJoinOpen(true)}>
+          <Button variant="ghost" size="lg" icon="users" onClick={() => setJoinOpen(true)}>
             У меня есть код
           </Button>
-          <Button variant="primary" icon="plus" onClick={() => setCreateOpen(true)}>
+          <Button variant="primary" size="lg" icon="plus" onClick={() => setCreateOpen(true)}>
             Создать плейлист
           </Button>
         </div>

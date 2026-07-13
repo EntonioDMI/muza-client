@@ -80,7 +80,7 @@ function PlaylistBody() {
     try {
       await getApi().deletePlaylist(id);
       notify("Плейлист удалён", "trash-2");
-      void refreshPlaylists();
+      await refreshPlaylists();
       router.replace("/library");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось удалить", "x");
@@ -140,7 +140,7 @@ function PlaylistBody() {
     try {
       await getApi().removePlaylistMember(id, session.user.id);
       notify("Ты покинул плейлист", "log-out");
-      void refreshPlaylists();
+      await refreshPlaylists();
       router.replace("/library");
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось выйти", "x");
@@ -313,7 +313,7 @@ function PlaylistBody() {
                 <span style={{ flex: 1, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
                   Друг вводит код у себя: Библиотека → «У меня есть код».
                 </span>
-                <Button variant="ghost" icon="shield-off" disabled={shareBusy} onClick={() => void revokeInvite()}>
+                <Button variant="ghost" size="lg" icon="shield-off" disabled={shareBusy} onClick={() => void revokeInvite()}>
                   Отозвать
                 </Button>
               </div>
