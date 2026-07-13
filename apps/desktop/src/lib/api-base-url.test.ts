@@ -58,6 +58,22 @@ describe("resolveApiBaseUrl", () => {
     expect(() => resolveApiBaseUrl(raw, mode)).toThrow();
   });
 
+  it.each(
+    ([
+      ["one backslash", String.raw`\/`],
+      ["two backslashes", String.raw`\\/`],
+      ["backslash plus extra slash", String.raw`\//`],
+    ] as const).flatMap(([variant, separators]) =>
+      [
+        ["production", "raw", variant, `https://${separators}@api.muza.lol/api`, undefined],
+        ["development", "raw", variant, `http://${separators}@localhost:8000/api`, undefined],
+        ["development", "fallback", variant, undefined, `http://${separators}@localhost:8000/api`],
+      ] as const,
+    ),
+  )("rejects %s %s URL with %s", (mode, _source, _variant, raw, fallback) => {
+    expect(() => resolveApiBaseUrl(raw, mode, fallback)).toThrow();
+  });
+
   it("allows @ in a development path", () => {
     expect(resolveApiBaseUrl("http://localhost:8000/api/@scope", "development")).toBe(
       "http://localhost:8000/api/@scope",

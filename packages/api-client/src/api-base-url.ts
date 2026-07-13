@@ -10,7 +10,7 @@ export function resolveApiBaseUrl(
   const value = raw?.trim() || (mode === "development" ? devFallback : undefined);
   if (!value) throw new Error("Production API URL is required");
 
-  if (/[\t\n\r]/.test(raw ?? "") || /[\t\n\r]/.test(value)) {
+  if (/[\\\t\n\r]/.test(raw ?? "") || /[\\\t\n\r]/.test(value)) {
     throw new Error("API URL contains forbidden parts");
   }
 
