@@ -1429,6 +1429,15 @@ export function SettingsView({
           onChange={(v) => set({ radiusControls: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
         />
       </SettingRow>
+      <SettingRow title="Баблы (переключатели)" hint="Сегменты Tabs: настройки, переключатели режимов; от строгих углов (0px) до пилюли (правый край, дефолт ДС)">
+        <LiveSlider
+          value={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusTabs}
+          max={27}
+          label="Скругление баблов-переключателей"
+          suffix={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? "пилюля" : `${prefs.radiusTabs} px`}
+          onChange={(v) => set({ radiusTabs: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
+        />
+      </SettingRow>
       <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля; от строгих углов (0px) до пресета (правый край)">
         <LiveSlider
           value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusFields}
@@ -1684,6 +1693,7 @@ export function SettingsView({
               radiusPanels: DEFAULT_PREFS.radiusPanels,
               radiusControls: DEFAULT_PREFS.radiusControls,
               radiusFields: DEFAULT_PREFS.radiusFields,
+              radiusTabs: DEFAULT_PREFS.radiusTabs,
               blur: DEFAULT_PREFS.blur,
               glassOpacity: DEFAULT_PREFS.glassOpacity,
               glassZonesOn: DEFAULT_PREFS.glassZonesOn,

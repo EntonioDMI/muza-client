@@ -21,6 +21,7 @@ export const THEME_KEYS = [
   "radiusPanels",
   "radiusControls",
   "radiusFields",
+  "radiusTabs",
   "bgType",
   "bgColor",
   "bgColor2",

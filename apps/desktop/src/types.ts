@@ -65,6 +65,10 @@ export interface Prefs {
   radiusPanels: number;
   radiusControls: number;
   radiusFields: number;
+  /** Скругление Tabs-«баблов» (переключатели/сегменты), px 0–26 либо
+   *  RADIUS_OVERRIDE_OFF (999) = «пилюля» (дефолт ДС, токен --r-tabs
+   *  не ставится). Та же схема, что у radiusControls/radiusFields. */
+  radiusTabs: number;
   /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
    *  картинка по URL. Старое поле bgCover=true мигрирует в "cover". */
   bgType: "none" | "cover" | "color" | "gradient" | "image";
@@ -226,6 +230,7 @@ export const DEFAULT_PREFS: Prefs = {
   radiusPanels: 100,
   radiusControls: RADIUS_OVERRIDE_OFF,
   radiusFields: RADIUS_OVERRIDE_OFF,
+  radiusTabs: RADIUS_OVERRIDE_OFF,
   bgType: "none",
   bgColor: "#1a1815",
   bgColor2: "#101418",

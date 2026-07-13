@@ -47,6 +47,16 @@ describe("migrateLegacyValue", () => {
     expect(migrateLegacyValue("radiusFields", 0)).toBe(0);
     expect(migrateLegacyValue("radiusFields", -5)).toBe(0);
   });
+
+  it("T8: radiusTabs — та же схема кламп/сентинел, что у radiusControls/Fields", () => {
+    expect(migrateLegacyValue("radiusTabs", 0)).toBe(0);
+    expect(migrateLegacyValue("radiusTabs", 26)).toBe(26);
+    expect(migrateLegacyValue("radiusTabs", 12.4)).toBe(12);
+    expect(migrateLegacyValue("radiusTabs", 999)).toBe(RADIUS_OVERRIDE_OFF);
+    expect(migrateLegacyValue("radiusTabs", 27)).toBe(RADIUS_OVERRIDE_OFF);
+    expect(migrateLegacyValue("radiusTabs", 300)).toBe(RADIUS_OVERRIDE_OFF);
+    expect(migrateLegacyValue("radiusTabs", -5)).toBe(0);
+  });
 });
 
 describe("sanitizeTokens: легаси-темы со строковыми пресетами", () => {

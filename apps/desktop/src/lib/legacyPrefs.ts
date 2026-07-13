@@ -27,6 +27,7 @@ const RANGES: Record<string, { min: number; max: number; offAbove?: boolean }> =
   radiusPanels: { min: 0, max: 200 },
   radiusControls: { min: 0, max: 26, offAbove: true },
   radiusFields: { min: 0, max: 26, offAbove: true },
+  radiusTabs: { min: 0, max: 26, offAbove: true },
   density: { min: 0, max: 100 },
   lineSpacing: { min: 125, max: 160 },
   animSpeed: { min: 60, max: 170 },

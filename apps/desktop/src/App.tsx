@@ -1012,6 +1012,7 @@ function Player({
   const rPanelsMult = prefs.radiusPanels / 100;
   const rControl = prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusControls}px`;
   const rField = prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusFields}px`;
+  const rTabs = prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusTabs}px`;
   // Скрим (T5): затемняющий слой поверх фоновой обложки (bgDim). На тёмной
   // теме — чёрный, как раньше; на светлой — тон BG_DEFAULTS.light.bg0
   // (#f3f1ed → 243,241,237), иначе сквозь полупрозрачные светлые панели
@@ -1054,6 +1055,7 @@ function Player({
       : {}),
     ...(rControl ? { "--r-control": rControl } : {}),
     ...(rField ? { "--r-field": rField } : {}),
+    ...(rTabs ? { "--r-tabs": rTabs } : {}),
     // прозрачность по зонам: своя плотность стекла у каждой зоны + backdrop-blur
     // для зон, которые без этого — плоские surface (сайдбар, «сейчас играет»)
     ...(prefs.glassZonesOn
