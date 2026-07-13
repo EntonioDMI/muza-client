@@ -1210,6 +1210,14 @@ function Player({
       // внутри — key={track.cover} только на ней, поэтому смена трека
       // ремонтирует (и фейдит через muza-fade) только img, а идущая CSS-
       // анимация вращения на обёртке не прерывается и угол не сбрасывается.
+      // Фикс по ревью T15: диаметр диска = max(140vw, 140vh), а не 140% от
+      // высоты контейнера — на ультрашироких окнах (напр. 3440×1440) диск,
+      // посчитанный от высоты, не дотягивался до центра при offset ±20%
+      // ширины (см. .superpowers/sdd/task-T15-report.md, «Фикс по ревью
+      // T15»). max(vw,vh) гарантирует diameter ≥ 140% ширины (offset -20%
+      // ⇒ диск сам по себе перекрывает всю ширину контейнера с запасом) И
+      // diameter ≥ 140% высоты (та же вертикальная маржа, что была раньше)
+      // — при ЛЮБОМ соотношении сторон окна, не только при height ≥ width.
       <div
         style={{
           position: "absolute",
@@ -1224,7 +1232,7 @@ function Player({
             position: "absolute",
             top: "50%",
             left: "-20%",
-            height: "140%",
+            height: "max(140vw, 140vh)",
             aspectRatio: "1",
             transform: "translateY(-50%)",
             borderRadius: "50%",
@@ -1251,7 +1259,7 @@ function Player({
             position: "absolute",
             top: "50%",
             right: "-20%",
-            height: "140%",
+            height: "max(140vw, 140vh)",
             aspectRatio: "1",
             transform: "translateY(-50%)",
             borderRadius: "50%",
