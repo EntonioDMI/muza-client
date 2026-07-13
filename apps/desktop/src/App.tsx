@@ -1012,6 +1012,11 @@ function Player({
   const rPanelsMult = prefs.radiusPanels / 100;
   const rControl = prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusControls}px`;
   const rField = prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusFields}px`;
+  // Скрим (T5): затемняющий слой поверх фоновой обложки (bgDim). На тёмной
+  // теме — чёрный, как раньше; на светлой — тон BG_DEFAULTS.light.bg0
+  // (#f3f1ed → 243,241,237), иначе сквозь полупрозрачные светлые панели
+  // (--glass-panel) просвечивает серо-чёрная муть — тот самый «баг белой темы».
+  const scrimRgb = isLight ? "243, 241, 237" : "0, 0, 0";
   // Тонировка фона обложкой поверх действующей пары bg-слоёв
   const bgPair = baseBg ?? BG_DEFAULTS[isLight ? "light" : "dark"];
   const tintStrength = isLight ? 0.12 : 0.22;
@@ -1134,7 +1139,7 @@ function Player({
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
       {backdrop}
       {backdrop && prefs.bgDim > 0 ? (
-        <div style={{ position: "absolute", inset: 0, background: `rgba(0, 0, 0, ${prefs.bgDim / 100})` }} />
+        <div style={{ position: "absolute", inset: 0, background: `rgba(${scrimRgb}, ${prefs.bgDim / 100})` }} />
       ) : null}
 
       <div

@@ -57,10 +57,10 @@ export interface Prefs {
   accentActive: string;
   radius: "mild" | "soft" | "round";
   /** Скругление по типам поверх пресета radius: плитки/строки и панели —
-   *  ПРОЦЕНТ от пресета (50–160, 100 = как пресет); кнопки и поля — px
-   *  6–26 либо RADIUS_OVERRIDE_OFF (999) = «как в ДС» (пилюля/пресет,
-   *  токен --r-control/--r-field не ставится). Старые строковые пресеты
-   *  мигрируются в числа (lib/legacyPrefs). */
+   *  ПРОЦЕНТ от пресета (0–200, 100 = как пресет; 0 = острые углы, 200 =
+   *  супер-круглые); кнопки и поля — px 0–26 либо RADIUS_OVERRIDE_OFF (999) =
+   *  «как в ДС» (пилюля/пресет, токен --r-control/--r-field не ставится).
+   *  Старые строковые пресеты мигрируются в числа (lib/legacyPrefs). */
   radiusTiles: number;
   radiusPanels: number;
   radiusControls: number;

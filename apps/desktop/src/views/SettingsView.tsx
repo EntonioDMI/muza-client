@@ -91,6 +91,12 @@ function SettingRow({
         boxSizing: "border-box",
         textAlign: "left",
         borderRadius: "var(--r-md)",
+        // T6: на сильном скруглении (radiusTiles до 200%) контролы у правого
+        // края (Switch/кнопки) своим прямоугольным боксом вылезали за
+        // скруглённый силуэт плашки — border-radius родителя не клипает детей
+        // сам по себе. Клип, не запас padding: фокус-кольца/тени контролов
+        // остаются внутри padding var(--sp-4/5), проверено живьём на 200%.
+        overflow: "hidden",
         background: onClick && hover ? "var(--surface-3)" : "var(--surface-2)",
         cursor: onClick ? "pointer" : "default",
         fontFamily: "var(--font-ui)",
@@ -1405,40 +1411,40 @@ export function SettingsView({
       </SettingRow>
 
       <GroupTitle>Форма и размеры</GroupTitle>
-      <SettingRow title="Плитки и строки" hint="Обложки, карточки, строки треков — процент от пресета «Скругление»">
+      <SettingRow title="Плитки и строки" hint="Обложки, карточки, строки треков — процент от пресета «Скругление» (0 = острые, 200 = супер-круглые)">
         <LiveSlider
-          value={prefs.radiusTiles - 50}
-          max={110}
+          value={prefs.radiusTiles}
+          max={200}
           label="Скругление плиток и строк"
           suffix={`${prefs.radiusTiles} %`}
-          onChange={(v) => set({ radiusTiles: 50 + Math.round(v) })}
+          onChange={(v) => set({ radiusTiles: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Кнопки" hint="Форма кнопок: от строгих углов до пилюли (правый край, дефолт ДС)">
+      <SettingRow title="Кнопки" hint="Форма кнопок: от строгих углов (0px) до пилюли (правый край, дефолт ДС)">
         <LiveSlider
-          value={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? 21 : prefs.radiusControls - 6}
-          max={21}
+          value={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusControls}
+          max={27}
           label="Скругление кнопок"
           suffix={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? "пилюля" : `${prefs.radiusControls} px`}
-          onChange={(v) => set({ radiusControls: Math.round(v) >= 21 ? RADIUS_OVERRIDE_OFF : 6 + Math.round(v) })}
+          onChange={(v) => set({ radiusControls: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля; правый край — как в пресете">
+      <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля; от строгих углов (0px) до пресета (правый край)">
         <LiveSlider
-          value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 21 : prefs.radiusFields - 6}
-          max={21}
+          value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusFields}
+          max={27}
           label="Скругление полей ввода"
           suffix={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? "пресет" : `${prefs.radiusFields} px`}
-          onChange={(v) => set({ radiusFields: Math.round(v) >= 21 ? RADIUS_OVERRIDE_OFF : 6 + Math.round(v) })}
+          onChange={(v) => set({ radiusFields: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Панели и зоны" hint="Сайдбар, плеер, диалоги — процент от пресета «Скругление»">
+      <SettingRow title="Панели и зоны" hint="Сайдбар, плеер, диалоги — процент от пресета «Скругление» (0 = острые, 200 = супер-круглые)">
         <LiveSlider
-          value={prefs.radiusPanels - 50}
-          max={110}
+          value={prefs.radiusPanels}
+          max={200}
           label="Скругление панелей и зон"
           suffix={`${prefs.radiusPanels} %`}
-          onChange={(v) => set({ radiusPanels: 50 + Math.round(v) })}
+          onChange={(v) => set({ radiusPanels: Math.round(v) })}
         />
       </SettingRow>
       <SettingRow title="Плотность интерфейса" hint="Отступы зон и высота строк трека: влево плотнее, вправо просторнее">

@@ -19,12 +19,14 @@ export const LEGACY_ENUM_TO_NUMBER: Record<string, Record<string, number>> = {
 };
 
 /** Диапазоны клампинга (мусор из чужих тем не должен ломать вид).
- *  Для radiusControls/Fields значения выше max трактуются как сентинел OFF. */
+ *  Для radiusControls/Fields значения выше max трактуются как сентинел OFF.
+ *  T7: углы «до упора» — radiusTiles/Panels 0–200% (было 50–160), radius-
+ *  Controls/Fields минимум 0px (было 6px, max/сентинел не менялись). */
 const RANGES: Record<string, { min: number; max: number; offAbove?: boolean }> = {
-  radiusTiles: { min: 50, max: 160 },
-  radiusPanels: { min: 50, max: 160 },
-  radiusControls: { min: 6, max: 26, offAbove: true },
-  radiusFields: { min: 6, max: 26, offAbove: true },
+  radiusTiles: { min: 0, max: 200 },
+  radiusPanels: { min: 0, max: 200 },
+  radiusControls: { min: 0, max: 26, offAbove: true },
+  radiusFields: { min: 0, max: 26, offAbove: true },
   density: { min: 0, max: 100 },
   lineSpacing: { min: 125, max: 160 },
   animSpeed: { min: 60, max: 170 },
