@@ -45,3 +45,5 @@ export interface PlayerSnapshot {
   volume: number;
   queue: QueueItem[];
 }
+
+export { PLAYLIST_ICON_IDS, pickRandomPlaylistIcon, playlistIconUrl } from "./playlistIcons";

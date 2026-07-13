@@ -85,7 +85,7 @@ function trackFromWire(wire: TrackWire): Track {
   });
 }
 
-/** Проводной формат плейлиста (Stage 7: роль/владелец/участники). */
+/** Проводной формат плейлиста (Stage 7: роль/владелец/участники; T47: icon). */
 interface PlaylistMetaWire {
   id: string;
   name: string;
@@ -94,6 +94,7 @@ interface PlaylistMetaWire {
   role?: "owner" | "collaborator";
   owner_username?: string;
   collaborators_count?: number;
+  icon?: string | null;
 }
 
 function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
@@ -105,6 +106,7 @@ function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
     role: w.role ?? "owner",
     ownerUsername: w.owner_username ?? "",
     collaboratorsCount: w.collaborators_count ?? 0,
+    icon: w.icon ?? null,
   });
 }
 
@@ -472,12 +474,20 @@ export class HttpMuzaApi implements MuzaApi {
     return rows.map(playlistMetaFromWire);
   }
 
-  async createPlaylist(name: string): Promise<PlaylistMeta> {
+  async createPlaylist(name: string, icon?: string): Promise<PlaylistMeta> {
     const p = await this.authedRequest<PlaylistMetaWire>("/me/playlists", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(icon !== undefined ? { name, icon } : { name }),
     });
     return playlistMetaFromWire(p);
+  }
+
+  /** Сменить иконку-обложку плейлиста (T47): владелец, id из манифеста @muza/core. */
+  async setPlaylistIcon(id: string, icon: string): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(id)}/icon`, {
+      method: "PATCH",
+      body: JSON.stringify({ icon }),
+    });
   }
 
   async getPlaylist(id: string): Promise<PlaylistDetail> {
@@ -490,6 +500,7 @@ export class HttpMuzaApi implements MuzaApi {
       invite_code?: string | null;
       collaborators?: { id: string; username: string }[];
       added_by?: Record<string, string>;
+      icon?: string | null;
     }>(`/me/playlists/${encodeURIComponent(id)}`);
     return PlaylistDetailSchema.parse({
       id: p.id,
@@ -500,6 +511,7 @@ export class HttpMuzaApi implements MuzaApi {
       inviteCode: p.invite_code ?? null,
       collaborators: p.collaborators ?? [],
       addedBy: p.added_by ?? {},
+      icon: p.icon ?? null,
     });
   }
 

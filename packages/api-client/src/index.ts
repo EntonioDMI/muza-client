@@ -110,9 +110,13 @@ export interface MuzaApi {
   addFavorite(trackId: string): Promise<void>;
   removeFavorite(trackId: string): Promise<void>;
   getPlaylists(): Promise<PlaylistMeta[]>;
-  createPlaylist(name: string): Promise<PlaylistMeta>;
+  /** icon — id из манифеста @muza/core ("pi-01".."pi-38"); клиент обычно
+   *  подбирает случайный сам (T47) и передаёт сюда, но поле опционально. */
+  createPlaylist(name: string, icon?: string): Promise<PlaylistMeta>;
   getPlaylist(id: string): Promise<PlaylistDetail>;
   renamePlaylist(id: string, name: string): Promise<void>;
+  /** Сменить иконку-обложку (T47, ПКМ → «Сменить иконку»); только владелец. */
+  setPlaylistIcon(id: string, icon: string): Promise<void>;
   deletePlaylist(id: string): Promise<void>;
   addPlaylistTrack(playlistId: string, trackId: string): Promise<void>;
   removePlaylistTrack(playlistId: string, trackId: string): Promise<void>;

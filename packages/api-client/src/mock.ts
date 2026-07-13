@@ -200,7 +200,7 @@ export class MockMuzaApi implements MuzaApi {
     return [...this.playlists.values()];
   }
 
-  async createPlaylist(name: string): Promise<PlaylistMeta> {
+  async createPlaylist(name: string, icon?: string): Promise<PlaylistMeta> {
     const p: PlaylistMeta = {
       id: crypto.randomUUID(),
       name,
@@ -209,9 +209,16 @@ export class MockMuzaApi implements MuzaApi {
       role: "owner",
       ownerUsername: "",
       collaboratorsCount: 0,
+      icon: icon ?? null,
     };
     this.playlists.set(p.id, p);
     return p;
+  }
+
+  /** Мок: эхо-запись иконки в in-memory плейлист (сервера нет — просто echo). */
+  async setPlaylistIcon(id: string, icon: string): Promise<void> {
+    const p = this.playlists.get(id);
+    if (p) this.playlists.set(id, { ...p, icon });
   }
 
   async getPlaylist(id: string): Promise<PlaylistDetail> {
@@ -226,6 +233,7 @@ export class MockMuzaApi implements MuzaApi {
       inviteCode: null,
       collaborators: [],
       addedBy: {},
+      icon: p.icon,
     };
   }
 
