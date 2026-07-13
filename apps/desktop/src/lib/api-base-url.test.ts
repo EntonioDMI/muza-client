@@ -32,6 +32,15 @@ describe("resolveApiBaseUrl", () => {
     expect(() => resolveApiBaseUrl(raw, mode)).toThrow();
   });
 
+  it.each([
+    ["development", "backslash authority", String.raw`http:\@localhost:8000/api`],
+    ["development", "surplus-slash authority", "http:////@localhost:8000/api"],
+    ["production", "backslash authority", String.raw`https:\@api.muza.lol/api`],
+    ["production", "surplus-slash authority", "https:////@api.muza.lol/api"],
+  ] as const)("rejects %s URL with %s (%s)", (mode, _syntax, raw) => {
+    expect(() => resolveApiBaseUrl(raw, mode)).toThrow();
+  });
+
   it("allows @ in a development path", () => {
     expect(resolveApiBaseUrl("http://localhost:8000/api/@scope", "development")).toBe(
       "http://localhost:8000/api/@scope",
