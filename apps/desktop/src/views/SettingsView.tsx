@@ -6,7 +6,7 @@ import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
 import { NAV_ITEM_META, normalizeNavItems } from "../lib/navItems";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
-import { formatTemplate } from "../lib/discord";
+import { formatTemplate, rpcAvailable } from "../lib/discord";
 import { openExternal } from "../lib/system";
 import { checkForUpdate, updaterAvailable, type FoundUpdate } from "../lib/updater";
 import {
@@ -1246,6 +1246,13 @@ export function SettingsView({
   useEffect(() => {
     if (tab === "library") reloadCache();
   }, [tab]);
+
+  // Discord RPC (T4): доступен ли Application ID (компайл-тайм client_id
+  // в rpc.rs) — честный хинт в под-панели, пока владелец его не пришлёт.
+  const [discordAvail, setDiscordAvail] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (sub === "discord") rpcAvailable().then(setDiscordAvail);
+  }, [sub]);
   const fmtGb = (bytes: number) =>
     bytes >= 1024 * 1024 * 1024
       ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} ГБ`
@@ -1756,7 +1763,14 @@ export function SettingsView({
   const discordPane = (
     <div key="discord" className={paneClass} style={paneStyle}>
       <SubHeader title="Discord Rich Presence" onBack={() => setSub(null)} />
-      <SettingRow title="Показывать в Discord" hint="Статус «слушает Muza»; нужен запущенный Discord и зарегистрированное приложение (client id)">
+      <SettingRow
+        title="Показывать в Discord"
+        hint={
+          discordAvail === false
+            ? "Нужен Discord Application ID — RPC заглушен до его добавления; настройка сохранится и заработает сама, когда владелец его пришлёт"
+            : "Статус «слушает Muza»; нужен запущенный Discord и зарегистрированное приложение (client id)"
+        }
+      >
         <Switch checked={prefs.discordRpcOn} onChange={(discordRpcOn: boolean) => set({ discordRpcOn })} label="Discord RPC" />
       </SettingRow>
       <GroupTitle>Что показывать</GroupTitle>
@@ -2532,7 +2546,7 @@ export function SettingsView({
     ) : tab === "integrations" ? (
       <div key="integrations" className={paneClass} style={paneStyle}>
         <SettingRow title="Discord Rich Presence" hint="Статус, кнопка, обложка и шаблоны строк (нужен Application ID из Dev Portal)" onClick={() => setSub("discord")} chevron>
-          <RowValue>Выкл</RowValue>
+          <RowValue>{prefs.discordRpcOn ? "Вкл" : "Выкл"}</RowValue>
         </SettingRow>
         <SettingRow
           title="Скробблинг Last.fm"

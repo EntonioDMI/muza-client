@@ -55,3 +55,14 @@ export async function clearDiscordActivity(): Promise<void> {
   if (!isTauri()) return;
   await invoke("rpc_clear").catch(() => undefined);
 }
+
+/** Настроен ли Application ID (компайл-тайм client_id в rpc.rs непуст).
+ *  В вебе всегда false — как и весь Discord-мост. */
+export async function rpcAvailable(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    return await invoke<boolean>("rpc_available");
+  } catch {
+    return false;
+  }
+}

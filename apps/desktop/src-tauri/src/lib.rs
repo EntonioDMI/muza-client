@@ -73,6 +73,7 @@ pub fn run() {
             local::local_forget,
             rpc::rpc_update,
             rpc::rpc_clear,
+            rpc::rpc_available,
             share::share_save_file,
             tray::tray_configure,
             miniplayer::miniplayer_show,

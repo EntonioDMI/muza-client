@@ -11,11 +11,20 @@ use std::sync::Mutex;
 use tauri::State;
 
 /// Application ID из Discord Developer Portal. Пусто = RPC выключен
-/// (владелец ещё не создал приложение «Muza»).
+/// (владелец ещё не создал приложение «Muza»). Когда ID появится — либо
+/// впиши его сюда значением константы, либо собери с
+/// `MUZA_DISCORD_CLIENT_ID=<id> cargo build` (компайл-тайм, не env рантайма).
 const DEFAULT_CLIENT_ID: &str = "";
 
-fn client_id() -> String {
-    std::env::var("MUZA_DISCORD_CLIENT_ID").unwrap_or_else(|_| DEFAULT_CLIENT_ID.to_string())
+fn client_id() -> &'static str {
+    option_env!("MUZA_DISCORD_CLIENT_ID").unwrap_or(DEFAULT_CLIENT_ID)
+}
+
+/// Настроен ли Application ID. Пока пусто — RPC осознанно заглушен;
+/// клиент честно показывает это в под-панели настроек Discord.
+#[tauri::command]
+pub fn rpc_available() -> bool {
+    !client_id().is_empty()
 }
 
 #[derive(Default)]
@@ -48,7 +57,7 @@ pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
     }
     let mut guard = state.client.lock().unwrap();
     if guard.is_none() {
-        let Ok(mut client) = DiscordIpcClient::new(&id) else {
+        let Ok(mut client) = DiscordIpcClient::new(id) else {
             return false;
         };
         if client.connect().is_err() {
