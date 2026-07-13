@@ -41,6 +41,23 @@ describe("resolveApiBaseUrl", () => {
     expect(() => resolveApiBaseUrl(raw, mode)).toThrow();
   });
 
+  it.each(
+    ([
+      ["TAB", "\t"],
+      ["LF", "\n"],
+      ["CR", "\r"],
+    ] as const).flatMap(([controlName, control]) =>
+      [
+        ["development", controlName, "/@host", `http://${control}/@localhost:8000/api`],
+        ["development", controlName, "//@host", `http://${control}//@localhost:8000/api`],
+        ["production", controlName, "/@host", `https://${control}/@api.muza.lol/api`],
+        ["production", controlName, "//@host", `https://${control}//@api.muza.lol/api`],
+      ] as const,
+    ),
+  )("rejects %s URL with %s-only authority before %s", (mode, _control, _slashes, raw) => {
+    expect(() => resolveApiBaseUrl(raw, mode)).toThrow();
+  });
+
   it("allows @ in a development path", () => {
     expect(resolveApiBaseUrl("http://localhost:8000/api/@scope", "development")).toBe(
       "http://localhost:8000/api/@scope",

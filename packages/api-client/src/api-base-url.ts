@@ -10,6 +10,10 @@ export function resolveApiBaseUrl(
   const value = raw?.trim() || (mode === "development" ? devFallback : undefined);
   if (!value) throw new Error("Production API URL is required");
 
+  if (/[\t\n\r]/.test(raw ?? "") || /[\t\n\r]/.test(value)) {
+    throw new Error("API URL contains forbidden parts");
+  }
+
   const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]+)/i.exec(value)?.[1];
   if (!authority || value.includes("?") || value.includes("#") || authority.includes("@")) {
     throw new Error("API URL contains forbidden parts");
