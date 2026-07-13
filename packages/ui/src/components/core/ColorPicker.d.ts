@@ -1,5 +1,7 @@
-/** Color swatch with a masked native picker — circle of the current color,
- *  eyedropper glyph on hover. Selection ring via outline (DS has no shadows). */
+/** Color swatch — circle of the current color, eyedropper glyph on hover.
+ *  Click opens the DS popover picker (SV square + hue slider + hex field)
+ *  instead of the native OS color dialog. Selection ring via outline
+ *  (DS has no shadows). Contract unchanged from the native-input version. */
 export interface ColorPickerProps {
   /** Hex color, e.g. "#3b82f6". */
   value?: string;
