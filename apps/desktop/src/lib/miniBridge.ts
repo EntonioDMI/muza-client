@@ -26,17 +26,17 @@ const HELLO_EVENT = "muza://mini-hello";
 
 export async function miniShow(): Promise<void> {
   if (!isTauri()) return;
-  await invoke("miniplayer_show").catch(() => undefined);
+  await invoke("miniplayer_show").catch((err) => console.error("[miniBridge]", err));
 }
 
 export async function miniHide(): Promise<void> {
   if (!isTauri()) return;
-  await invoke("miniplayer_hide").catch(() => undefined);
+  await invoke("miniplayer_hide").catch((err) => console.error("[miniBridge]", err));
 }
 
 export async function miniSendState(state: MiniState): Promise<void> {
   if (!isTauri()) return;
-  await emitTo("mini", STATE_EVENT, state).catch(() => undefined);
+  await emitTo("mini", STATE_EVENT, state).catch((err) => console.error("[miniBridge]", err));
 }
 
 /** main: слушать команды мини и его hello (ответить снапшотом). */
@@ -57,12 +57,12 @@ export async function miniListen(
 
 export async function miniHello(): Promise<void> {
   if (!isTauri()) return;
-  await emitTo("main", HELLO_EVENT, null).catch(() => undefined);
+  await emitTo("main", HELLO_EVENT, null).catch((err) => console.error("[miniBridge]", err));
 }
 
 export async function miniCommand(cmd: MiniCommand): Promise<void> {
   if (!isTauri()) return;
-  await emitTo("main", CMD_EVENT, cmd).catch(() => undefined);
+  await emitTo("main", CMD_EVENT, cmd).catch((err) => console.error("[miniBridge]", err));
 }
 
 export async function miniOnState(cb: (s: MiniState) => void): Promise<UnlistenFn> {

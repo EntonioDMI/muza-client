@@ -19,6 +19,18 @@
         "minWidth": 1024,
         "minHeight": 700,
         "center": true
+      },
+      {
+        "label": "mini",
+        "url": "index.html",
+        "visible": false,
+        "width": 380,
+        "height": 148,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "title": "Muza mini"
       }
     ],
     "security": {

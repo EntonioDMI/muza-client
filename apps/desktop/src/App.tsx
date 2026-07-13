@@ -486,8 +486,16 @@ function Player({
   };
   useEffect(() => {
     if (!engineAvailable()) return;
-    if (prefs.miniPlayer) void miniShow();
-    else void miniHide();
+    if (prefs.miniPlayer) {
+      // Окно "mini" смонтировано (скрыто) ещё со старта приложения — его
+      // собственный mini-hello мог уйти ДО того, как main успел подписаться
+      // (см. miniListen ниже). Досылаем свежий снапшот сразу после show(),
+      // чтобы первое появление окна не оставалось пустым до следующего
+      // изменения трека/позиции.
+      void miniShow().then(() => miniRef.current.send());
+    } else {
+      void miniHide();
+    }
   }, [prefs.miniPlayer]);
   useEffect(() => {
     if (!engineAvailable()) return;

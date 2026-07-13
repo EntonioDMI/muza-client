@@ -41,8 +41,15 @@ pub fn run() {
                     if tray::handle_close_requested(window.app_handle()) {
                         api.prevent_close();
                     } else {
-                        // выходим по-настоящему — мини-плеер не должен пережить main
-                        let _ = miniplayer::miniplayer_hide(window.app_handle().clone());
+                        // Выходим по-настоящему. Мини-плеер — статическое окно
+                        // (visible:false в конфиге), hide() его не уничтожает —
+                        // значит оно останется «открытым», и Tauri не запустит
+                        // авто-выход по нулю окон (см. RunEvent::ExitRequested).
+                        // Поэтому тут именно close(), а не miniplayer_hide():
+                        // мини-плеер не должен пережить main.
+                        if let Some(mini) = window.app_handle().get_webview_window("mini") {
+                            let _ = mini.close();
+                        }
                     }
                 }
             }
