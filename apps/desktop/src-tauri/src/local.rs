@@ -58,8 +58,12 @@ fn persist(app: &AppHandle, entries: &[LocalEntry]) {
 /// (scope не персистится между запусками — открываем заново).
 pub fn init(app: &AppHandle) {
     let Ok(path) = registry_path(app) else { return };
-    let Ok(raw) = fs::read_to_string(&path) else { return };
-    let Ok(entries) = serde_json::from_str::<Vec<LocalEntry>>(&raw) else { return };
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<LocalEntry>>(&raw) else {
+        return;
+    };
     for entry in &entries {
         let p = Path::new(&entry.path);
         if p.exists() {
@@ -76,7 +80,9 @@ fn hash_file(path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 1024 * 1024];
     loop {
-        let n = file.read(&mut buf).map_err(|e| format!("файл не читается: {e}"))?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("файл не читается: {e}"))?;
         if n == 0 {
             break;
         }
@@ -91,7 +97,9 @@ fn hash_file(path: &Path) -> Result<String, String> {
 }
 
 /// Расширения, которые пытаемся читать как аудио.
-const AUDIO_EXT: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "aiff", "ape", "webm"];
+const AUDIO_EXT: &[&str] = &[
+    "mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "aiff", "ape", "webm",
+];
 
 fn is_audio(path: &Path) -> bool {
     path.extension()
@@ -176,14 +184,19 @@ pub async fn local_scan(
     {
         let mut entries = state.entries.lock().unwrap();
         for entry in scanned {
-            let _ = app.asset_protocol_scope().allow_file(Path::new(&entry.path));
+            let _ = app
+                .asset_protocol_scope()
+                .allow_file(Path::new(&entry.path));
             // тот же файл (hash) — обновляем путь/теги, не плодим дубли
             if let Some(existing) = entries.iter_mut().find(|e| e.hash == entry.hash) {
                 *existing = entry.clone();
             } else {
                 entries.push(entry.clone());
             }
-            out.push(LocalEntryOut { entry, available: true });
+            out.push(LocalEntryOut {
+                entry,
+                available: true,
+            });
         }
         persist(&app, &entries);
     }
@@ -194,7 +207,9 @@ fn collect_audio(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -213,7 +228,10 @@ pub fn local_list(state: State<'_, LocalState>) -> Vec<LocalEntryOut> {
         .lock()
         .unwrap()
         .iter()
-        .map(|e| LocalEntryOut { entry: e.clone(), available: Path::new(&e.path).exists() })
+        .map(|e| LocalEntryOut {
+            entry: e.clone(),
+            available: Path::new(&e.path).exists(),
+        })
         .collect()
 }
 
@@ -232,7 +250,11 @@ pub fn local_resolve(app: AppHandle, state: State<'_, LocalState>, hash: String)
 
 /// Убрать запись из реестра (файл на диске не трогаем — он пользовательский).
 #[tauri::command]
-pub fn local_forget(app: AppHandle, state: State<'_, LocalState>, hash: String) -> Result<(), String> {
+pub fn local_forget(
+    app: AppHandle,
+    state: State<'_, LocalState>,
+    hash: String,
+) -> Result<(), String> {
     let mut entries = state.entries.lock().unwrap();
     entries.retain(|e| e.hash != hash);
     persist(&app, &entries);

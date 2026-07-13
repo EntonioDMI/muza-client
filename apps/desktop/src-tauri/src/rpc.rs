@@ -71,9 +71,10 @@ pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
         .activity_type(activity::ActivityType::Listening)
         .details(&payload.details)
         .state(&payload.state);
-    let assets = payload.cover_url.as_deref().map(|url| {
-        activity::Assets::new().large_image(url).large_text("Muza")
-    });
+    let assets = payload
+        .cover_url
+        .as_deref()
+        .map(|url| activity::Assets::new().large_image(url).large_text("Muza"));
     if let Some(assets) = assets {
         act = act.assets(assets);
     }
