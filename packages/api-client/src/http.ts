@@ -25,6 +25,7 @@ import {
   type ScrobblingStatus,
   type SearchScope,
   type Session,
+  type SessionInfo,
   SessionSchema,
   type StatsOverview,
   type StatsPeriod,
@@ -1114,6 +1115,42 @@ export class HttpMuzaApi implements MuzaApi {
         ...(refreshToken ? { refresh_token: refreshToken } : {}),
       }),
     });
+  }
+
+  async changeEmail(password: string, newEmail: string): Promise<void> {
+    await this.authedRequest("/auth/email/start", {
+      method: "POST",
+      body: JSON.stringify({ password, new_email: newEmail }),
+    });
+  }
+
+  async listSessions(): Promise<SessionInfo[]> {
+    const out = await this.authedRequest<{
+      sessions: { id: string; ip: string | null; user_agent: string | null; created_at: string; current: boolean }[];
+    }>("/me/sessions");
+    return out.sessions.map((s) => ({
+      id: s.id,
+      ip: s.ip,
+      userAgent: s.user_agent,
+      createdAt: s.created_at,
+      current: s.current,
+    }));
+  }
+
+  async revokeSession(id: string): Promise<void> {
+    await this.authedRequest(`/me/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async exportData(): Promise<Record<string, unknown>> {
+    return this.authedRequest<Record<string, unknown>>("/me/privacy/export");
+  }
+
+  async deleteAccount(password: string): Promise<void> {
+    await this.authedRequest("/me/privacy/account", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    });
+    localStorage.removeItem(STORAGE_KEY); // аккаунта больше нет — сессия тоже
   }
 
   private load(): Session | null {

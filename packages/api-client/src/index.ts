@@ -25,6 +25,7 @@ import type {
   ScrobblingStatus,
   SearchScope,
   Session,
+  SessionInfo,
   StatsOverview,
   StatsPeriod,
   TelemetryStats,
@@ -59,6 +60,21 @@ export interface MuzaApi {
   /** Смена пароля из приложения (настройки → Аккаунт): старый → новый.
    *  Остальные устройства разлогиниваются, текущая сессия живёт. */
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
+
+  /** Смена/привязка почты: пароль + новая почта → письмо-подтверждение
+   *  на НОВЫЙ адрес (почта меняется по клику из письма). */
+  changeEmail(password: string, newEmail: string): Promise<void>;
+
+  /** Сессии и устройства: активные refresh-сессии (текущая помечена). */
+  listSessions(): Promise<SessionInfo[]>;
+  /** Разлогинить устройство (текущее — 400: используй logout). */
+  revokeSession(id: string): Promise<void>;
+
+  /** Выгрузка всех данных аккаунта одним JSON (без секретов). */
+  exportData(): Promise<Record<string, unknown>>;
+  /** Удалить аккаунт и все серверные данные; пароль обязателен.
+   *  Локальная сессия чистится сразу. */
+  deleteAccount(password: string): Promise<void>;
 
   // Каталог (Stage 2, слайс 3). Требует серверной сессии (аноним — локальный,
   // сервер его не знает → поиск недоступен).

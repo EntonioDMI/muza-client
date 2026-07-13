@@ -214,6 +214,19 @@ export interface MarketTheme {
   hidden: boolean;
 }
 
+// ── Сессии и устройства (настройки → Аккаунт) ─────────────────────
+
+/** Активная сессия (refresh-строка); createdAt = последняя активность
+ *  устройства (ротация создаёт свежую строку на каждый refresh). */
+export interface SessionInfo {
+  id: string;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+  /** Сессия, которой сделан этот запрос. */
+  current: boolean;
+}
+
 // ── Jam: слушать вместе (Stage 7) ──────────────────────────────────
 
 export interface JamMember {

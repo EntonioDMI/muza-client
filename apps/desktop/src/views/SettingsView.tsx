@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
-import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus } from "@muza/api-client";
+import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
@@ -31,6 +31,25 @@ import {
 
 /** Демо-значения для предпросмотра шаблонов Discord-активности. */
 const DISCORD_PREVIEW_VARS = { track: "Кометы над городом", artist: "Северный ветер", album: "Полночь" };
+
+/** Человеческое имя устройства из user-agent (грубая эвристика для списка сессий). */
+function deviceLabel(ua: string | null): string {
+  if (!ua) return "Неизвестное устройство";
+  const low = ua.toLowerCase();
+  const os = low.includes("windows")
+    ? "Windows"
+    : low.includes("android")
+      ? "Android"
+      : low.includes("iphone") || low.includes("ipad")
+        ? "iOS"
+        : low.includes("mac")
+          ? "macOS"
+          : low.includes("linux")
+            ? "Linux"
+            : "Устройство";
+  const app = low.includes("muza") || low.includes("tauri") ? "Muza" : "браузер";
+  return `${os} · ${app}`;
+}
 
 /* Структура и состав — docs/notes/2026-07-10-настройки-спецификация.md:
    11 вкладок-разделов; «Внешний вид» = простые (пресеты) + под-экран
@@ -627,7 +646,19 @@ const TABS = [
 
 // Хоткеи переназначаемы — определения/дефолты в lib/hotkeys, биндинги в prefs.hotkeys
 
-type Sub = "customize" | "equalizer" | "discord" | "market" | "data" | "stats" | "licenses" | "bar" | "nav" | null;
+type Sub =
+  | "customize"
+  | "equalizer"
+  | "discord"
+  | "market"
+  | "data"
+  | "stats"
+  | "licenses"
+  | "bar"
+  | "nav"
+  | "sessions"
+  | "privacy"
+  | null;
 
 /** Открытый код внутри клиента: имя · лицензия · сайт (под-экран «Лицензии»). */
 const OSS_LICENSES: { name: string; license: string; url: string }[] = [
@@ -664,6 +695,8 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   licenses: "system",
   bar: "appearance",
   nav: "appearance",
+  sessions: "account",
+  privacy: "account",
 };
 
 /** Витрина маркетплейса (демо-каталог; установка — Stage 6). */
@@ -752,6 +785,119 @@ export function SettingsView({
       setPwdErr(e instanceof ApiError ? e.message : "Не удалось сменить пароль");
     } finally {
       setPwdBusy(false);
+    }
+  };
+
+  // Смена почты (волна C1): пароль + новая почта → письмо на новый адрес
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailPwd, setEmailPwd] = useState("");
+  const [emailNew, setEmailNew] = useState("");
+  const [emailErr, setEmailErr] = useState<string | null>(null);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const openEmailChange = () => {
+    setEmailPwd("");
+    setEmailNew("");
+    setEmailErr(null);
+    setEmailOpen(true);
+  };
+  const submitEmailChange = async () => {
+    if (!emailNew.includes("@")) {
+      setEmailErr("Похоже, это не почта");
+      return;
+    }
+    setEmailBusy(true);
+    setEmailErr(null);
+    try {
+      await api.changeEmail(emailPwd, emailNew.trim());
+      setEmailOpen(false);
+      onNotify("Письмо отправлено на новую почту — подтверди по ссылке", "mail");
+    } catch (e) {
+      setEmailErr(e instanceof ApiError ? e.message : "Не удалось отправить письмо");
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  // Сессии и устройства (волна C2)
+  const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
+  useEffect(() => {
+    if (sub !== "sessions" || !serverSession) return;
+    let alive = true;
+    api
+      .listSessions()
+      .then((s) => {
+        if (alive) setSessions(s);
+      })
+      .catch(() => {
+        if (alive) setSessions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sub, serverSession, api]);
+  const revokeSession = async (id: string) => {
+    try {
+      await api.revokeSession(id);
+      setSessions((list) => list?.filter((s) => s.id !== id) ?? list);
+      onNotify("Устройство разлогинено", "shield-check");
+    } catch (e) {
+      onNotify(e instanceof ApiError ? e.message : "Не удалось отозвать сессию", "x");
+    }
+  };
+
+  // Выгрузка/удаление данных (волна C3)
+  const [exportBusy, setExportBusy] = useState(false);
+  const doExport = async () => {
+    setExportBusy(true);
+    try {
+      const data = await api.exportData();
+      const json = JSON.stringify(data, null, 2);
+      const name = `muza-export-${new Date().toISOString().slice(0, 10)}.json`;
+      if (engineAvailable()) {
+        // Tauri: нативный save-диалог + запись через Rust (паттерн ShareDialog);
+        // JSON юникодный — base64 через TextEncoder, голый btoa падает на кириллице
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const path = await save({ defaultPath: name, filters: [{ name: "JSON", extensions: ["json"] }] });
+        if (path) {
+          const bytes = new TextEncoder().encode(json);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+          }
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("share_save_file", { path, dataBase64: btoa(binary) });
+          onNotify("Данные выгружены", "download");
+        }
+      } else {
+        const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      onNotify(e instanceof ApiError ? e.message : "Не удалось выгрузить данные", "x");
+    } finally {
+      setExportBusy(false);
+    }
+  };
+  const [delOpen, setDelOpen] = useState(false);
+  const [delPwd, setDelPwd] = useState("");
+  const [delErr, setDelErr] = useState<string | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const submitDelete = async () => {
+    setDelBusy(true);
+    setDelErr(null);
+    try {
+      await api.deleteAccount(delPwd);
+      setDelOpen(false);
+      onNotify("Аккаунт удалён", "trash-2");
+      onLogout();
+    } catch (e) {
+      setDelErr(e instanceof ApiError ? e.message : "Не удалось удалить аккаунт");
+    } finally {
+      setDelBusy(false);
     }
   };
 
@@ -1788,6 +1934,67 @@ export function SettingsView({
     </div>
   );
 
+  // Под-экран «Сессии и устройства» (C2): активные refresh-сессии
+  const sessionsPane = (
+    <div key="sessions" className={paneClass} style={paneStyle}>
+      <SubHeader title="Сессии и устройства" onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        Каждая строка — устройство со входом в аккаунт. Дата — последняя активность. Не узнаёшь устройство — разлогинь
+        его и смени пароль.
+      </div>
+      {sessions === null ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>Загружаем…</div>
+      ) : sessions.length === 0 ? (
+        <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>Не удалось загрузить список сессий.</div>
+      ) : (
+        sessions.map((s) => (
+          <SettingRow
+            key={s.id}
+            title={`${deviceLabel(s.userAgent)}${s.current ? " · текущая" : ""}`}
+            hint={`${s.ip ?? "ip неизвестен"} · ${new Date(s.createdAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`}
+          >
+            {s.current ? (
+              <RowValue>это устройство</RowValue>
+            ) : (
+              <Button variant="ghost" icon="log-out" onClick={() => void revokeSession(s.id)}>
+                Выйти
+              </Button>
+            )}
+          </SettingRow>
+        ))
+      )}
+    </div>
+  );
+
+  // Под-экран «Выгрузить или удалить данные» (C3)
+  const privacyPane = (
+    <div key="privacy" className={paneClass} style={paneStyle}>
+      <SubHeader title="Данные аккаунта" onBack={() => setSub(null)} />
+      <SettingRow title="Выгрузить данные" hint="Профиль, лайки, история, плейлисты — одним JSON, без паролей и токенов">
+        <Button variant="secondary" icon="download" disabled={exportBusy} onClick={() => void doExport()}>
+          {exportBusy ? "Собираем…" : "Выгрузить JSON"}
+        </Button>
+      </SettingRow>
+      <SettingRow
+        title="Удалить аккаунт"
+        hint="Навсегда: лайки, плейлисты, история и совместные доступы. Локальные файлы и кэш на устройстве останутся"
+        danger
+      >
+        <Button
+          variant="ghost"
+          icon="trash-2"
+          onClick={() => {
+            setDelPwd("");
+            setDelErr(null);
+            setDelOpen(true);
+          }}
+        >
+          Удалить…
+        </Button>
+      </SettingRow>
+    </div>
+  );
+
   // Под-экран «Лицензии»: открытый код внутри клиента (честный список руками —
   // полная машинная выжимка сотен транзитивных пакетов тут никому не помогает)
   const licensesPane = (
@@ -1973,6 +2180,10 @@ export function SettingsView({
       barPane
     ) : sub === "nav" ? (
       navPane
+    ) : sub === "sessions" ? (
+      sessionsPane
+    ) : sub === "privacy" ? (
+      privacyPane
     ) : tab === "account" ? (
       <div key="account" className={paneClass} style={paneStyle}>
         <SettingRow title="Профиль" hint={username}>
@@ -1980,9 +2191,16 @@ export function SettingsView({
             Выйти
           </Button>
         </SettingRow>
-        <SettingRow title="Email" hint="Для восстановления пароля (смена почты — позже)">
-          <RowValue>указан при регистрации</RowValue>
-        </SettingRow>
+        <SettingRow
+          title="Email"
+          hint={
+            serverSession
+              ? "Для восстановления пароля; смена подтверждается письмом на новый адрес"
+              : "Нужен аккаунт — у анонима почты нет"
+          }
+          onClick={serverSession ? openEmailChange : undefined}
+          chevron={serverSession}
+        ></SettingRow>
         <SettingRow
           title="Сменить пароль"
           hint={
@@ -1993,7 +2211,12 @@ export function SettingsView({
           onClick={serverSession ? openPwd : undefined}
           chevron={serverSession}
         ></SettingRow>
-        <SettingRow title="Сессии и устройства" hint="Где выполнен вход (позже)" chevron></SettingRow>
+        <SettingRow
+          title="Сессии и устройства"
+          hint={serverSession ? "Где выполнен вход; чужое устройство можно разлогинить" : "Нужен аккаунт"}
+          onClick={serverSession ? () => setSub("sessions") : undefined}
+          chevron={serverSession}
+        ></SettingRow>
         <GroupTitle>Приватность</GroupTitle>
         <SettingRow
           title="Анонимная статистика"
@@ -2011,7 +2234,13 @@ export function SettingsView({
           onClick={() => setSub("data")}
           chevron
         ></SettingRow>
-        <SettingRow title="Выгрузить или удалить данные" hint="Появится к релизу" danger chevron></SettingRow>
+        <SettingRow
+          title="Выгрузить или удалить данные"
+          hint={serverSession ? "JSON-выгрузка всего или полное удаление аккаунта" : "Нужен аккаунт — у анонима на сервере ничего нет"}
+          onClick={serverSession ? () => setSub("privacy") : undefined}
+          danger
+          chevron={serverSession}
+        ></SettingRow>
       </div>
     ) : tab === "appearance" ? (
       <div key="appearance" className={paneClass} style={paneStyle}>
@@ -2564,6 +2793,61 @@ export function SettingsView({
               После смены все остальные устройства разлогинятся; это — останется в сессии.
             </div>
           )}
+        </div>
+      </Dialog>
+
+      {/* Смена почты (C1): пароль + новая почта → письмо на новый адрес */}
+      <Dialog
+        open={emailOpen}
+        title="Сменить почту"
+        onClose={() => setEmailOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setEmailOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="mail" disabled={emailBusy} onClick={() => void submitEmailChange()}>
+              {emailBusy ? "Отправляем…" : "Отправить письмо"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
+          <SettingInput type="password" value={emailPwd} onChange={setEmailPwd} placeholder="Пароль аккаунта" width={300} />
+          <SettingInput value={emailNew} onChange={setEmailNew} placeholder="Новая почта" width={300} />
+          {emailErr ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{emailErr}</div>
+          ) : (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              На новую почту придёт письмо — адрес сменится после клика по ссылке из него.
+            </div>
+          )}
+        </div>
+      </Dialog>
+
+      {/* Удаление аккаунта (C3): двухшаговое — кнопка в под-экране, тут пароль */}
+      <Dialog
+        open={delOpen}
+        title="Удалить аккаунт навсегда?"
+        onClose={() => setDelOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setDelOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="trash-2" disabled={delBusy || delPwd.length < 8} onClick={() => void submitDelete()}>
+              {delBusy ? "Удаляем…" : "Удалить навсегда"}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
+            Сервер удалит всё: лайки, плейлисты, историю, совместные доступы и опубликованные темы. Это не
+            отменяется. Локальные файлы и кэш на устройстве останутся.
+          </div>
+          <SettingInput type="password" value={delPwd} onChange={setDelPwd} placeholder="Пароль для подтверждения" width={300} />
+          {delErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{delErr}</div> : null}
         </div>
       </Dialog>
 

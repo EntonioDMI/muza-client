@@ -20,6 +20,7 @@ import {
   type RegisterStatus,
   type SearchScope,
   type Session,
+  type SessionInfo,
   SessionSchema,
   type StatsOverview,
   type Track,
@@ -106,6 +107,24 @@ export class MockMuzaApi implements MuzaApi {
 
   async changePassword(): Promise<void> {
     // мок: пароля нет — делаем вид, что сменили
+  }
+
+  async changeEmail(): Promise<void> {
+    // мок: почты нет
+  }
+
+  async listSessions(): Promise<SessionInfo[]> {
+    return [];
+  }
+
+  async revokeSession(): Promise<void> {}
+
+  async exportData(): Promise<Record<string, unknown>> {
+    return { exported_at: new Date().toISOString(), note: "мок: данных на сервере нет" };
+  }
+
+  async deleteAccount(): Promise<void> {
+    // мок: серверного аккаунта нет
   }
 
   // Скробблинг в моке недоступен: сервера с ключами нет
