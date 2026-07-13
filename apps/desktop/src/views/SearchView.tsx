@@ -4,6 +4,7 @@ import type { MuzaApi, Track } from "@muza/api-client";
 import { TRACKS, type DemoTrack } from "../data/demo";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
  *  каталогу (scope=catalog), Enter/кнопка — полный с провайдерами (scope=full,
@@ -137,8 +138,16 @@ export function SearchView({
           ) : null}
           <div style={{ display: "flex", flexDirection: "column" }}>
             {(results ?? []).map((t, i) => (
-              // draggable: строку можно унести в плейлист сайдбара
-              <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
+              // draggable: строку можно унести в плейлист сайдбара; Alt+drag — файл (T18)
+              <div
+                key={t.id}
+                draggable
+                onDragStart={(e) => {
+                  if (maybeAltFileDrag(e, () => exportCachedTrack(t.id, t.artist, t.title), (m) => onNotify(m, "x")))
+                    return;
+                  startTrackDrag(e, t.id, t.title, t.artist);
+                }}
+              >
                 <TrackRow
                   index={i + 1}
                   cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}

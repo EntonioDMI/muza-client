@@ -85,6 +85,7 @@ function PlaylistRow({
   meta,
   shared,
   onClick,
+  onMenu,
   onDropTrack,
 }: {
   cover?: string;
@@ -92,6 +93,8 @@ function PlaylistRow({
   meta: string;
   shared?: boolean;
   onClick?: () => void;
+  /** ПКМ по строке — контекст-меню плейлиста (Открыть/Переименовать/Удалить). */
+  onMenu?: (e: React.MouseEvent) => void;
   /** Дроп перетаскиваемого трека на этот плейлист (undefined = не таргет). */
   onDropTrack?: (trackId: string) => void;
 }) {
@@ -103,6 +106,14 @@ function PlaylistRow({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onContextMenu={
+        onMenu
+          ? (e) => {
+              e.preventDefault();
+              onMenu(e);
+            }
+          : undefined
+      }
       onDragOver={
         onDropTrack
           ? (e) => {
@@ -187,6 +198,7 @@ export function Sidebar({
   playlists,
   onCreatePlaylist,
   onOpenPlaylist,
+  onPlaylistMenu,
   onDropTrack,
   isAdmin = false,
   navItems,
@@ -197,6 +209,8 @@ export function Sidebar({
   playlists: SidebarPlaylist[];
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
+  /** T17: ПКМ по плейлисту — контекст-меню (App: Открыть/Переименовать/Удалить). */
+  onPlaylistMenu?: (p: SidebarPlaylist, e: React.MouseEvent) => void;
   /** DnD: трек уронили на плейлист (только серверные списки). */
   onDropTrack?: (playlistId: string, trackId: string) => void;
   /** Показывает пункт «Админка» (Stage 5); true только после adminPing. */
@@ -300,6 +314,7 @@ export function Sidebar({
             meta={p.meta}
             shared={p.shared}
             onClick={() => onOpenPlaylist(p.id)}
+            onMenu={onPlaylistMenu ? (e) => onPlaylistMenu(p, e) : undefined}
             onDropTrack={onDropTrack ? (trackId) => onDropTrack(p.id, trackId) : undefined}
           />
         ))}

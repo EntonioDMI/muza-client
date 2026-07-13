@@ -8,10 +8,13 @@ import {
   localForget,
   localList,
   localPickAndScan,
+  localResolve,
   registerLocalTracks,
   type LocalEntry,
 } from "../lib/localFiles";
 import { fmtTime } from "../lib/format";
+import { startTrackDrag } from "../lib/dnd";
+import { maybeAltFileDrag } from "../lib/dragOut";
 
 /** «Твоя медиатека» (Stage 4): настоящие серверные плейлисты, локальные файлы
  *  (device-bound), добавление по ссылке и импорт; демо-контент остаётся
@@ -23,6 +26,7 @@ export function LibraryView({
   currentId,
   playing,
   onOpenPlaylist,
+  onPlaylistMenu,
   onPlayTrack,
   onPlayLocal,
   onAddToPlaylist,
@@ -38,6 +42,8 @@ export function LibraryView({
   currentId: string;
   playing: boolean;
   onOpenPlaylist: (id: string) => void;
+  /** T17: ПКМ по плитке серверного плейлиста — то же меню, что в сайдбаре. */
+  onPlaylistMenu?: (p: { id: string; name: string }, e: React.MouseEvent) => void;
   onPlayTrack: (id: string) => void;
   /** Играть локальные файлы (очередь = вкладка «Локальные»). */
   onPlayLocal: (entries: LocalEntry[], hash: string) => void;
@@ -143,7 +149,33 @@ export function LibraryView({
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
             {(locals ?? []).map((e, i) => (
-              <div key={e.hash} style={e.available ? undefined : { opacity: 0.45 }}>
+              // T18 draggable: drag — в плейлист сайдбара (нужен серверный id),
+              // Alt+drag — сам локальный файл на рабочий стол / в проводник
+              <div
+                key={e.hash}
+                draggable={e.available}
+                onDragStart={(ev) => {
+                  if (
+                    maybeAltFileDrag(
+                      ev,
+                      async () => {
+                        const path = await localResolve(e.hash);
+                        if (!path) throw new Error("Файла нет на этом устройстве");
+                        return path;
+                      },
+                      (m) => onNotify(m, "x"),
+                    )
+                  )
+                    return;
+                  const sid = serverIds[e.hash];
+                  if (!sid) {
+                    ev.preventDefault(); // без серверного id класть в плейлист нечего
+                    return;
+                  }
+                  startTrackDrag(ev, sid, e.title, e.artist);
+                }}
+                style={e.available ? undefined : { opacity: 0.45 }}
+              >
                 <TrackRow
                   index={i + 1}
                   title={e.title}
@@ -189,6 +221,7 @@ export function LibraryView({
               width="auto"
               onClick={() => onOpenPlaylist(p.id)}
               onPlay={() => onOpenPlaylist(p.id)}
+              onMenu={onPlaylistMenu ? (e: React.MouseEvent) => onPlaylistMenu({ id: p.id, name: p.name }, e) : undefined}
             />
           ))}
           {srvPlaylists.length === 0 ? (

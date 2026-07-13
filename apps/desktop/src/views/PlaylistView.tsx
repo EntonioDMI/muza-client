@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, Tooltip } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
-import { localList } from "../lib/localFiles";
+import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { CollabDialog } from "../shell/CollabDialog";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
@@ -187,7 +188,10 @@ export function PlaylistView({
             if (detail) onSaveOffline(detail.tracks);
           }}
         />
-        {detail?.isOwner !== false ? (
+        {/* Райдер T16: при ошибке загрузки (detail=null, error) плейлиста может
+            уже не существовать — владельческие кнопки скрываем, иначе они бьют
+            по мёртвому id. Пока грузится (error=null) — ведём себя как раньше. */}
+        {(detail ? detail.isOwner : error === null) ? (
           <>
             <IconButton
               icon="pencil"
@@ -219,12 +223,30 @@ export function PlaylistView({
           ]
             .filter(Boolean)
             .join(" · ");
+          // локальный трек: Alt+drag тащит сам файл с устройства, каталожный — экспорт из кэша
+          const localOnly = t.localHash !== null && t.sources.every((s) => s === "local");
           return (
-            // draggable: из плейлиста можно унести в другой плейлист сайдбара
+            // draggable: из плейлиста можно унести в другой плейлист сайдбара; Alt+drag — файл (T18)
             <div
               key={t.id}
               draggable={!missingLocal}
-              onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}
+              onDragStart={(e) => {
+                if (
+                  maybeAltFileDrag(
+                    e,
+                    localOnly
+                      ? async () => {
+                          const path = await localResolve(t.localHash ?? "");
+                          if (!path) throw new Error("Файла нет на этом устройстве");
+                          return path;
+                        }
+                      : () => exportCachedTrack(t.id, t.artist, t.title),
+                    (m) => onNotify(m, "x"),
+                  )
+                )
+                  return;
+                startTrackDrag(e, t.id, t.title, t.artist);
+              }}
               style={missingLocal ? { opacity: 0.45 } : undefined}
             >
               <TrackRow

@@ -44,3 +44,24 @@ function dragIcon(): string {
 export async function startTrackFileDrag(path: string): Promise<void> {
   await startDrag({ item: [path], icon: dragIcon() });
 }
+
+/** T18, единый UX списков: обычный drag строки = в плейлист (HTML5),
+ *  Alt+drag = нативный файл на рабочий стол / в проводник.
+ *  Зовётся ПЕРВЫМ в onDragStart draggable-обёртки: если Alt зажат и мы в
+ *  Tauri — HTML5-drag отменяется (preventDefault) и запускается файл-drag
+ *  (кнопка мыши ещё зажата — OLE-drag подхватывает курсор, как в PlayerBar).
+ *  Вернул true — вызывающий НЕ должен стартовать startTrackDrag.
+ *  exportFile бросает честную ошибку («Трека нет в кэше…») — она уходит в
+ *  onError-тост, файл-drag просто не начинается. */
+export function maybeAltFileDrag(
+  e: React.DragEvent,
+  exportFile: () => Promise<string>,
+  onError: (message: string) => void,
+): boolean {
+  if (!e.altKey || !dragOutAvailable()) return false;
+  e.preventDefault();
+  exportFile()
+    .then((path) => startTrackFileDrag(path))
+    .catch((err) => onError(err instanceof Error ? err.message : "Не удалось подготовить файл"));
+  return true;
+}

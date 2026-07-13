@@ -5,6 +5,8 @@ import { PLAYLISTS, RELEASES, TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { WRAPPED_BANNER_PREVIEW, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
+import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import type { View } from "../types";
 
 function greeting() {
@@ -54,6 +56,7 @@ export function HomeFeed({
   onLike,
   onTrackMenu,
   onCatalogMenu,
+  onNotify,
   onOpen,
   onOpenWrapped,
 }: {
@@ -77,6 +80,8 @@ export function HomeFeed({
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   /** «⋯» на каталожном треке (плейлист/версии/оффлайн/радио). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
+  /** Тост (T18: «Трека нет в кэше…» при Alt+drag файла). */
+  onNotify: (text: string, icon?: string) => void;
   onOpen: (v: View) => void;
   /** Открыть Wrapped «Итоги года» (Stage 7); undefined у анонима. */
   onOpenWrapped?: () => void;
@@ -239,38 +244,60 @@ export function HomeFeed({
                 <h2 style={sectionH2}>{s.title}</h2>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {s.tracks.map((t, i) => (
-                    <TrackRow
+                    // T18 draggable: drag строки — в плейлист, Alt+drag — файл на рабочий стол
+                    <div
                       key={t.id}
-                      index={i + 1}
-                      cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
-                      title={t.title}
-                      artist={t.artist}
-                      duration={fmtTime(t.durationSec)}
-                      showDuration={rowShow?.duration !== false}
-                      active={currentId === t.id}
-                      playing={currentId === t.id && playing}
-                      liked={likes.includes(t.id)}
-                      onPlay={() => onPlayCatalog(s.tracks, t.id)}
-                      onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(t) : undefined}
-                      onLike={() => onLike(t.id)}
-                      onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
-                    />
+                      draggable
+                      onDragStart={(e) => {
+                        if (maybeAltFileDrag(e, () => exportCachedTrack(t.id, t.artist, t.title), (m) => onNotify(m, "x")))
+                          return;
+                        startTrackDrag(e, t.id, t.title, t.artist);
+                      }}
+                    >
+                      <TrackRow
+                        index={i + 1}
+                        cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
+                        title={t.title}
+                        artist={t.artist}
+                        duration={fmtTime(t.durationSec)}
+                        showDuration={rowShow?.duration !== false}
+                        active={currentId === t.id}
+                        playing={currentId === t.id && playing}
+                        liked={likes.includes(t.id)}
+                        onPlay={() => onPlayCatalog(s.tracks, t.id)}
+                        onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(t) : undefined}
+                        onLike={() => onLike(t.id)}
+                        onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
+                      />
+                    </div>
                   ))}
                 </div>
               </div>
             ) : (
-              // остальные секции — карусели
+              // остальные секции — карусели (T17: ПКМ по плитке = меню «⋯»;
+              // T18: плитка тоже draggable — у свежей ленты бывают только карусели)
               <Shelf key={s.key} title={s.title}>
                 {s.tracks.map((t) => (
-                  <Tile
+                  <div
                     key={t.id}
-                    cover={t.coverUrl ?? COVER_FALLBACK}
-                    title={t.title}
-                    subtitle={t.artist}
-                    playing={currentId === t.id && playing}
-                    onPlay={() => onPlayCatalog(s.tracks, t.id)}
-                    onClick={() => onPlayCatalog(s.tracks, t.id)}
-                  />
+                    draggable
+                    onDragStart={(e) => {
+                      if (maybeAltFileDrag(e, () => exportCachedTrack(t.id, t.artist, t.title), (m) => onNotify(m, "x")))
+                        return;
+                      startTrackDrag(e, t.id, t.title, t.artist);
+                    }}
+                    style={{ flex: "none" }}
+                  >
+                    <Tile
+                      cover={t.coverUrl ?? COVER_FALLBACK}
+                      title={t.title}
+                      subtitle={t.artist}
+                      playing={currentId === t.id && playing}
+                      onPlay={() => onPlayCatalog(s.tracks, t.id)}
+                      onClick={() => onPlayCatalog(s.tracks, t.id)}
+                      onMenu={(e: React.MouseEvent) => onCatalogMenu(t, e)}
+                    />
+                  </div>
                 ))}
               </Shelf>
             ),
@@ -398,6 +425,7 @@ function DemoShelves({
             playing={currentId === t.id && playing}
             onPlay={() => onPlayTrack(t.id)}
             onClick={() => onPlayTrack(t.id)}
+            onMenu={(e: React.MouseEvent) => onTrackMenu(t, e)}
           />
         ))}
       </Shelf>

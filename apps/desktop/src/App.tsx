@@ -252,6 +252,21 @@ function Player({
     y: 0,
     track: null,
   });
+  // T17: контекст-меню плейлиста (ПКМ в сайдбаре/медиатеке) + диалоги
+  // переименования/удаления на уровне App (страница плейлиста может быть
+  // не открыта — её диалоги не переиспользовать)
+  const [plMenu, setPlMenu] = useState<{ open: boolean; x: number; y: number; pl: { id: string; name: string } | null }>({
+    open: false,
+    x: 0,
+    y: 0,
+    pl: null,
+  });
+  const [plRename, setPlRename] = useState<{ id: string; name: string } | null>(null);
+  const [plRenameValue, setPlRenameValue] = useState("");
+  const [plDelete, setPlDelete] = useState<{ id: string; name: string } | null>(null);
+  // переименование открытого прямо сейчас плейлиста: bump ремоунтит PlaylistView,
+  // чтобы шапка перечитала имя (сама страница о переименовании извне не знает)
+  const [plBump, setPlBump] = useState(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Кастомизация переживает перезапуск: без этого все настройки слетали
   const [prefs, setPrefsState] = useState<Prefs>(loadPrefs);
@@ -965,6 +980,66 @@ function Player({
     });
   };
 
+  /** T17: ПКМ по плейлисту (сайдбар/медиатека) — Открыть/Переименовать/Удалить. */
+  const openPlaylistMenu = (p: { id: string; name: string }, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPlMenu({
+      open: true,
+      x: Math.min(e.clientX, window.innerWidth - 250),
+      y: Math.min(e.clientY, window.innerHeight - 220),
+      pl: { id: p.id, name: p.name },
+    });
+  };
+
+  // Совместный плейлист «от кого-то» переименовывать/удалять нельзя — я не владелец
+  const plMenuIsOwner =
+    plMenu.pl === null || !canSearch || srvPlaylists.find((x) => x.id === plMenu.pl?.id)?.role !== "collaborator";
+
+  /** Переименование из контекст-меню: сервер — как в PlaylistView, аноним — демо-список. */
+  const renameFromMenu = async () => {
+    const target = plRename;
+    const name = plRenameValue.trim();
+    if (!target || !name) return;
+    setPlRename(null);
+    if (canSearch) {
+      try {
+        await api.renamePlaylist(target.id, name);
+        await reloadServerPlaylists();
+        if (openPlaylistId === target.id) setPlBump((v) => v + 1); // открытая страница перечитает имя
+        showToast("Плейлист переименован", "pencil");
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : "Не удалось переименовать", "x");
+      }
+      return;
+    }
+    setPlaylists((ps) => ps.map((p) => (p.id === target.id ? { ...p, name } : p)));
+    showToast("Плейлист переименован", "pencil");
+  };
+
+  /** Удаление из контекст-меню (после подтверждения); открытая страница
+   *  этого плейлиста закрывается, как при удалении из PlaylistView. */
+  const deleteFromMenu = async () => {
+    const target = plDelete;
+    if (!target) return;
+    setPlDelete(null);
+    if (canSearch) {
+      try {
+        await api.deletePlaylist(target.id);
+        await reloadServerPlaylists();
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : "Не удалось удалить", "x");
+        return;
+      }
+    } else {
+      setPlaylists((ps) => ps.filter((p) => p.id !== target.id));
+    }
+    showToast("Плейлист удалён", "trash-2");
+    if (openPlaylistId === target.id) {
+      setOpenPlaylistId(null);
+      if (view === "playlist") navigate("home");
+    }
+  };
+
   const createPlaylist = async () => {
     const name = plName.trim() || "Новый плейлист";
     if (canSearch) {
@@ -1328,6 +1403,8 @@ function Player({
           playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
           onOpenPlaylist={openPlaylist}
+          // T17: ПКМ по плейлисту — контекст-меню (открыть/переименовать/удалить)
+          onPlaylistMenu={openPlaylistMenu}
           // DnD: строка трека брошена на плейлист (только серверные списки)
           onDropTrack={
             canSearch
@@ -1366,6 +1443,7 @@ function Player({
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
+                onNotify={showToast}
                 onOpen={navigate}
                 onOpenWrapped={canSearch ? () => setWrappedOpen(true) : undefined}
               />
@@ -1403,9 +1481,11 @@ function Player({
                 onLike={toggleLike}
                 onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
+                onNotify={showToast}
               />
             ) : view === "playlist" && openPlaylistId ? (
               <PlaylistView
+                key={`${openPlaylistId}:${plBump}`}
                 api={api}
                 playlistId={openPlaylistId}
                 userId={userId}
@@ -1442,6 +1522,7 @@ function Player({
                 currentId={track.id}
                 playing={playing}
                 onOpenPlaylist={openPlaylist}
+                onPlaylistMenu={openPlaylistMenu}
                 onPlayTrack={playTrack}
                 onPlayLocal={playLocal}
                 onAddToPlaylist={(t) => setPlPick(t)}
@@ -1700,6 +1781,88 @@ function Player({
         ]}
       />
 
+      {/* T17: контекст-меню плейлиста (ПКМ в сайдбаре/медиатеке); совместному
+          «от кого-то» владельческие пункты не показываем */}
+      <Menu
+        open={plMenu.open}
+        x={plMenu.x}
+        y={plMenu.y}
+        onClose={() => setPlMenu((m) => ({ ...m, open: false }))}
+        items={[
+          {
+            icon: "list-music",
+            label: "Открыть",
+            onClick: () => {
+              if (plMenu.pl) openPlaylist(plMenu.pl.id);
+            },
+          },
+          ...(plMenuIsOwner
+            ? ([
+                {
+                  icon: "pencil",
+                  label: "Переименовать",
+                  onClick: () => {
+                    const pl = plMenu.pl;
+                    if (!pl) return;
+                    setPlRenameValue(pl.name);
+                    setPlRename(pl);
+                  },
+                },
+                "-",
+                {
+                  icon: "trash-2",
+                  label: "Удалить плейлист",
+                  danger: true,
+                  onClick: () => {
+                    if (plMenu.pl) setPlDelete(plMenu.pl);
+                  },
+                },
+              ] as const)
+            : []),
+        ]}
+      />
+
+      {/* Диалоги контекст-меню плейлиста — как в PlaylistView */}
+      <Dialog
+        open={plRename !== null}
+        title="Переименовать плейлист"
+        onClose={() => setPlRename(null)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setPlRename(null)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="check" onClick={() => void renameFromMenu()}>
+              Сохранить
+            </Button>
+          </>
+        }
+      >
+        <SearchInput value={plRenameValue} onChange={setPlRenameValue} placeholder="Название" icon="list-music" autoFocus />
+      </Dialog>
+
+      <Dialog
+        open={plDelete !== null}
+        title="Удалить плейлист?"
+        onClose={() => setPlDelete(null)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setPlDelete(null)}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="trash-2" onClick={() => void deleteFromMenu()}>
+              Удалить
+            </Button>
+          </>
+        }
+      >
+        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
+          {canSearch
+            ? `«${plDelete?.name}» исчезнет со всех устройств. Треки останутся в каталоге.`
+            : `«${plDelete?.name}» исчезнет из сайдбара.`}
+        </div>
+      </Dialog>
+
       <VersionsDialog api={api} track={versionsTrack} onClose={() => setVersionsTrack(null)} onNotify={showToast} />
 
       {/* «Добавить по ссылке» (Stage 4): прямой источник + сразу «в плейлист» */}
@@ -1803,6 +1966,9 @@ function Player({
             ...HOTKEY_ACTIONS.map((a) => ({ action: a.label, combo: formatCombo(prefs.hotkeys[a.id]) })),
             { action: "Поиск / закрыть оверлей", combo: "Esc" },
             { action: "Эта справка", combo: "?" },
+            // T18: жесты перетаскивания (единый UX списков)
+            { action: "Трек — в плейлист сайдбара", combo: "перетащи строку" },
+            { action: "Файл трека — на рабочий стол", combo: "Alt + перетащи" },
           ].map((h) => (
             <div key={h.action} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
               <span style={{ flex: 1, fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{h.action}</span>
@@ -1821,7 +1987,8 @@ function Player({
             </div>
           ))}
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: "var(--sp-2)" }}>
-            Переназначить — Настройки → Клавиши.
+            Переназначить — Настройки → Клавиши. Файл-drag работает для уже добытых (кэшированных)
+            треков; ещё один способ — утащить обложку из плеер-бара.
           </div>
         </div>
       </Dialog>

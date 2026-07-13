@@ -16,4 +16,6 @@ export interface TileProps {
   onPlay?: () => void;
   /** Whole-tile click (open page). */
   onClick?: () => void;
+  /** ПКМ по плитке — открой из него <Menu /> (как onMore у TrackRow); preventDefault внутри. */
+  onMenu?: (e: React.MouseEvent) => void;
 }

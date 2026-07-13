@@ -5,6 +5,7 @@ import { TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 
 /** «Любимое»: при серверной сессии — настоящее избранное с сервера
  *  (слайс 4, переживает переустановку); демо-лайки показываются отдельной
@@ -23,6 +24,7 @@ export function FavoritesView({
   onLike,
   onTrackMenu,
   onCatalogMenu,
+  onNotify,
 }: {
   api: MuzaApi;
   canSearch: boolean;
@@ -41,6 +43,8 @@ export function FavoritesView({
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
+  /** Тост (T18: «Трека нет в кэше…» при Alt+drag файла). */
+  onNotify: (text: string, icon?: string) => void;
 }) {
   const [server, setServer] = useState<Track[] | null>(null);
 
@@ -68,8 +72,16 @@ export function FavoritesView({
 
       <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
         {(server ?? []).map((t, i) => (
-          // draggable: любимое можно унести в плейлист сайдбара
-          <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
+          // draggable: любимое можно унести в плейлист сайдбара; Alt+drag — файл (T18)
+          <div
+            key={t.id}
+            draggable
+            onDragStart={(e) => {
+              if (maybeAltFileDrag(e, () => exportCachedTrack(t.id, t.artist, t.title), (m) => onNotify(m, "x")))
+                return;
+              startTrackDrag(e, t.id, t.title, t.artist);
+            }}
+          >
             <TrackRow
               index={i + 1}
               cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
