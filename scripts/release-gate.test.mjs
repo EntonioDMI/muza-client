@@ -13,6 +13,7 @@ import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, test } from "node:test";
+import * as gate from "./release-gate.mjs";
 
 import {
   ALLOWED_HTTP_LITERALS,
@@ -31,6 +32,10 @@ const scriptPath = fileURLToPath(new URL("./release-gate.mjs", import.meta.url))
 const clientRoot = dirname(dirname(scriptPath));
 const baseConfigPath = join(clientRoot, "apps", "desktop", "src-tauri", "tauri.conf.json");
 const overlayConfigPath = join(clientRoot, "apps", "desktop", "src-tauri", "tauri.dev.conf.json");
+const mainCapabilityPath = join(clientRoot, "apps", "desktop", "src-tauri", "capabilities", "main.json");
+const miniCapabilityPath = join(clientRoot, "apps", "desktop", "src-tauri", "capabilities", "mini.json");
+const releaseWorkflowPath = join(clientRoot, ".github", "workflows", "release.yml");
+const trustWorkflowPath = join(clientRoot, ".github", "workflows", "trust-gate.yml");
 const webPackagePath = join(clientRoot, "apps", "web", "package.json");
 const MAX_ARTIFACT_TEXT_BYTES = 32 * 1024 * 1024;
 
@@ -44,6 +49,27 @@ const EXPECTED_ALLOWED_HTTP_LITERALS = [
   "http://f",
   "http://n",
 ];
+
+const EXPECTED_MAIN_PERMISSIONS = [
+  "core:default",
+  "core:window:allow-start-dragging",
+  "dialog:allow-open",
+  "dialog:allow-save",
+  "autostart:default",
+  "updater:default",
+  "process:allow-restart",
+  "drag:default",
+  { identifier: "opener:allow-open-url", allow: [{ url: "https://**" }] },
+];
+
+const EXPECTED_ACTIONS = {
+  checkout: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+  pnpm: "pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa",
+  node: "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+  rust: "dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30",
+  cache: "Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae",
+  tauri: "tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4",
+};
 
 const tempRoots = [];
 
@@ -110,7 +136,10 @@ describe("API environment and exact CSP contracts", () => {
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost",
     );
     assert.equal(DEVELOPMENT_CSP, `${PRODUCTION_CSP} http://localhost:8000`);
-    assert.doesNotThrow(() => validateTauriConfig({ app: { security: { csp: PRODUCTION_CSP } } }));
+    assert.doesNotThrow(() => validateTauriConfig({
+      app: { security: { csp: PRODUCTION_CSP } },
+      bundle: { externalBin: ["bin/yt-dlp", "bin/deno"] },
+    }));
   });
 
   test("rejects deleted, duplicated, reordered, extra, and weakened production CSP", () => {
@@ -166,6 +195,118 @@ describe("API environment and exact CSP contracts", () => {
       const invalid = clone(overlay);
       invalid.app.security.csp = csp;
       assert.throws(() => validateDevTauriOverlay(base, invalid), /dev CSP/);
+    }
+  });
+
+  test("requires exactly the two logical sidecars in canonical order", () => {
+    const base = readJson(baseConfigPath);
+    assert.deepEqual(base.bundle?.externalBin, ["bin/yt-dlp", "bin/deno"]);
+    for (const externalBin of [
+      [],
+      ["bin/yt-dlp"],
+      ["bin/deno", "bin/yt-dlp"],
+      ["bin/yt-dlp", "bin/deno", "bin/extra"],
+      ["bin/yt-dlp.exe", "bin/deno"],
+    ]) {
+      const invalid = clone(base);
+      invalid.bundle.externalBin = externalBin;
+      assert.throws(() => validateTauriConfig(invalid), /externalBin/);
+    }
+  });
+});
+
+describe("least-privilege capabilities", () => {
+  test("accepts only the exact main and mini real-file contracts", () => {
+    const mainCapability = readJson(mainCapabilityPath);
+    const miniCapability = readJson(miniCapabilityPath);
+
+    assert.deepEqual(mainCapability.windows, ["main"]);
+    assert.deepEqual(mainCapability.permissions, EXPECTED_MAIN_PERMISSIONS);
+    assert.deepEqual(miniCapability.windows, ["mini"]);
+    assert.deepEqual(miniCapability.permissions, [
+      "core:default",
+      "core:window:allow-start-dragging",
+    ]);
+    assert.doesNotThrow(() => gate.validateCapabilities(mainCapability, miniCapability));
+  });
+
+  test("rejects window crossover, permission drift and privileged mini permissions", () => {
+    const canonicalMain = {
+      $schema: "../gen/schemas/desktop-schema.json",
+      identifier: "main",
+      description: "main",
+      windows: ["main"],
+      permissions: clone(EXPECTED_MAIN_PERMISSIONS),
+    };
+    const canonicalMini = {
+      $schema: "../gen/schemas/desktop-schema.json",
+      identifier: "mini",
+      description: "mini",
+      windows: ["mini"],
+      permissions: ["core:default", "core:window:allow-start-dragging"],
+    };
+    assert.doesNotThrow(() => gate.validateCapabilities(canonicalMain, canonicalMini));
+
+    const variants = [
+      [Object.assign(clone(canonicalMain), { windows: ["main", "mini"] }), canonicalMini],
+      [canonicalMain, Object.assign(clone(canonicalMini), { windows: ["main", "mini"] })],
+      [Object.assign(clone(canonicalMain), { permissions: EXPECTED_MAIN_PERMISSIONS.slice(0, -1) }), canonicalMini],
+      [Object.assign(clone(canonicalMain), { permissions: [...EXPECTED_MAIN_PERMISSIONS, "shell:default"] }), canonicalMini],
+      [canonicalMain, Object.assign(clone(canonicalMini), { permissions: [...canonicalMini.permissions, "updater:default"] })],
+      [Object.assign(clone(canonicalMain), { remote: { urls: ["https://evil.test"] } }), canonicalMini],
+      [canonicalMain, Object.assign(clone(canonicalMini), { remote: { urls: ["https://evil.test"] } })],
+      [Object.assign(clone(canonicalMain), { identifier: "default" }), canonicalMini],
+      [canonicalMain, Object.assign(clone(canonicalMini), { identifier: "default" })],
+    ];
+    for (const [mainCapability, miniCapability] of variants) {
+      assert.throws(() => gate.validateCapabilities(mainCapability, miniCapability), /capabilit|permission|window|identifier/i);
+    }
+  });
+});
+
+describe("pinned trust and release workflows", () => {
+  test("validates both real workflows and exact immutable action sets", () => {
+    const release = readFileSync(releaseWorkflowPath, "utf8");
+    const trust = readFileSync(trustWorkflowPath, "utf8");
+    assert.doesNotThrow(() => gate.validateWorkflows(release, trust));
+
+    const uses = (text) => [...text.matchAll(/^ {6}(?:- uses:|  uses:)\s*(\S+)\s*$/gm)].map((match) => match[1]);
+    assert.deepEqual(uses(release), [...Object.values(EXPECTED_ACTIONS)]);
+    assert.deepEqual(uses(trust), Object.values(EXPECTED_ACTIONS).slice(0, -1));
+  });
+
+  test("rejects mutable actions, credential persistence, env drift and reordered authority", () => {
+    const release = readFileSync(releaseWorkflowPath, "utf8");
+    const trust = readFileSync(trustWorkflowPath, "utf8");
+    const denoChecksumLine = trust.split("\n").find((line) => line.includes("Deno checksum mismatch"));
+    const extractionLine = trust.split("\n").find((line) => line.includes("Expand-Archive"));
+    assert.ok(denoChecksumLine && extractionLine);
+    const checksumAfterExtraction = trust.replace(
+      `${denoChecksumLine}\n${extractionLine}`,
+      `${extractionLine}\n${denoChecksumLine}`,
+    );
+    const mutations = [
+      [release.replace(EXPECTED_ACTIONS.checkout, "actions/checkout@v4"), trust],
+      [release, trust.replace(EXPECTED_ACTIONS.node, "actions/setup-node@v4")],
+      [release.replace("persist-credentials: false", "persist-credentials: true"), trust],
+      [release, trust.replace("persist-credentials: false", "persist-credentials: true")],
+      [release.replace("VITE_API_URL: ${{ vars.MUZA_API_URL }}", "VITE_API_URL: http://localhost:8000/api"), trust],
+      [release, trust.replace("NEXT_PUBLIC_API_URL: ${{ vars.MUZA_API_URL }}", "NEXT_PUBLIC_API_URL: https://api.muza.lol/api/")],
+      [release.replace("node scripts/release-gate.mjs env VITE_API_URL", "node -e \"process.exit(0)\""), trust],
+      [release, trust.replace("node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL", "node -e \"process.exit(0)\"")],
+      [release.replace("apps/desktop/dist apps/web/out", "apps/desktop/dist"), trust],
+      [release, trust.replace("apps/desktop/dist apps/web/out", "apps/web/out")],
+      [release.replace("tauri.conf.json apps/desktop/src-tauri/tauri.dev.conf.json", "tauri.conf.json"), trust],
+      [release, `${trust}\n      - name: late step\n        run: echo late\n`],
+      [`${release}\n      - name: forbidden after release\n        run: echo late\n`, trust],
+      [release.replace("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}", ""), trust],
+      [release.replace("- name: Установка зависимостей", "- name: Установка зависимостей\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"), trust],
+      [release.replace("      contents: write", "      contents: write\n      id-token: write"), trust],
+      [release, trust.replace("  contents: read", "  contents: read\n  id-token: write")],
+      [release, checksumAfterExtraction],
+    ];
+    for (const [badRelease, badTrust] of mutations) {
+      assert.throws(() => gate.validateWorkflows(badRelease, badTrust), /workflow|action|credential|env|gate|artifact|secret|last|order|tauri/i);
     }
   });
 });
@@ -455,8 +596,12 @@ describe("CLI is synchronous, import-safe, and works from this Windows path", ()
     try {
       assert.doesNotThrow(() => main(["env", "MUZA_GATE_TEST_API"]));
       assert.doesNotThrow(() => main(["tauri", baseConfigPath, overlayConfigPath]));
+      assert.doesNotThrow(() => main(["capabilities", mainCapabilityPath, miniCapabilityPath]));
+      assert.doesNotThrow(() => main(["workflows", releaseWorkflowPath, trustWorkflowPath]));
       assert.throws(() => main(["env"]), /usage/);
       assert.throws(() => main(["tauri", baseConfigPath]), /usage/);
+      assert.throws(() => main(["capabilities", mainCapabilityPath]), /usage/);
+      assert.throws(() => main(["workflows", releaseWorkflowPath]), /usage/);
       assert.throws(() => main(["unknown"]), /usage/);
     } finally {
       if (previous === undefined) delete process.env.MUZA_GATE_TEST_API;

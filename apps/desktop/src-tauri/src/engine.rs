@@ -8,6 +8,7 @@ use base64::Engine as _;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
@@ -36,6 +37,7 @@ const DEFAULT_RECIPE_JSON: &str = r#"{
 
 /// Сколько ждать yt-dlp на одну попытку (резолв + скачивание одного трека).
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(180);
+const MAX_YTDLP_OUTPUT_BYTES: u64 = 512 * 1024 * 1024;
 
 const DEFAULT_CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 ГБ, как в Prefs
 
@@ -489,27 +491,119 @@ fn find_cached(dir: &Path, track_id: &str) -> Option<PathBuf> {
     None
 }
 
-/// yt-dlp: env-переменная → рядом с exe (externalBin кладёт сюда и в dev,
-/// и в бандле) → PATH.
-fn ytdlp_path() -> PathBuf {
-    if let Ok(p) = std::env::var("MUZA_YTDLP_PATH") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
+#[derive(Clone, Debug)]
+struct SidecarPaths {
+    ytdlp: PathBuf,
+    deno: PathBuf,
+}
+
+fn regular_sidecar(path: &Path, label: &str) -> Result<PathBuf, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("{label} sidecar недоступен ({}): {error}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(format!(
+            "{label} sidecar должен быть обычным файлом без symlink ({})",
+            path.display()
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Release доверяет только двум обычным файлам рядом с текущим exe. Эта
+/// функция намеренно не читает env/PATH и также используется диагностикой.
+fn release_sidecar_paths(exe_path: &Path) -> Result<SidecarPaths, String> {
+    if !exe_path.is_absolute() {
+        return Err("путь приложения для release sidecar должен быть абсолютным".into());
+    }
+    let dir = exe_path
+        .parent()
+        .ok_or_else(|| "у пути приложения нет родительского каталога".to_string())?;
+    Ok(SidecarPaths {
+        ytdlp: regular_sidecar(&dir.join("yt-dlp.exe"), "yt-dlp")?,
+        deno: regular_sidecar(&dir.join("deno.exe"), "Deno")?,
+    })
+}
+
+#[cfg(debug_assertions)]
+fn canonical_debug_sidecar(path: &Path, label: &str) -> Result<PathBuf, String> {
+    regular_sidecar(path, label)?;
+    let canonical = fs::canonicalize(path).map_err(|error| {
+        format!(
+            "не удалось канонизировать {label} debug sidecar ({}): {error}",
+            path.display()
+        )
+    })?;
+    regular_sidecar(&canonical, label)
+}
+
+#[cfg(debug_assertions)]
+fn debug_sidecar_path(
+    adjacent: &Path,
+    env_key: &str,
+    executable_name: &str,
+    label: &str,
+) -> Result<PathBuf, String> {
+    if let Ok(path) = canonical_debug_sidecar(adjacent, label) {
+        return Ok(path);
+    }
+
+    if let Some(raw) = std::env::var_os(env_key) {
+        if !raw.is_empty() {
+            return canonical_debug_sidecar(&PathBuf::from(raw), label);
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let sidecar = dir.join(if cfg!(windows) {
-                "yt-dlp.exe"
-            } else {
-                "yt-dlp"
-            });
-            if sidecar.exists() {
-                return sidecar;
+
+    if let Some(path_value) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_value) {
+            let candidate = dir.join(executable_name);
+            if let Ok(path) = canonical_debug_sidecar(&candidate, label) {
+                return Ok(path);
             }
         }
     }
-    PathBuf::from("yt-dlp")
+
+    Err(format!(
+        "{label} debug sidecar не найден рядом с приложением, в {env_key} или PATH"
+    ))
+}
+
+fn sidecar_paths() -> Result<SidecarPaths, String> {
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("не удалось определить путь приложения: {error}"))?;
+    match release_sidecar_paths(&exe) {
+        Ok(paths) => Ok(paths),
+        Err(release_error) => {
+            #[cfg(debug_assertions)]
+            {
+                let dir = exe
+                    .parent()
+                    .ok_or_else(|| "у пути приложения нет родительского каталога".to_string())?;
+                let debug_paths: Result<SidecarPaths, String> = (|| {
+                    Ok(SidecarPaths {
+                        ytdlp: debug_sidecar_path(
+                            &dir.join("yt-dlp.exe"),
+                            "MUZA_YTDLP_PATH",
+                            "yt-dlp.exe",
+                            "yt-dlp",
+                        )?,
+                        deno: debug_sidecar_path(
+                            &dir.join("deno.exe"),
+                            "MUZA_DENO_PATH",
+                            "deno.exe",
+                            "Deno",
+                        )?,
+                    })
+                })();
+                debug_paths.map_err(|debug_error| {
+                    format!("{release_error}; debug fallback: {debug_error}")
+                })
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                Err(release_error)
+            }
+        }
+    }
 }
 
 /// Запуск дочернего процесса без консольного окна (Windows).
@@ -520,22 +614,6 @@ fn command(program: &Path) -> Command {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    // Каталог нашего exe — в PATH ребёнка: бандл кладёт deno.exe рядом,
-    // yt-dlp найдёт его сам (n-challenge требует JS-рантайм — спайк Stage 0)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let path_var = std::env::var("PATH").unwrap_or_default();
-            cmd.env(
-                "PATH",
-                format!(
-                    "{}{}{}",
-                    dir.display(),
-                    if cfg!(windows) { ";" } else { ":" },
-                    path_var
-                ),
-            );
-        }
     }
     cmd
 }
@@ -633,37 +711,116 @@ fn build_attempts(sources: &[SourceRef], clients: &[String]) -> Vec<Attempt> {
     build_attempts_from_targets(sources, clients, canonical_target)
 }
 
+fn build_ytdlp_args(
+    dir: &Path,
+    track_id: &str,
+    attempt: &Attempt,
+    format_str: &str,
+    deno_path: &Path,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--ignore-config"),
+        OsString::from("--no-playlist"),
+        OsString::from("--max-downloads"),
+        OsString::from("1"),
+        OsString::from("--max-filesize"),
+        OsString::from("512M"),
+        OsString::from("--js-runtimes"),
+        OsString::from(format!("deno:{}", deno_path.display())),
+        OsString::from("-f"),
+        OsString::from(format_str),
+        OsString::from("--no-warnings"),
+        OsString::from("--no-progress"),
+        OsString::from("--socket-timeout"),
+        OsString::from("15"),
+        OsString::from("--retries"),
+        OsString::from("2"),
+        OsString::from("--print"),
+        OsString::from("after_move:filepath"),
+        OsString::from("--no-simulate"),
+        OsString::from("-P"),
+        dir.as_os_str().to_os_string(),
+        OsString::from("-o"),
+        OsString::from(format!("{track_id}.%(ext)s")),
+    ];
+    if let Some(client) = &attempt.client {
+        args.push(OsString::from("--extractor-args"));
+        args.push(OsString::from(format!("youtube:player_client={client}")));
+    }
+    args.push(OsString::from(attempt.url.as_str()));
+    args
+}
+
+fn validate_ytdlp_output_with_canonicalizer(
+    cache_dir: &Path,
+    candidate: &Path,
+    canonicalize: &mut impl FnMut(&Path) -> std::io::Result<PathBuf>,
+) -> Result<PathBuf, String> {
+    let canonical_cache = canonicalize(cache_dir).map_err(|error| {
+        format!(
+            "не удалось канонизировать кэш-каталог ({}): {error}",
+            cache_dir.display()
+        )
+    })?;
+    let canonical_candidate = canonicalize(candidate).map_err(|error| {
+        format!(
+            "yt-dlp вернул недоступный путь ({}): {error}",
+            candidate.display()
+        )
+    })?;
+
+    if canonical_candidate == canonical_cache || !canonical_candidate.starts_with(&canonical_cache)
+    {
+        return Err(format!(
+            "yt-dlp вернул путь вне кэша: {}",
+            canonical_candidate.display()
+        ));
+    }
+
+    let cache_metadata = fs::metadata(&canonical_cache)
+        .map_err(|error| format!("не удалось проверить кэш-каталог: {error}"))?;
+    if !cache_metadata.is_dir() {
+        return Err("канонический путь кэша не является каталогом".into());
+    }
+
+    let supplied_metadata = fs::symlink_metadata(candidate)
+        .map_err(|error| format!("не удалось проверить путь результата yt-dlp: {error}"))?;
+    if supplied_metadata.file_type().is_symlink() {
+        return Err("yt-dlp вернул symlink вместо аудиофайла".into());
+    }
+
+    let metadata = fs::symlink_metadata(&canonical_candidate)
+        .map_err(|error| format!("не удалось проверить результат yt-dlp: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err("результат yt-dlp не является обычным файлом".into());
+    }
+    if metadata.len() == 0 {
+        return Err("скачанный файл пуст".into());
+    }
+    if metadata.len() > MAX_YTDLP_OUTPUT_BYTES {
+        return Err("скачанный файл превышает лимит 512 МиБ".into());
+    }
+
+    Ok(canonical_candidate)
+}
+
+fn validate_ytdlp_output(cache_dir: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    let mut canonicalize = |path: &Path| fs::canonicalize(path);
+    validate_ytdlp_output_with_canonicalizer(cache_dir, candidate, &mut canonicalize)
+}
+
 /// Одна попытка yt-dlp: скачать лучший аудио-формат по рецепту в кэш-каталог.
 /// Успех — абсолютный путь скачанного файла (--print after_move:filepath).
 fn run_ytdlp_once(
     ytdlp: &Path,
+    deno: &Path,
     dir: &Path,
     track_id: &str,
     attempt: &Attempt,
     format_str: &str,
 ) -> Result<PathBuf, String> {
     let mut cmd = command(ytdlp);
-    cmd.arg("-f")
-        .arg(format_str)
-        .arg("--no-playlist")
-        .arg("--no-warnings")
-        .arg("--no-progress")
-        .arg("--socket-timeout")
-        .arg("15")
-        .arg("--retries")
-        .arg("2")
-        .arg("--print")
-        .arg("after_move:filepath")
-        .arg("--no-simulate")
-        .arg("-P")
-        .arg(dir)
-        .arg("-o")
-        .arg(format!("{track_id}.%(ext)s"));
-    if let Some(client) = &attempt.client {
-        cmd.arg("--extractor-args")
-            .arg(format!("youtube:player_client={client}"));
-    }
-    cmd.arg(attempt.url.as_str());
+    cmd.args(build_ytdlp_args(dir, track_id, attempt, format_str, deno));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -697,11 +854,7 @@ fn run_ytdlp_once(
         .find(|l| !l.trim().is_empty())
         .ok_or("yt-dlp не вернул путь к файлу")?;
     let path = PathBuf::from(path_line.trim());
-    let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    if size == 0 {
-        return Err("скачанный файл пуст".into());
-    }
-    Ok(path)
+    validate_ytdlp_output(dir, &path)
 }
 
 /// LRU-эвикция: суммарный размер кэша держим в пределах лимита,
@@ -838,18 +991,26 @@ pub async fn engine_resolve(
         return Err("у трека нет живых источников".into());
     }
 
-    let ytdlp = ytdlp_path();
+    let sidecars = sidecar_paths()?;
     let mut last_error = String::new();
     for attempt in attempts {
         state.stats.lock().unwrap().attempts += 1;
         let dir_clone = dir.clone();
         let id_clone = track_id.clone();
         let fmt = format_str.clone();
-        let ytdlp_clone = ytdlp.clone();
+        let ytdlp_clone = sidecars.ytdlp.clone();
+        let deno_clone = sidecars.deno.clone();
         let attempt_provider = attempt.provider.clone();
         // Процесс — блокирующий; уводим с async-потока Tauri
         let result = tauri::async_runtime::spawn_blocking(move || {
-            run_ytdlp_once(&ytdlp_clone, &dir_clone, &id_clone, &attempt, &fmt)
+            run_ytdlp_once(
+                &ytdlp_clone,
+                &deno_clone,
+                &dir_clone,
+                &id_clone,
+                &attempt,
+                &fmt,
+            )
         })
         .await
         .map_err(|e| format!("spawn_blocking: {e}"))?;
@@ -1068,9 +1229,14 @@ pub async fn engine_doctor() -> Doctor {
         child.stdout.take()?.read_to_string(&mut out).ok()?;
         out.lines().next().map(|l| l.trim().to_string())
     }
-    tauri::async_runtime::spawn_blocking(|| Doctor {
-        ytdlp: version_of(&ytdlp_path()),
-        deno: version_of(Path::new("deno")),
+    tauri::async_runtime::spawn_blocking(|| {
+        let paths = std::env::current_exe()
+            .ok()
+            .and_then(|exe| release_sidecar_paths(&exe).ok());
+        Doctor {
+            ytdlp: paths.as_ref().and_then(|value| version_of(&value.ytdlp)),
+            deno: paths.as_ref().and_then(|value| version_of(&value.deno)),
+        }
     })
     .await
     .unwrap_or(Doctor {
@@ -1106,7 +1272,7 @@ mod tests {
 
     /// Живая добыча по лестнице клиентов рецепта (как engine_resolve):
     /// tv-сессии периодически ловят DRM-эксперимент — фолбэки обязаны спасать.
-    /// Сеть + deno на PATH; известный источник из каталога dev-сервера.
+    /// Сеть + два adjacent/debug sidecar; известный источник из каталога dev-сервера.
     /// `cargo test resolve_real_track -- --ignored --nocapture`
     #[test]
     #[ignore = "сеть + yt-dlp + deno"]
@@ -1126,10 +1292,18 @@ mod tests {
             source_id: "4D7u5KF7SP8".into(),
         };
         let attempts = build_attempts(&[source], &clients);
+        let sidecars = sidecar_paths().expect("sidecar-файлы доступны");
         let mut result = None;
         for attempt in attempts {
             let client = attempt.client.as_deref().unwrap_or("unknown").to_string();
-            match run_ytdlp_once(&ytdlp_path(), &dir, "test1", &attempt, "251/140/bestaudio") {
+            match run_ytdlp_once(
+                &sidecars.ytdlp,
+                &sidecars.deno,
+                &dir,
+                "test1",
+                &attempt,
+                "251/140/bestaudio",
+            ) {
                 Ok(path) => {
                     println!("клиент {client}: OK");
                     result = Some(path);
@@ -1715,5 +1889,332 @@ mod source_policy_tests {
             "canonicalUrl": "https://soundcloud.com/artist/song"
         });
         assert!(serde_json::from_value::<SourceRef>(value).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod sidecar_policy_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::fs::{self, OpenOptions};
+    use std::io;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    const MAX_OUTPUT_BYTES: u64 = 512 * 1024 * 1024;
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new(label: &str) -> Self {
+            let suffix = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "muza-sidecar-policy-{label}-{}-{suffix}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct EnvRestore {
+        key: &'static str,
+        value: Option<OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self {
+                key,
+                value: previous,
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.value {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn write_file(path: &Path, contents: &[u8]) {
+        fs::write(path, contents).unwrap();
+    }
+
+    fn materialize_sidecars(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let exe = root.join("muza.exe");
+        let ytdlp = root.join("yt-dlp.exe");
+        let deno = root.join("deno.exe");
+        write_file(&exe, b"app");
+        write_file(&ytdlp, b"yt-dlp");
+        write_file(&deno, b"deno");
+        (exe, ytdlp, deno)
+    }
+
+    fn os_strings(args: Vec<OsString>) -> Vec<String> {
+        args.into_iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn sidecar_policy_release_paths_require_both_adjacent_regular_files() {
+        let root = TempRoot::new("adjacent");
+        let (exe, ytdlp, deno) = materialize_sidecars(root.path());
+        let paths = release_sidecar_paths(&exe).unwrap();
+        assert_eq!(paths.ytdlp, ytdlp);
+        assert_eq!(paths.deno, deno);
+
+        fs::remove_file(&ytdlp).unwrap();
+        assert!(release_sidecar_paths(&exe).is_err());
+        write_file(&ytdlp, b"yt-dlp");
+        fs::remove_file(&deno).unwrap();
+        assert!(release_sidecar_paths(&exe).is_err());
+
+        fs::create_dir(&deno).unwrap();
+        assert!(release_sidecar_paths(&exe).is_err());
+        fs::remove_dir(&deno).unwrap();
+        fs::remove_file(&ytdlp).unwrap();
+        fs::create_dir(&ytdlp).unwrap();
+        assert!(release_sidecar_paths(&exe).is_err());
+    }
+
+    #[test]
+    fn sidecar_policy_release_helper_never_consults_debug_env_fallbacks() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let adjacent = TempRoot::new("release-no-env");
+        let fallback = TempRoot::new("debug-env");
+        let exe = adjacent.path().join("muza.exe");
+        write_file(&exe, b"app");
+        let fallback_ytdlp = fallback.path().join("yt-dlp.exe");
+        let fallback_deno = fallback.path().join("deno.exe");
+        write_file(&fallback_ytdlp, b"yt-dlp");
+        write_file(&fallback_deno, b"deno");
+        let _yt_restore = EnvRestore::set("MUZA_YTDLP_PATH", &fallback_ytdlp);
+        let _deno_restore = EnvRestore::set("MUZA_DENO_PATH", &fallback_deno);
+
+        assert!(release_sidecar_paths(&exe).is_err());
+    }
+
+    #[test]
+    fn sidecar_policy_release_paths_reject_symlinks_when_available() {
+        let root = TempRoot::new("sidecar-link");
+        let outside = TempRoot::new("sidecar-link-target");
+        let (exe, ytdlp, deno) = materialize_sidecars(root.path());
+        let target = outside.path().join("real.exe");
+        write_file(&target, b"outside");
+
+        fs::remove_file(&ytdlp).unwrap();
+        match create_file_symlink(&target, &ytdlp) {
+            Ok(()) => {
+                assert!(release_sidecar_paths(&exe).is_err());
+                assert!(ytdlp.exists());
+                assert_eq!(fs::read(&target).unwrap(), b"outside");
+            }
+            Err(error) if link_creation_unavailable(&error) => {
+                println!("sidecar symlink unavailable: {error}");
+            }
+            Err(error) => panic!("unexpected symlink error: {error}"),
+        }
+
+        let _ = fs::remove_file(&ytdlp);
+        write_file(&ytdlp, b"yt-dlp");
+        fs::remove_file(&deno).unwrap();
+        match create_file_symlink(&target, &deno) {
+            Ok(()) => assert!(release_sidecar_paths(&exe).is_err()),
+            Err(error) if link_creation_unavailable(&error) => {
+                println!("Deno symlink unavailable: {error}");
+            }
+            Err(error) => panic!("unexpected symlink error: {error}"),
+        }
+    }
+
+    #[test]
+    fn sidecar_policy_build_args_have_exact_guard_prefix_and_url_last() {
+        let root = TempRoot::new("args");
+        let deno = root.path().join("deno.exe");
+        write_file(&deno, b"deno");
+        let attempt = Attempt {
+            provider: "youtube".into(),
+            url: Url::parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap(),
+            client: Some("tv".into()),
+        };
+
+        let args = os_strings(build_ytdlp_args(
+            root.path(),
+            "42",
+            &attempt,
+            "251/140/bestaudio",
+            &deno,
+        ));
+        assert_eq!(
+            &args[..8],
+            [
+                "--ignore-config",
+                "--no-playlist",
+                "--max-downloads",
+                "1",
+                "--max-filesize",
+                "512M",
+                "--js-runtimes",
+                &format!("deno:{}", deno.display()),
+            ]
+        );
+        let target = attempt.url.as_str();
+        assert_eq!(args.last().map(String::as_str), Some(target));
+        assert_eq!(args.iter().filter(|arg| arg.as_str() == target).count(), 1);
+        for guard in [
+            "--ignore-config",
+            "--no-playlist",
+            "--max-downloads",
+            "--max-filesize",
+            "--js-runtimes",
+        ] {
+            assert!(args.iter().position(|arg| arg == guard).unwrap() < args.len() - 1);
+        }
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--extractor-args", "youtube:player_client=tv"]));
+    }
+
+    #[test]
+    fn sidecar_policy_output_accepts_only_contained_regular_size_range() {
+        let root = TempRoot::new("output-size");
+        let cache = root.path().join("cache");
+        fs::create_dir(&cache).unwrap();
+
+        let exact = cache.join("exact.webm");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&exact)
+            .unwrap()
+            .set_len(MAX_OUTPUT_BYTES)
+            .unwrap();
+        assert_eq!(
+            validate_ytdlp_output(&cache, &exact).unwrap(),
+            fs::canonicalize(&exact).unwrap()
+        );
+
+        let empty = cache.join("empty.webm");
+        write_file(&empty, b"");
+        assert!(validate_ytdlp_output(&cache, &empty).is_err());
+
+        let oversized = cache.join("oversized.webm");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&oversized)
+            .unwrap()
+            .set_len(MAX_OUTPUT_BYTES + 1)
+            .unwrap();
+        assert!(validate_ytdlp_output(&cache, &oversized).is_err());
+
+        let directory = cache.join("directory.webm");
+        fs::create_dir(&directory).unwrap();
+        write_file(&directory.join("keep.txt"), b"keep");
+        assert!(validate_ytdlp_output(&cache, &directory).is_err());
+        assert_eq!(fs::read(directory.join("keep.txt")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn sidecar_policy_output_rejects_outside_and_dotdot_without_touching_targets() {
+        let root = TempRoot::new("output-containment");
+        let cache = root.path().join("cache");
+        fs::create_dir(&cache).unwrap();
+        let outside = root.path().join("outside.webm");
+        write_file(&outside, b"outside-unchanged");
+
+        assert!(validate_ytdlp_output(&cache, &outside).is_err());
+        assert!(validate_ytdlp_output(&cache, &cache.join("..").join("outside.webm")).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"outside-unchanged");
+    }
+
+    #[test]
+    fn sidecar_policy_injected_canonical_escape_rejects_before_any_deletion() {
+        let root = TempRoot::new("canonical-injection");
+        let cache = root.path().join("cache");
+        fs::create_dir(&cache).unwrap();
+        let candidate = cache.join("candidate.webm");
+        let outside = root.path().join("outside.webm");
+        write_file(&candidate, b"candidate-unchanged");
+        write_file(&outside, b"outside-unchanged");
+        let canonical_outside = fs::canonicalize(&outside).unwrap();
+        let candidate_for_lookup = candidate.clone();
+        let mut canonicalize = move |path: &Path| -> io::Result<PathBuf> {
+            if path == candidate_for_lookup {
+                Ok(canonical_outside.clone())
+            } else {
+                fs::canonicalize(path)
+            }
+        };
+
+        assert!(
+            validate_ytdlp_output_with_canonicalizer(&cache, &candidate, &mut canonicalize,)
+                .is_err()
+        );
+        assert_eq!(fs::read(&candidate).unwrap(), b"candidate-unchanged");
+        assert_eq!(fs::read(&outside).unwrap(), b"outside-unchanged");
+    }
+
+    #[test]
+    fn sidecar_policy_actual_output_symlink_escape_keeps_link_and_target_when_available() {
+        let root = TempRoot::new("output-link");
+        let cache = root.path().join("cache");
+        fs::create_dir(&cache).unwrap();
+        let outside = root.path().join("outside.webm");
+        let link = cache.join("linked.webm");
+        write_file(&outside, b"outside-unchanged");
+
+        match create_file_symlink(&outside, &link) {
+            Ok(()) => {
+                assert!(validate_ytdlp_output(&cache, &link).is_err());
+                assert!(fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink());
+                assert_eq!(fs::read(&outside).unwrap(), b"outside-unchanged");
+            }
+            Err(error) if link_creation_unavailable(&error) => {
+                println!("output symlink unavailable: {error}");
+            }
+            Err(error) => panic!("unexpected symlink error: {error}"),
+        }
+    }
+
+    #[cfg(windows)]
+    fn create_file_symlink(target: &Path, link: &Path) -> io::Result<()> {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+
+    #[cfg(unix)]
+    fn create_file_symlink(target: &Path, link: &Path) -> io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    fn link_creation_unavailable(error: &io::Error) -> bool {
+        error.raw_os_error() == Some(1314)
+            || matches!(
+                error.kind(),
+                io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+            )
     }
 }

@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Базовые права окон (main + мини-плеер). Tauri v2: default-deny, каждый плагин добавляет своё разрешение сюда явно.",
-  "windows": ["main", "mini"],
+  "identifier": "main",
+  "description": "Права только основного окна Muza.",
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "dialog:allow-open",
+    "dialog:allow-save",
     "autostart:default",
     "updater:default",
     "process:allow-restart",

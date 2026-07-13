@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 export const PRODUCTION_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost";
 export const DEVELOPMENT_CSP = `${PRODUCTION_CSP} http://localhost:8000`;
@@ -23,6 +24,29 @@ export const ALLOWED_HTTP_LITERALS = new Set([
 ]);
 
 const DEFAULT_FS_OPS = { lstatSync, readFileSync, readdirSync };
+const EXPECTED_EXTERNAL_BINS = ["bin/yt-dlp", "bin/deno"];
+const EXPECTED_MAIN_PERMISSIONS = [
+  "core:default",
+  "core:window:allow-start-dragging",
+  "dialog:allow-open",
+  "dialog:allow-save",
+  "autostart:default",
+  "updater:default",
+  "process:allow-restart",
+  "drag:default",
+  { identifier: "opener:allow-open-url", allow: [{ url: "https://**" }] },
+];
+const EXPECTED_MINI_PERMISSIONS = ["core:default", "core:window:allow-start-dragging"];
+const EXPECTED_CAPABILITY_KEYS = ["$schema", "identifier", "description", "windows", "permissions"];
+const EXPECTED_CAPABILITY_SCHEMA = "../gen/schemas/desktop-schema.json";
+const PINNED_ACTIONS = {
+  checkout: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+  pnpm: "pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa",
+  node: "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+  rust: "dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30",
+  cache: "Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae",
+  tauri: "tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4",
+};
 
 export function validateApiEnv(value) {
   if (value !== "https://api.muza.lol/api") throw new Error("API env must equal https://api.muza.lol/api");
@@ -40,6 +64,9 @@ function assertExactKeys(value, expected, label) {
 export function validateTauriConfig(config) {
   const csp = config.app?.security?.csp ?? "";
   if (csp !== PRODUCTION_CSP) throw new Error("production CSP must equal PRODUCTION_CSP");
+  if (!isDeepStrictEqual(config.bundle?.externalBin, EXPECTED_EXTERNAL_BINS)) {
+    throw new Error("production externalBin must equal bin/yt-dlp,bin/deno");
+  }
 }
 
 export function validateDevTauriOverlay(base, overlay) {
@@ -50,6 +77,174 @@ export function validateDevTauriOverlay(base, overlay) {
   if (overlay.app.security.csp !== DEVELOPMENT_CSP) {
     throw new Error("dev CSP must equal DEVELOPMENT_CSP");
   }
+}
+
+export function validateCapabilities(mainCapability, miniCapability) {
+  assertExactKeys(mainCapability, EXPECTED_CAPABILITY_KEYS, "main capability");
+  assertExactKeys(miniCapability, EXPECTED_CAPABILITY_KEYS, "mini capability");
+  if (
+    mainCapability.$schema !== EXPECTED_CAPABILITY_SCHEMA
+    || miniCapability.$schema !== EXPECTED_CAPABILITY_SCHEMA
+  ) {
+    throw new Error("capability schema mismatch");
+  }
+  if (mainCapability?.identifier !== "main" || miniCapability?.identifier !== "mini") {
+    throw new Error("capability identifier mismatch");
+  }
+  if (!isDeepStrictEqual(mainCapability.windows, ["main"])) {
+    throw new Error("main capability window set mismatch");
+  }
+  if (!isDeepStrictEqual(miniCapability.windows, ["mini"])) {
+    throw new Error("mini capability window set mismatch");
+  }
+  if (!isDeepStrictEqual(mainCapability.permissions, EXPECTED_MAIN_PERMISSIONS)) {
+    throw new Error("main capability permission set mismatch");
+  }
+  if (!isDeepStrictEqual(miniCapability.permissions, EXPECTED_MINI_PERMISSIONS)) {
+    throw new Error("mini capability permission set mismatch");
+  }
+}
+
+function activeWorkflowText(text, label) {
+  if (typeof text !== "string" || text.trim() === "") throw new Error(`${label} workflow is empty`);
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .map((line) => line.replace(/\s+#.*$/, ""))
+    .join("\n");
+}
+
+function workflowSteps(text) {
+  const lines = text.split("\n");
+  const starts = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^ {6}- (?:name|uses|run):/.test(lines[index])) starts.push(index);
+  }
+  return starts.map((start, index) => lines.slice(start, starts[index + 1] ?? lines.length).join("\n"));
+}
+
+function exactUses(text) {
+  return [...text.matchAll(/^ {6}(?:- uses:|  uses:)\s*(\S+)\s*$/gm)].map((match) => match[1]);
+}
+
+function requireExactlyOnce(text, marker, label) {
+  const first = text.indexOf(marker);
+  if (first === -1 || text.indexOf(marker, first + marker.length) !== -1) {
+    throw new Error(`${label} workflow must contain exactly once: ${marker}`);
+  }
+  return first;
+}
+
+function validateWorkflow(text, kind) {
+  const active = activeWorkflowText(text, kind);
+  const steps = workflowSteps(active);
+  const expectedUses = kind === "release"
+    ? [...Object.values(PINNED_ACTIONS)]
+    : Object.values(PINNED_ACTIONS).slice(0, -1);
+  if (!isDeepStrictEqual(exactUses(active), expectedUses)) {
+    throw new Error(`${kind} workflow action pins or order mismatch`);
+  }
+
+  const checkoutStep = steps.find((step) => step.includes(`uses: ${PINNED_ACTIONS.checkout}`));
+  if (!checkoutStep || !/^ {10}persist-credentials: false$/m.test(checkoutStep)) {
+    throw new Error(`${kind} workflow checkout credential policy mismatch`);
+  }
+
+  const permissionHeaders = active.match(/^\s*permissions:\s*$/gm) ?? [];
+  if (permissionHeaders.length !== 1) {
+    throw new Error(`${kind} workflow permission block mismatch`);
+  }
+  const permissionBlock = kind === "trust"
+    ? "permissions:\n  contents: read\n\njobs:"
+    : "    permissions:\n      contents: write\n    steps:";
+  requireExactlyOnce(active, permissionBlock, kind);
+
+  requireExactlyOnce(active, "  VITE_API_URL: ${{ vars.MUZA_API_URL }}", kind);
+  requireExactlyOnce(active, "  NEXT_PUBLIC_API_URL: ${{ vars.MUZA_API_URL }}", kind);
+
+  const orderedMarkers = [
+    "pnpm install --frozen-lockfile",
+    "node --test scripts/release-gate.test.mjs",
+    "node scripts/release-gate.mjs env VITE_API_URL",
+    "node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL",
+    "cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib",
+    "cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "pnpm --filter muza-desktop build",
+    "pnpm --filter muza-web build",
+    "node scripts/release-gate.mjs tauri apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/tauri.dev.conf.json",
+    "node scripts/release-gate.mjs capabilities apps/desktop/src-tauri/capabilities/main.json apps/desktop/src-tauri/capabilities/mini.json",
+    "node scripts/release-gate.mjs workflows .github/workflows/release.yml .github/workflows/trust-gate.yml",
+    "node scripts/release-gate.mjs artifacts apps/desktop/dist apps/web/out",
+  ];
+  let previous = -1;
+  for (const marker of orderedMarkers) {
+    const position = requireExactlyOnce(active, marker, kind);
+    if (position <= previous) throw new Error(`${kind} workflow gate order mismatch`);
+    previous = position;
+  }
+
+  for (const marker of [
+    "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp.exe",
+    "3a48cb955d55c8821b60ccbdbbc6f61bc958f2f3d3b7ad5eaf3d83a543293a27",
+    "https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-pc-windows-msvc.zip",
+    "5fe194d26ac5ef77fcc5288c2c438c7a0465f3b6180440ebf04092714bf2dcdf",
+    '"yt-dlp-$triple.exe"',
+    '"deno-$triple.exe"',
+  ]) {
+    requireExactlyOnce(active, marker, kind);
+  }
+  const sidecarMarkers = [
+    "Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp.exe' -OutFile $ytDlpPath",
+    "if ((Get-FileHash -LiteralPath $ytDlpPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '3a48cb955d55c8821b60ccbdbbc6f61bc958f2f3d3b7ad5eaf3d83a543293a27') { throw 'yt-dlp checksum mismatch' }",
+    "Invoke-WebRequest -Uri 'https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-pc-windows-msvc.zip' -OutFile $denoZip",
+    "if ((Get-FileHash -LiteralPath $denoZip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5fe194d26ac5ef77fcc5288c2c438c7a0465f3b6180440ebf04092714bf2dcdf') { throw 'Deno checksum mismatch' }",
+    "Expand-Archive -LiteralPath $denoZip -DestinationPath $denoExtract -Force",
+    "Move-Item -LiteralPath (Join-Path $denoExtract 'deno.exe') -Destination $denoPath -Force",
+    "if (-not (Test-Path -LiteralPath $denoPath -PathType Leaf)) { throw 'Deno sidecar missing after extraction' }",
+  ];
+  let sidecarPrevious = -1;
+  for (const marker of sidecarMarkers) {
+    const position = requireExactlyOnce(active, marker, kind);
+    if (position <= sidecarPrevious) throw new Error(`${kind} workflow sidecar checksum order mismatch`);
+    sidecarPrevious = position;
+  }
+  const nodeTests = active.indexOf(orderedMarkers[1]);
+  if (nodeTests === -1 || sidecarPrevious >= nodeTests || sidecarPrevious >= previous) {
+    throw new Error(`${kind} workflow sidecar checksum order mismatch`);
+  }
+
+  if (kind === "release") {
+    const finalStep = steps.at(-1) ?? "";
+    if (!finalStep.includes(`uses: ${PINNED_ACTIONS.tauri}`)) {
+      throw new Error("release workflow tauri action must be last");
+    }
+    for (const marker of [
+      "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+      "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
+      "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}",
+    ]) {
+      requireExactlyOnce(finalStep, marker, "release final step");
+    }
+    for (const step of steps.slice(0, -1)) {
+      if (/\$\{\{\s*secrets\.|GITHUB_TOKEN/.test(step)) {
+        throw new Error("release workflow secret escaped the final action");
+      }
+    }
+  } else {
+    if (active.includes("tauri-apps/tauri-action") || /\$\{\{\s*secrets\.|GITHUB_TOKEN/.test(active)) {
+      throw new Error("trust workflow has release authority or secrets");
+    }
+    const finalStep = steps.at(-1) ?? "";
+    if (!finalStep.includes(orderedMarkers.at(-1))) {
+      throw new Error("trust workflow artifact gate must be last");
+    }
+  }
+}
+
+export function validateWorkflows(releaseWorkflow, trustWorkflow) {
+  validateWorkflow(releaseWorkflow, "release");
+  validateWorkflow(trustWorkflow, "trust");
 }
 
 function isHardDelimiter(character) {
@@ -350,8 +545,17 @@ export function main(argv = process.argv.slice(2)) {
     const overlay = JSON.parse(readFileSync(args[1], "utf8"));
     return validateDevTauriOverlay(base, overlay);
   }
+  if (command === "capabilities" && args.length === 2) {
+    return validateCapabilities(
+      JSON.parse(readFileSync(args[0], "utf8")),
+      JSON.parse(readFileSync(args[1], "utf8")),
+    );
+  }
+  if (command === "workflows" && args.length === 2) {
+    return validateWorkflows(readFileSync(args[0], "utf8"), readFileSync(args[1], "utf8"));
+  }
   if (command === "artifacts") return scanArtifacts(args);
-  throw new Error("usage: release-gate.mjs env NAME | tauri BASE_PATH DEV_OVERLAY_PATH | artifacts PATH...");
+  throw new Error("usage: release-gate.mjs env NAME | tauri BASE_PATH DEV_OVERLAY_PATH | capabilities MAIN MINI | workflows RELEASE TRUST | artifacts PATH...");
 }
 
 const entryUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";

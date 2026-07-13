@@ -1,20 +1,21 @@
-# Тег v* → проверенный NSIS/updater draft. Публикация остаётся ручной.
-# Authenticode здесь не настроен: OV-сертификат/HSM остаётся блокером публичного релиза.
-name: release
+name: trust-gate
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 
 env:
   VITE_API_URL: ${{ vars.MUZA_API_URL }}
   NEXT_PUBLIC_API_URL: ${{ vars.MUZA_API_URL }}
 
+permissions:
+  contents: read
+
 jobs:
-  build-windows:
+  verify-windows:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -82,17 +83,3 @@ jobs:
           node scripts/release-gate.mjs capabilities apps/desktop/src-tauri/capabilities/main.json apps/desktop/src-tauri/capabilities/mini.json
           node scripts/release-gate.mjs workflows .github/workflows/release.yml .github/workflows/trust-gate.yml
           node scripts/release-gate.mjs artifacts apps/desktop/dist apps/web/out
-
-      - name: Сборка и draft-релиз
-        uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: "Muza ${{ github.ref_name }}"
-          releaseBody: "Что нового — см. коммиты. Установщик проверяет подпись обновлений автоматически."
-          releaseDraft: true
-          includeUpdaterJson: true
