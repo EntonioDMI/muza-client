@@ -107,6 +107,11 @@ export function usePlayback({
   const playSeqRef = useRef(0);
   // Кроссфейд на естественном переходе уже запущен для этого pos
   const autoAdvancedRef = useRef(false);
+  // id трека, чей URL реально загружен в движок (успешный engine().play()).
+  // T2: очередь при монтировании может содержать восстановленный трек, для
+  // которого startAt ЕЩЁ не вызывался (playing нарочно false) — toggle()
+  // сверяется с этим, чтобы не звать resume() на пустом слоте движка.
+  const startedIdRef = useRef<string | null>(null);
 
   const engineRef = useRef<AudioEngine | null>(null);
   const engine = () => {
@@ -249,6 +254,7 @@ export function usePlayback({
       preloadedRef.current = null;
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
       await engine().play(url, norm, opts?.crossfade ? CROSSFADE_SEC : 0);
+      startedIdRef.current = t.id; // движок реально держит URL этого трека
       // «Продолжить с места»: если сохранена осмысленная позиция (не у начала
       // и не у конца) — досикиваем. Ручной старт с 0 через seek не трогаем.
       if (prefsRef.current.resumePosition) {
@@ -367,8 +373,22 @@ export function usePlayback({
   const toggle = () => {
     const s = stateRef.current;
     if (s.track.kind !== "demo") {
-      if (s.playing) engine().pause();
-      else void engine().resume();
+      if (s.playing) {
+        engine().pause();
+        setPlaying(false);
+        return;
+      }
+      // Трек в очереди мог попасть туда БЕЗ startAt (T2: восстановление
+      // последнего трека при старте — App.tsx кладёт его в initialQueue, но
+      // playing нарочно false и движок ни разу не резолвил URL). engine().resume()
+      // на пустом слоте — тихий no-op (audioEngine.resume: el?.src falsy),
+      // playing выставился бы в true БЕЗ звука. Проверяем и в этом случае
+      // делаем полноценный startAt — он сам ставит playing.
+      if (startedIdRef.current !== s.track.id) {
+        void startAt(s.index);
+        return;
+      }
+      void engine().resume();
     }
     setPlaying(!s.playing);
   };
