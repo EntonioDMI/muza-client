@@ -2500,8 +2500,13 @@ export function SettingsView({
             )}
           </div>
         </SettingRow>
-        <SettingRow title="Мини-плеер" hint="Компактное окно поверх всех (позже)">
-          <Switch checked={false} disabled label="Мини-плеер" />
+        <SettingRow title="Мини-плеер" hint="Компактное окно поверх всех: обложка, транспорт, лайк; тянется за фон">
+          <Switch
+            checked={prefs.miniPlayer}
+            disabled={!engineAvailable()}
+            onChange={(miniPlayer: boolean) => set({ miniPlayer })}
+            label="Мини-плеер"
+          />
         </SettingRow>
         <SettingRow title="Язык интерфейса" hint="Пока только русский">
           <RowValue>Русский</RowValue>

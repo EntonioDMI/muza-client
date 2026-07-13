@@ -3,6 +3,7 @@
 
 mod engine;
 mod local;
+mod miniplayer;
 mod rpc;
 mod share;
 mod tray;
@@ -36,8 +37,13 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" && tray::handle_close_requested(window.app_handle()) {
-                    api.prevent_close();
+                if window.label() == "main" {
+                    if tray::handle_close_requested(window.app_handle()) {
+                        api.prevent_close();
+                    } else {
+                        // выходим по-настоящему — мини-плеер не должен пережить main
+                        let _ = miniplayer::miniplayer_hide(window.app_handle().clone());
+                    }
                 }
             }
         })
@@ -62,6 +68,8 @@ pub fn run() {
             rpc::rpc_clear,
             share::share_save_file,
             tray::tray_configure,
+            miniplayer::miniplayer_show,
+            miniplayer::miniplayer_hide,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -113,6 +113,8 @@ export interface Prefs {
    *  Выключен — текст без пунктира и карточек. */
   meaningMode: boolean;
   autostart: boolean;
+  /** Мини-плеер: компактное окно поверх всех (Rust-окно "mini"). */
+  miniPlayer: boolean;
   /** Иконка Muza в области уведомлений. */
   tray: boolean;
   /** Закрытие окна сворачивает в трей (музыка играет дальше), а не выходит.
@@ -249,6 +251,7 @@ export const DEFAULT_PREFS: Prefs = {
   customCss: "",
   visualizer: "bars",
   autostart: true,
+  miniPlayer: false,
   tray: true,
   closeToTray: true,
   normalize: true,

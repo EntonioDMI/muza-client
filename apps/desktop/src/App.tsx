@@ -7,6 +7,7 @@ import { accentRoleVars, customAccentVars } from "./lib/accent";
 import { dominantColor, mixHex } from "./lib/coverTint";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
 import { applySourcePolicy } from "./lib/sources";
+import { miniHide, miniListen, miniSendState, miniShow, type MiniCommand, type MiniState } from "./lib/miniBridge";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
 import { exportCachedTrack } from "./lib/dragOut";
@@ -455,6 +456,56 @@ function Player({
     },
     prefs.mediaKeys,
   );
+
+  // Мини-плеер: окно "mini" живёт/умирает по prefs; состояние уходит событиями
+  // (1 Гц по целым секундам позиции), команды приходят обратно (ref-паттерн —
+  // подписка одна, замыкания свежие)
+  const miniStateNow = (): MiniState => ({
+    title: track.title,
+    artist: track.artist,
+    cover: track.cover,
+    playing,
+    pos,
+    duration: track.duration,
+    liked: likes.includes(track.id),
+  });
+  const miniRef = useRef({ send: () => {}, cmd: (_c: MiniCommand) => {} });
+  miniRef.current = {
+    send: () => void miniSendState(miniStateNow()),
+    cmd: (c: MiniCommand) => {
+      if (c === "toggle") pb.toggle();
+      else if (c === "next") pb.next();
+      else if (c === "prev") pb.prev();
+      else if (c === "like") toggleLike(track.id);
+      else if (c === "close") {
+        // замыкание свежее (miniRef переприсваивается каждый рендер) — prefs актуальны
+        setPrefs({ ...prefs, miniPlayer: false });
+        void miniHide();
+      }
+    },
+  };
+  useEffect(() => {
+    if (!engineAvailable()) return;
+    if (prefs.miniPlayer) void miniShow();
+    else void miniHide();
+  }, [prefs.miniPlayer]);
+  useEffect(() => {
+    if (!engineAvailable()) return;
+    let un: (() => void) | undefined;
+    void miniListen(
+      (c) => miniRef.current.cmd(c),
+      () => miniRef.current.send(),
+    ).then((u) => {
+      un = u;
+    });
+    return () => un?.();
+  }, []);
+  const miniPos = Math.floor(pos);
+  useEffect(() => {
+    if (!prefs.miniPlayer || !engineAvailable()) return;
+    miniRef.current.send();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.miniPlayer, track.id, playing, likes, miniPos]);
 
   // Discord Rich Presence: активность на смену трека/паузу (RPC живёт в Rust;
   // Discord не запущен или client_id не настроен — no-op). Строки — из
