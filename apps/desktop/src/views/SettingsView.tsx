@@ -2042,6 +2042,12 @@ export function SettingsView({
           Удалить…
         </Button>
       </SettingRow>
+      <SettingRow
+        title="Как Muza использует данные"
+        hint="Простыми словами: что собираем, зачем и как удалить"
+        onClick={() => void openExternal("https://muza.lol/privacy")}
+        chevron
+      ></SettingRow>
     </div>
   );
 

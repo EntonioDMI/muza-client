@@ -46,6 +46,48 @@
   background: rgba(18, 17, 16, 0.76);
 }
 
+/* W2-хвосты: Wrapped — намеренно «тёмное шоу» (T11). Скрим выше захардкожен
+   тёмным независимо от темы приложения, поэтому фактическая подложка внутри
+   оверлея всегда тёмная — но токены текста/поверхностей в светлой теме
+   (data-theme="light" в themes.css) переключаются на «тёмный-на-светлом»
+   вариант и становятся невидимы на тёмном скриме. Фикс: форсируем внутри
+   .wrapped ту же тёмную рампу, что действует по умолчанию (:root в
+   colors.css) — независимо от текущей темы приложения. Акцентные токены
+   учитывают выбранный data-accent (red/bolt), чтобы хue акцента не менялся —
+   только его «тёмный» вариант вместо «тёмный-на-светлом». Тёмная тема не
+   тронута: правила применяются только под [data-theme="light"], а значения
+   в них дословно совпадают с её же дефолтами. */
+[data-theme="light"] .wrapped {
+  --bg-0: #121110;
+  --bg-1: #171614;
+  --surface-1: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --surface-3: rgba(255, 255, 255, 0.11);
+  --surface-4: rgba(255, 255, 255, 0.15);
+  --text-1: #f4f3f1;
+  --text-2: rgba(244, 243, 241, 0.62);
+  --text-3: rgba(244, 243, 241, 0.38);
+  --text-on-accent: #ffffff;
+  --accent: #3b82f6;
+  --accent-hover: #5c96f7;
+  --accent-text: #85b3fa;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+}
+
+[data-theme="light"][data-accent="red"] .wrapped {
+  --accent: #f76967;
+  --accent-hover: #f9807e;
+  --accent-text: #fa9b99;
+  --accent-soft: rgba(247, 105, 103, 0.16);
+}
+
+[data-theme="light"][data-accent="bolt"] .wrapped {
+  --accent: #327ad9;
+  --accent-hover: #4f8fe0;
+  --accent-text: #7fb0ec;
+  --accent-soft: rgba(50, 122, 217, 0.16);
+}
+
 .wrapped__ambient {
   inset: auto;
   width: min(58vw, 620px);
