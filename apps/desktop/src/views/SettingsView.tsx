@@ -2690,6 +2690,13 @@ export function SettingsView({
             />
           </SettingRow>
         ) : null}
+        <SettingRow title="Качание при басах" hint="Экран мягко пульсирует в такт басам в полноэкранном плеере">
+          <Switch
+            checked={prefs.bassShake}
+            onChange={(on: boolean) => set({ bassShake: on })}
+            label="Качание при басах"
+          />
+        </SettingRow>
         <GroupTitle>Внешние плагины</GroupTitle>
         <SettingRow title="Плагины" hint="Внешняя плагин-система требует песочницу и capability-права — в работе">
           <RowValue>0 установлено</RowValue>

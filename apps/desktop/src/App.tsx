@@ -1683,6 +1683,8 @@ function Player({
         onClose={() => setExpanded(false)}
         visualizer={prefs.visualizer}
         getAnalyser={pb.getAnalyser}
+        bassShake={prefs.bassShake}
+        anims={prefs.anims}
       />
       <MeaningDialog
         open={meaningLine !== null}

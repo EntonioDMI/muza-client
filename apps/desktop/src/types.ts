@@ -113,6 +113,11 @@ export interface Prefs {
   customCss: string;
   /** Визуализатор в режиме прослушивания (встроенное расширение). */
   visualizer: "bars" | "wave" | "off";
+  /** «Качание при басах» (встроенное расширение, T14): в полноэкранном плеере
+   *  (ListeningMode) экран мягко пульсирует в такт низким частотам (первые
+   *  бины analyser'а движка). Уважает общий anims и OS prefers-reduced-motion
+   *  (выключается принудительно). Поведенческий преф — НЕ в THEME_KEYS. */
+  bassShake: boolean;
   /** «Режим смысла»: пунктирные строки с Genius-аннотациями (Stage 5).
    *  Выключен — текст без пунктира и карточек. */
   meaningMode: boolean;
@@ -255,6 +260,7 @@ export const DEFAULT_PREFS: Prefs = {
   customCssOn: false,
   customCss: "",
   visualizer: "bars",
+  bassShake: false,
   autostart: true,
   miniPlayer: false,
   tray: true,

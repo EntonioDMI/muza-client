@@ -5,6 +5,29 @@ import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 import { Visualizer } from "./Visualizer";
 
+/** OS-уровень «уменьшить анимацию» — жёсткий выключатель качания независимо
+ *  от пользовательского прefa bassShake (как и общий anims). Без
+ *  window.matchMedia (jsdom-тесты, старый WebView) — считаем, что предпочтения
+ *  нет, вызывающий код всё равно доходит сюда только когда bassShake=true. */
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/** Качание при басах (T14): первые бины analyser'а (~до 250Гц при fftSize
+ *  2048) → сглаженная энергия (быстрая атака на удар, плавный спад) →
+ *  scale/translate контейнера всего оверлея. Амплитуда мала намеренно —
+ *  не морская болезнь, лёгкий пульс. */
+const BASS_BINS = 10;
+const BASS_ATTACK_SEC = 0.05;
+const BASS_RELEASE_SEC = 0.35;
+const BASS_SCALE_MAX = 0.02; // 1.0 → 1.02
+const BASS_LIFT_PX = 1.5; // лёгкий подъём на ударе
+
 /** Полноэкранный «режим прослушивания» — караоке-оверлей («ночной вайб»). */
 export function ListeningMode({
   open,
@@ -24,6 +47,8 @@ export function ListeningMode({
   onClose,
   visualizer = "off",
   getAnalyser,
+  bassShake = false,
+  anims = true,
 }: {
   open: boolean;
   track: PlayerTrack;
@@ -47,9 +72,63 @@ export function ListeningMode({
   /** Визуализатор (Stage 6): бары/волна поверх сцены, за контентом. */
   visualizer?: "bars" | "wave" | "off";
   getAnalyser?: () => AnalyserNode | null;
+  /** Преф «Качание при басах» (T14, Настройки → Расширения → Встроенные). */
+  bassShake?: boolean;
+  /** Общий переключатель анимаций — выключен, значит качание тоже выключено. */
+  anims?: boolean;
 }) {
   const [calm, setCalm] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shakeRef = useRef<HTMLDivElement | null>(null);
+  // getAnalyser — новая функция на каждый ре-рендер App (usePlayback тикает
+  // pos несколько раз в секунду) — стабилизация через ref, как в Visualizer,
+  // иначе огибающая басов (level) сбрасывалась бы каждые ~250мс.
+  const getAnalyserRef = useRef(getAnalyser);
+  useEffect(() => {
+    getAnalyserRef.current = getAnalyser;
+  }, [getAnalyser]);
+
+  useEffect(() => {
+    const node = shakeRef.current;
+    if (!open || !bassShake || !anims || !getAnalyser || prefersReducedMotion()) {
+      if (node) node.style.transform = "";
+      return;
+    }
+    let raf = 0;
+    let level = 0;
+    let lastT = performance.now();
+    const bass = new Uint8Array(BASS_BINS);
+    if (node) node.style.willChange = "transform";
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const analyser = getAnalyserRef.current?.();
+      if (!analyser) return;
+      const now = performance.now();
+      const dt = Math.min(0.25, Math.max(0, (now - lastT) / 1000));
+      lastT = now;
+      analyser.getByteFrequencyData(bass);
+      let sum = 0;
+      for (let i = 0; i < bass.length; i++) sum += bass[i];
+      const raw = sum / bass.length / 255; // 0..1
+      const tau = raw > level ? BASS_ATTACK_SEC : BASS_RELEASE_SEC;
+      level += (raw - level) * (1 - Math.exp(-dt / tau));
+      const s = Math.max(0, Math.min(1, level));
+      const target = shakeRef.current;
+      if (target) {
+        target.style.transform = `scale(${(1 + s * BASS_SCALE_MAX).toFixed(4)}) translateY(${(-s * BASS_LIFT_PX).toFixed(2)}px)`;
+      }
+    };
+    tick();
+    return () => {
+      cancelAnimationFrame(raf);
+      if (shakeRef.current) {
+        shakeRef.current.style.transform = "";
+        shakeRef.current.style.willChange = "";
+      }
+    };
+    // getAnalyser стабилизирован через ref выше — эффект от его identity не зависит.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, bassShake, anims]);
 
   const wake = () => {
     setCalm(false);
@@ -76,6 +155,8 @@ export function ListeningMode({
 
   return (
     <div
+      ref={shakeRef}
+      data-testid="listening-mode"
       onMouseMove={wake}
       style={{
         position: "absolute",

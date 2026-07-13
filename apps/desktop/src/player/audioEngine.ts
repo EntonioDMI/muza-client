@@ -145,7 +145,8 @@ export class AudioEngine {
     // как его слышит юзер (после EQ, нормализации и лимитера)
     this.analyserNode = ctx.createAnalyser();
     this.analyserNode.fftSize = 2048;
-    this.analyserNode.smoothingTimeConstant = 0.82;
+    // T14: 0.82 давал вялый, «нежёсткий» отклик баров — 0.7 живее, но не дёрганый.
+    this.analyserNode.smoothingTimeConstant = 0.7;
     this.limiter.connect(this.analyserNode);
     this.analyserNode.connect(ctx.destination);
     this.master.gain.value = volCurve(this.volume);
