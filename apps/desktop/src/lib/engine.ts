@@ -39,6 +39,37 @@ export interface ResolveResult {
  *  ключуется track_id: уже добытый HQ-файл играет и в эконом-режиме. */
 export type StreamQuality = "auto" | "econom";
 
+/** Минимальная типизированная форма, которой renderer может снабдить нативный
+ * движок. YouTube URL всегда строит Rust; URL остальных разрешённых
+ * провайдеров проходит строгую каноническую проверку на нативной границе. */
+export type NativeSourceRef =
+  | { provider: "youtube"; sourceId: string }
+  | {
+      provider: "soundcloud" | "bandcamp";
+      sourceId: string;
+      canonicalUrl: string;
+    };
+
+/** Отбрасывает local/неизвестные источники и не переносит произвольные поля
+ * TrackSource через IPC. Порядок сервера сохраняется как порядок попыток. */
+export function toNativeSourceRefs(sources: readonly TrackSource[]): NativeSourceRef[] {
+  return sources.flatMap<NativeSourceRef>((source) => {
+    if (source.provider === "youtube") {
+      return [{ provider: "youtube", sourceId: source.sourceId }];
+    }
+    if (source.provider === "soundcloud" || source.provider === "bandcamp") {
+      return [
+        {
+          provider: source.provider,
+          sourceId: source.sourceId,
+          canonicalUrl: source.url,
+        },
+      ];
+    }
+    return [];
+  });
+}
+
 /** Добыть трек: LRU-кэш → yt-dlp по лестнице «источники × клиенты рецепта».
  *  sources — с сервера (getTrackSources), уже по убыванию priority. */
 export async function resolveTrack(
@@ -50,7 +81,7 @@ export async function resolveTrack(
     "engine_resolve",
     {
       trackId,
-      sources: sources.map((s) => ({ provider: s.provider, sourceId: s.sourceId, url: s.url })),
+      sources: toNativeSourceRefs(sources),
       quality,
     },
   );
