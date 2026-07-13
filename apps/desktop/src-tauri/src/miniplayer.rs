@@ -11,7 +11,7 @@
 //! и main, поэтому надёжно. show/hide теперь просто переключают видимость
 //! уже существующего окна, а не создают/уничтожают его.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager};
 
 /// Показать мини-плеер (окно уже существует со старта — просто показываем).
 #[tauri::command]
@@ -21,23 +21,10 @@ pub fn miniplayer_show(app: AppHandle) -> Result<(), String> {
         win.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
-    // Фолбэк на случай, если статическое окно из конфига почему-то не
-    // поднялось (например, старый конфиг без записи "mini") — не оставляем
-    // пользователя с нерабочим свитчом.
-    let win = WebviewWindowBuilder::new(&app, "mini", WebviewUrl::App("index.html".into()))
-        .title("Muza mini")
-        .inner_size(380.0, 148.0)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .build()
-        .map_err(|e| format!("окно мини-плеера не создалось: {e}"))?;
-    win.show().map_err(|e| e.to_string())?;
-    win.set_focus().map_err(|e| e.to_string())?;
-    Ok(())
+    // Окно "mini" не найдено — статическое окно обязано быть объявлено
+    // в tauri.conf.json и загружено при старте приложения.
+    eprintln!("ошибка: окно mini не объявлено в tauri.conf.json — статическое окно обязательно");
+    Err("окно mini не найдено; проверь tauri.conf.json".to_string())
 }
 
 /// Спрятать мини-плеер (выключили настройку/крестик в самом мини).
