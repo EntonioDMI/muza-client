@@ -16,6 +16,9 @@ export interface WebPrefs {
   eqOn: boolean;
   eqPreset: string;
   eqBands: number[];
+  /** T41: группировка ремиксов/версий в поиске — оригинал + версии одной
+   *  карточкой (?group=1 сервера, T36). Default true (дизайн-док). */
+  searchGrouping: boolean;
 }
 
 export const DEFAULT_WEB_PREFS: WebPrefs = {
@@ -25,6 +28,7 @@ export const DEFAULT_WEB_PREFS: WebPrefs = {
   eqOn: false,
   eqPreset: "Ровный",
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  searchGrouping: true,
 };
 
 const KEY = "muza.web.prefs.v1";
