@@ -2,12 +2,14 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Button, Dialog, Icon, IconButton, Menu, SearchInput } from "@muza/ui";
+import { Button, Dialog, IconButton, Menu, SearchInput } from "@muza/ui";
 import { ApiError, type PlaylistDetail } from "@muza/api-client";
 import { getApi } from "../../../src/api";
 import { usePlayer } from "../../../src/player";
 import { usePlaylists } from "../../../src/playlists";
 import { useSession } from "../../../src/session";
+import { PlaylistCover } from "../../../src/components/PlaylistCover";
+import { PlaylistIconPicker } from "../../../src/components/PlaylistIconPicker";
 import { TrackList } from "../../../src/components/TrackList";
 import { useToast } from "../../../src/toast";
 
@@ -38,6 +40,8 @@ function PlaylistBody() {
   const [shareBusy, setShareBusy] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
+  const [iconOpen, setIconOpen] = useState(false);
+  const [iconBusy, setIconBusy] = useState(false);
 
   const load = useCallback(() => {
     if (!id) return;
@@ -96,6 +100,21 @@ function PlaylistBody() {
       void refreshPlaylists();
     } catch (e) {
       notify(e instanceof ApiError ? e.message : "Не удалось убрать трек", "x");
+    }
+  };
+
+  const changeIcon = async (icon: string) => {
+    setIconBusy(true);
+    try {
+      await getApi().setPlaylistIcon(id, icon);
+      setDetail((d) => (d ? { ...d, icon } : d));
+      setIconOpen(false);
+      notify("Иконка изменена", "image");
+      void refreshPlaylists();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : "Не удалось сменить иконку", "x");
+    } finally {
+      setIconBusy(false);
     }
   };
 
@@ -162,21 +181,7 @@ function PlaylistBody() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 72,
-            height: 72,
-            borderRadius: "var(--r-md)",
-            flex: "none",
-            background: "var(--accent-soft)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Icon name={detail.collaborators.length > 0 ? "users" : "list-music"} size={30} color="var(--accent-text)" />
-        </span>
+        <PlaylistCover icon={detail.icon} shared={detail.collaborators.length > 0} size={72} radius="var(--r-md)" iconSize={30} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <h1 className="page-title" style={{ fontSize: 24 }}>
             {detail.name}
@@ -215,12 +220,21 @@ function PlaylistBody() {
                     setRenameOpen(true);
                   },
                 },
+                { icon: "image", label: "Сменить иконку", onClick: () => setIconOpen(true) },
                 { icon: "share-2", label: "Поделиться", onClick: () => setShareOpen(true) },
                 "-",
                 { icon: "trash-2", label: "Удалить плейлист", danger: true, onClick: () => setDeleteOpen(true) },
               ]
             : [{ icon: "log-out", label: "Покинуть плейлист", danger: true, onClick: () => setLeaveOpen(true) }]
         }
+      />
+
+      <PlaylistIconPicker
+        open={iconOpen}
+        currentIcon={detail.icon}
+        busy={iconBusy}
+        onClose={() => setIconOpen(false)}
+        onPick={(icon) => void changeIcon(icon)}
       />
 
       <Dialog

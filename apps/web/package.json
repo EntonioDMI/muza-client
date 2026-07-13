@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@muza/api-client": "workspace:*",
+    "@muza/core": "workspace:*",
     "@muza/ui": "workspace:*",
     "next": "^16.1.0",
     "react": "^19.2.7",

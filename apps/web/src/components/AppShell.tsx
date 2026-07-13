@@ -14,6 +14,7 @@ import { useToast } from "../toast";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { NowPlayingPanel } from "./NowPlayingPanel";
 import { PlayerBar } from "./PlayerBar";
+import { PlaylistCover } from "./PlaylistCover";
 import { TRACK_DND_MIME } from "./TrackList";
 
 /** Каркас залогиненного веба. Живёт в layout группы (app) — плеер НЕ
@@ -174,25 +175,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     transition: "background var(--dur-fast) var(--ease-out)",
                   }}
                 >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: "var(--r-xs)",
-                      flex: "none",
-                      background: "var(--accent-soft)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Icon
-                      name={p.role === "collaborator" || p.collaboratorsCount > 0 ? "users" : "list-music"}
-                      size={18}
-                      color="var(--accent-text)"
-                    />
-                  </span>
+                  <PlaylistCover icon={p.icon} shared={p.role === "collaborator" || p.collaboratorsCount > 0} size={40} iconSize={18} />
                   <span style={{ minWidth: 0 }}>
                     <span
                       style={{

@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, Dialog, EmptyState, Icon, SearchInput, Tabs } from "@muza/ui";
+import { Button, Dialog, EmptyState, SearchInput, Tabs } from "@muza/ui";
+import { pickRandomPlaylistIcon } from "@muza/core";
 import { ApiError, type HistoryItem } from "@muza/api-client";
 import { getApi } from "../../../src/api";
 import { usePlaylists } from "../../../src/playlists";
+import { PlaylistCover } from "../../../src/components/PlaylistCover";
 import { TrackList } from "../../../src/components/TrackList";
 import { useToast } from "../../../src/toast";
 
@@ -47,7 +49,9 @@ export default function LibraryPage() {
     if (!name) return;
     setCreateBusy(true);
     try {
-      const playlist = await getApi().createPlaylist(name);
+      const usedIcons = playlists.map((p) => p.icon).filter((v): v is string => Boolean(v));
+      const icon = pickRandomPlaylistIcon(usedIcons);
+      const playlist = await getApi().createPlaylist(name, icon);
       await refresh();
       closeCreate();
       router.push(`/playlist?id=${playlist.id}`);
@@ -132,21 +136,7 @@ export default function LibraryPage() {
                   textDecoration: "none",
                 }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 52,
-                    height: 52,
-                    borderRadius: "var(--r-xs)",
-                    flex: "none",
-                    background: "var(--accent-soft)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Icon name={p.collaboratorsCount > 0 || p.role === "collaborator" ? "users" : "list-music"} size={22} color="var(--accent-text)" />
-                </span>
+                <PlaylistCover icon={p.icon} shared={p.collaboratorsCount > 0 || p.role === "collaborator"} size={52} iconSize={22} />
                 <span style={{ minWidth: 0 }}>
                   <span
                     style={{

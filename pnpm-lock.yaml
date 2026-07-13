@@ -90,6 +90,9 @@ importers:
       '@muza/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@muza/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@muza/ui':
         specifier: workspace:*
         version: link:../../packages/ui
