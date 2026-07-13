@@ -214,6 +214,11 @@ export interface Prefs {
   /** Где искать: каталог + источники (yt-dlp) или только накопленный каталог.
    *  Локальные файлы в поиске не участвуют (живут в Библиотеке). */
   searchScope: "all" | "catalog";
+  /** T37 (эпик W6): группировка ремиксов/версий в поиске (сервер T36,
+   *  ?group=1) — оригинал/канон + версии одной карточкой, лайк карточки
+   *  бьёт по канону. Выкл — обычный плоский поиск (как раньше). Поведенческий
+   *  преф — НЕ THEME. */
+  searchGrouping: boolean;
   /** Синхронизированный текст (выкл = plain-список без подсветки/автоследования). */
   syncedLyrics: boolean;
   /** Автоследование за активной строкой текста (выкл = свободный скролл). */
@@ -311,6 +316,7 @@ export const DEFAULT_PREFS: Prefs = {
   mediaKeys: true,
   instantSearch: true,
   searchScope: "all",
+  searchGrouping: true,
   syncedLyrics: true,
   lyricsAutoScroll: true,
   streamQuality: "auto",

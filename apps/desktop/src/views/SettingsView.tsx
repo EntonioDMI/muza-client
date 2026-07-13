@@ -2508,6 +2508,16 @@ export function SettingsView({
         <SettingRow title="Мгновенный поиск" hint="Каталог при вводе; выкл — поиск только по Enter">
           <Switch checked={prefs.instantSearch} onChange={(instantSearch: boolean) => set({ instantSearch })} label="Мгновенный поиск" />
         </SettingRow>
+        <SettingRow
+          title="Группировка ремиксов и версий"
+          hint="Ремиксы/спидапы/кавера — под одной карточкой оригинала; лайк карточки ставится оригиналу, версии разворачиваются отдельно"
+        >
+          <Switch
+            checked={prefs.searchGrouping}
+            onChange={(searchGrouping: boolean) => set({ searchGrouping })}
+            label="Группировка ремиксов и версий"
+          />
+        </SettingRow>
         <SettingRow title="Прямые и локальные источники" hint="Работает: файлы, папки и ссылки — в Медиатеке">
           <RowValue>Медиатека → Локальные / По ссылке</RowValue>
         </SettingRow>

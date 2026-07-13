@@ -1500,6 +1500,7 @@ function Player({
                 likes={likes}
                 instantSearch={prefs.instantSearch}
                 searchScope={prefs.searchScope}
+                searchGrouping={prefs.searchGrouping}
                 onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
                 onQueueCatalog={onQueueCatalog}
