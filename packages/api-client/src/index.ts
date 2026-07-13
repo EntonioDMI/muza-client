@@ -36,6 +36,7 @@ import type {
 } from "./schemas";
 
 export * from "./schemas";
+export { resolveApiBaseUrl, type ApiBuildMode } from "./api-base-url";
 
 export interface MuzaApi {
   /** Анонимный вход: аккаунт-на-устройстве, без синхронизации между устройствами. */

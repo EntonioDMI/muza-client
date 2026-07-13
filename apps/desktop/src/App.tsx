@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, Menu, SearchInput, Toast } from "@muza/ui";
-import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
+import {
+  HttpMuzaApi,
+  resolveApiBaseUrl,
+  type MuzaApi,
+  type PlaylistMeta,
+  type Session,
+  type Track as CatalogTrack,
+} from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
 import { accentRoleVars, customAccentVars } from "./lib/accent";
@@ -53,7 +60,14 @@ import { WrappedOverlay } from "./views/WrappedOverlay";
 
 export function App() {
   const api = useMemo(
-    () => new HttpMuzaApi(import.meta.env.VITE_API_URL ?? "http://localhost:8000/api"),
+    () =>
+      new HttpMuzaApi(
+        resolveApiBaseUrl(
+          import.meta.env.VITE_API_URL,
+          import.meta.env.PROD ? "production" : "development",
+          import.meta.env.DEV ? "http://localhost:8000/api" : undefined,
+        ),
+      ),
     [],
   );
   const [session, setSession] = useState<Session | null>(null);
