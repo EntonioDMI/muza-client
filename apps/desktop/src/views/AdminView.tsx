@@ -296,7 +296,7 @@ function UsersTab({ api }: { api: MuzaApi }) {
 export function AdminView({ api }: { api: MuzaApi }) {
   const [tab, setTab] = useState("overview");
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6)", maxWidth: 860 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6)", maxWidth: 860, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <Icon name="shield" size={22} color="var(--accent-text)" />
         <h1

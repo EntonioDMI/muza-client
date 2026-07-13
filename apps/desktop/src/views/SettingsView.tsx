@@ -743,6 +743,7 @@ export function SettingsView({
   username,
   onLogout,
   onNotify,
+  onOpenHotkeys,
   intent,
 }: {
   api: MuzaApi;
@@ -753,6 +754,8 @@ export function SettingsView({
   username: string;
   onLogout: () => void;
   onNotify: (text: string, icon?: string) => void;
+  /** T9: строка «Помощь / закрыть» кликабельна — открывает диалог горячих клавиш (App). */
+  onOpenHotkeys: () => void;
   intent?: SettingsIntent | null;
 }) {
   const [tab, setTab] = useState("appearance");
@@ -2645,7 +2648,7 @@ export function SettingsView({
                 onCapture={(combo) => setKey(a.id, combo)}
               />
             ))}
-            <SettingRow title="Помощь / закрыть" hint="Фиксированные — не переназначаются">
+            <SettingRow title="Помощь / закрыть" hint="Фиксированные — не переназначаются" onClick={onOpenHotkeys} chevron>
               <div style={{ display: "flex", gap: "var(--sp-2)" }}>
                 <Kbd>?</Kbd>
                 <Kbd>Esc</Kbd>
@@ -2798,7 +2801,7 @@ export function SettingsView({
     );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 720 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 720, margin: "0 auto" }}>
       <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>Настройки</h1>
       {/* wrap: разделов много — все вкладки видны при любой ширине,
           скрытый горизонтальный скролл был антипаттерном */}

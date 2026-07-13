@@ -190,6 +190,7 @@ export function Sidebar({
   onDropTrack,
   isAdmin = false,
   navItems,
+  onOpenHotkeys,
 }: {
   view: View;
   setView: (v: View) => void;
@@ -202,6 +203,8 @@ export function Sidebar({
   isAdmin?: boolean;
   /** Компоновка (настройки → «Вкладки сайдбара»): состав/порядок/имена. */
   navItems?: NavItemPref[];
+  /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
+  onOpenHotkeys: () => void;
 }) {
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
   // индикатор гаснет, контент остаётся доступен), label — своё имя
@@ -305,7 +308,21 @@ export function Sidebar({
         {isAdmin ? (
           <NavItem icon="shield" label="Админка" active={view === "admin"} onClick={() => setView("admin")} />
         ) : null}
-        <NavItem icon="settings" label="Настройки" active={view === "settings"} onClick={() => setView("settings")} />
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <NavItem icon="settings" label="Настройки" active={view === "settings"} onClick={() => setView("settings")} />
+          </div>
+          <Tooltip label="Горячие клавиши (?)">
+            <IconButton
+              icon="circle-help"
+              size="sm"
+              label="Горячие клавиши"
+              style={{ width: 28, height: 28 }}
+              iconSize={16}
+              onClick={onOpenHotkeys}
+            />
+          </Tooltip>
+        </div>
       </div>
     </aside>
   );

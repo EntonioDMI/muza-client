@@ -826,6 +826,9 @@ function Player({
 
   // Оверлей горячих клавиш (клавиша «?»)
   const [hotkeysOpen, setHotkeysOpen] = useState(false);
+  // T9: явное открытие (кнопка сайдбара / строка настроек) — не toggle,
+  // клик всегда открывает, даже если диалог уже открыт.
+  const openHotkeys = () => setHotkeysOpen(true);
 
   // Mute: клик по иконке громкости или клавиша M; помним прежний уровень
   const prevVolRef = useRef(64);
@@ -1178,6 +1181,7 @@ function Player({
               : undefined
           }
           isAdmin={isAdmin}
+          onOpenHotkeys={openHotkeys}
         />
         {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
             прошлого экрана не протекает в новый (короткий экран улетал вверх) */}
@@ -1311,6 +1315,7 @@ function Player({
                 username={username}
                 onLogout={onLogout}
                 onNotify={showToast}
+                onOpenHotkeys={openHotkeys}
                 intent={settingsIntent}
               />
             )}
