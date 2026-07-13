@@ -2,6 +2,7 @@
 
 import { LikesProvider } from "./likes";
 import { PlayerProvider } from "./player";
+import { PlaylistsProvider } from "./playlists";
 import { PrefsProvider } from "./prefs";
 import { SessionProvider } from "./session";
 import { ToastProvider } from "./toast";
@@ -14,9 +15,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <SessionProvider>
       <PrefsProvider>
         <LikesProvider>
-          <PlayerProvider>
-            <ToastProvider>{children}</ToastProvider>
-          </PlayerProvider>
+          <PlaylistsProvider>
+            <PlayerProvider>
+              <ToastProvider>{children}</ToastProvider>
+            </PlayerProvider>
+          </PlaylistsProvider>
         </LikesProvider>
       </PrefsProvider>
     </SessionProvider>

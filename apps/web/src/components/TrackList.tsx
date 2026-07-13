@@ -7,6 +7,7 @@ import { getApi } from "../api";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
+import { usePlaylists } from "../playlists";
 import { useToast } from "../toast";
 
 /** Тип данных внутреннего DnD (строка трека → плейлист сайдбара). */
@@ -39,25 +40,30 @@ function setTrackDragImage(e: React.DragEvent, track: Track) {
 }
 
 /** Список треков на TrackRow ДС: клик/даблклик — playContext, лайк — общий
- *  контекст, «⋯» и ПКМ — меню (в любимое / в плейлист / скачать), строка
+ *  контекст, «⋯» и ПКМ — меню (в любимое / в плейлист / скачать / убрать из
+ *  плейлиста — только когда передан onRemoveFromPlaylist), строка
  *  перетаскивается в плейлисты сайдбара. Локальные треки других устройств
  *  не играбельны на вебе — приглушены. */
-export function TrackList({ tracks }: { tracks: Track[] }) {
+export function TrackList({
+  tracks,
+  onRemoveFromPlaylist,
+}: {
+  tracks: Track[];
+  /** Передаётся только со страницы плейлиста: добавляет в меню пункт
+   *  «Убрать из плейлиста» (список — не общий контекст, только владелец
+   *  страницы знает playlistId и умеет перезагрузить detail). */
+  onRemoveFromPlaylist?: (track: Track) => void;
+}) {
   const { likedIds, toggle } = useLikes();
   const { current, playing, playContext } = usePlayer();
+  const { playlists, loaded, refresh: refreshPlaylists } = usePlaylists();
   const notify = useToast();
   const [menu, setMenu] = useState<{ x: number; y: number; track: Track; index: number } | null>(null);
   const [plPick, setPlPick] = useState<Track | null>(null);
-  const [playlists, setPlaylists] = useState<PlaylistMeta[] | null>(null);
 
   const openPlaylistPick = (track: Track) => {
     setPlPick(track);
-    if (playlists === null) {
-      getApi()
-        .getPlaylists()
-        .then(setPlaylists)
-        .catch(() => setPlaylists([]));
-    }
+    if (!loaded) void refreshPlaylists();
   };
 
   const addToPlaylist = async (pl: PlaylistMeta, track: Track) => {
@@ -65,6 +71,7 @@ export function TrackList({ tracks }: { tracks: Track[] }) {
     try {
       await getApi().addPlaylistTrack(pl.id, track.id);
       notify(`Добавлено в «${pl.name}»`, "list-music");
+      void refreshPlaylists();
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось добавить", "x");
     }
@@ -144,6 +151,12 @@ export function TrackList({ tracks }: { tracks: Track[] }) {
                 "-",
                 { icon: "list-music", label: "В плейлист…", onClick: () => openPlaylistPick(menu.track) },
                 { icon: "download", label: "Скачать", onClick: () => void download(menu.track) },
+                ...(onRemoveFromPlaylist
+                  ? [
+                      "-" as const,
+                      { icon: "list-x", label: "Убрать из плейлиста", onClick: () => onRemoveFromPlaylist(menu.track) },
+                    ]
+                  : []),
               ]
             : []
         }
@@ -152,11 +165,11 @@ export function TrackList({ tracks }: { tracks: Track[] }) {
       {/* Выбор плейлиста для «В плейлист…» */}
       <Dialog open={plPick !== null} title="В какой плейлист?" onClose={() => setPlPick(null)}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 300, maxHeight: 320, overflowY: "auto" }}>
-          {playlists === null ? (
+          {!loaded ? (
             <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>Загрузка…</span>
           ) : playlists.length === 0 ? (
             <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>
-              Плейлистов пока нет — создаются в приложении для Windows.
+              Плейлистов пока нет — создай первый в библиотеке.
             </span>
           ) : (
             playlists.map((p) => (

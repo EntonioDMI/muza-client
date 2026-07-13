@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Badge, Icon } from "@muza/ui";
 import type { PlaylistMeta } from "@muza/api-client";
 import { getApi } from "../api";
 import { usePlayer } from "../player";
+import { usePlaylists } from "../playlists";
 import { usePrefs } from "../prefs";
 import { useSession } from "../session";
 import { useToast } from "../toast";
@@ -61,10 +62,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { session, ready } = useSession();
   const { prefs, set } = usePrefs();
   const { current } = usePlayer();
+  const { playlists, refresh: reloadPlaylists } = usePlaylists();
   const notify = useToast();
   const router = useRouter();
   const pathname = usePathname();
-  const [playlists, setPlaylists] = useState<PlaylistMeta[]>([]);
   const [mobileNp, setMobileNp] = useState(false);
   /** плейлист под перетаскиваемым треком — подсветка drop-таргета */
   const [dropPl, setDropPl] = useState<string | null>(null);
@@ -72,17 +73,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (ready && !session) router.replace("/login");
   }, [ready, session, router]);
-
-  const reloadPlaylists = useCallback(() => {
-    getApi()
-      .getPlaylists()
-      .then(setPlaylists)
-      .catch(() => setPlaylists([]));
-  }, []);
-
-  useEffect(() => {
-    if (session) reloadPlaylists();
-  }, [session, reloadPlaylists]);
 
   /** Drop трека на плейлист сайдбара (DnD из любого списка). */
   const dropOnPlaylist = async (e: React.DragEvent, pl: PlaylistMeta) => {
@@ -94,7 +84,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       const { id } = JSON.parse(raw) as { id: string };
       await getApi().addPlaylistTrack(pl.id, id);
       notify(`Добавлено в «${pl.name}»`, "list-music");
-      reloadPlaylists();
+      void reloadPlaylists();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Не удалось добавить", "x");
     }
