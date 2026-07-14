@@ -28,6 +28,8 @@ export const en = {
     loading: "Loading…",
     on: "On",
     off: "Off",
+    like: "Like",
+    namePlaceholder: "Name",
   },
   settings: {
     title: "Settings",
@@ -618,7 +620,7 @@ export const en = {
     },
 
     // ── Интеграции (сама вкладка, помимо discord/lastfm/listenbrainz выше) ─
-    // (整合 keys для самой вкладки — mediaKeys уже в integrations.mediaKeys)
+    // (остальные ключи самой вкладки — mediaKeys уже в integrations.mediaKeys)
 
     // ── Хоткеи ───────────────────────────────────────────────────────
     hotkeys: {
@@ -767,5 +769,204 @@ export const en = {
         deleteFailed: "Couldn't delete the account",
       },
     },
+  },
+
+  // ── App.tsx (T31, эпик W5): каркас плеера — тосты, меню, диалоги ────
+  app: {
+    anonymousUsername: "Anonymous (no sync)",
+    newPlaylistName: "New Playlist",
+    zeroTracksMeta: "0 tracks",
+    unknownPlaylistName: "playlist",
+    queuePlaylistName: "Queue {date}",
+    demoPlaylistName: "Night Vibe",
+    dropOverlay: {
+      title: "Drop it — we'll add it to Muza",
+      hint: "Audio files and folders become local tracks",
+    },
+    errors: {
+      pluginBridgeNotReady: "internal: plugin bridge isn't ready yet",
+    },
+    renamePlaylistDialog: {
+      title: "Rename playlist",
+    },
+    deletePlaylistDialog: {
+      title: "Delete playlist?",
+      confirm: "Delete",
+      bodyServer: "\"{name}\" will disappear from every device. Tracks stay in the catalog.",
+      bodyLocal: "\"{name}\" will disappear from the sidebar.",
+    },
+    newPlaylistDialog: {
+      create: "Create",
+    },
+    addToPlaylistDialog: {
+      titleWithTrack: "\"{title}\" — add to playlist",
+      empty: "No playlists yet — create the first one with the \"+\" button in the sidebar.",
+    },
+    hotkeysDialog: {
+      title: "Hotkeys",
+      rows: {
+        searchOrClose: "Search / close overlay",
+        thisHelp: "This help",
+        dragTrackToPlaylist: "Track — to a sidebar playlist",
+        dragRowCombo: "drag the row",
+        dragFileToDesktop: "Track file — to the desktop",
+        altDragCombo: "Alt + drag",
+      },
+      footerHint:
+        "Reassign — Settings → Hotkeys. File-drag works for already-fetched (cached) tracks; another way — drag the cover off the player bar.",
+    },
+  },
+
+  // ── Контекстные меню (App.tsx: трек/каталожный трек/плейлист) ───────
+  menu: {
+    addToPlaylist: "Add to playlist",
+    track: {
+      addToQueue: "Add to queue",
+      showLyrics: "Show lyrics",
+      copyLink: "Copy link",
+    },
+    catalog: {
+      radio: "Radio from this track",
+      addToJam: "Add to Jam",
+      share: "Share",
+      versions: "Versions & sources",
+      saveOffline: "Save offline",
+      removeOffline: "Remove from offline",
+    },
+    playlist: {
+      open: "Open",
+      rename: "Rename",
+      changeIcon: "Change icon",
+      delete: "Delete playlist",
+    },
+  },
+
+  // ── Тосты (App.tsx: onNotify/showToast по всему каркасу плеера) ─────
+  toast: {
+    undo: "Undo",
+    radio: {
+      continuing: "Radio: continuing with similar tracks",
+      building: "Building a radio…",
+      byTrack: "Radio from \"{title}\"",
+      buildFailed: "Couldn't build the radio",
+    },
+    offline: {
+      removed: "Removed from offline",
+      saving: "Saving offline…",
+      saved: "Saved offline",
+      pinnedWillDownload: "Pinned — will download on first listen",
+      savingPlaylist: "Saving {count} tr. offline — downloading in the background",
+      playlistDone: "Offline ready: {ok} of {count} downloaded",
+    },
+    sleep: {
+      track: "Falling asleep at the end of the track",
+      inMinutes: "Falling asleep in {minutes} min",
+      paused: "Sleep timer: paused",
+    },
+    queue: {
+      added: "To queue: {title}",
+      addedGeneric: "Added to queue",
+      trackRemoved: "\"{title}\" removed from the queue",
+      nothingToSave: "No catalog tracks in the queue — nothing to save",
+      savedAsPlaylist: "Saved: \"{name}\" · {count} tr.",
+      saveFailed: "Couldn't save the queue",
+      tailCleared: "Up-next cleared",
+    },
+    files: {
+      noneFound: "No audio files found in what was dropped",
+      added: "Local tracks added: {count}",
+      addFailed: "Couldn't add the files",
+      prepareFailed: "Couldn't prepare the file",
+    },
+    update: {
+      available: "Muza {version} available",
+      downloading: "Downloading the update — Muza will restart itself…",
+      installFailed: "Couldn't install the update",
+    },
+    favorites: {
+      added: "Added to Favorites",
+      removed: "Removed from Favorites",
+      syncFailed: "Couldn't sync the like",
+    },
+    playlist: {
+      renamed: "Playlist renamed",
+      renameFailed: "Couldn't rename",
+      deleteFailed: "Couldn't delete",
+      deleted: "Playlist deleted",
+      created: "Playlist created",
+      createFailed: "Couldn't create the playlist",
+      iconChanged: "Icon changed",
+      iconChangeFailed: "Couldn't change the icon",
+      addedTrack: "Added to \"{name}\"",
+      addFailed: "Couldn't add",
+      joined: "You're in the playlist \"{name}\" (from {owner})",
+    },
+    link: {
+      copied: "Link copied",
+      trackAdded: "\"{title}\" added",
+    },
+  },
+
+  // ── Плеер-бар/транспорт (T31): PlayerBar.tsx + ListeningMode.tsx +
+  //    NowPlayingPanel.tsx + вычисления App.tsx, использующие тот же текст ─
+  player: {
+    speedTooltip: "Playback speed",
+    speedAria: "Speed: {speed}",
+    speedToast: "Speed: {speed}×",
+    listeningModeTooltip: "Listening mode",
+    listeningModeTooltipDrag: "Listening mode · drag to the desktop",
+    shuffle: "Shuffle",
+    previous: "Previous",
+    next: "Next",
+    buffering: "Fetching track…",
+    pause: "Pause",
+    play: "Listen",
+    repeat: {
+      off: "Repeat off",
+      all: "Repeat queue",
+      one: "Repeat track",
+    },
+    progress: "Progress",
+    progressValueText: "{pos} of {duration}",
+    sleep: {
+      off: "Sleep timer off",
+      track: "Sleep at the end of the track",
+      inMinutes: "Sleep in {minutes} min",
+    },
+    lyrics: "Lyrics",
+    jamTooltip: "Jam: listen together",
+    jamActiveTooltip: "Jam in progress — open",
+    queue: "Queue",
+    unmute: "Unmute",
+    mute: "Mute",
+    volume: "Volume",
+    fullscreen: "Fullscreen",
+    lyricsSearching: "Looking for lyrics…",
+    lyricsNotFound: "Lyrics not found",
+  },
+
+  // ── Sidebar.tsx (T31) ─────────────────────────────────────────────
+  sidebar: {
+    playlistsHeading: "Playlists",
+    newPlaylistTooltip: "New playlist",
+    createPlaylistAria: "Create playlist",
+    admin: "Admin",
+    hotkeysTooltip: "Hotkeys (?)",
+    hotkeysAria: "Hotkeys",
+    playlistMeta: {
+      collabFrom: "{count} tr. · from {owner}",
+      shared: "{count} tr. · shared",
+      trackCount: "{count} tr.",
+    },
+  },
+
+  // ── NowPlayingPanel.tsx (T31) ─────────────────────────────────────
+  nowPlaying: {
+    heading: "Now Playing",
+  },
+
+  // ── ListeningMode.tsx (T31, строки помимо переиспользованных player.*) ─
+  listeningMode: {
+    minimize: "Minimize",
   },
 };

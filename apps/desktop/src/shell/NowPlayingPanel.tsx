@@ -1,6 +1,7 @@
 import { IconButton, Lyrics } from "@muza/ui";
 import type { LyricLine } from "../data/demo";
 import type { PlayerTrack } from "../player/types";
+import { useT } from "../i18n";
 
 export function NowPlayingPanel({
   track,
@@ -27,6 +28,7 @@ export function NowPlayingPanel({
   /** Открыть общую модалку смысла для выделенной строки. */
   onExplain: (index: number) => void;
 }) {
+  const { t } = useT();
   return (
     <aside
       style={{
@@ -51,7 +53,7 @@ export function NowPlayingPanel({
           color: "var(--text-3)",
         }}
       >
-        Сейчас играет
+        {t("nowPlaying.heading")}
       </span>
       <img
         key={track.id}
@@ -78,7 +80,7 @@ export function NowPlayingPanel({
             {track.album ? `${track.artist} · ${track.album}` : track.artist}
           </div>
         </div>
-        <IconButton icon="heart" active={liked} filled={liked} label="Нравится" onClick={onLike} />
+        <IconButton icon="heart" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
       </div>
       <div
         style={{
@@ -111,7 +113,7 @@ export function NowPlayingPanel({
               fontSize: "var(--fs-caption)",
             }}
           >
-            {lyricsLoading ? "Ищем текст…" : "Текст не найден"}
+            {lyricsLoading ? t("player.lyricsSearching") : t("player.lyricsNotFound")}
           </div>
         )}
       </div>

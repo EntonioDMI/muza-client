@@ -5,6 +5,7 @@ import { isTrackDrag, readTrackDrag } from "../lib/dnd";
 import { NAV_ITEM_META, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
+import { useT } from "../i18n";
 
 /** T44: плагинная вкладка сайдбара (мета из contributes). */
 export interface PluginNavItemView {
@@ -244,6 +245,7 @@ export function Sidebar({
   /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
   onOpenHotkeys: () => void;
 }) {
+  const { t } = useT();
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
   // индикатор гаснет, контент остаётся доступен), label — своё имя.
   // T44: плагинные вкладки живут в том же списке под ключами plugin:<id>:<tab>.
@@ -252,7 +254,7 @@ export function Sidebar({
     .map((n) => {
       if (isPluginKey(n.key)) {
         const pn = pluginNav.find((p) => p.key === n.key);
-        return { key: n.key, icon: pn?.icon || "puzzle", label: n.label || pn?.title || "Плагин", plugin: pn };
+        return { key: n.key, icon: pn?.icon || "puzzle", label: n.label || pn?.title || t("settings.appearance.plugin.genericLabel"), plugin: pn };
       }
       const nativeKey = n.key as keyof typeof NAV_ITEM_META;
       return { key: n.key, icon: NAV_ITEM_META[nativeKey].icon, label: n.label || NAV_ITEM_META[nativeKey].label, plugin: undefined };
@@ -334,13 +336,13 @@ export function Sidebar({
             color: "var(--text-3)",
           }}
         >
-          Плейлисты
+          {t("sidebar.playlistsHeading")}
         </span>
-        <Tooltip label="Новый плейлист">
+        <Tooltip label={t("sidebar.newPlaylistTooltip")}>
           <IconButton
             icon="plus"
             size="sm"
-            label="Создать плейлист"
+            label={t("sidebar.createPlaylistAria")}
             style={{ width: 28, height: 28 }}
             iconSize={16}
             onClick={onCreatePlaylist}
@@ -363,17 +365,17 @@ export function Sidebar({
       </div>
       <div style={{ marginTop: "auto" }}>
         {isAdmin ? (
-          <NavItem icon="shield" label="Админка" active={view === "admin"} onClick={() => setView("admin")} />
+          <NavItem icon="shield" label={t("sidebar.admin")} active={view === "admin"} onClick={() => setView("admin")} />
         ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <NavItem icon="settings" label="Настройки" active={view === "settings"} onClick={() => setView("settings")} />
+            <NavItem icon="settings" label={t("settings.title")} active={view === "settings"} onClick={() => setView("settings")} />
           </div>
-          <Tooltip label="Горячие клавиши (?)">
+          <Tooltip label={t("sidebar.hotkeysTooltip")}>
             <IconButton
               icon="circle-help"
               size="sm"
-              label="Горячие клавиши"
+              label={t("sidebar.hotkeysAria")}
               style={{ width: 28, height: 28 }}
               iconSize={16}
               onClick={onOpenHotkeys}

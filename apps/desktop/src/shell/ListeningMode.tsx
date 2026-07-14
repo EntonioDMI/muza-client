@@ -4,6 +4,7 @@ import type { LyricLine } from "../data/demo";
 import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 import { Visualizer } from "./Visualizer";
+import { useT } from "../i18n";
 
 /** OS-уровень «уменьшить анимацию» — жёсткий выключатель качания независимо
  *  от пользовательского прefa bassShake (как и общий anims). Без
@@ -77,6 +78,7 @@ export function ListeningMode({
   /** Общий переключатель анимаций — выключен, значит качание тоже выключено. */
   anims?: boolean;
 }) {
+  const { t } = useT();
   const [calm, setCalm] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shakeRef = useRef<HTMLDivElement | null>(null);
@@ -258,7 +260,7 @@ export function ListeningMode({
               fontSize: "var(--fs-strong)",
             }}
           >
-            {lyricsLoading ? "Ищем текст…" : "Текст не найден"}
+            {lyricsLoading ? t("player.lyricsSearching") : t("player.lyricsNotFound")}
           </div>
         )}
       </div>
@@ -273,7 +275,7 @@ export function ListeningMode({
           pointerEvents: calm ? "none" : "auto",
         }}
       >
-        <IconButton icon="minimize-2" variant="surface" label="Свернуть" onClick={onClose} />
+        <IconButton icon="minimize-2" variant="surface" label={t("listeningMode.minimize")} onClick={onClose} />
       </div>
 
       <div
@@ -295,17 +297,17 @@ export function ListeningMode({
           pointerEvents: calm ? "none" : "auto",
         }}
       >
-        <IconButton icon="skip-back" label="Предыдущий" onClick={onPrev} />
+        <IconButton icon="skip-back" label={t("player.previous")} onClick={onPrev} />
         <IconButton
           icon={playing ? "pause" : "play"}
           variant="accent"
           size="lg"
-          label={playing ? "Пауза" : "Слушать"}
+          label={playing ? t("player.pause") : t("player.play")}
           onClick={onTogglePlay}
         />
-        <IconButton icon="skip-forward" label="Следующий" onClick={onNext} />
+        <IconButton icon="skip-forward" label={t("player.next")} onClick={onNext} />
         <span style={{ fontSize: 13, color: "var(--text-2)", fontVariantNumeric: "tabular-nums", paddingLeft: 6 }}>{fmtTime(pos)}</span>
-        <Slider value={pos} max={track.duration} onChange={onSeek} ariaLabel="Прогресс" style={{ width: 220 }} />
+        <Slider value={pos} max={track.duration} onChange={onSeek} ariaLabel={t("player.progress")} style={{ width: 220 }} />
         <span style={{ fontSize: 13, color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>{fmtTime(track.duration)}</span>
       </div>
     </div>

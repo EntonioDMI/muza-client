@@ -18,6 +18,8 @@ export const ru: typeof en = {
     loading: "Загружаем…",
     on: "Вкл",
     off: "Выкл",
+    like: "Нравится",
+    namePlaceholder: "Название",
   },
   settings: {
     title: "Настройки",
@@ -735,5 +737,196 @@ export const ru: typeof en = {
         deleteFailed: "Не удалось удалить аккаунт",
       },
     },
+  },
+
+  app: {
+    anonymousUsername: "Аноним (без синхронизации)",
+    newPlaylistName: "Новый плейлист",
+    zeroTracksMeta: "0 треков",
+    unknownPlaylistName: "плейлист",
+    queuePlaylistName: "Очередь {date}",
+    demoPlaylistName: "Ночной вайб",
+    dropOverlay: {
+      title: "Отпусти — добавим в Muza",
+      hint: "Аудиофайлы и папки станут локальными треками",
+    },
+    errors: {
+      pluginBridgeNotReady: "internal: бридж плагинов ещё не готов",
+    },
+    renamePlaylistDialog: {
+      title: "Переименовать плейлист",
+    },
+    deletePlaylistDialog: {
+      title: "Удалить плейлист?",
+      confirm: "Удалить",
+      bodyServer: "«{name}» исчезнет со всех устройств. Треки останутся в каталоге.",
+      bodyLocal: "«{name}» исчезнет из сайдбара.",
+    },
+    newPlaylistDialog: {
+      create: "Создать",
+    },
+    addToPlaylistDialog: {
+      titleWithTrack: "«{title}» — в плейлист",
+      empty: "Плейлистов пока нет — создай первый кнопкой «+» в сайдбаре.",
+    },
+    hotkeysDialog: {
+      title: "Горячие клавиши",
+      rows: {
+        searchOrClose: "Поиск / закрыть оверлей",
+        thisHelp: "Эта справка",
+        dragTrackToPlaylist: "Трек — в плейлист сайдбара",
+        dragRowCombo: "перетащи строку",
+        dragFileToDesktop: "Файл трека — на рабочий стол",
+        altDragCombo: "Alt + перетащи",
+      },
+      footerHint:
+        "Переназначить — Настройки → Клавиши. Файл-drag работает для уже добытых (кэшированных) треков; ещё один способ — утащить обложку из плеер-бара.",
+    },
+  },
+
+  menu: {
+    addToPlaylist: "В плейлист",
+    track: {
+      addToQueue: "В очередь",
+      showLyrics: "Показать текст",
+      copyLink: "Скопировать ссылку",
+    },
+    catalog: {
+      radio: "Радио по треку",
+      addToJam: "В jam",
+      share: "Поделиться",
+      versions: "Версии и источники",
+      saveOffline: "Сохранить оффлайн",
+      removeOffline: "Убрать из оффлайна",
+    },
+    playlist: {
+      open: "Открыть",
+      rename: "Переименовать",
+      changeIcon: "Сменить иконку",
+      delete: "Удалить плейлист",
+    },
+  },
+
+  toast: {
+    undo: "Вернуть",
+    radio: {
+      continuing: "Радио: продолжаем похожими треками",
+      building: "Собираем радио…",
+      byTrack: "Радио по «{title}»",
+      buildFailed: "Не удалось собрать радио",
+    },
+    offline: {
+      removed: "Убрано из оффлайна",
+      saving: "Сохраняем оффлайн…",
+      saved: "Сохранено оффлайн",
+      pinnedWillDownload: "Закреплено — скачаем при первом прослушивании",
+      savingPlaylist: "Сохраняем оффлайн {count} тр. — качаем в фоне",
+      playlistDone: "Оффлайн готов: {ok} из {count} скачано",
+    },
+    sleep: {
+      track: "Уснём в конце трека",
+      inMinutes: "Уснём через {minutes} мин",
+      paused: "Таймер сна: пауза",
+    },
+    queue: {
+      added: "В очередь: {title}",
+      addedGeneric: "Добавлено в очередь",
+      trackRemoved: "«{title}» убран из очереди",
+      nothingToSave: "В очереди нет каталожных треков — сохранять нечего",
+      savedAsPlaylist: "Сохранено: «{name}» · {count} тр.",
+      saveFailed: "Не удалось сохранить очередь",
+      tailCleared: "Хвост очереди очищен",
+    },
+    files: {
+      noneFound: "Аудиофайлов среди брошенного не нашлось",
+      added: "Добавлено локальных треков: {count}",
+      addFailed: "Не удалось добавить файлы",
+      prepareFailed: "Не удалось подготовить файл",
+    },
+    update: {
+      available: "Доступна Muza {version}",
+      downloading: "Скачиваем обновление — Muza перезапустится сама…",
+      installFailed: "Не удалось установить обновление",
+    },
+    favorites: {
+      added: "Добавлено в Любимое",
+      removed: "Убрано из Любимого",
+      syncFailed: "Не удалось синхронизировать лайк",
+    },
+    playlist: {
+      renamed: "Плейлист переименован",
+      renameFailed: "Не удалось переименовать",
+      deleteFailed: "Не удалось удалить",
+      deleted: "Плейлист удалён",
+      created: "Плейлист создан",
+      createFailed: "Не удалось создать плейлист",
+      iconChanged: "Иконка изменена",
+      iconChangeFailed: "Не удалось сменить иконку",
+      addedTrack: "Добавлено в «{name}»",
+      addFailed: "Не удалось добавить",
+      joined: "Ты в плейлисте «{name}» (от {owner})",
+    },
+    link: {
+      copied: "Ссылка скопирована",
+      trackAdded: "«{title}» добавлен",
+    },
+  },
+
+  player: {
+    speedTooltip: "Скорость воспроизведения",
+    speedAria: "Скорость: {speed}",
+    speedToast: "Скорость: {speed}×",
+    listeningModeTooltip: "Режим прослушивания",
+    listeningModeTooltipDrag: "Режим прослушивания · тяни на рабочий стол",
+    shuffle: "Перемешать",
+    previous: "Предыдущий",
+    next: "Следующий",
+    buffering: "Добываем трек…",
+    pause: "Пауза",
+    play: "Слушать",
+    repeat: {
+      off: "Повтор выключен",
+      all: "Повтор очереди",
+      one: "Повтор трека",
+    },
+    progress: "Прогресс",
+    progressValueText: "{pos} из {duration}",
+    sleep: {
+      off: "Таймер сна выключен",
+      track: "Сон в конце трека",
+      inMinutes: "Сон через {minutes} мин",
+    },
+    lyrics: "Текст",
+    jamTooltip: "Jam: слушать вместе",
+    jamActiveTooltip: "Jam идёт — открыть",
+    queue: "Очередь",
+    unmute: "Включить звук",
+    mute: "Без звука",
+    volume: "Громкость",
+    fullscreen: "Во весь экран",
+    lyricsSearching: "Ищем текст…",
+    lyricsNotFound: "Текст не найден",
+  },
+
+  sidebar: {
+    playlistsHeading: "Плейлисты",
+    newPlaylistTooltip: "Новый плейлист",
+    createPlaylistAria: "Создать плейлист",
+    admin: "Админка",
+    hotkeysTooltip: "Горячие клавиши (?)",
+    hotkeysAria: "Горячие клавиши",
+    playlistMeta: {
+      collabFrom: "{count} тр. · от {owner}",
+      shared: "{count} тр. · совместный",
+      trackCount: "{count} тр.",
+    },
+  },
+
+  nowPlaying: {
+    heading: "Сейчас играет",
+  },
+
+  listeningMode: {
+    minimize: "Свернуть",
   },
 };

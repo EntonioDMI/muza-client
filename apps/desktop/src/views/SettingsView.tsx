@@ -888,8 +888,8 @@ export function SettingsView({
     if (!staged || !isFullAccessManifest(staged.manifest)) return;
     setFullAccessAck(false);
     setFullAccessRemaining(FULL_ACCESS_DELAY_SEC);
-    const t = setInterval(() => setFullAccessRemaining((s) => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(t);
+    const iv = setInterval(() => setFullAccessRemaining((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staged]);
   const fullAccessBlocked = (m: StagedPlugin["manifest"]) =>
@@ -1246,8 +1246,8 @@ export function SettingsView({
     let alive = true;
     api
       .getMarketThemes()
-      .then((t) => {
-        if (alive) setMarketThemes(t);
+      .then((themes) => {
+        if (alive) setMarketThemes(themes);
       })
       .catch(() => {
         if (alive) setMarketThemes([]);

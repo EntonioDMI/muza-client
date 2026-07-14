@@ -4,7 +4,7 @@ import { pickRandomPlaylistIcon } from "@muza/core";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
-import { LanguageProvider, resolveMigratedLanguage } from "./i18n";
+import { LanguageProvider, resolveMigratedLanguage, translate, type TParams, type TranslationKey } from "./i18n";
 import { accentRoleVars, customAccentVars } from "./lib/accent";
 import { dominantColor, mixHex } from "./lib/coverTint";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
@@ -98,7 +98,8 @@ export function App() {
       userId={session.user.id}
       canSearch={!session.user.anonymous}
       greetName={session.user.anonymous ? null : session.user.username}
-      username={session.user.anonymous ? "Аноним (без синхронизации)" : (session.user.username ?? "")}
+      isAnonymous={session.user.anonymous}
+      rawUsername={session.user.anonymous ? null : (session.user.username ?? "")}
       onLogout={async () => {
         await api.logout();
         setSession(null);
@@ -199,7 +200,8 @@ function Player({
   userId,
   canSearch,
   greetName,
-  username,
+  isAnonymous,
+  rawUsername,
   onLogout,
 }: {
   api: MuzaApi;
@@ -208,7 +210,10 @@ function Player({
   canSearch: boolean;
   /** Ник для приветствия на главной; null у анонима. */
   greetName: string | null;
-  username: string;
+  isAnonymous: boolean;
+  /** Ник аккаунта; null у анонима — «Аноним (без синхронизации)» подставляется
+   *  через t() ниже (App() не знает языка — читается из Prefs внутри Player). */
+  rawUsername: string | null;
   onLogout: () => void;
 }) {
   // Скоуп снапшотов — до первых загрузок (эффекты ниже читают через withSnapshot)
@@ -290,6 +295,12 @@ function Player({
     setPrefsState(p);
     localStorage.setItem(PREFS_KEY, JSON.stringify(p));
   };
+  // T31 (i18n): Player — сам родитель <LanguageProvider> (см. return ниже),
+  // поэтому useT() внутри тела Player читал бы контекст СНАРУЖИ своего же
+  // провайдера (фолбэк на DEFAULT_LANG) — вместо хука зовём чистую translate()
+  // напрямую с prefs.language, которая уже есть в стейте Player.
+  const t = (key: TranslationKey, params?: TParams) => translate(prefs.language, key, params);
+  const username = isAnonymous ? t("app.anonymousUsername") : (rawUsername ?? "");
 
   // Jam-гость (Stage 7): бесконечное радио не должно спорить с хостом —
   // ref, потому что onQueueEnd замыкается при создании usePlayback
@@ -326,7 +337,7 @@ function Player({
       try {
         const radio = await api.getRadio(last.id);
         if (radio.length === 0) return null;
-        showToast("Радио: продолжаем похожими треками", "radio");
+        showToast(t("toast.radio.continuing"), "radio");
         return radio.map(fromCatalog);
       } catch {
         return null; // сервер лёг — честная остановка очереди
@@ -393,7 +404,7 @@ function Player({
     () =>
       createPluginBridge(() => {
         const live = pluginLiveRef.current;
-        if (!live) throw new Error("internal: бридж плагинов ещё не готов");
+        if (!live) throw new Error(t("app.errors.pluginBridgeNotReady"));
         return live;
       }),
     [],
@@ -506,21 +517,21 @@ function Player({
     }
   };
 
-  const toggleOffline = async (t: CatalogTrack) => {
-    if (pins.has(t.id)) {
-      await enginePin(t.id, false);
+  const toggleOffline = async (track: CatalogTrack) => {
+    if (pins.has(track.id)) {
+      await enginePin(track.id, false);
       setPins((p) => {
         const next = new Set(p);
-        next.delete(t.id);
+        next.delete(track.id);
         return next;
       });
-      showToast("Убрано из оффлайна", "cloud-off");
+      showToast(t("toast.offline.removed"), "cloud-off");
       return;
     }
-    showToast("Сохраняем оффлайн…", "download");
-    const ok = await saveOffline(t);
+    showToast(t("toast.offline.saving"), "download");
+    const ok = await saveOffline(track);
     showToast(
-      ok === false ? "Закреплено — скачаем при первом прослушивании" : "Сохранено оффлайн",
+      ok === false ? t("toast.offline.pinnedWillDownload") : t("toast.offline.saved"),
       "download",
     );
   };
@@ -529,14 +540,14 @@ function Player({
   const saveOfflinePlaylist = async (tracks: CatalogTrack[]) => {
     const targets = tracks.filter((t) => /^\d+$/.test(t.id));
     if (targets.length === 0) return;
-    showToast(`Сохраняем оффлайн ${targets.length} тр. — качаем в фоне`, "download");
+    showToast(t("toast.offline.savingPlaylist", { count: targets.length }), "download");
     let ok = 0;
-    for (const t of targets) {
-      const r = await saveOffline(t);
+    for (const track of targets) {
+      const r = await saveOffline(track);
       if (r !== false) ok += 1;
     }
-    setPins((p) => new Set([...p, ...targets.map((t) => t.id)]));
-    showToast(`Оффлайн готов: ${ok} из ${targets.length} скачано`, "download");
+    setPins((p) => new Set([...p, ...targets.map((track) => track.id)]));
+    showToast(t("toast.offline.playlistDone", { ok, count: targets.length }), "download");
   };
 
   /** Каталожный (серверный) id — числовой; демо-ид вида "t1". */
@@ -547,14 +558,14 @@ function Player({
   const usedPlaylistIcons = () => srvPlaylists.map((p) => p.icon).filter((id): id is string => id !== null);
 
   /** «Радио по треку» (Stage 5): очередь = трек + похожие с сервера. */
-  const startRadio = async (t: CatalogTrack) => {
-    showToast("Собираем радио…", "radio");
+  const startRadio = async (track: CatalogTrack) => {
+    showToast(t("toast.radio.building"), "radio");
     try {
-      const radio = await api.getRadio(t.id);
-      pb.playContext([t, ...radio].map(fromCatalog), t.id);
-      showToast(`Радио по «${t.title}»`, "radio");
+      const radio = await api.getRadio(track.id);
+      pb.playContext([track, ...radio].map(fromCatalog), track.id);
+      showToast(t("toast.radio.byTrack", { title: track.title }), "radio");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось собрать радио", "x");
+      showToast(e instanceof Error ? e.message : t("toast.radio.buildFailed"), "x");
     }
   };
 
@@ -678,10 +689,10 @@ function Player({
   });
   const sleepLabel =
     sleep.mode === "off"
-      ? "Таймер сна выключен"
+      ? t("player.sleep.off")
       : sleep.mode === "track"
-        ? "Сон в конце трека"
-        : `Сон через ${sleep.mode} мин`;
+        ? t("player.sleep.track")
+        : t("player.sleep.inMinutes", { minutes: sleep.mode });
   const cycleSleep = () => {
     const order: ("off" | "track" | number)[] = ["off", ...prefs.sleepPresets, "track"];
     const i = order.findIndex((m) => m === sleep.mode);
@@ -689,7 +700,7 @@ function Player({
     const minutes = typeof mode === "number" ? mode : null;
     setSleep({ mode, at: minutes ? Date.now() + minutes * 60_000 : null });
     showToast(
-      mode === "off" ? "Таймер сна выключен" : mode === "track" ? "Уснём в конце трека" : `Уснём через ${minutes} мин`,
+      mode === "off" ? t("player.sleep.off") : mode === "track" ? t("toast.sleep.track") : t("toast.sleep.inMinutes", { minutes: minutes ?? 0 }),
       "moon",
     );
   };
@@ -699,7 +710,7 @@ function Player({
       if (Date.now() >= (sleep.at ?? Infinity)) {
         setSleep({ mode: "off", at: null });
         pb.pause();
-        showToast("Таймер сна: пауза", "moon");
+        showToast(t("toast.sleep.paused"), "moon");
       }
     }, 5000);
     return () => clearInterval(iv);
@@ -719,7 +730,7 @@ function Player({
     if (sleepTrackArmedRef.current !== track.id) {
       setSleep({ mode: "off", at: null });
       pb.pause();
-      showToast("Таймер сна: пауза", "moon");
+      showToast(t("toast.sleep.paused"), "moon");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sleep.mode, track.id]);
@@ -765,15 +776,15 @@ function Player({
 
   // Дабл-клик по строке = «в очередь» (настройка «Действие по двойному клику»);
   // при "play" вьюхи получают undefined — TrackRow оставляет dblclick = play
-  const queueCatalog = (t: CatalogTrack) => {
-    pbRaw.insertInQueue(fromCatalog(t), pbRaw.queue.length);
-    showToast(`В очередь: ${t.title}`, "list-music");
+  const queueCatalog = (track: CatalogTrack) => {
+    pbRaw.insertInQueue(fromCatalog(track), pbRaw.queue.length);
+    showToast(t("toast.queue.added", { title: track.title }), "list-music");
   };
   const queueDemo = (id: string) => {
-    const t = TRACKS.find((x) => x.id === id);
-    if (!t) return;
-    pbRaw.insertInQueue(fromDemo(t), pbRaw.queue.length);
-    showToast(`В очередь: ${t.title}`, "list-music");
+    const track = TRACKS.find((x) => x.id === id);
+    if (!track) return;
+    pbRaw.insertInQueue(fromDemo(track), pbRaw.queue.length);
+    showToast(t("toast.queue.added", { title: track.title }), "list-music");
   };
   const onQueueCatalog = prefs.doubleClickAction === "queue" ? queueCatalog : undefined;
   const onQueueDemo = prefs.doubleClickAction === "queue" ? queueDemo : undefined;
@@ -785,7 +796,7 @@ function Player({
       open: true,
       text,
       icon,
-      actionLabel: "Вернуть",
+      actionLabel: t("toast.undo"),
       onAction: () => {
         onUndo();
         setToast((t) => ({ ...t, open: false }));
@@ -802,14 +813,14 @@ function Player({
     try {
       const entries = await localScanPaths(paths);
       if (entries.length === 0) {
-        showToast("Аудиофайлов среди брошенного не нашлось", "x");
+        showToast(t("toast.files.noneFound"), "x");
         return;
       }
       if (canSearch) await registerLocalTracks(api, entries);
-      showToast(`Добавлено локальных треков: ${entries.length}`, "folder-down");
+      showToast(t("toast.files.added", { count: entries.length }), "folder-down");
       navigate("library");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось добавить файлы", "x");
+      showToast(e instanceof Error ? e.message : t("toast.files.addFailed"), "x");
     }
   };
   useEffect(() => {
@@ -846,12 +857,12 @@ function Player({
         if (toastTimer.current) clearTimeout(toastTimer.current);
         setToast({
           open: true,
-          text: `Доступна Muza ${found.version}`,
+          text: t("toast.update.available", { version: found.version }),
           icon: "download",
-          actionLabel: "Установить",
+          actionLabel: t("common.install"),
           onAction: () => {
-            setToast({ open: true, text: "Скачиваем обновление — Muza перезапустится сама…", icon: "download" });
-            found.install(() => undefined).catch(() => showToast("Не удалось установить обновление", "x"));
+            setToast({ open: true, text: t("toast.update.downloading"), icon: "download" });
+            found.install(() => undefined).catch(() => showToast(t("toast.update.installFailed"), "x"));
           },
         });
         toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 12000);
@@ -886,24 +897,24 @@ function Player({
   // Циклические кнопки бара тостят новое состояние (иконка меняется тонко)
   const cycleSpeedWithToast = () => {
     const next = pb.cycleSpeed();
-    showToast(`Скорость: ${next}×`, "gauge");
+    showToast(t("player.speedToast", { speed: next }), "gauge");
   };
   const cycleRepeatWithToast = () => {
     const next = pb.cycleRepeat();
-    showToast(next === "off" ? "Повтор выключен" : next === "all" ? "Повтор очереди" : "Повтор трека", "repeat");
+    showToast(next === "off" ? t("player.repeat.off") : next === "all" ? t("player.repeat.all") : t("player.repeat.one"), "repeat");
   };
 
   // ── Очередь (UX-доводка): операции + возврат фокуса ───────────────
   /** Закрыть панель и вернуть фокус на кнопку очереди (клавиатурный путь). */
   const closeQueue = () => {
     setQueueOn(false);
-    (document.querySelector('button[aria-label="Очередь"]') as HTMLButtonElement | null)?.focus();
+    (document.querySelector(`button[aria-label="${t("player.queue")}"]`) as HTMLButtonElement | null)?.focus();
   };
 
   const removeQueueTrack = (id: string) => {
     const removed = pb.removeFromQueue(id);
     if (!removed) return;
-    showUndoToast(`«${removed.track.title}» убран из очереди`, "list-x", () =>
+    showUndoToast(t("toast.queue.trackRemoved", { title: removed.track.title }), "list-x", () =>
       pb.insertInQueue(removed.track, removed.index),
     );
   };
@@ -911,18 +922,18 @@ function Player({
   const saveQueueAsPlaylist = async () => {
     const catalog = pb.queue.filter((t) => isCatalogId(t.id));
     if (catalog.length === 0) {
-      showToast("В очереди нет каталожных треков — сохранять нечего", "x");
+      showToast(t("toast.queue.nothingToSave"), "x");
       return;
     }
     try {
-      const name = `Очередь ${new Date().toLocaleDateString("ru")}`;
+      const name = t("app.queuePlaylistName", { date: new Date().toLocaleDateString("ru") });
       // T47b: тоже создание нового плейлиста — та же случайная иконка, что и из «+» сайдбара
       const created = await api.createPlaylist(name, pickRandomPlaylistIcon(usedPlaylistIcons()));
       for (const t of catalog) await api.addPlaylistTrack(created.id, t.id);
       await reloadServerPlaylists();
-      showToast(`Сохранено: «${name}» · ${catalog.length} тр.`, "save");
+      showToast(t("toast.queue.savedAsPlaylist", { name, count: catalog.length }), "save");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось сохранить очередь", "x");
+      showToast(e instanceof Error ? e.message : t("toast.queue.saveFailed"), "x");
     }
   };
 
@@ -1014,13 +1025,13 @@ function Player({
   const toggleLike = (id: string) => {
     const had = likes.includes(id);
     setLikes((ls) => (had ? ls.filter((x) => x !== id) : [...ls, id]));
-    showToast(had ? "Убрано из Любимого" : "Добавлено в Любимое", "heart");
+    showToast(had ? t("toast.favorites.removed") : t("toast.favorites.added"), "heart");
     // каталожный трек при серверной сессии — синхронизируем (optimistic;
     // упало → откатываем и честно говорим)
     if (canSearch && isCatalogId(id)) {
       (had ? api.removeFavorite(id) : api.addFavorite(id)).catch(() => {
         setLikes((ls) => (had ? [...ls, id] : ls.filter((x) => x !== id)));
-        showToast("Не удалось синхронизировать лайк", "x");
+        showToast(t("toast.favorites.syncFailed"), "x");
       });
     }
   };
@@ -1072,14 +1083,14 @@ function Player({
         await api.renamePlaylist(target.id, name);
         await reloadServerPlaylists();
         if (openPlaylistId === target.id) setPlBump((v) => v + 1); // открытая страница перечитает имя
-        showToast("Плейлист переименован", "pencil");
+        showToast(t("toast.playlist.renamed"), "pencil");
       } catch (e) {
-        showToast(e instanceof Error ? e.message : "Не удалось переименовать", "x");
+        showToast(e instanceof Error ? e.message : t("toast.playlist.renameFailed"), "x");
       }
       return;
     }
     setPlaylists((ps) => ps.map((p) => (p.id === target.id ? { ...p, name } : p)));
-    showToast("Плейлист переименован", "pencil");
+    showToast(t("toast.playlist.renamed"), "pencil");
   };
 
   /** Удаление из контекст-меню (после подтверждения); открытая страница
@@ -1093,13 +1104,13 @@ function Player({
         await api.deletePlaylist(target.id);
         await reloadServerPlaylists();
       } catch (e) {
-        showToast(e instanceof Error ? e.message : "Не удалось удалить", "x");
+        showToast(e instanceof Error ? e.message : t("toast.playlist.deleteFailed"), "x");
         return;
       }
     } else {
       setPlaylists((ps) => ps.filter((p) => p.id !== target.id));
     }
-    showToast("Плейлист удалён", "trash-2");
+    showToast(t("toast.playlist.deleted"), "trash-2");
     if (openPlaylistId === target.id) {
       setOpenPlaylistId(null);
       if (view === "playlist") navigate("home");
@@ -1107,7 +1118,7 @@ function Player({
   };
 
   const createPlaylist = async () => {
-    const name = plName.trim() || "Новый плейлист";
+    const name = plName.trim() || t("app.newPlaylistName");
     if (canSearch) {
       try {
         const icon = pickRandomPlaylistIcon(usedPlaylistIcons());
@@ -1115,18 +1126,18 @@ function Player({
         await reloadServerPlaylists();
         setDialogOpen(false);
         setPlName("");
-        showToast("Плейлист создан", "list-music");
+        showToast(t("toast.playlist.created"), "list-music");
         navigate("playlist", { playlistId: created.id });
         return;
       } catch (e) {
-        showToast(e instanceof Error ? e.message : "Не удалось создать плейлист", "x");
+        showToast(e instanceof Error ? e.message : t("toast.playlist.createFailed"), "x");
         return;
       }
     }
-    setPlaylists((ps) => [...ps, { id: `p${ps.length + 1}${Date.now()}`, name, meta: "0 треков", cover: NEW_PLAYLIST_COVER }]);
+    setPlaylists((ps) => [...ps, { id: `p${ps.length + 1}${Date.now()}`, name, meta: t("app.zeroTracksMeta"), cover: NEW_PLAYLIST_COVER }]);
     setDialogOpen(false);
     setPlName("");
-    showToast("Плейлист создан", "list-music");
+    showToast(t("toast.playlist.created"), "list-music");
   };
 
   /** T47b: ПКМ на плейлисте (сайдбар/медиатека) ИЛИ ПКМ на треке внутри
@@ -1149,9 +1160,9 @@ function Player({
       // перечитает detail.icon (как renameFromMenu делает для имени)
       if (openPlaylistId === target.id) setPlBump((v) => v + 1);
       setIconPicker(null);
-      showToast("Иконка изменена", "image");
+      showToast(t("toast.playlist.iconChanged"), "image");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось сменить иконку", "x");
+      showToast(e instanceof Error ? e.message : t("toast.playlist.iconChangeFailed"), "x");
     } finally {
       setIconPickerBusy(false);
     }
@@ -1165,10 +1176,10 @@ function Player({
         name: p.name,
         meta:
           p.role === "collaborator"
-            ? `${p.trackCount} тр. · от ${p.ownerUsername}`
+            ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername })
             : p.collaboratorsCount > 0
-              ? `${p.trackCount} тр. · совместный`
-              : `${p.trackCount} тр.`,
+              ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
+              : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
         // T47b: иконка-обложка из манифеста @muza/core; нет/невалидна — PlaylistRow
         // сама рисует прежний фолбэк (users/list-music), как для демо-плейлистов без cover
@@ -1241,9 +1252,9 @@ function Player({
     try {
       await api.addPlaylistTrack(playlistId, plPick.id);
       await reloadServerPlaylists();
-      showToast(`Добавлено в «${playlistName}»`, "list-music");
+      showToast(t("toast.playlist.addedTrack", { name: playlistName }), "list-music");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Не удалось добавить", "x");
+      showToast(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x");
     }
   };
 
@@ -1576,14 +1587,14 @@ function Player({
           onDropTrack={
             canSearch
               ? (playlistId, trackId) => {
-                  const name = sidebarPlaylists.find((p) => p.id === playlistId)?.name ?? "плейлист";
+                  const name = sidebarPlaylists.find((p) => p.id === playlistId)?.name ?? t("app.unknownPlaylistName");
                   api
                     .addPlaylistTrack(playlistId, trackId)
                     .then(async () => {
                       await reloadServerPlaylists();
-                      showToast(`Добавлено в «${name}»`, "list-music");
+                      showToast(t("toast.playlist.addedTrack", { name }), "list-music");
                     })
-                    .catch((e: unknown) => showToast(e instanceof Error ? e.message : "Не удалось добавить", "x"));
+                    .catch((e: unknown) => showToast(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x"));
                 }
               : undefined
           }
@@ -1763,7 +1774,7 @@ function Player({
         onMove={pb.moveInQueue}
         onClearUpNext={() => {
           pb.clearUpNext();
-          showToast("Хвост очереди очищен", "list-x");
+          showToast(t("toast.queue.tailCleared"), "list-x");
         }}
         onSaveAsPlaylist={() => void saveQueueAsPlaylist()}
       />
@@ -1810,7 +1821,7 @@ function Player({
                 try {
                   return await exportCachedTrack(track.id, track.artist, track.title);
                 } catch (e) {
-                  showToast(e instanceof Error ? e.message : "Не удалось подготовить файл", "x");
+                  showToast(e instanceof Error ? e.message : t("toast.files.prepareFailed"), "x");
                   return null;
                 }
               }
@@ -1852,10 +1863,10 @@ function Player({
               <Icon name="folder-down" size={42} color="var(--accent-text)" />
             </span>
             <span style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 700, color: "var(--text-1)" }}>
-              Отпусти — добавим в Muza
+              {t("app.dropOverlay.title")}
             </span>
             <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
-              Аудиофайлы и папки станут локальными треками
+              {t("app.dropOverlay.hint")}
             </span>
           </div>
         </div>
@@ -1882,18 +1893,22 @@ function Player({
         y={menu.y}
         onClose={() => setMenu((m) => ({ ...m, open: false }))}
         items={[
-          { icon: "list-plus", label: "В очередь", onClick: () => showToast("Добавлено в очередь", "list-plus") },
-          { icon: "plus", label: "В плейлист", onClick: () => showToast("Добавлено в «Ночной вайб»", "list-music") },
+          { icon: "list-plus", label: t("menu.track.addToQueue"), onClick: () => showToast(t("toast.queue.addedGeneric"), "list-plus") },
+          {
+            icon: "plus",
+            label: t("menu.addToPlaylist"),
+            onClick: () => showToast(t("toast.playlist.addedTrack", { name: t("app.demoPlaylistName") }), "list-music"),
+          },
           {
             icon: "mic-vocal",
-            label: "Показать текст",
+            label: t("menu.track.showLyrics"),
             onClick: () => {
               if (menu.track) playTrack(menu.track.id);
               setExpanded(true);
             },
           },
           "-",
-          { icon: "link", label: "Скопировать ссылку", onClick: () => showToast("Ссылка скопирована", "link") },
+          { icon: "link", label: t("menu.track.copyLink"), onClick: () => showToast(t("toast.link.copied"), "link") },
           // T44: пункты плагинов (contributes.menus.track) — дописываются в конец
           ...(plugins.menuItems("track").length ? (["-"] as const) : []),
           ...plugins.menuItems("track").map((mi) => ({
@@ -1921,14 +1936,14 @@ function Player({
         items={[
           {
             icon: "radio",
-            label: "Радио по треку",
+            label: t("menu.catalog.radio"),
             onClick: () => {
               if (catMenu.track) void startRadio(catMenu.track);
             },
           },
           {
             icon: "plus",
-            label: "В плейлист",
+            label: t("menu.addToPlaylist"),
             onClick: () => {
               if (catMenu.track) setPlPick(catMenu.track);
             },
@@ -1937,7 +1952,7 @@ function Player({
             ? [
                 {
                   icon: "radio-tower",
-                  label: "В jam",
+                  label: t("menu.catalog.addToJam"),
                   onClick: () => {
                     if (catMenu.track) void jam.addTrack(catMenu.track.id);
                   },
@@ -1946,22 +1961,22 @@ function Player({
             : []),
           {
             icon: "share-2",
-            label: "Поделиться",
+            label: t("menu.catalog.share"),
             onClick: () => {
-              const t = catMenu.track;
-              if (t) setShareData({ kind: "track", title: t.title, artist: t.artist, coverUrl: t.coverUrl });
+              const clicked = catMenu.track;
+              if (clicked) setShareData({ kind: "track", title: clicked.title, artist: clicked.artist, coverUrl: clicked.coverUrl });
             },
           },
           {
             icon: "git-branch",
-            label: "Версии и источники",
+            label: t("menu.catalog.versions"),
             onClick: () => {
               if (catMenu.track) setVersionsTrack(catMenu.track);
             },
           },
           {
             icon: catMenu.track && pins.has(catMenu.track.id) ? "cloud-off" : "download",
-            label: catMenu.track && pins.has(catMenu.track.id) ? "Убрать из оффлайна" : "Сохранить оффлайн",
+            label: catMenu.track && pins.has(catMenu.track.id) ? t("menu.catalog.removeOffline") : t("menu.catalog.saveOffline"),
             onClick: () => {
               if (catMenu.track) void toggleOffline(catMenu.track);
             },
@@ -1993,7 +2008,7 @@ function Player({
         items={[
           {
             icon: "list-music",
-            label: "Открыть",
+            label: t("menu.playlist.open"),
             onClick: () => {
               if (plMenu.pl) openPlaylist(plMenu.pl.id);
             },
@@ -2002,7 +2017,7 @@ function Player({
             ? ([
                 {
                   icon: "pencil",
-                  label: "Переименовать",
+                  label: t("menu.playlist.rename"),
                   onClick: () => {
                     const pl = plMenu.pl;
                     if (!pl) return;
@@ -2012,7 +2027,7 @@ function Player({
                 },
                 {
                   icon: "image",
-                  label: "Сменить иконку",
+                  label: t("menu.playlist.changeIcon"),
                   onClick: () => {
                     if (plMenu.pl) openIconPicker(plMenu.pl.id);
                   },
@@ -2020,7 +2035,7 @@ function Player({
                 "-",
                 {
                   icon: "trash-2",
-                  label: "Удалить плейлист",
+                  label: t("menu.playlist.delete"),
                   danger: true,
                   onClick: () => {
                     if (plMenu.pl) setPlDelete(plMenu.pl);
@@ -2047,41 +2062,41 @@ function Player({
       {/* Диалоги контекст-меню плейлиста — как в PlaylistView */}
       <Dialog
         open={plRename !== null}
-        title="Переименовать плейлист"
+        title={t("app.renamePlaylistDialog.title")}
         onClose={() => setPlRename(null)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setPlRename(null)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="check" onClick={() => void renameFromMenu()}>
-              Сохранить
+              {t("common.save")}
             </Button>
           </>
         }
       >
-        <SearchInput value={plRenameValue} onChange={setPlRenameValue} placeholder="Название" icon="list-music" autoFocus />
+        <SearchInput value={plRenameValue} onChange={setPlRenameValue} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
       </Dialog>
 
       <Dialog
         open={plDelete !== null}
-        title="Удалить плейлист?"
+        title={t("app.deletePlaylistDialog.title")}
         onClose={() => setPlDelete(null)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setPlDelete(null)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="trash-2" onClick={() => void deleteFromMenu()}>
-              Удалить
+              {t("app.deletePlaylistDialog.confirm")}
             </Button>
           </>
         }
       >
         <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
           {canSearch
-            ? `«${plDelete?.name}» исчезнет со всех устройств. Треки останутся в каталоге.`
-            : `«${plDelete?.name}» исчезнет из сайдбара.`}
+            ? t("app.deletePlaylistDialog.bodyServer", { name: plDelete?.name ?? "" })
+            : t("app.deletePlaylistDialog.bodyLocal", { name: plDelete?.name ?? "" })}
         </div>
       </Dialog>
 
@@ -2103,9 +2118,9 @@ function Player({
         open={addLinkOpen}
         onClose={() => setAddLinkOpen(false)}
         onNotify={showToast}
-        onAdded={(t) => {
-          showToast(`«${t.title}» добавлен`, "link");
-          setPlPick(t); // сразу предлагаем положить в плейлист
+        onAdded={(added) => {
+          showToast(t("toast.link.trackAdded", { title: added.title }), "link");
+          setPlPick(added); // сразу предлагаем положить в плейлист
         }}
       />
 
@@ -2129,7 +2144,7 @@ function Player({
         onJoined={(p) => {
           setJoinOpen(false);
           void reloadServerPlaylists();
-          showToast(`Ты в плейлисте «${p.name}» (от ${p.ownerUsername})`, "users");
+          showToast(t("toast.playlist.joined", { name: p.name, owner: p.ownerUsername }), "users");
           navigate("playlist", { playlistId: p.id });
         }}
       />
@@ -2150,30 +2165,30 @@ function Player({
 
       <Dialog
         open={dialogOpen}
-        title="Новый плейлист"
+        title={t("app.newPlaylistName")}
         onClose={() => setDialogOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="plus" onClick={createPlaylist}>
-              Создать
+              {t("app.newPlaylistDialog.create")}
             </Button>
           </>
         }
       >
-        <SearchInput value={plName} onChange={setPlName} placeholder="Название" icon="list-music" autoFocus />
+        <SearchInput value={plName} onChange={setPlName} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
       </Dialog>
 
       {/* Выбор плейлиста для найденного трека («⋯ → В плейлист») */}
       <Dialog
         open={plPick !== null}
-        title={plPick ? `«${plPick.title}» — в плейлист` : "В плейлист"}
+        title={plPick ? t("app.addToPlaylistDialog.titleWithTrack", { title: plPick.title }) : t("menu.addToPlaylist")}
         onClose={() => setPlPick(null)}
         actions={
           <Button variant="ghost" onClick={() => setPlPick(null)}>
-            Отмена
+            {t("common.cancel")}
           </Button>
         }
       >
@@ -2183,22 +2198,22 @@ function Player({
           ))}
           {srvPlaylists.length === 0 ? (
             <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.5 }}>
-              Плейлистов пока нет — создай первый кнопкой «+» в сайдбаре.
+              {t("app.addToPlaylistDialog.empty")}
             </div>
           ) : null}
         </div>
       </Dialog>
 
       {/* Справка по клавишам: «?» или вкладка настроек */}
-      <Dialog open={hotkeysOpen} title="Горячие клавиши" onClose={() => setHotkeysOpen(false)}>
+      <Dialog open={hotkeysOpen} title={t("app.hotkeysDialog.title")} onClose={() => setHotkeysOpen(false)}>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 320 }}>
           {[
             ...HOTKEY_ACTIONS.map((a) => ({ action: a.label, combo: formatCombo(prefs.hotkeys[a.id]) })),
-            { action: "Поиск / закрыть оверлей", combo: "Esc" },
-            { action: "Эта справка", combo: "?" },
+            { action: t("app.hotkeysDialog.rows.searchOrClose"), combo: "Esc" },
+            { action: t("app.hotkeysDialog.rows.thisHelp"), combo: "?" },
             // T18: жесты перетаскивания (единый UX списков)
-            { action: "Трек — в плейлист сайдбара", combo: "перетащи строку" },
-            { action: "Файл трека — на рабочий стол", combo: "Alt + перетащи" },
+            { action: t("app.hotkeysDialog.rows.dragTrackToPlaylist"), combo: t("app.hotkeysDialog.rows.dragRowCombo") },
+            { action: t("app.hotkeysDialog.rows.dragFileToDesktop"), combo: t("app.hotkeysDialog.rows.altDragCombo") },
           ].map((h) => (
             <div key={h.action} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
               <span style={{ flex: 1, fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{h.action}</span>
@@ -2217,8 +2232,7 @@ function Player({
             </div>
           ))}
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: "var(--sp-2)" }}>
-            Переназначить — Настройки → Клавиши. Файл-drag работает для уже добытых (кэшированных)
-            треков; ещё один способ — утащить обложку из плеер-бара.
+            {t("app.hotkeysDialog.footerHint")}
           </div>
         </div>
       </Dialog>

@@ -96,6 +96,7 @@ describe("MeaningDialog", () => {
     // Dialog делает delayed-unmount на время exit-анимации (T13) — узел
     // уходит из DOM асинхронно (onAnimationEnd/таймаут-фолбэк), не сразу.
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByRole("button", { name: "Свернуть" })).toBeTruthy();
+    // T31 (i18n): вне LanguageProvider useT() фолбэкает на DEFAULT_LANG="en".
+    expect(screen.getByRole("button", { name: "Minimize" })).toBeTruthy();
   });
 });
