@@ -23,4 +23,12 @@ export interface TrackRowProps {
   onLike?: () => void;
   /** Shows an ellipsis button on hover — open a <Menu /> from it. */
   onMore?: (e: React.MouseEvent) => void;
+  /** Play button aria label. Default "Play" (app passes a localized value). */
+  playLabel?: string;
+  /** Pause button aria label. Default "Pause". */
+  pauseLabel?: string;
+  /** Like button aria label. Default "Like". */
+  likeLabel?: string;
+  /** More (ellipsis) button aria label. Default "More". */
+  moreLabel?: string;
 }

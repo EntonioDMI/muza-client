@@ -4,7 +4,9 @@ import { IconButton } from "../core/IconButton.jsx";
 
 /** Track list row — no dividers; hover is a surface layer, active is accent title.
  *  Keyboard-reachable: the index cell is a real play button (number → play icon
- *  on hover/focus), like/more appear on focus-within as well as hover. */
+ *  on hover/focus), like/more appear on focus-within as well as hover.
+ *  Labels default to English (ДС строко-нейтральна, DEFAULT_LANG=en) — приложение
+ *  может передать локализованные playLabel/pauseLabel/likeLabel/moreLabel. */
 export function TrackRow({
   index,
   cover,
@@ -20,6 +22,10 @@ export function TrackRow({
   onRowDoubleClick,
   onLike,
   onMore,
+  playLabel = "Play",
+  pauseLabel = "Pause",
+  likeLabel = "Like",
+  moreLabel = "More",
 }) {
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -58,7 +64,7 @@ export function TrackRow({
         {/* всегда настоящая кнопка: клавиатура достаёт play без ховера */}
         <button
           type="button"
-          aria-label={active && playing ? "Пауза" : `Слушать: ${title}`}
+          aria-label={active && playing ? pauseLabel : `${playLabel}: ${title}`}
           onClick={onPlay}
           style={{
             width: 28,
@@ -112,7 +118,7 @@ export function TrackRow({
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}>
         {lit || liked ? (
-          <IconButton icon="heart" size="sm" active={liked} filled={liked} label="Нравится" onClick={onLike} style={{ opacity: liked || lit ? 1 : 0 }} />
+          <IconButton icon="heart" size="sm" active={liked} filled={liked} label={likeLabel} onClick={onLike} style={{ opacity: liked || lit ? 1 : 0 }} />
         ) : (
           <span style={{ width: 36 }}></span>
         )}
@@ -121,7 +127,7 @@ export function TrackRow({
         ) : null}
         {onMore ? (
           lit ? (
-            <IconButton icon="ellipsis" size="sm" label="Ещё" onClick={onMore} />
+            <IconButton icon="ellipsis" size="sm" label={moreLabel} onClick={onMore} />
           ) : (
             <span style={{ width: 36 }}></span>
           )

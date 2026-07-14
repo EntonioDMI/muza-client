@@ -3,7 +3,7 @@ import React from "react";
 /** Тонкое кольцо загрузки в линейном стиле ДС (штрих 2px, разрыв четверть).
  *  Цвет — currentColor: наследует текст, в акцентных местах передай color.
  *  reduced-motion гасит вращение (класс muza-spin в animations.css). */
-export function Spinner({ size = 18, color = "currentColor", label = "Загрузка", style }) {
+export function Spinner({ size = 18, color = "currentColor", label = "Loading", style }) {
   const r = (size - 3) / 2;
   const c = 2 * Math.PI * r;
   return (

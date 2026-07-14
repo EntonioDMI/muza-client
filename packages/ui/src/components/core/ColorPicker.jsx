@@ -188,7 +188,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
       <div
         ref={panelRef}
         role="dialog"
-        aria-label={label ? `Выбор цвета: ${label}` : "Выбор цвета"}
+        aria-label={label ? `Color picker: ${label}` : "Color picker"}
         className="muza-colorpicker-panel"
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -216,11 +216,11 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
           <div
             ref={svRef}
             role="slider"
-            aria-label="Насыщенность и яркость"
+            aria-label="Saturation and brightness"
             aria-valuenow={Math.round(hsv.v * 100)}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuetext={`Насыщенность ${Math.round(hsv.s * 100)}%, яркость ${Math.round(hsv.v * 100)}%`}
+            aria-valuetext={`Saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
             tabIndex={0}
             onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setSvDrag(true); setSvFromEvent(e); }}
             onPointerMove={(e) => {
@@ -260,7 +260,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
           <div
             ref={hueRef}
             role="slider"
-            aria-label="Оттенок"
+            aria-label="Hue"
             aria-valuenow={Math.round(hsv.h)}
             aria-valuemin={0}
             aria-valuemax={359}
@@ -302,12 +302,12 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
 
         {/* Текущий/новый свотч + hex-ввод */}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
-          <div style={{ display: "flex", flex: "none" }} title="Текущий / новый цвет">
+          <div style={{ display: "flex", flex: "none" }} title="Current / new color">
             <button
               type="button"
               onClick={revertToInitial}
-              aria-label="Вернуть исходный цвет"
-              title="Исходный цвет"
+              aria-label="Reset to original color"
+              title="Original color"
               style={{
                 width: 28,
                 height: 28,
@@ -320,7 +320,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
             />
             <span
               aria-hidden="true"
-              title="Новый цвет"
+              title="New color"
               style={{
                 width: 28,
                 height: 28,
@@ -346,7 +346,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
               // закрывает попап — поэтому убран целиком.
               if (e.key === "Enter") e.currentTarget.blur();
             }}
-            aria-label="Hex-код цвета"
+            aria-label="Hex color code"
             spellCheck={false}
             maxLength={7}
             style={{
