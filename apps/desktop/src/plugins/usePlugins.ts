@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isFullAccessManifest } from "@muza/core";
 import { pluginHost } from "./host";
+import { fullAccessHost } from "./fullAccessHost";
 import { listInstalled } from "./install";
 import { pluginSlotKey } from "../lib/pluginSlots";
 import type { InstalledPluginInfo, PluginBridge } from "./types";
@@ -77,6 +78,18 @@ export function usePlugins(bridge: PluginBridge) {
   );
 
   const enabled = useMemo(() => installed.filter(isLevel1), [installed]);
+
+  // T44b: запуск app:full-access-плагинов В ХОСТ-КОНТЕКСТЕ (не через
+  // PluginFrames/iframe — см. isLevel1 выше, full-access туда не попадает).
+  // Единый путь для «при старте» и «при включении» (§5.2 дока): installed
+  // меняется в обоих случаях (первый listInstalled() на маунте App и после
+  // каждого togglePlugin из SettingsView) — fullAccessHost.run сам
+  // дедуплицирует повторные вызовы на один и тот же id за сессию окна.
+  useEffect(() => {
+    for (const p of installed) {
+      if (p.enabled && isFullAccessManifest(p.manifest)) void fullAccessHost.run(p.id);
+    }
+  }, [installed]);
 
   // Плагин выключили/удалили — сбрасываем watchdog-статус "зависший" (T44-fix:
   // security review, Important #1): PluginFrames размонтирует зависший фрейм

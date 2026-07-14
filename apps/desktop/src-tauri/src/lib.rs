@@ -25,7 +25,11 @@ pub fn run() {
         .plugin(tauri_plugin_drag::init())
         // Плагины уровня 1 (T44): песочница на своём протоколе — bootstrap-
         // документ отдаёт СВОЙ CSP (не наследует глобальный, полноценный
-        // origin), см. plugins.rs и tauri.conf.json (frame-src).
+        // origin), см. plugins.rs и tauri.conf.json (frame-src). Уровень 2
+        // (T44b, app:full-access) этот протокол НЕ использует — код льётся
+        // в главное окно напрямую через WebviewWindow::eval из команды
+        // plugins::run_full_access_plugin (ниже, invoke_handler); никакой
+        // правки CSP это не требует.
         .register_uri_scheme_protocol("muza-plugin", plugins::handle_plugin_request)
         .manage(engine::EngineState::default())
         .manage(local::LocalState::default())
@@ -90,6 +94,7 @@ pub fn run() {
             plugins::plugin_stage_from_file,
             plugins::plugin_discard_staged,
             plugins::plugin_finalize_install,
+            plugins::run_full_access_plugin,
             plugins::plugin_storage_get,
             plugins::plugin_storage_set,
             plugins::plugin_storage_remove,

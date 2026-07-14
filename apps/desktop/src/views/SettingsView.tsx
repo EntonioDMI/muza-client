@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
 import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
@@ -16,7 +16,9 @@ import {
   uninstallPlugin,
   type StagedPlugin,
 } from "../plugins/install";
+import { fullAccessHost } from "../plugins/fullAccessHost";
 import type { InstalledPluginInfo } from "../plugins/types";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { formatTemplate, rpcAvailable } from "../lib/discord";
 import { openExternal } from "../lib/system";
@@ -72,6 +74,7 @@ function deviceLabel(ua: string | null): string {
 
 function SettingRow({
   title,
+  titleExtra,
   hint,
   onClick,
   chevron,
@@ -79,6 +82,8 @@ function SettingRow({
   children,
 }: {
   title: string;
+  /** Доп. узел справа от заголовка — бейджи и т.п. (T44b: «Полный доступ»). */
+  titleExtra?: React.ReactNode;
   hint?: string;
   onClick?: () => void;
   chevron?: boolean;
@@ -116,7 +121,10 @@ function SettingRow({
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: "var(--fs-body)", fontWeight: 500, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          <div style={{ fontSize: "var(--fs-body)", fontWeight: 500, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
+          {titleExtra}
+        </div>
         {hint ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>{hint}</div> : null}
       </div>
       {children}
@@ -773,7 +781,8 @@ export function SettingsView({
   const [tab, setTab] = useState("appearance");
   const [sub, setSub] = useState<Sub>(null);
 
-  // Плагины уровня 1 (T44): установленные + мастер установки из файла
+  // Плагины уровня 1 (T44) + «Полный доступ» (T44b): установленные + мастер
+  // установки из файла
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginInfo[]>([]);
   const refreshPlugins = () => void listInstalled().then(setInstalledPlugins).catch(() => setInstalledPlugins([]));
   useEffect(() => {
@@ -792,13 +801,31 @@ export function SettingsView({
       setInstallBusy(false);
     }
   };
+  // T44b: громкий экран согласия для app:full-access — чекбокс + задержка
+  // кнопки (несколько секунд, чтобы не кликнули на автомате), кнопка отказа
+  // остаётся дефолтным фокусом Dialog (первая в actions). Сбрасывается на
+  // каждый новый staged (новый выбор файла/повтор согласия при апгрейде —
+  // finalizeInstall/plugin_finalize_install переустанавливает целиком, так
+  // что «апгрейд до full-access» — это тот же путь установки заново).
+  const FULL_ACCESS_DELAY_SEC = 5;
+  const [fullAccessAck, setFullAccessAck] = useState(false);
+  const [fullAccessRemaining, setFullAccessRemaining] = useState(FULL_ACCESS_DELAY_SEC);
+  useEffect(() => {
+    if (!staged || !isFullAccessManifest(staged.manifest)) return;
+    setFullAccessAck(false);
+    setFullAccessRemaining(FULL_ACCESS_DELAY_SEC);
+    const t = setInterval(() => setFullAccessRemaining((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staged]);
+  const fullAccessBlocked = (m: StagedPlugin["manifest"]) =>
+    isFullAccessManifest(m) && (!fullAccessAck || fullAccessRemaining > 0);
   const confirmInstall = async () => {
     if (!staged) return;
-    // T44-fix: security review — уровень 2 (app:full-access) этим рантаймом не
-    // поддержан; disabled на кнопке ниже — основная защита от клика, эта
-    // проверка дублирует её на случай программного вызова (Rust всё равно
-    // отклонит финализацию сам, см. plugins.rs::plugin_finalize_install).
-    if (isFullAccessManifest(staged.manifest)) return;
+    // Дублирует disabled на кнопке ниже (программный вызов/гонка) — то же
+    // рассуждение, что и в plugins.rs::plugin_finalize_install: не доверяем
+    // одному только disabled в разметке.
+    if (fullAccessBlocked(staged.manifest)) return;
     try {
       await finalizeInstall(staged, staged.manifest.permissions);
       onNotify(`Плагин «${staged.manifest.name}» установлен`, "puzzle");
@@ -812,9 +839,16 @@ export function SettingsView({
     if (staged) void cancelInstall(staged);
     setStaged(null);
   };
+  // T44b: выключение full-access-плагина не выгружает уже исполненный код
+  // (realm не умеет — §5.3 дока) — предлагаем рестарт сразу после toggle off.
+  const [restartPromptName, setRestartPromptName] = useState<string | null>(null);
   const togglePlugin = async (id: string, on: boolean) => {
     try {
       await setPluginEnabled(id, on);
+      if (!on) {
+        const p = installedPlugins.find((pl) => pl.id === id);
+        if (p && isFullAccessManifest(p.manifest)) setRestartPromptName(p.manifest.name);
+      }
       refreshPlugins();
     } catch (e) {
       onNotify(e instanceof Error ? e.message : "Не удалось изменить", "x");
@@ -829,6 +863,14 @@ export function SettingsView({
       onNotify(e instanceof Error ? e.message : "Не удалось удалить", "x");
     }
   };
+  // T44b: хост-реестр ошибок full-access-плагинов (репорт из try/catch
+  // IIFE в plugins.rs::build_full_access_script + ошибки самого invoke).
+  const fullAccessErrorsVersion = useSyncExternalStore(
+    (cb) => fullAccessHost.subscribe(cb),
+    () => fullAccessHost.runtimeVersion(),
+  );
+  void fullAccessErrorsVersion;
+  const fullAccessErrors = fullAccessHost.getErrors();
   // Валидные плагинные ключи композиции (только включённые уровень-1 плагины)
   const enabledLevel1 = installedPlugins.filter((p) => p.enabled && !isFullAccessManifest(p.manifest));
   const pluginBarKeys = enabledLevel1.flatMap((p) =>
@@ -2839,9 +2881,14 @@ export function SettingsView({
             <SettingRow
               key={p.id}
               title={p.manifest.name}
-              hint={`v${p.version} · ${p.manifest.author} · права: ${p.granted.length}${
-                isFullAccessManifest(p.manifest) ? " · ПОЛНЫЙ ДОСТУП" : ""
-              }`}
+              titleExtra={
+                isFullAccessManifest(p.manifest) ? (
+                  <Badge tone="accent" style={{ background: "color-mix(in srgb, var(--danger) 22%, transparent)", color: "var(--danger)" }}>
+                    Полный доступ
+                  </Badge>
+                ) : undefined
+              }
+              hint={`v${p.version} · ${p.manifest.author} · права: ${p.granted.length}`}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
                 <Switch
@@ -2859,6 +2906,26 @@ export function SettingsView({
             </SettingRow>
           ))
         )}
+        {fullAccessErrors.length > 0 ? (
+          <>
+            <GroupTitle>Ошибки полного доступа</GroupTitle>
+            {fullAccessErrors.map((err, i) => (
+              <SettingRow
+                key={`${err.pluginId}-${err.at}-${i}`}
+                title={installedPlugins.find((p) => p.id === err.pluginId)?.manifest.name ?? err.pluginId}
+                hint={err.message}
+                danger
+              >
+                <RowValue>{new Date(err.at).toLocaleTimeString()}</RowValue>
+              </SettingRow>
+            ))}
+            <SettingRow title="Журнал ошибок" hint={`${fullAccessErrors.length} запись(ей) — из try/catch плагинов с полным доступом`}>
+              <Button variant="ghost" icon="trash-2" onClick={() => fullAccessHost.clearErrors()}>
+                Очистить
+              </Button>
+            </SettingRow>
+          </>
+        ) : null}
         <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — пока витрина" onClick={() => openMarket("Плагины")} chevron></SettingRow>
         <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — работает" onClick={() => openMarket("Темы")} chevron></SettingRow>
       </div>
@@ -2982,23 +3049,29 @@ export function SettingsView({
       />
       {pane}
 
-      {/* T44: согласие на права при установке плагина из файла */}
+      {/* T44/T44b: согласие на права при установке плагина из файла —
+          app:full-access получает отдельный громкий экран (чекбокс + задержка
+          кнопки), обычные права — честный список с выделением опасных. */}
       <Dialog
         open={staged !== null}
         title={staged ? `Установить «${staged.manifest.name}»?` : "Установка плагина"}
         onClose={declineInstall}
         actions={
           <>
+            {/* Кнопка отказа — первая в разметке = дефолтный фокус Dialog
+                (см. muza-design-system Dialog: focus jumps to first field/button). */}
             <Button variant="ghost" onClick={declineInstall}>
               Отмена
             </Button>
             <Button
               variant="primary"
               icon="download"
-              disabled={staged ? isFullAccessManifest(staged.manifest) : false}
+              disabled={!staged || fullAccessBlocked(staged.manifest)}
               onClick={() => void confirmInstall()}
             >
-              Установить
+              {staged && isFullAccessManifest(staged.manifest) && fullAccessRemaining > 0
+                ? `Подождите ${fullAccessRemaining} с…`
+                : "Установить"}
             </Button>
           </>
         }
@@ -3009,10 +3082,29 @@ export function SettingsView({
               {staged.manifest.description} · v{staged.manifest.version} · {staged.manifest.author}
             </div>
             {isFullAccessManifest(staged.manifest) ? (
-              <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 600 }}>
-                Плагин запрашивает ПОЛНЫЙ ДОСТУП — установка недоступна, этот рантайм поддерживает только
-                ограниченные права (полный доступ — в следующей версии).
-              </div>
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "var(--sp-3)",
+                    padding: "var(--sp-4)",
+                    borderRadius: "var(--r-md)",
+                    background: "color-mix(in srgb, var(--danger) 14%, transparent)",
+                  }}
+                >
+                  <Icon name="shield-alert" size={22} color="var(--danger)" />
+                  <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 600, lineHeight: 1.4 }}>
+                    Плагин запрашивает ПОЛНЫЙ ДОСТУП: сможет делать в приложении ВСЁ — читать и менять любые
+                    данные, включая твою сессию. Код исполняется как часть самой Muza, без песочницы.
+                    Устанавливай только если полностью доверяешь автору «{staged.manifest.author}».
+                  </div>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", cursor: "pointer" }}>
+                  <Switch checked={fullAccessAck} onChange={setFullAccessAck} label="Понимаю риск и доверяю автору" />
+                  <span style={{ fontSize: "var(--fs-body)", color: "var(--text-1)" }}>Понимаю риск и доверяю автору</span>
+                </label>
+              </>
             ) : staged.manifest.permissions.length === 0 ? (
               <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>Плагин не запрашивает особых прав.</div>
             ) : (
@@ -3044,6 +3136,29 @@ export function SettingsView({
             )}
           </div>
         ) : null}
+      </Dialog>
+
+      {/* T44b: выключение full-access-плагина не выгружает исполненный код
+          (realm живёт до рестарта, §5.3 дока) — предлагаем рестарт сразу. */}
+      <Dialog
+        open={restartPromptName !== null}
+        title="Перезапустить Muza?"
+        onClose={() => setRestartPromptName(null)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setRestartPromptName(null)}>
+              Позже
+            </Button>
+            <Button variant="primary" icon="refresh-cw" onClick={() => void relaunch()}>
+              Перезапустить
+            </Button>
+          </>
+        }
+      >
+        <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+          «{restartPromptName}» выключен, но его код полного доступа уже исполняется в этом окне и не
+          выгружается на лету — он останется активным до перезапуска приложения.
+        </div>
       </Dialog>
 
       {/* Смена пароля: старый → новый (сервер разлогинит остальные устройства) */}

@@ -333,19 +333,14 @@ pub fn plugin_finalize_install(
     require_staging_path(&src)?;
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_json).map_err(|e| format!("bad_args: {e}"))?;
-    // T44-fix: security review — уровень 2 (app:full-access) в этом рантайме
-    // не поддержан вообще; SettingsView блокирует кнопку «Установить», но
-    // команда доступна через invoke() напрямую, так что запрет дублируем
-    // здесь — не доверяем фронту, pre-grant full-access в installed.json не
-    // попадёт ни при каких обстоятельствах.
-    let is_full_access = manifest
-        .get("permissions")
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| a.iter().any(|p| p.as_str() == Some("app:full-access")));
-    if is_full_access {
-        return Err("denied: app:full-access не поддержан этим рантаймом (T44) — установка отклонена".into());
-    }
-
+    // T44b: уровень 2 (app:full-access) больше не блокируется здесь — T44
+    // отказывал в установке, потому что рантайм не умел исполнять такой
+    // плагин вообще. Теперь умеет (run_full_access_plugin ниже), а громкое
+    // согласие (чекбокс + задержка кнопки) — забота фронта (SettingsView),
+    // эта команда лишь фиксирует то, на что согласился пользователь, в
+    // installed.json. Реальный гейт — не установка, а ИСПОЛНЕНИЕ: каждый
+    // вызов run_full_access_plugin перепроверяет `granted` В RUST заново
+    // (см. require_granted там же) — фронту не доверяем и на этом шаге тоже.
     let _g = state.lock.lock().unwrap();
     let dest = plugins_dir(&app)?.join(&id);
     let _ = fs::remove_dir_all(&dest); // переустановка/обновление — старое стирается
@@ -427,6 +422,98 @@ fn build_bootstrap_response(app: &AppHandle, path: &str) -> Result<tauri::http::
         .header(tauri::http::header::CONTENT_SECURITY_POLICY, csp)
         .body(html.into_bytes())
         .unwrap())
+}
+
+// ── Уровень 2: «Полный доступ» (T44b) — исполнение в хост-контексте ──
+
+/// Собирает скрипт для `main_window.eval` (T44b, дизайн-док §5.2) — вынесено
+/// в чистую функцию отдельно от `run_full_access_plugin`, чтобы не требовать
+/// мок-`AppHandle` для юнит-теста (остальные тесты файла держат этот же
+/// принцип: тестируем чистую сборку/валидацию, не Tauri-команды целиком).
+///
+/// Идемпотентность — `window.__MUZA__[<id>]` как маркер «уже исполнялось в
+/// этом окне»: realm нельзя выгрузить без рестарта (§5.3 дока), поэтому
+/// повторный вызов `run_full_access_plugin` в той же сессии окна (например,
+/// включили → выключили → включили обратно без рестарта) НЕ должен запускать
+/// `entry_code` ещё раз — предыдущий запуск уже что-то сделал с DOM/стейтом
+/// и не может быть откачен. `id_js`/`name_js`/`version_js` — через
+/// `serde_json::to_string`: даёт корректно экранированный JS string-литерал
+/// (JSON — синтаксический подмножество ES2019+, WebView2 — Chromium,
+/// экранирования выше ES2019 не касаются нас). `entry_code` льётся как есть
+/// (это исходный JS, не строковый литерал) — та же техника, что и в
+/// `build_bootstrap_response` для guest-рантайма уровня 1.
+fn build_full_access_script(id: &str, name: &str, version: &str, entry_code: &str) -> Result<String, String> {
+    let id_js = serde_json::to_string(id).map_err(|e| format!("internal: {e}"))?;
+    let name_js = serde_json::to_string(name).map_err(|e| format!("internal: {e}"))?;
+    let version_js = serde_json::to_string(version).map_err(|e| format!("internal: {e}"))?;
+    Ok(format!(
+        r#"(function () {{
+  window.__MUZA__ = window.__MUZA__ || {{}};
+  if (window.__MUZA__[{id_js}]) return;
+  var __muzaPlugin = {{ id: {id_js}, name: {name_js}, version: {version_js} }};
+  __muzaPlugin.reportError = function (message) {{
+    try {{
+      if (window.__MUZA_FULL_ACCESS__ && typeof window.__MUZA_FULL_ACCESS__.reportError === "function") {{
+        window.__MUZA_FULL_ACCESS__.reportError({id_js}, String(message));
+      }}
+    }} catch (_e) {{}}
+  }};
+  window.__MUZA__[{id_js}] = __muzaPlugin;
+  try {{
+    (function () {{
+{entry_code}
+    }})();
+  }} catch (e) {{
+    __muzaPlugin.reportError((e && e.message) ? e.message : String(e));
+  }}
+}})();"#
+    ))
+}
+
+/// Запуск app:full-access-плагина В ХОСТ-КОНТЕКСТЕ (дизайн-док §5.2). Поток:
+/// `granted` плагина перепроверяется В RUST (`require_granted` — фронту не
+/// верим: SettingsView прячет кнопку/дизейблит её без права, но `invoke()`
+/// доступен напрямую) → `entry` читается с диска той же `ensure_within`
+/// защитой от path traversal, что и бутстрап уровня 1, → скрипт из
+/// `build_full_access_script` льётся в главное окно через
+/// `WebviewWindow::eval` (WebView2 `ExecuteScript`) — привилегия хоста,
+/// глобальный CSP страницы (`script-src 'self'`, без `unsafe-eval`) на неё
+/// не действует (см. tauri v2 docs, develop/calling-frontend; §5.2 дока).
+/// Глобальный CSP этой командой НЕ меняется вообще.
+///
+/// Вызывается фронтом (не отсюда, не из `lib.rs::setup`) при старте
+/// приложения — для уже включённых full-access-плагинов, как только
+/// React примонтировался и `window.__MUZA_FULL_ACCESS__` зарегистрирован
+/// (см. `apps/desktop/src/plugins/fullAccessHost.ts`) — и при включении
+/// плагина. Запуск из `setup()` был бы раньше готовности фронта (окно ещё
+/// не догрузило бандл) — `window.__MUZA_FULL_ACCESS__.reportError` тогда
+/// был бы не определён, и репорт ошибок из try/catch терялся бы молча.
+#[tauri::command]
+pub fn run_full_access_plugin(app: AppHandle, id: String) -> Result<(), String> {
+    let id = sanitize_id(&id)?;
+    let plugin = require_granted(&app, &id, "app:full-access")?;
+    if !plugin.enabled {
+        return Err("bad_args: плагин выключен".into());
+    }
+    let entry_rel = plugin
+        .manifest
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "internal: битый манифест установленного плагина".to_string())?;
+    let plugin_dir = plugins_dir(&app)?.join(&id);
+    let entry_path = ensure_within(&plugin_dir, &plugin_dir.join(entry_rel))?;
+    let entry_code = fs::read_to_string(&entry_path).map_err(|e| format!("internal: не читается entry: {e}"))?;
+    let name = plugin.manifest.get("name").and_then(|v| v.as_str()).unwrap_or("");
+
+    let wrapped = build_full_access_script(&id, name, &plugin.version, &entry_code)?;
+
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "internal: главное окно не найдено".to_string())?;
+    main_window
+        .eval(&wrapped)
+        .map_err(|e| format!("internal: eval не удался: {e}"))?;
+    Ok(())
 }
 
 // ── Storage: KV на диске, неймспейс <id>, квота 1 МБ ──────────────
@@ -728,6 +815,47 @@ mod tests {
         let mut entry = archive.by_index(0).unwrap();
         let res = read_entry_capped(&mut entry, MAX_UNPACKED_BYTES);
         assert!(res.is_err(), "3 МБ реального декомпрессированного потока обязаны отклоняться при лимите 2 МБ");
+    }
+
+    /// T44b — идемпотентность: повторный `run_full_access_plugin` в той же
+    /// сессии окна не должен исполнять entry дважды (realm не выгружаем,
+    /// §5.3 дока) — маркер и ранний `return` обязаны быть в собранном скрипте.
+    #[test]
+    fn build_full_access_script_has_idempotency_guard() {
+        let script = build_full_access_script("demo-plugin", "Demo", "1.0.0", "console.log(1)").unwrap();
+        assert!(script.contains("window.__MUZA__[\"demo-plugin\"]"));
+        assert!(script.contains("return;"));
+    }
+
+    /// Имя плагина — произвольная Zod-строка (до 60 символов, без ограничений
+    /// на символы), кавычки/бэкслэши обязаны экранироваться корректно —
+    /// иначе сломанный JS-литерал = вся команда рушится на плагине с таким
+    /// именем (а не просто «плагин отказался запускаться»).
+    #[test]
+    fn build_full_access_script_escapes_quotes_and_backslashes_in_name() {
+        let script = build_full_access_script("demo-plugin", "He said \"hi\\bye\"", "1.0.0", "1").unwrap();
+        let expected_name_literal = serde_json::to_string("He said \"hi\\bye\"").unwrap();
+        assert!(script.contains(&expected_name_literal));
+    }
+
+    /// entry_code — сырой JS (не строковый литерал) — обязан попасть в
+    /// вывод дословно, без обёртки/экранирования (иначе плагин не исполнится
+    /// вовсе, синтаксическая ошибка на первой же строке).
+    #[test]
+    fn build_full_access_script_embeds_entry_code_verbatim() {
+        let script = build_full_access_script("demo-plugin", "Demo", "1.0.0", "window.__marker = 42;").unwrap();
+        assert!(script.contains("window.__marker = 42;"));
+    }
+
+    /// Ошибки исполнения entry обязаны репортиться через
+    /// window.__MUZA_FULL_ACCESS__.reportError, а не молча глотаться —
+    /// хост-реестр ошибок (SettingsView) иначе никогда их не увидит.
+    #[test]
+    fn build_full_access_script_reports_errors_via_catch() {
+        let script = build_full_access_script("demo-plugin", "Demo", "1.0.0", "throw new Error('boom')").unwrap();
+        assert!(script.contains("catch (e)"));
+        assert!(script.contains("__MUZA_FULL_ACCESS__"));
+        assert!(script.contains("reportError"));
     }
 
     #[test]
