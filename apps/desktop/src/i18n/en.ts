@@ -35,6 +35,7 @@ export const en = {
     on: "On",
     off: "Off",
     like: "Like",
+    showAll: "Show all",
     namePlaceholder: "Name",
   },
   settings: {
@@ -977,6 +978,48 @@ export const en = {
   },
 
   // ── Зоны-фрагменты (параллельное извлечение) ──
+  auth: {
+    tabs: { login: "Sign in", register: "Sign up", recover: "Recover" },
+    fields: {
+      username: "Username",
+      emailAccount: "Account email",
+      emailOptional: "Email (optional)",
+      password: "Password",
+    },
+    submit: { login: "Sign in", register: "Create account", recover: "Send link" },
+    continueAnon: "Continue anonymously",
+    hint: {
+      login: "No email needed. No personal listening history.",
+      register: "Email is optional: everything works without it, but the password can't be recovered.",
+      recover: "Only works if an email was set at sign-up.",
+    },
+    recoverySent: "If that email is linked to an account, a link is already on its way. It's valid for 30 minutes.",
+    check: {
+      title: "Check your email",
+      sentToPrefix: "We sent an email to ",
+      sentToSuffix: ". Open the link from the email — your account will be created automatically, you can leave this window open.",
+      waiting: "Waiting for confirmation…",
+      startOver: "Start over",
+      resendIn: "Send again ({count}s)",
+      resend: "Send the email again",
+      back: "Back",
+      resent: "Email sent again.",
+    },
+    anon: {
+      title: "No sync",
+      continue: "Continue",
+      body: "An anonymous account lives only on this device: playlists and likes won't sync and won't be restored after a reinstall. You can create a full account later in settings.",
+    },
+    errors: {
+      completeFailed: "Couldn't finish registration",
+      expired: "Confirmation window expired — start over.",
+      notFound: "Request not found — start over.",
+      notEmail: "That doesn't look like an email.",
+      somethingWrong: "Something went wrong",
+      credsTooShort: "Username — 3+ characters, password — 8+.",
+      resendFailed: "Couldn't send the email",
+    },
+  },
   views: viewsEn,
   media: mediaEn,
 };

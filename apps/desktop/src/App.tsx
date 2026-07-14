@@ -90,7 +90,7 @@ export function App() {
     return <div style={{ position: "absolute", inset: 0, background: "var(--bg-0)" }} />;
   }
   if (!session) {
-    return <LoginScreen api={api} onSession={setSession} />;
+    return <LoginScreen api={api} onSession={setSession} lang={loadPrefs().language} />;
   }
   return (
     <Player

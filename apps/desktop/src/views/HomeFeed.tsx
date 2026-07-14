@@ -416,12 +416,12 @@ function DemoShelves({
           />
         ))}
       </Shelf>
-      <Shelf title={t("views.home.demo.pickedForYou")} onAction={() => onOpen("library")}>
+      <Shelf title={t("views.home.demo.pickedForYou")} action={t("common.showAll")} onAction={() => onOpen("library")}>
         {PLAYLISTS.map((p) => (
           <Tile key={p.id} cover={p.cover} title={p.name} subtitle={p.meta} onPlay={() => onPlayTrack(TRACKS[0].id)} />
         ))}
       </Shelf>
-      <Shelf title={t("views.home.demo.newReleases")} onAction={() => onOpen("library")}>
+      <Shelf title={t("views.home.demo.newReleases")} action={t("common.showAll")} onAction={() => onOpen("library")}>
         {RELEASES.map((r) => (
           <Tile key={r.id} cover={r.cover} title={r.name} subtitle={r.meta} onPlay={() => onPlayTrack(TRACKS[1].id)} />
         ))}
