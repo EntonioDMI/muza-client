@@ -7,6 +7,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { parsePluginManifest, type PluginManifest } from "@muza/core";
 import { scanPluginCss, scanPluginScript } from "@muza/core";
 import type { InstalledPluginInfo } from "./types";
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 interface StagedRaw {
   stagedDir: string;
@@ -46,14 +47,16 @@ async function discardStaged(stagedDir: string): Promise<void> {
 
 /** Открыть диалог, распаковать пакет, провалидировать манифест и просканировать
  *  entry/css. Бросает Error с человекочитаемой причиной (стейджинг подчищается).
- *  null — пользователь отменил выбор файла. */
-export async function pickAndStagePlugin(): Promise<StagedPlugin | null> {
-  if (!isTauri()) throw new Error("Установка из файла доступна только в приложении");
+ *  null — пользователь отменил выбор файла. `lang` — язык этих сообщений и
+ *  нативного диалога выбора файла (потребитель, SettingsView.tsx, передаёт
+ *  свой lang из useT(); без него — дефолт EN). */
+export async function pickAndStagePlugin(lang: Lang = DEFAULT_LANG): Promise<StagedPlugin | null> {
+  if (!isTauri()) throw new Error(translate(lang, "plugins.install.fileOnlyInApp"));
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
     multiple: false,
-    filters: [{ name: "Плагин Muza", extensions: ["muzaplugin", "zip"] }],
-    title: "Выбери .muzaplugin",
+    filters: [{ name: translate(lang, "plugins.install.filePickerFilterName"), extensions: ["muzaplugin", "zip"] }],
+    title: translate(lang, "plugins.install.filePickerTitle"),
   });
   if (!picked || Array.isArray(picked)) return null;
 
@@ -62,18 +65,18 @@ export async function pickAndStagePlugin(): Promise<StagedPlugin | null> {
   const parsed = parsePluginManifest(JSON.parse(staged.manifestJson));
   if (!parsed.ok) {
     await discardStaged(staged.stagedDir);
-    throw new Error(`Манифест плагина отклонён: ${parsed.error}`);
+    throw new Error(translate(lang, "plugins.install.manifestRejected", { reason: parsed.error }));
   }
   const scriptBad = scanPluginScript(staged.entryCode);
   if (scriptBad) {
     await discardStaged(staged.stagedDir);
-    throw new Error(`Код плагина отклонён: ${scriptBad}`);
+    throw new Error(translate(lang, "plugins.install.scriptRejected", { reason: scriptBad }));
   }
   if (staged.cssCode) {
     const cssBad = scanPluginCss(staged.cssCode);
     if (cssBad) {
       await discardStaged(staged.stagedDir);
-      throw new Error(`CSS плагина отклонён: ${cssBad}`);
+      throw new Error(translate(lang, "plugins.install.cssRejected", { reason: cssBad }));
     }
   }
   return { stagedDir: staged.stagedDir, manifest: parsed.manifest, css: staged.cssCode };
@@ -103,13 +106,16 @@ export async function cancelInstall(staged: StagedPlugin): Promise<void> {
  *  и plugin_stage_from_file, дальше — ОДИН И ТОТ ЖЕ путь валидации/согласия/
  *  финализации (see pickAndStagePlugin выше), никакого дублирования UI.
  *  Бросает Error с человекочитаемой причиной (стейджинг подчищается). */
-export async function stagePluginFromMarket(payload: {
-  manifest: Record<string, unknown>;
-  code: string;
-  css?: string | null;
-  strings?: Record<string, string> | null;
-}): Promise<StagedPlugin> {
-  if (!isTauri()) throw new Error("Установка плагина доступна только в приложении");
+export async function stagePluginFromMarket(
+  payload: {
+    manifest: Record<string, unknown>;
+    code: string;
+    css?: string | null;
+    strings?: Record<string, string> | null;
+  },
+  lang: Lang = DEFAULT_LANG,
+): Promise<StagedPlugin> {
+  if (!isTauri()) throw new Error(translate(lang, "plugins.install.marketOnlyInApp"));
 
   const staged = await invoke<StagedRaw>("plugin_stage_from_data", {
     manifestJson: JSON.stringify(payload.manifest),
@@ -121,18 +127,18 @@ export async function stagePluginFromMarket(payload: {
   const parsed = parsePluginManifest(JSON.parse(staged.manifestJson));
   if (!parsed.ok) {
     await discardStaged(staged.stagedDir);
-    throw new Error(`Манифест плагина отклонён: ${parsed.error}`);
+    throw new Error(translate(lang, "plugins.install.manifestRejected", { reason: parsed.error }));
   }
   const scriptBad = scanPluginScript(staged.entryCode);
   if (scriptBad) {
     await discardStaged(staged.stagedDir);
-    throw new Error(`Код плагина отклонён: ${scriptBad}`);
+    throw new Error(translate(lang, "plugins.install.scriptRejected", { reason: scriptBad }));
   }
   if (staged.cssCode) {
     const cssBad = scanPluginCss(staged.cssCode);
     if (cssBad) {
       await discardStaged(staged.stagedDir);
-      throw new Error(`CSS плагина отклонён: ${cssBad}`);
+      throw new Error(translate(lang, "plugins.install.cssRejected", { reason: cssBad }));
     }
   }
   return { stagedDir: staged.stagedDir, manifest: parsed.manifest, css: staged.cssCode };

@@ -10,6 +10,7 @@ import { pluginHost } from "./host";
 import type { InstalledPluginInfo } from "./types";
 import type { UsePlugins } from "./usePlugins";
 import type { PluginPermission } from "@muza/core";
+import { useT } from "../i18n";
 
 /** Origin custom-протокола: Windows/WebView2 — http://muza-plugin.localhost,
  *  mac/Linux — muza-plugin://localhost (оба в frame-src tauri.conf.json). */
@@ -85,6 +86,7 @@ function PluginFrame({ plugin, surface }: { plugin: InstalledPluginInfo; surface
 }
 
 export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
+  const { t } = useT();
   const { enabled, activeTab, activePanel, activeOverlay, closeTab, closePanel, closeOverlay, isCrashed } = plugins;
 
   const surfaceOf = (id: string): Surface => {
@@ -111,7 +113,7 @@ export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
       {activeOverlay ? (
         <IconButton
           icon="x"
-          label="Закрыть оверлей"
+          label={t("plugins.closeOverlay")}
           onClick={closeOverlay}
           style={{ position: "fixed", top: "var(--gap-zone)", right: "var(--gap-zone)", zIndex: 96 }}
         />
@@ -120,7 +122,7 @@ export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
         <IconButton
           icon="x"
           size="sm"
-          label="Закрыть панель"
+          label={t("plugins.closePanel")}
           onClick={closePanel}
           style={{ position: "fixed", top: "calc(var(--gap-zone) + 4px)", right: "calc(var(--gap-zone) + 4px)", zIndex: 46 }}
         />
@@ -129,7 +131,7 @@ export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
         <IconButton
           icon="x"
           size="sm"
-          label="Закрыть вкладку плагина"
+          label={t("plugins.closeTab")}
           onClick={closeTab}
           style={{ position: "fixed", top: "calc(var(--gap-zone) + 4px)", right: "calc(var(--gap-zone) + 4px)", zIndex: 31 }}
         />

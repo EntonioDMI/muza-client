@@ -868,7 +868,7 @@ export function SettingsView({
   const startInstall = async () => {
     setInstallBusy(true);
     try {
-      const s = await pickAndStagePlugin();
+      const s = await pickAndStagePlugin(lang);
       if (s) setStaged(s); // откроется модалка согласия
     } catch (e) {
       onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.readFailed"), "x");
@@ -1363,12 +1363,15 @@ export function SettingsView({
       if (!payload.manifest || typeof payload.code !== "string") {
         throw new Error(t("settings.market.errors.corruptPayload"));
       }
-      const s = await stagePluginFromMarket({
-        manifest: payload.manifest,
-        code: payload.code,
-        css: payload.css,
-        strings: payload.strings,
-      });
+      const s = await stagePluginFromMarket(
+        {
+          manifest: payload.manifest,
+          code: payload.code,
+          css: payload.css,
+          strings: payload.strings,
+        },
+        lang,
+      );
       setStaged(s); // модалка согласия T44/T44b — confirmInstall/declineInstall уже готовы
       setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
     } catch (e) {
