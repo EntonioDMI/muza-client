@@ -39,3 +39,10 @@ tauri-plugin-process = "2"
 # Нативный drag-out: перетаскивание трека из приложения на рабочий стол
 # (файл из кэша добычи с человеческим именем; CrabNebula drag-rs)
 tauri-plugin-drag = "2.1.1"
+# Плагины уровня 1 (T44, plugins.rs): распаковка .muzaplugin (zip-slip/бомба
+# защита через enclosed_name()+лимит), net.fetch (reqwest уже в дереве через
+# tauri-plugin-updater — тот же rustls-бэкенд, версия уже разрешена в
+# Cargo.lock, доп. компиляции почти нет), парсинг URL для net_allow.
+zip = { version = "4", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+url = "2"

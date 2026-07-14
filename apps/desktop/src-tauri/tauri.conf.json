@@ -34,7 +34,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src 'self' https: ipc: http://ipc.localhost http://localhost:8000 asset: http://asset.localhost",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src 'self' https: ipc: http://ipc.localhost http://localhost:8000 asset: http://asset.localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/audio-cache/**"]
