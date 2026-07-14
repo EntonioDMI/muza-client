@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, SearchInput } from "@muza/ui";
 import type { MuzaApi, PlaylistMeta } from "@muza/api-client";
+import { useT } from "../i18n";
 
 /** Вход в совместный плейлист по инвайт-коду (Stage 7). Код выдаёт
  *  владелец: страница плейлиста → «Совместный доступ». */
@@ -16,6 +17,7 @@ export function JoinPlaylistDialog({
   /** Успешный вход: перечитать сайдбар и открыть плейлист. */
   onJoined: (playlist: PlaylistMeta) => void;
 }) {
+  const { t } = useT();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function JoinPlaylistDialog({
   const join = async () => {
     const trimmed = code.trim().toUpperCase();
     if (trimmed.length < 4) {
-      setError("Код короче 4 символов — проверь его");
+      setError(t("dialogs.codeTooShort"));
       return;
     }
     setBusy(true);
@@ -33,7 +35,7 @@ export function JoinPlaylistDialog({
       setCode("");
       onJoined(playlist);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось войти по коду");
+      setError(e instanceof Error ? e.message : t("dialogs.joinPlaylist.joinFailed"));
     } finally {
       setBusy(false);
     }
@@ -48,15 +50,15 @@ export function JoinPlaylistDialog({
   return (
     <Dialog
       open={open}
-      title="Совместный плейлист по коду"
+      title={t("dialogs.joinPlaylist.title")}
       onClose={close}
       actions={
         <>
           <Button variant="ghost" onClick={close}>
-            Отмена
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" icon="users" disabled={busy} onClick={() => void join()}>
-            {busy ? "Входим…" : "Войти"}
+            {busy ? t("dialogs.joinPlaylist.joining") : t("dialogs.joinPlaylist.join")}
           </Button>
         </>
       }
@@ -68,7 +70,7 @@ export function JoinPlaylistDialog({
         }}
       >
         <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
-          Введи код, который прислал владелец плейлиста, — и добавляйте треки вместе.
+          {t("dialogs.joinPlaylist.hint")}
         </div>
         <SearchInput
           value={code}
@@ -76,7 +78,7 @@ export function JoinPlaylistDialog({
             setCode(v.toUpperCase());
             setError(null);
           }}
-          placeholder="Например: 7WQK2M9T"
+          placeholder={t("dialogs.joinPlaylist.codePlaceholder")}
           icon="users"
           autoFocus
         />

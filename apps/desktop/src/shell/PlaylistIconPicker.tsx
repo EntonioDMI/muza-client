@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Dialog } from "@muza/ui";
 import { PLAYLIST_ICON_IDS, playlistIconUrl } from "@muza/core";
+import { useT } from "../i18n";
 
 /** Пикер иконки плейлиста (T47b): диалог с сеткой всех 38 иконок манифеста
  *  @muza/core. Клик — сразу применяет (без отдельного «Сохранить»); вызывающий
@@ -29,12 +30,13 @@ function IconSwatch({
   busy: boolean;
   onClick: () => void;
 }) {
+  const { t } = useT();
   const [hover, setHover] = useState(false);
   return (
     <button
       type="button"
       disabled={busy}
-      aria-label={`Иконка ${id}`}
+      aria-label={t("dialogs.iconPicker.iconAria", { id })}
       aria-pressed={active}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
@@ -65,8 +67,9 @@ function IconSwatch({
 }
 
 export function PlaylistIconPicker({ open, currentIcon, onClose, onPick, busy = false }: PlaylistIconPickerProps) {
+  const { t } = useT();
   return (
-    <Dialog open={open} title="Сменить иконку" onClose={onClose} width={380}>
+    <Dialog open={open} title={t("dialogs.iconPicker.title")} onClose={onClose} width={380}>
       <div
         style={{
           display: "grid",
