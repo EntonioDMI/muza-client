@@ -16,15 +16,8 @@ import { hourLabel } from "../lib/hourLabel";
 import { wrappedSeason } from "../lib/wrappedSeason";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import type { Prefs, StatsBlockKey } from "../types";
-
-const PERIOD_TABS = [
-  { key: "week", label: "Неделя" },
-  { key: "month", label: "Месяц" },
-  { key: "year", label: "Год" },
-  { key: "all", label: "Всё время" },
-];
-
-const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+import { useT } from "../i18n";
+import type { Lang } from "../i18n";
 
 /** Заголовок панели: одинаковый для всех блоков — секции читаются рядом. */
 const panelHead: React.CSSProperties = {
@@ -34,17 +27,20 @@ const panelHead: React.CSSProperties = {
   color: "var(--text-1)",
 };
 
-/** Подпись ведра для тултипа/оси: день «11 июля» или месяц «июл 2026». */
-function bucketLabel(bucket: string): string {
+/** Подпись ведра для тултипа/оси: день «11 июля» или месяц «июл 2026»
+ *  (T31 i18n: месяц/день форматируются через `lang`, не захардкожены на
+ *  "ru" — Intl сам подбирает нужные названия месяцев). */
+function bucketLabel(bucket: string, lang: Lang): string {
   if (bucket.length === 7) {
     const [y, m] = bucket.split("-").map(Number);
-    return `${MONTHS_SHORT[m - 1]} ${y}`;
+    const monthName = new Date(y, m - 1, 1).toLocaleDateString(lang, { month: "short" });
+    return `${monthName} ${y}`;
   }
-  return new Date(`${bucket}T00:00:00`).toLocaleDateString("ru", { day: "numeric", month: "long" });
+  return new Date(`${bucket}T00:00:00`).toLocaleDateString(lang, { day: "numeric", month: "long" });
 }
 
-function fmtMinutes(ms: number): string {
-  return Math.round(ms / 60_000).toLocaleString("ru");
+function fmtMinutes(ms: number, lang: Lang): string {
+  return Math.round(ms / 60_000).toLocaleString(lang);
 }
 
 /** Панель блока: единый «карточный» корпус секции. flush — списки TrackRow
@@ -135,6 +131,7 @@ function Bars({
  *  акцентная плитка года, шеврон и акцентный ховер, а не крикливая подложка;
  *  подпись читается ровно как во всех остальных блоках (тот же контраст). */
 function WrappedPanel({ year, onOpen }: { year: number; onOpen: () => void }) {
+  const { t } = useT();
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -182,10 +179,10 @@ function WrappedPanel({ year, onOpen }: { year: number; onOpen: () => void }) {
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "block", fontSize: "var(--fs-strong)", fontWeight: 700, color: "var(--text-1)" }}>
-          Итоги {year}
+          {t("views.stats.wrappedPanel.title", { year })}
         </span>
         <span style={{ display: "block", marginTop: 2, fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.45 }}>
-          Story-слайды года: минуты, треки, артисты — и карточка на поделиться
+          {t("views.stats.wrappedPanel.hint")}
         </span>
       </span>
       <Icon name="chevron-right" size={20} color={hover ? "var(--accent-text)" : "var(--text-3)"} />
@@ -195,9 +192,10 @@ function WrappedPanel({ year, onOpen }: { year: number; onOpen: () => void }) {
 
 /** Скелетон страницы: тихие поверхности без мерцания (как лента). */
 function StatsSkeleton() {
+  const { t } = useT();
   return (
     <div
-      aria-label="Считаем статистику"
+      aria-label={t("views.stats.skeletonAria")}
       role="status"
       style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}
     >
@@ -262,6 +260,7 @@ export function StatsView({
   /** Открыть под-экран настроек «Статистика» (кнопка «Настроить»). */
   onCustomize: () => void;
 }) {
+  const { t, lang } = useT();
   const [period, setPeriod] = useState<StatsPeriod>(prefs.statsPeriod);
   const [state, setState] = useState<{
     status: "loading" | "live" | "error";
@@ -293,6 +292,14 @@ export function StatsView({
   const d = state.data;
   const blocks = normalizeStatsBlocks(prefs.statsBlocks).filter((b) => b.on);
   const season = wrappedSeason();
+  // Тот же словарь, что у пресета периода в настройках (settings.stats.period.*) —
+  // одно и то же понятие «период статистики», не вводим синоним.
+  const periodTabs = [
+    { key: "week", label: t("settings.stats.period.week") },
+    { key: "month", label: t("settings.stats.period.month") },
+    { key: "year", label: t("settings.stats.period.year") },
+    { key: "all", label: t("settings.stats.period.allTime") },
+  ];
 
   const renderBlock = (key: StatsBlockKey) => {
     if (!d) return null;
@@ -301,10 +308,10 @@ export function StatsView({
         return (
           <Panel key={key} title={STATS_BLOCK_META.summary.label}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-4)" }}>
-              <BigStat value={fmtMinutes(d.totalMs)} label="минут с музыкой" accent />
-              <BigStat value={d.totalPlays.toLocaleString("ru")} label="прослушиваний" />
-              <BigStat value={d.uniqueTracks.toLocaleString("ru")} label="треков" />
-              <BigStat value={d.uniqueArtists.toLocaleString("ru")} label="артистов" />
+              <BigStat value={fmtMinutes(d.totalMs, lang)} label={t("views.stats.summary.minutesLabel")} accent />
+              <BigStat value={d.totalPlays.toLocaleString(lang)} label={t("views.stats.summary.playsLabel")} />
+              <BigStat value={d.uniqueTracks.toLocaleString(lang)} label={t("views.stats.summary.tracksLabel")} />
+              <BigStat value={d.uniqueArtists.toLocaleString(lang)} label={t("views.stats.summary.artistsLabel")} />
             </div>
           </Panel>
         );
@@ -314,9 +321,9 @@ export function StatsView({
           <Panel key={key} title={STATS_BLOCK_META.activity.label}>
             <Bars
               values={d.series.map((s) => s.plays)}
-              titles={d.series.map((s) => `${bucketLabel(s.bucket)}: ${s.plays} · ${fmtMinutes(s.ms)} мин`)}
+              titles={d.series.map((s) => `${bucketLabel(s.bucket, lang)}: ${s.plays} · ${fmtMinutes(s.ms, lang)} ${t("views.stats.topArtists.minSuffix")}`)}
               height={120}
-              ariaLabel={`Прослушивания по ${daily ? "дням" : "месяцам"}`}
+              ariaLabel={daily ? t("views.stats.activity.ariaByDay") : t("views.stats.activity.ariaByMonth")}
             />
             <div
               style={{
@@ -327,8 +334,8 @@ export function StatsView({
                 color: "var(--text-3)",
               }}
             >
-              <span>{bucketLabel(d.series[0]?.bucket ?? "")}</span>
-              <span>{bucketLabel(d.series[d.series.length - 1]?.bucket ?? "")}</span>
+              <span>{bucketLabel(d.series[0]?.bucket ?? "", lang)}</span>
+              <span>{bucketLabel(d.series[d.series.length - 1]?.bucket ?? "", lang)}</span>
             </div>
           </Panel>
         );
@@ -340,10 +347,12 @@ export function StatsView({
               values={d.hours}
               titles={d.hours.map((v, h) => `${h}:00 — ${v}`)}
               height={72}
-              ariaLabel="Прослушивания по часам суток"
+              ariaLabel={t("views.stats.rhythm.aria")}
             />
             <div style={{ marginTop: 6, fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
-              {d.topHour !== null ? `Любимый час — ${d.topHour}:00 (${hourLabel(d.topHour)})` : "Пока без любимого часа"}
+              {d.topHour !== null
+                ? t("views.stats.rhythm.topHour", { hour: d.topHour, label: hourLabel(d.topHour) })
+                : t("views.stats.rhythm.noTopHour")}
             </div>
           </Panel>
         );
@@ -351,22 +360,22 @@ export function StatsView({
         return d.topTracks.length > 0 ? (
           <Panel key={key} title={STATS_BLOCK_META.top_tracks.label} flush>
             <div style={{ display: "flex", flexDirection: "column" }}>
-              {d.topTracks.map((t, i) => (
+              {d.topTracks.map((entry, i) => (
                 <TrackRow
-                  key={t.track.id}
+                  key={entry.track.id}
                   index={i + 1}
-                  cover={t.track.coverUrl ?? undefined}
-                  title={t.track.title}
-                  artist={t.track.artist}
+                  cover={entry.track.coverUrl ?? undefined}
+                  title={entry.track.title}
+                  artist={entry.track.artist}
                   // поле длительности показывает счётчик прослушиваний —
                   // для топа это информативнее хронометража
-                  duration={`${t.plays}×`}
-                  active={currentId === t.track.id}
-                  playing={currentId === t.track.id && playing}
-                  liked={likes.includes(t.track.id)}
-                  onPlay={() => onPlayCatalog(d.topTracks.map((x) => x.track), t.track.id)}
-                  onLike={() => onLike(t.track.id)}
-                  onMore={(e: React.MouseEvent) => onCatalogMenu(t.track, e)}
+                  duration={`${entry.plays}×`}
+                  active={currentId === entry.track.id}
+                  playing={currentId === entry.track.id && playing}
+                  liked={likes.includes(entry.track.id)}
+                  onPlay={() => onPlayCatalog(d.topTracks.map((x) => x.track), entry.track.id)}
+                  onLike={() => onLike(entry.track.id)}
+                  onMore={(e: React.MouseEvent) => onCatalogMenu(entry.track, e)}
                 />
               ))}
             </div>
@@ -424,7 +433,7 @@ export function StatsView({
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {fmtMinutes(a.playedMs)} мин
+                    {fmtMinutes(a.playedMs, lang)} {t("views.stats.topArtists.minSuffix")}
                   </span>
                 </div>
               ))}
@@ -436,16 +445,20 @@ export function StatsView({
         return (
           <Panel key={key} title={STATS_BLOCK_META.streaks.label}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-4)" }}>
-              <BigStat value={`${d.currentStreakDays} дн.`} label="текущая серия" accent={d.currentStreakDays > 0} />
-              <BigStat value={`${d.longestStreakDays} дн.`} label="рекордная серия" />
-              <BigStat value={String(d.activeDays)} label="дней с музыкой за период" />
+              <BigStat
+                value={`${d.currentStreakDays} ${t("views.stats.streaks.daysSuffix")}`}
+                label={t("views.stats.streaks.current")}
+                accent={d.currentStreakDays > 0}
+              />
+              <BigStat value={`${d.longestStreakDays} ${t("views.stats.streaks.daysSuffix")}`} label={t("views.stats.streaks.longest")} />
+              <BigStat value={String(d.activeDays)} label={t("views.stats.streaks.activeDays")} />
             </div>
           </Panel>
         );
       case "likes":
         return (
           <Panel key={key} title={STATS_BLOCK_META.likes.label}>
-            <BigStat value={`+${d.favoritesAdded}`} label="в любимое за период" />
+            <BigStat value={`+${d.favoritesAdded}`} label={t("views.stats.likes.addedThisPeriod")} />
           </Panel>
         );
       case "wrapped":
@@ -486,15 +499,15 @@ export function StatsView({
             lineHeight: "var(--lh-tight)",
           }}
         >
-          Статистика
+          {t("views.stats.title")}
         </h1>
         {canSearch ? (
           <>
             {/* тонкий индикатор обновления — контент при этом остаётся на месте */}
             {state.status === "loading" && d ? <Spinner size={16} color="var(--text-3)" /> : null}
-            <Tabs items={PERIOD_TABS} value={period} onChange={(k: string) => setPeriod(k as StatsPeriod)} />
-            <Tooltip label="Настроить блоки">
-              <IconButton icon="settings-2" label="Настроить блоки статистики" onClick={onCustomize} />
+            <Tabs items={periodTabs} value={period} onChange={(k: string) => setPeriod(k as StatsPeriod)} />
+            <Tooltip label={t("views.stats.customizeBlocksTooltip")}>
+              <IconButton icon="settings-2" label={t("views.stats.customizeBlocksLabel")} onClick={onCustomize} />
             </Tooltip>
           </>
         ) : null}
@@ -503,15 +516,15 @@ export function StatsView({
       {!canSearch ? (
         <Notice
           icon="user-round"
-          text="Статистика считается на сервере по истории аккаунта. Войди с аккаунтом — и здесь появятся минуты, топы и серии."
+          text={t("views.stats.notice.needsAccount")}
         />
       ) : !d ? (
         // данных ещё нет вообще: первый заход — скелетон, глухая ошибка — плашка
         state.status === "error" ? (
           <Notice
             icon="server-off"
-            text="Сервер недоступен, а оффлайн-копии статистики ещё нет."
-            action="Повторить"
+            text={t("views.stats.notice.errorText")}
+            action={t("views.stats.notice.retry")}
             onAction={load}
           />
         ) : (
@@ -522,23 +535,23 @@ export function StatsView({
           {state.offline ? (
             <Notice
               icon="cloud-off"
-              text="Оффлайн-копия: сервер сейчас недоступен, показано последнее загруженное."
-              action="Обновить"
+              text={t("views.stats.notice.offlineText")}
+              action={t("views.stats.notice.refresh")}
               onAction={load}
             />
           ) : null}
-          <Notice icon="sparkles" text="За этот период прослушиваний не было. Включи что-нибудь — статистика начнёт собираться." />
+          <Notice icon="sparkles" text={t("views.stats.notice.emptyText")} />
         </>
       ) : (
         <>
           {/* данные есть — рисуем их; при неудачном обновлении показываем прежние + плашку */}
           {state.status === "error" ? (
-            <Notice icon="server-off" text="Не удалось обновить — показаны прежние данные." action="Повторить" onAction={load} />
+            <Notice icon="server-off" text={t("views.stats.notice.updateFailedText")} action={t("views.stats.notice.retry")} onAction={load} />
           ) : state.offline ? (
             <Notice
               icon="cloud-off"
-              text="Оффлайн-копия: сервер сейчас недоступен, показано последнее загруженное."
-              action="Обновить"
+              text={t("views.stats.notice.offlineText")}
+              action={t("views.stats.notice.refresh")}
               onAction={load}
             />
           ) : null}
