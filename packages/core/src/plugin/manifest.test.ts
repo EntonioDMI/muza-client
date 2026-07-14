@@ -52,6 +52,25 @@ describe("parsePluginManifest", () => {
     if (!res.ok) expect(res.error).toContain("entry");
   });
 
+  it("entry с Windows drive-letter абсолютом отклоняется (security review T44)", () => {
+    for (const bad of ["C:\\Users\\victim\\secret.js", "C:/Users/victim/secret.js", "d:\\evil.js"]) {
+      const res = parsePluginManifest({ ...VALID, entry: bad });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toContain("entry");
+    }
+  });
+
+  it("entry с UNC-путём отклоняется", () => {
+    const res = parsePluginManifest({ ...VALID, entry: "\\\\attacker-share\\evil.js" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("entry");
+  });
+
+  it("contributes.css с Windows drive-letter абсолютом отклоняется", () => {
+    const res = parsePluginManifest({ ...VALID, contributes: { css: "C:\\Windows\\system.css" } });
+    expect(res.ok).toBe(false);
+  });
+
   it("contributes с чужим ключом отклоняется (strict)", () => {
     const res = parsePluginManifest({ ...VALID, contributes: { evilKey: true } });
     expect(res.ok).toBe(false);

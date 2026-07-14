@@ -47,6 +47,18 @@ describe("scanPluginScript", () => {
     // документируем ограничение: скан не защита сама по себе (§9 дока)
     expect(scanPluginScript('this["ev"+"al"]("1+1")')).toBeNull();
   });
+
+  it("</script запрещён (HTML-инъекция в bootstrap, security review T44)", () => {
+    expect(scanPluginScript('const x = "</script><script>alert(1)</script>";')).toMatch(/script/);
+  });
+
+  it("</SCRIPT в любом регистре тоже запрещён", () => {
+    expect(scanPluginScript('const x = "</SCRIPT >";')).toMatch(/script/);
+  });
+
+  it("<!-- запрещён (escaped script data state ломает парсинг тега)", () => {
+    expect(scanPluginScript('const x = "<!--";')).toMatch(/<!--/);
+  });
 });
 
 describe("scanPluginCss", () => {

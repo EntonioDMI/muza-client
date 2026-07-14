@@ -2414,6 +2414,7 @@ dependencies = [
  "discord-rich-presence",
  "ed25519-dalek",
  "filetime",
+ "getrandom 0.3.4",
  "lofty",
  "reqwest",
  "serde",

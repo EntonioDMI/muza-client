@@ -4,7 +4,7 @@
  *  оверлеи), плагинные ключи композиции и инъекцию CSS. Фреймы рендерит
  *  PluginFrames. См. docs/notes/2026-07-13-плагины-архитектура.md §3. */
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isFullAccessManifest } from "@muza/core";
 import { pluginHost } from "./host";
 import { listInstalled } from "./install";
@@ -78,13 +78,33 @@ export function usePlugins(bridge: PluginBridge) {
 
   const enabled = useMemo(() => installed.filter(isLevel1), [installed]);
 
-  // Активные поверхности гаснут, если плагин выключили/удалили
+  // Плагин выключили/удалили — сбрасываем watchdog-статус "зависший" (T44-fix:
+  // security review, Important #1): PluginFrames размонтирует зависший фрейм
+  // навсегда, пока явно не переустановили/переключили — иначе повторное
+  // включение того же id молча не монтировалось бы (crashedIds в host.ts живёт
+  // отдельно от enabled-списка специально, чтобы не было crash-restart-петли).
+  const prevEnabledIds = useRef<Set<string>>(new Set());
   useEffect(() => {
     const ids = new Set(enabled.map((p) => p.id));
-    if (activeTab && !ids.has(activeTab.pluginId)) setActiveTab(null);
-    if (activePanel && !ids.has(activePanel)) setActivePanel(null);
-    if (activeOverlay && !ids.has(activeOverlay)) setActiveOverlay(null);
-  }, [enabled, activeTab, activePanel, activeOverlay]);
+    for (const id of prevEnabledIds.current) {
+      if (!ids.has(id)) pluginHost.clearCrashed(id);
+    }
+    prevEnabledIds.current = ids;
+  }, [enabled]);
+
+  // Активные поверхности гаснут, если плагин выключили/удалили — или если его
+  // фрейм только что снял watchdog (crashed): дальше показывать пустую
+  // вкладку/панель с одной кнопкой закрытия незачем.
+  useEffect(() => {
+    const ids = new Set(enabled.map((p) => p.id));
+    const gone = (id: string) => !ids.has(id) || pluginHost.isCrashed(id);
+    if (activeTab && gone(activeTab.pluginId)) setActiveTab(null);
+    if (activePanel && gone(activePanel)) setActivePanel(null);
+    if (activeOverlay && gone(activeOverlay)) setActiveOverlay(null);
+    // runtimeVersion — пересчёт при markCrashed/clearCrashed (isCrashed сам по
+    // себе не реактивен, нужно triggerить эффект извне)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, activeTab, activePanel, activeOverlay, runtimeVersion]);
 
   const barButtons = useMemo<PluginBarButton[]>(() => {
     const out: PluginBarButton[] = [];
@@ -165,6 +185,16 @@ export function usePlugins(bridge: PluginBridge) {
     [runtimeVersion],
   );
 
+  /** watchdog снял фрейм (§ Important #1 T44-fix) — PluginFrames не должна
+   *  монтировать <iframe> для такого id, пока плагин не выключат/включат заново. */
+  const isCrashed = useCallback(
+    (pluginId: string) => {
+      void runtimeVersion;
+      return pluginHost.isCrashed(pluginId);
+    },
+    [runtimeVersion],
+  );
+
   const openTab = useCallback((pluginId: string, tabId: string) => {
     setActiveOverlay(null);
     setActiveTab({ pluginId, tabId });
@@ -195,6 +225,7 @@ export function usePlugins(bridge: PluginBridge) {
     overlays,
     injectedCss,
     barButtonRuntime,
+    isCrashed,
     // активные поверхности
     activeTab,
     activePanel,

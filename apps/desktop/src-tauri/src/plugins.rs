@@ -9,12 +9,11 @@
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read as _;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
@@ -52,8 +51,6 @@ pub struct PluginsState {
     /// и при двух почти одновременных кликах в Settings).
     lock: Mutex<()>,
 }
-
-static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // ── Пути и общие утилиты ─────────────────────────────────────────
 
@@ -109,18 +106,62 @@ fn sanitize_id(id: &str) -> Result<String, String> {
     Ok(id.to_string())
 }
 
+/// CSPRNG (T44-fix: security review — раньше был SHA256(время+счётчик+pid),
+/// предсказуемый источник, не годится ни для CSP-nonce, ни для стейджинг-токена).
 fn random_nonce() -> String {
-    let n = NONCE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let mut hasher = Sha256::new();
-    hasher.update(t.to_le_bytes());
-    hasher.update(n.to_le_bytes());
-    hasher.update(std::process::id().to_le_bytes());
-    let digest = hasher.finalize();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&digest[..16])
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("internal: CSPRNG недоступен");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Канонизирует `path` и убеждается, что он лежит СТРОГО внутри канонизированного
+/// `base` (T44-fix: security review — манифесту не доверяем: `entry`/`css`/`strings`
+/// приходят из JSON, и `PathBuf::join` с абсолютным путём или Windows drive-letter
+/// (`C:\...`) заменяет базу целиком, а не подмешивает её — Zod-валидация на TS-стороне
+/// такие пути уже отклоняет, но Rust не полагается на фронт). Требует, чтобы файл
+/// физически существовал (canonicalize) — отсутствующий путь тоже отклоняется.
+fn ensure_within(base: &Path, path: &Path) -> Result<PathBuf, String> {
+    let base_canon = fs::canonicalize(base).map_err(|e| format!("internal: {e}"))?;
+    let path_canon = fs::canonicalize(path)
+        .map_err(|_| "bad_args: недопустимый путь внутри пакета плагина".to_string())?;
+    if !path_canon.starts_with(&base_canon) {
+        return Err("bad_args: путь выходит за пределы папки плагина".into());
+    }
+    Ok(path_canon)
+}
+
+/// Читает содержимое zip-entry, НЕ доверяя `entry.size()` из заголовка (T44-fix:
+/// security review, Important #3 — заголовочный размер ничем не гарантирован,
+/// классическая zip-бомба: маленький архив, огромный реальный поток после
+/// decode). Лимитирует сам декомпрессированный поток через `Read::take` на
+/// факт прочитанных байт, а не на заявленный размер: если поток не кончился
+/// в пределах `remaining`, отказ — не читаем дальше, не ждём, пока decoder
+/// сам исчерпает бомбу.
+fn read_entry_capped<R: std::io::Read>(entry: &mut R, remaining: u64) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    entry
+        .take(remaining + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("internal: {e}"))?;
+    if buf.len() as u64 > remaining {
+        return Err("bad_args: пакет распаковывается больше 2 МБ — отклонено".into());
+    }
+    Ok(buf)
+}
+
+/// Плагин установлен и ему выдано право `perm` — Rust-сторона перепроверяет
+/// это для каждой команды, доступной guest-фрейму через host.ts (не доверяем
+/// тому, что фронт уже отфильтровал по `granted` перед вызовом invoke).
+fn require_granted(app: &AppHandle, id: &str, perm: &str) -> Result<InstalledPlugin, String> {
+    let list = read_installed(app)?;
+    let plugin = list
+        .into_iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| "denied: плагин не найден".to_string())?;
+    if !plugin.granted.iter().any(|g| g == perm) {
+        return Err(format!("denied: нет права {perm}"));
+    }
+    Ok(plugin)
 }
 
 // ── Установленные плагины: список/вкл-выкл/удаление ──────────────
@@ -194,11 +235,6 @@ pub fn plugin_stage_from_file(app: AppHandle, path: String) -> Result<StagedPlug
     let mut total: u64 = 0;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| format!("bad_args: битый пакет: {e}"))?;
-        total += entry.size();
-        if total > MAX_UNPACKED_BYTES {
-            let _ = fs::remove_dir_all(&staged_dir);
-            return Err("bad_args: пакет распаковывается больше 2 МБ — отклонено".into());
-        }
         let Some(rel) = entry.enclosed_name() else {
             let _ = fs::remove_dir_all(&staged_dir);
             return Err("bad_args: недопустимый путь внутри пакета (zip-slip)".into());
@@ -211,8 +247,12 @@ pub fn plugin_stage_from_file(app: AppHandle, path: String) -> Result<StagedPlug
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("internal: {e}"))?;
         }
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf).map_err(|e| format!("internal: {e}"))?;
+        let remaining = MAX_UNPACKED_BYTES.saturating_sub(total);
+        let buf = read_entry_capped(&mut entry, remaining).map_err(|e| {
+            let _ = fs::remove_dir_all(&staged_dir);
+            e
+        })?;
+        total += buf.len() as u64;
         fs::write(&dest, &buf).map_err(|e| format!("internal: {e}"))?;
     }
 
@@ -224,19 +264,26 @@ pub fn plugin_stage_from_file(app: AppHandle, path: String) -> Result<StagedPlug
         .get("entry")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "bad_args: manifest.entry отсутствует".to_string())?;
-    let entry_code = fs::read_to_string(staged_dir.join(entry_rel))
+    // T44-fix: security review — манифесту не доверяем: entry_rel мог бы быть
+    // Windows-абсолютом (C:\...) или UNC-путём, тогда staged_dir.join() заменил
+    // бы базу целиком (см. ensure_within). Zod уже отклоняет такие entry на
+    // TS-стороне, но эта команда вызывается ДО TS-валидации (сама распаковка).
+    let entry_path = ensure_within(&staged_dir, &staged_dir.join(entry_rel))?;
+    let entry_code = fs::read_to_string(&entry_path)
         .map_err(|e| format!("bad_args: не читается entry «{entry_rel}»: {e}"))?;
 
     let css_code = manifest
         .get("contributes")
         .and_then(|c| c.get("css"))
         .and_then(|v| v.as_str())
-        .and_then(|rel| fs::read_to_string(staged_dir.join(rel)).ok());
+        .and_then(|rel| ensure_within(&staged_dir, &staged_dir.join(rel)).ok())
+        .and_then(|p| fs::read_to_string(p).ok());
     let strings_json = manifest
         .get("contributes")
         .and_then(|c| c.get("strings"))
         .and_then(|v| v.as_str())
-        .and_then(|rel| fs::read_to_string(staged_dir.join(rel)).ok());
+        .and_then(|rel| ensure_within(&staged_dir, &staged_dir.join(rel)).ok())
+        .and_then(|p| fs::read_to_string(p).ok());
 
     Ok(StagedPlugin {
         staged_dir: staged_dir.to_string_lossy().to_string(),
@@ -286,6 +333,18 @@ pub fn plugin_finalize_install(
     require_staging_path(&src)?;
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_json).map_err(|e| format!("bad_args: {e}"))?;
+    // T44-fix: security review — уровень 2 (app:full-access) в этом рантайме
+    // не поддержан вообще; SettingsView блокирует кнопку «Установить», но
+    // команда доступна через invoke() напрямую, так что запрет дублируем
+    // здесь — не доверяем фронту, pre-grant full-access в installed.json не
+    // попадёт ни при каких обстоятельствах.
+    let is_full_access = manifest
+        .get("permissions")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| a.iter().any(|p| p.as_str() == Some("app:full-access")));
+    if is_full_access {
+        return Err("denied: app:full-access не поддержан этим рантаймом (T44) — установка отклонена".into());
+    }
 
     let _g = state.lock.lock().unwrap();
     let dest = plugins_dir(&app)?.join(&id);
@@ -345,7 +404,11 @@ fn build_bootstrap_response(app: &AppHandle, path: &str) -> Result<tauri::http::
         .get("entry")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "internal: битый манифест установленного плагина".to_string())?;
-    let entry_path = plugins_dir(app)?.join(&id).join(entry_rel);
+    // T44-fix: security review — установленный манифест уже прошёл Zod на
+    // TS-стороне при установке, но Rust это не проверяет сам и файл читается
+    // при КАЖДОМ открытии плагина — не полагаемся на прошлую валидацию.
+    let plugin_dir = plugins_dir(app)?.join(&id);
+    let entry_path = ensure_within(&plugin_dir, &plugin_dir.join(entry_rel))?;
     let entry_code = fs::read_to_string(&entry_path).map_err(|e| format!("internal: не читается entry: {e}"))?;
 
     let nonce = random_nonce();
@@ -391,15 +454,21 @@ fn write_storage_map(app: &AppHandle, id: &str, map: &HashMap<String, String>) -
     fs::write(path, raw).map_err(|e| format!("internal: {e}"))
 }
 
+// T44-fix: security review — как и net_fetch, перепроверяем `granted` на
+// Rust-стороне (не только в host.ts): storage.* доступна через invoke()
+// напрямую, host.ts — не единственный путь к этим командам.
+
 #[tauri::command]
 pub fn plugin_storage_get(app: AppHandle, id: String, key: String) -> Result<Option<String>, String> {
     let id = sanitize_id(&id)?;
+    require_granted(&app, &id, "storage")?;
     Ok(read_storage_map(&app, &id)?.get(&key).cloned())
 }
 
 #[tauri::command]
 pub fn plugin_storage_set(app: AppHandle, id: String, key: String, value: String) -> Result<(), String> {
     let id = sanitize_id(&id)?;
+    require_granted(&app, &id, "storage")?;
     let mut map = read_storage_map(&app, &id)?;
     map.insert(key, value);
     let total: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
@@ -412,6 +481,7 @@ pub fn plugin_storage_set(app: AppHandle, id: String, key: String, value: String
 #[tauri::command]
 pub fn plugin_storage_remove(app: AppHandle, id: String, key: String) -> Result<(), String> {
     let id = sanitize_id(&id)?;
+    require_granted(&app, &id, "storage")?;
     let mut map = read_storage_map(&app, &id)?;
     map.remove(&key);
     write_storage_map(&app, &id, &map)
@@ -420,6 +490,7 @@ pub fn plugin_storage_remove(app: AppHandle, id: String, key: String) -> Result<
 #[tauri::command]
 pub fn plugin_storage_keys(app: AppHandle, id: String) -> Result<Vec<String>, String> {
     let id = sanitize_id(&id)?;
+    require_granted(&app, &id, "storage")?;
     Ok(read_storage_map(&app, &id)?.into_keys().collect())
 }
 
@@ -441,6 +512,36 @@ pub struct NetFetchResult {
     pub body: String,
 }
 
+/// SSRF-фильтр (T44-fix: security review) — loopback/приватные/link-local/
+/// CGNAT диапазоны запрещены для net.fetch, даже если хост прошёл net_allow
+/// (плагин мог бы объявить `net_allow: ["attacker.example"]`, где домен
+/// резолвится на 127.0.0.1/10.x/192.168.x — атака на локальную сеть жертвы).
+/// ⚠️ Резолвим и проверяем ЗДЕСЬ, но сам connect делает reqwest со своим,
+/// отдельным резолвом — окно для DNS rebinding (адрес меняется между этой
+/// проверкой и реальным подключением) теоретически остаётся; полное закрытие
+/// требует кастомного resolver/connector в reqwest — вне объёма этого фикса.
+fn is_blocked_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_documentation()
+                // CGNAT 100.64.0.0/10 — тоже периметр провайдера/облака, не публичный интернет
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 0b0100_0000)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.to_ipv4_mapped().is_some_and(|v4| is_blocked_ip(&IpAddr::V4(v4)))
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn plugin_net_fetch(
     app: AppHandle,
@@ -449,14 +550,7 @@ pub async fn plugin_net_fetch(
     init: Option<NetFetchInit>,
 ) -> Result<NetFetchResult, String> {
     let id = sanitize_id(&id)?;
-    let list = read_installed(&app)?;
-    let plugin = list
-        .into_iter()
-        .find(|p| p.id == id)
-        .ok_or_else(|| "denied: плагин не найден".to_string())?;
-    if !plugin.granted.iter().any(|g| g == "net") {
-        return Err("denied: нет права net".into());
-    }
+    let plugin = require_granted(&app, &id, "net")?;
 
     let parsed = url::Url::parse(&url).map_err(|_| "bad_args: битый URL".to_string())?;
     if parsed.scheme() != "https" {
@@ -471,6 +565,18 @@ pub async fn plugin_net_fetch(
         .unwrap_or_default();
     if !allow.iter().any(|h| h == &host) {
         return Err(format!("denied: хост «{host}» не в net_allow манифеста"));
+    }
+
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addrs: Vec<_> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|_| format!("bad_args: хост «{host}» не резолвится"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("bad_args: хост «{host}» не резолвится"));
+    }
+    if addrs.iter().any(|a| is_blocked_ip(&a.ip())) {
+        return Err(format!("denied: хост «{host}» резолвится в приватный/локальный адрес"));
     }
 
     let init = init.unwrap_or_default();
@@ -512,4 +618,131 @@ pub async fn plugin_net_fetch(
     }
     let body = String::from_utf8_lossy(&bytes).to_string();
     Ok(NetFetchResult { status, headers, body })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T44-fix (security review, Important #2) — на Windows `PathBuf::join`
+    /// с абсолютным drive-letter путём заменяет базу целиком, а не подмешивает
+    /// её; ensure_within обязана это ловить, даже если бы Zod-валидация манифеста
+    /// на TS-стороне почему-то пропустила такой `entry`.
+    #[test]
+    #[cfg(windows)]
+    fn ensure_within_rejects_windows_drive_absolute_join() {
+        let dir = std::env::temp_dir().join("muza-plugins-test-drive-abs");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let joined = dir.join(r"C:\Windows");
+        assert_ne!(joined, dir.join("Windows"), "join() обязан был заменить базу целиком — иначе тест не о том");
+        assert!(ensure_within(&dir, &joined).is_err(), "абсолютный Windows-путь обязан быть отклонён");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_within_accepts_legit_relative_path() {
+        let dir = std::env::temp_dir().join("muza-plugins-test-legit");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("index.js");
+        fs::write(&entry, "// ok").unwrap();
+
+        assert!(ensure_within(&dir, &entry).is_ok());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_within_rejects_traversal_outside_base() {
+        let base = std::env::temp_dir().join("muza-plugins-test-base");
+        let outside = std::env::temp_dir().join("muza-plugins-test-outside");
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "secret").unwrap();
+
+        // "../<outside>/secret.txt" — классический traversal через дозволенные
+        // символы (без drive-letter), проверяем что ensure_within тоже его ловит.
+        let escaped = base.join("..").join(outside.file_name().unwrap()).join("secret.txt");
+        assert!(ensure_within(&base, &escaped).is_err());
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    /// SSRF-фильтр (Important-минор) — loopback/приватные/link-local/CGNAT.
+    #[test]
+    fn is_blocked_ip_rejects_private_ranges() {
+        for ip in ["127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "169.254.1.1", "100.64.0.1", "0.0.0.0", "::1"] {
+            let addr: IpAddr = ip.parse().unwrap();
+            assert!(is_blocked_ip(&addr), "{ip} обязан быть заблокирован");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_allows_public_addresses() {
+        for ip in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
+            let addr: IpAddr = ip.parse().unwrap();
+            assert!(!is_blocked_ip(&addr), "{ip} — публичный адрес, блокироваться не должен");
+        }
+    }
+
+    #[test]
+    fn is_blocked_ip_rejects_ipv4_mapped_loopback() {
+        // ::ffff:127.0.0.1 — IPv4-mapped IPv6, распаковывается и перепроверяется
+        let addr: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(is_blocked_ip(&addr));
+    }
+
+    /// Nonce/staging-токен больше не детерминирован по времени/счётчику/pid.
+    #[test]
+    fn random_nonce_is_not_predictable_and_unique() {
+        let a = random_nonce();
+        let b = random_nonce();
+        assert_ne!(a, b);
+        assert!(!a.is_empty());
+    }
+
+    /// Настоящий crafted-zip: 3 МБ нулей deflate сжимает в считанные КБ —
+    /// классический профиль zip-бомбы (T44-fix, Important #3). До фикса
+    /// `entry.size()` из заголовка использовался для контроля лимита, а
+    /// реальная распаковка через read_to_end() ничем не ограничивалась.
+    #[test]
+    fn read_entry_capped_rejects_real_zip_bomb_entry() {
+        use std::io::{Cursor, Write as _};
+        let mut zip_bytes = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(Cursor::new(&mut zip_bytes));
+            let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("index.js", options).unwrap();
+            writer.write_all(&vec![0u8; 3 * 1024 * 1024]).unwrap(); // 3 МБ > лимита 2 МБ
+            writer.finish().unwrap();
+        }
+        assert!(zip_bytes.len() < 100 * 1024, "сжатый архив обязан быть маленьким — иначе тест не о том");
+
+        let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes)).unwrap();
+        let mut entry = archive.by_index(0).unwrap();
+        let res = read_entry_capped(&mut entry, MAX_UNPACKED_BYTES);
+        assert!(res.is_err(), "3 МБ реального декомпрессированного потока обязаны отклоняться при лимите 2 МБ");
+    }
+
+    #[test]
+    fn read_entry_capped_accepts_stream_within_limit() {
+        use std::io::{Cursor, Write as _};
+        let mut zip_bytes = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(Cursor::new(&mut zip_bytes));
+            writer.start_file("index.js", zip::write::SimpleFileOptions::default()).unwrap();
+            writer.write_all(b"console.log(1)").unwrap();
+            writer.finish().unwrap();
+        }
+        let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes)).unwrap();
+        let mut entry = archive.by_index(0).unwrap();
+        let res = read_entry_capped(&mut entry, MAX_UNPACKED_BYTES).unwrap();
+        assert_eq!(res, b"console.log(1)");
+    }
 }

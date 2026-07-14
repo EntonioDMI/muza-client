@@ -56,6 +56,21 @@ export const PERMISSION_INFO: Record<PluginPermission, { label: string; dangerou
 const ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{1,38})[a-z0-9]$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
+/** Windows drive-letter абсолют (`C:\...`, `C:/...`) — первый символ буква,
+ *  старые проверки на `..`/ведущий `/`/`\` его не ловят. */
+const WINDOWS_DRIVE_PATTERN = /^[a-zA-Z]:/;
+
+/** Путь внутри пакета плагина обязан быть относительным и не выходить за
+ *  пределы staged-папки (защита от path traversal, security review T44):
+ *  без `..`, без ведущего `/` или `\` (в т.ч. UNC `\\server\share`) и без
+ *  Windows drive-letter (`C:\...`) — последний пропускался прежней проверкой,
+ *  т.к. первый символ буква, не `/`/`\`, и `PathBuf::join` на Rust-стороне
+ *  заменяет базу целиком на такой абсолютный путь (см. plugins.rs::ensure_within,
+ *  которая эту же атаку перепроверяет и на Rust-стороне — манифесту не доверяем). */
+function isSafeRelPath(p: string): boolean {
+  return !p.includes("..") && !p.startsWith("/") && !p.startsWith("\\") && !WINDOWS_DRIVE_PATTERN.test(p);
+}
+
 /** Общая форма элемента contributes (tabs/barButtons/navItems/menus.*). */
 const ContributesItemSchema = z.object({
   id: z.string().min(1).max(60),
@@ -83,13 +98,13 @@ export const PluginContributesSchema = z
       .string()
       .min(1)
       .max(200)
-      .refine((p) => !p.includes("..") && !p.startsWith("/") && !p.startsWith("\\"), "contributes.css: недопустимый путь")
+      .refine(isSafeRelPath, "contributes.css: недопустимый путь")
       .optional(),
     strings: z
       .string()
       .min(1)
       .max(200)
-      .refine((p) => !p.includes("..") && !p.startsWith("/") && !p.startsWith("\\"), "contributes.strings: недопустимый путь")
+      .refine(isSafeRelPath, "contributes.strings: недопустимый путь")
       .optional(),
   })
   .strict();
@@ -102,11 +117,7 @@ export const PluginManifestSchema = z.object({
   api_version: z.literal(1),
   description: z.string().min(1).max(200),
   author: z.string().min(1).max(32),
-  entry: z
-    .string()
-    .min(1)
-    .max(200)
-    .refine((p) => !p.includes("..") && !p.startsWith("/") && !p.startsWith("\\"), "entry: недопустимый путь"),
+  entry: z.string().min(1).max(200).refine(isSafeRelPath, "entry: недопустимый путь"),
   permissions: z.array(PluginPermissionSchema).default([]),
   contributes: PluginContributesSchema.optional(),
   net_allow: z.array(z.string().min(1).max(253)).max(20).optional(),

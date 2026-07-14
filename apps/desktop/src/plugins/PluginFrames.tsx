@@ -85,7 +85,7 @@ function PluginFrame({ plugin, surface }: { plugin: InstalledPluginInfo; surface
 }
 
 export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
-  const { enabled, activeTab, activePanel, activeOverlay, closeTab, closePanel, closeOverlay } = plugins;
+  const { enabled, activeTab, activePanel, activeOverlay, closeTab, closePanel, closeOverlay, isCrashed } = plugins;
 
   const surfaceOf = (id: string): Surface => {
     if (activeOverlay === id) return "overlay";
@@ -94,9 +94,16 @@ export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
     return "hidden";
   };
 
+  // T44-fix: security review, Important #1 — watchdog (host.ts::markCrashed)
+  // раньше только помечал status:"crashed", а сам <iframe> оставался в DOM
+  // (этот .map не фильтровал по статусу) — зависший realm продолжал жить.
+  // Теперь снятый фрейм не монтируется вовсе, пока явно не сброшено
+  // (usePlugins.refresh — выключили/включили плагин).
+  const mountable = enabled.filter((p) => !isCrashed(p.id));
+
   return (
     <>
-      {enabled.map((p) => (
+      {mountable.map((p) => (
         <PluginFrame key={p.id} plugin={p} surface={surfaceOf(p.id)} />
       ))}
       {/* Кнопка закрытия видимой поверхности (фрейм плагина сам её не рисует

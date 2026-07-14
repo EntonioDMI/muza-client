@@ -52,6 +52,15 @@ export function scanPluginScript(code: string): string | null {
   if (new TextEncoder().encode(code).length > MAX_SCRIPT_BYTES) {
     return "entry: файл больше 512 КБ";
   }
+  // Доп. рубеж поверх CSP (security review T44): entry_code вставляется как
+  // сырой текст внутри <script> в bootstrap-документе плагина без экранирования
+  // (plugins.rs::build_bootstrap_response) — литеральный </script прерывает тег
+  // раньше времени, а <!-- переводит HTML-парсер в escaped script data state,
+  // из-за чего последующий реальный </script> может не сработать как ожидается.
+  // Оба ловим здесь текстово, до AST-парсинга.
+  if (/<\/script/i.test(code) || code.includes("<!--")) {
+    return "entry: запрещены литералы </script или <!-- (HTML-инъекция в bootstrap-документ)";
+  }
   let ast: unknown;
   try {
     ast = parse(code, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true });

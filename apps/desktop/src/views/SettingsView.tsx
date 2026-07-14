@@ -794,6 +794,11 @@ export function SettingsView({
   };
   const confirmInstall = async () => {
     if (!staged) return;
+    // T44-fix: security review — уровень 2 (app:full-access) этим рантаймом не
+    // поддержан; disabled на кнопке ниже — основная защита от клика, эта
+    // проверка дублирует её на случай программного вызова (Rust всё равно
+    // отклонит финализацию сам, см. plugins.rs::plugin_finalize_install).
+    if (isFullAccessManifest(staged.manifest)) return;
     try {
       await finalizeInstall(staged, staged.manifest.permissions);
       onNotify(`Плагин «${staged.manifest.name}» установлен`, "puzzle");
@@ -2987,7 +2992,12 @@ export function SettingsView({
             <Button variant="ghost" onClick={declineInstall}>
               Отмена
             </Button>
-            <Button variant="primary" icon="download" onClick={() => void confirmInstall()}>
+            <Button
+              variant="primary"
+              icon="download"
+              disabled={staged ? isFullAccessManifest(staged.manifest) : false}
+              onClick={() => void confirmInstall()}
+            >
               Установить
             </Button>
           </>
@@ -3000,7 +3010,8 @@ export function SettingsView({
             </div>
             {isFullAccessManifest(staged.manifest) ? (
               <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 600 }}>
-                Плагин запрашивает ПОЛНЫЙ ДОСТУП — уровень 2 пока не поддержан этим рантаймом.
+                Плагин запрашивает ПОЛНЫЙ ДОСТУП — установка недоступна, этот рантайм поддерживает только
+                ограниченные права (полный доступ — в следующей версии).
               </div>
             ) : staged.manifest.permissions.length === 0 ? (
               <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>Плагин не запрашивает особых прав.</div>

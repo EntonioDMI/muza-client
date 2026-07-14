@@ -82,6 +82,15 @@ class PluginHost {
   private injectedCss = new Map<string, string>();
   private listeners = new Set<() => void>();
   private started = false;
+  /** Плагины, помеченные "зависшими" watchdog'ом (T44-fix: security review —
+   *  раньше жила только в FrameReg.status, а unregisterFrame при размонтаже
+   *  <iframe> стирал саму запись, из-за чего PluginFrames не имела, по чему
+   *  фильтровать, и снятый фрейм оставался смонтированным). Живёт ОТДЕЛЬНО
+   *  от frames — переживает unregisterFrame, иначе фильтр в PluginFrames
+   *  размонтирует фрейм и тут же перемонтирует его на следующем рендере
+   *  (crash-loop). Сбрасывается явно — clearCrashed (usePlugins.refresh,
+   *  когда плагин выключили/удалили: следующее включение — новая попытка). */
+  private crashedIds = new Set<string>();
   /** Монотонный счётчик состояния для useSyncExternalStore (getSnapshot). */
   private version = 0;
 
@@ -163,9 +172,24 @@ class PluginHost {
     f.pingTimer = null;
     f.pendingPing = null;
     f.status = "crashed";
+    this.crashedIds.add(pluginId);
     // Реальный тердаун JS-realm — снятие <iframe> из DOM; это делает React,
-    // перерисовав слот по status:"crashed" (usePlugins), — хост лишь помечает.
+    // перерисовав слот по isCrashed() (PluginFrames фильтрует enabled по
+    // pluginHost.isCrashed перед маунтом — см. usePlugins/PluginFrames).
     this.notify();
+  }
+
+  /** true — watchdog снял фрейм (зависший ready/ping); PluginFrames не должна
+   *  монтировать <iframe> для такого id, пока явно не сброшено. */
+  isCrashed(pluginId: string): boolean {
+    return this.crashedIds.has(pluginId);
+  }
+
+  /** Сброс "зависшего" статуса — usePlugins вызывает, когда плагин выключили
+   *  или удалили (следующее включение обязано быть новой честной попыткой
+   *  монтажа, а не намертво заблокированным id до перезапуска приложения). */
+  clearCrashed(pluginId: string): void {
+    if (this.crashedIds.delete(pluginId)) this.notify();
   }
 
   private startWatchdog(reg: FrameReg): void {
