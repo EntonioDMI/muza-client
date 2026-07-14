@@ -1724,6 +1724,7 @@ function Player({
                 onLogout={onLogout}
                 onNotify={showToast}
                 onOpenHotkeys={openHotkeys}
+                onPluginsChanged={plugins.refresh}
                 intent={settingsIntent}
               />
             )}

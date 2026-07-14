@@ -771,6 +771,7 @@ export function SettingsView({
   onLogout,
   onNotify,
   onOpenHotkeys,
+  onPluginsChanged,
   intent,
 }: {
   api: MuzaApi;
@@ -785,6 +786,10 @@ export function SettingsView({
   onNotify: (text: string, icon?: string) => void;
   /** T9: строка «Помощь / закрыть» кликабельна — открывает диалог горячих клавиш (App). */
   onOpenHotkeys: () => void;
+  /** T45b-fix: installed.json изменился (установка/toggle/удаление плагина) —
+   *  дёргает usePlugins.refresh() в Player, чтобы уровень-1 плагин ожил
+   *  (слоты/iframe) БЕЗ перезагрузки приложения. См. docs/notes про gap T45b. */
+  onPluginsChanged?: () => void;
   intent?: SettingsIntent | null;
 }) {
   const [tab, setTab] = useState("appearance");
@@ -793,9 +798,16 @@ export function SettingsView({
   // Плагины уровня 1 (T44) + «Полный доступ» (T44b): установленные + мастер
   // установки из файла
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginInfo[]>([]);
-  const refreshPlugins = () => void listInstalled().then(setInstalledPlugins).catch(() => setInstalledPlugins([]));
+  // T45b-fix: обновляет и локальный список (эта вкладка), и рантайм usePlugins
+  // в Player (App.tsx) — иначе новый/переключённый L1-плагин не оживал бы
+  // (не появлялся в слотах/iframe) до перезагрузки приложения.
+  const refreshPlugins = () => {
+    void listInstalled().then(setInstalledPlugins).catch(() => setInstalledPlugins([]));
+    onPluginsChanged?.();
+  };
   useEffect(() => {
     refreshPlugins();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [staged, setStaged] = useState<StagedPlugin | null>(null);
   const [installBusy, setInstallBusy] = useState(false);
