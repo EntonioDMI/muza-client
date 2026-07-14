@@ -14,7 +14,10 @@ const MAX_ARTIFACT_TEXT_BYTES = 32 * 1024 * 1024;
 const MAX_DECODE_PASSES = 4;
 const SCANNED_EXTENSIONS = new Set([".js", ".css", ".html", ".json", ".svg", ".map"]);
 const HARD_HTTP_LITERAL_DELIMITERS = new Set([" ", "\"", "'", "`", "<", ">", "(", ")", "[", "]", "{", "}", ",", ";"]);
-const INTERNAL_TAURI_ORIGINS = ["http://ipc.localhost", "http://asset.localhost"];
+// http://muza-plugin.localhost — origin кастом-протокола песочницы плагинов W8
+// на Windows/WebView2 (см. PluginFrames.tsx и frame-src в PRODUCTION_CSP):
+// внутренний «домен» вебвью, не сетевой адрес — та же категория, что ipc/asset.
+const INTERNAL_TAURI_ORIGINS = ["http://ipc.localhost", "http://asset.localhost", "http://muza-plugin.localhost"];
 
 export const ALLOWED_HTTP_LITERALS = new Set([
   "http://json-schema.org/draft-04/schema#",
