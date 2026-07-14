@@ -11,7 +11,7 @@ import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
-import { pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
+import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
 import type { PlayerTrack } from "./types";
 
 /** За сколько секунд до конца начинать преднагрузку следующего трека. */
@@ -396,7 +396,9 @@ export function usePlayback({
       return;
     }
     if (!prefsRef.current.gapless && !prefsRef.current.crossfade) return; // обе фичи выкл — нечего опрашивать
-    const delay = remaining > GAPLESS_ARM_LEAD_SEC ? (remaining - GAPLESS_ARM_LEAD_SEC) * 1000 : GAPLESS_POLL_STEP_MS;
+    // T19-fix: формула вынесена в gaplessPlan.nextPollDelayMs (юнит-тест там же) —
+    // здесь только вызов, поведение не изменилось.
+    const delay = nextPollDelayMs(remaining, GAPLESS_ARM_LEAD_SEC, GAPLESS_POLL_STEP_MS);
     gaplessTimerRef.current = window.setTimeout(pollGapless, delay);
   };
 

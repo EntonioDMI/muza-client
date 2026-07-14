@@ -3,6 +3,7 @@ import {
   CROSSFADE_SEC,
   GAPLESS_LEAD_SEC,
   GAPLESS_XFADE_SEC,
+  nextPollDelayMs,
   pickAutoFadeSec,
   planAutoAdvance,
   type AutoAdvanceInput,
@@ -101,6 +102,35 @@ describe("GAPLESS_LEAD_SEC — T19 fast-follow: узкое окно, не кос
     // что задача ревью #2 была ровно обратной.
     expect(GAPLESS_LEAD_SEC).toBeGreaterThan(GAPLESS_XFADE_SEC);
     expect(GAPLESS_LEAD_SEC).toBeLessThanOrEqual(0.15);
+  });
+});
+
+describe("nextPollDelayMs — T19-fix: чистая формула планировщика usePlayback.pollGapless", () => {
+  it("далеко от конца — грубый большой прыжок до (remaining − lead)", () => {
+    // 10с до конца, lead=2с, шаг=20мс → ждём (10-2)*1000 = 8000мс, не шаг
+    expect(nextPollDelayMs(10, 2, 20)).toBe(8000);
+  });
+
+  it("только перешли порог — расчёт от свежего remaining, не залипает на старом", () => {
+    // 2.5с до конца, lead=2с → (2.5-2)*1000 = 500мс — корректный пересчёт у самой границы
+    expect(nextPollDelayMs(2.5, 2, 20)).toBe(500);
+  });
+
+  it("внутри lead-окна — фиксированный тесный шаг", () => {
+    expect(nextPollDelayMs(1, 2, 20)).toBe(20);
+    expect(nextPollDelayMs(0.05, 2, 20)).toBe(20);
+  });
+
+  it("край: remaining === lead — уже тесный шаг (не грубый прыжок в 0мс)", () => {
+    expect(nextPollDelayMs(2, 2, 20)).toBe(20);
+  });
+
+  it("край: remaining === 0 (трек физически закончился) — тесный шаг", () => {
+    expect(nextPollDelayMs(0, 2, 20)).toBe(20);
+  });
+
+  it("край: remaining отрицательный (таймер снаружи ещё не остановили) — всё ещё тесный шаг, не отрицательная задержка", () => {
+    expect(nextPollDelayMs(-0.5, 2, 20)).toBe(20);
   });
 });
 

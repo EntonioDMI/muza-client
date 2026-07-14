@@ -114,3 +114,21 @@ export function planAutoAdvance(input: AutoAdvanceInput): AutoAdvancePlan {
   }
   return { trigger: false, fadeSec: 0 };
 }
+
+/** T19-fix (ревью): чистая логика планирования следующего опроса в
+ *  usePlayback.pollGapless — self-adjusting setTimeout, читающий
+ *  engine().position() напрямую (см. usePlayback.ts). pollGapless —
+ *  самая тайминг-критичная и при этом самая тяжёлая для теста часть T19
+ *  (React-хук + реальные таймеры); вынесена сюда ЧИСТАЯ формула расчёта
+ *  задержки — юнит-тест без мока хука/движка/setTimeout.
+ *
+ *  Пока до конца трека (remainingSec) дальше leadSec — один дешёвый
+ *  "дальний" прыжок: спим ровно до момента "remainingSec − leadSec"
+ *  (переведено в мс), не тратя CPU на опрос всю длительность трека.
+ *  Как только remainingSec опускается до leadSec (включительно) и ниже —
+ *  тесный опрос с фиксированным шагом stepMs (в т.ч. когда remainingSec
+ *  уже ≤ 0 — трек физически кончился, но таймер ещё не успели остановить
+ *  снаружи; шаг остаётся тем же самым stepMs, не отрицательным). */
+export function nextPollDelayMs(remainingSec: number, leadSec: number, stepMs: number): number {
+  return remainingSec > leadSec ? (remainingSec - leadSec) * 1000 : stepMs;
+}
