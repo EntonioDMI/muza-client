@@ -1523,8 +1523,10 @@ function Player({
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
       {/* CSS плагинов (T44): статический contributes.css + динамический
           UI.applyCss, каждый в своём <style data-plugin>, ПОСЛЕ customCss */}
-      {plugins.injectedCss.map((c) => (
-        <style key={c.pluginId} data-plugin={c.pluginId}>
+      {plugins.injectedCss.map((c, i) => (
+        // ключ композитный: у плагина может быть И contributes.css, И applyCss —
+        // два <style> с одним data-plugin, ключ по индексу разводит их
+        <style key={`${c.pluginId}-${i}`} data-plugin={c.pluginId}>
           {c.css}
         </style>
       ))}
