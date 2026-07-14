@@ -7,6 +7,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { MuzaApi, Track } from "@muza/api-client";
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 export interface LocalEntry {
   hash: string;
@@ -62,16 +63,18 @@ export async function localScanPaths(paths: string[]): Promise<LocalEntry[]> {
 }
 
 /** Диалог выбора аудиофайлов/папки → скан (теги, хэш, реестр, asset-scope).
- *  null — пользователь передумал. */
-export async function localPickAndScan(kind: "files" | "folder"): Promise<LocalEntry[] | null> {
+ *  null — пользователь передумал. `lang` — язык подписей диалога
+ *  (потребитель, views/LibraryView.tsx, вне зоны этой правки — без lang
+ *  дефолт EN, было RU). */
+export async function localPickAndScan(kind: "files" | "folder", lang: Lang = DEFAULT_LANG): Promise<LocalEntry[] | null> {
   const picked = await open(
     kind === "files"
       ? {
           multiple: true,
-          title: "Выбери аудиофайлы",
-          filters: [{ name: "Аудио", extensions: ["mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "aiff", "ape", "webm"] }],
+          title: translate(lang, "media.localFiles.pickFilesTitle"),
+          filters: [{ name: translate(lang, "media.localFiles.audioFilterName"), extensions: ["mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "aiff", "ape", "webm"] }],
         }
-      : { directory: true, title: "Выбери папку с музыкой" },
+      : { directory: true, title: translate(lang, "media.localFiles.pickFolderTitle") },
   );
   if (!picked) return null;
   const paths = Array.isArray(picked) ? picked : [picked];

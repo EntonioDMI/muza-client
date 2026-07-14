@@ -1,7 +1,12 @@
 /** Компоновка плеер-бара: нормализация prefs.barButtons + подписи для
  *  настроек (паттерн — statsBlocks). Порядок массива = порядок в баре.
- *  T44: плагинные кнопки живут тут же под ключами `plugin:<id>:<slot>`. */
+ *  T44: плагинные кнопки живут тут же под ключами `plugin:<id>:<slot>`.
+ *
+ *  i18n (эпик W5, T-media): та же схема, что у NAV_ITEM_META (см.
+ *  lib/navItems.ts) — потребитель (views/SettingsView.tsx) вне зоны этой
+ *  правки, дефолты вычислены через `translate(DEFAULT_LANG, key)`. */
 
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { BAR_BUTTON_KEYS, type BarButtonKey } from "../types";
 import { isPluginKey } from "./pluginSlots";
 
@@ -39,14 +44,23 @@ export function normalizeBarButtons(saved: BarButtonPref[], pluginKeys: readonly
 }
 
 export const BAR_BUTTON_META: Record<BarButtonKey, { label: string; hint: string }> = {
-  shuffle: { label: "Перемешать", hint: "Слева от транспорта" },
-  repeat: { label: "Повтор", hint: "Справа от транспорта" },
-  sleep: { label: "Таймер сна", hint: "Луна: выкл → пресеты → конец трека" },
-  speed: { label: "Скорость", hint: "Кнопка «1×», циклит шаги из настроек" },
-  equalizer: { label: "Эквалайзер", hint: "Открывает под-экран EQ" },
-  lyrics: { label: "Текст", hint: "Панель «Сейчас играет»" },
-  jam: { label: "Jam", hint: "Слушать вместе" },
-  volume: { label: "Громкость", hint: "Кнопка-mute и слайдер" },
-  queue: { label: "Очередь", hint: "Панель очереди" },
-  fullscreen: { label: "Во весь экран", hint: "Режим прослушивания" },
+  shuffle: { label: translate(DEFAULT_LANG, "media.barButtons.shuffle.label"), hint: translate(DEFAULT_LANG, "media.barButtons.shuffle.hint") },
+  repeat: { label: translate(DEFAULT_LANG, "media.barButtons.repeat.label"), hint: translate(DEFAULT_LANG, "media.barButtons.repeat.hint") },
+  sleep: { label: translate(DEFAULT_LANG, "media.barButtons.sleep.label"), hint: translate(DEFAULT_LANG, "media.barButtons.sleep.hint") },
+  speed: { label: translate(DEFAULT_LANG, "media.barButtons.speed.label"), hint: translate(DEFAULT_LANG, "media.barButtons.speed.hint") },
+  equalizer: { label: translate(DEFAULT_LANG, "media.barButtons.equalizer.label"), hint: translate(DEFAULT_LANG, "media.barButtons.equalizer.hint") },
+  lyrics: { label: translate(DEFAULT_LANG, "media.barButtons.lyrics.label"), hint: translate(DEFAULT_LANG, "media.barButtons.lyrics.hint") },
+  jam: { label: translate(DEFAULT_LANG, "media.barButtons.jam.label"), hint: translate(DEFAULT_LANG, "media.barButtons.jam.hint") },
+  volume: { label: translate(DEFAULT_LANG, "media.barButtons.volume.label"), hint: translate(DEFAULT_LANG, "media.barButtons.volume.hint") },
+  queue: { label: translate(DEFAULT_LANG, "media.barButtons.queue.label"), hint: translate(DEFAULT_LANG, "media.barButtons.queue.hint") },
+  fullscreen: { label: translate(DEFAULT_LANG, "media.barButtons.fullscreen.label"), hint: translate(DEFAULT_LANG, "media.barButtons.fullscreen.hint") },
 };
+
+/** Локализованная метка/подсказка кнопки — для будущей правки потребителя
+ *  (SettingsView.tsx, вне зоны этого набора файлов). */
+export function barButtonLabel(key: BarButtonKey, lang: Lang): { label: string; hint: string } {
+  return {
+    label: translate(lang, `media.barButtons.${key}.label`),
+    hint: translate(lang, `media.barButtons.${key}.hint`),
+  };
+}

@@ -16,20 +16,31 @@ function track(id: string): Track {
   };
 }
 
-describe("variantLabel (T37)", () => {
-  it("отдаёт человеческую подпись для всех 12 типов словаря сервера", () => {
-    expect(variantLabel("remix")).toBe("Ремикс");
-    expect(variantLabel("sped_up")).toBe("Спидап");
-    expect(variantLabel("slowed")).toBe("Замедленная");
-    expect(variantLabel("mashup")).toBe("Мэшап");
-    expect(variantLabel("cover")).toBe("Кавер");
+describe("variantLabel (T37, i18n T-media)", () => {
+  it("EN (дефолт, без lang) — человеческая подпись для всех 12 типов словаря сервера", () => {
+    expect(variantLabel("remix")).toBe("Remix");
+    expect(variantLabel("sped_up")).toBe("Sped up");
+    expect(variantLabel("slowed")).toBe("Slowed");
+    expect(variantLabel("mashup")).toBe("Mashup");
+    expect(variantLabel("cover")).toBe("Cover");
     expect(variantLabel("live")).toBe("Live");
     expect(variantLabel("acoustic")).toBe("Acoustic");
     expect(variantLabel("instrumental")).toBe("Instrumental");
-    expect(variantLabel("karaoke")).toBe("Караоке");
+    expect(variantLabel("karaoke")).toBe("Karaoke");
     expect(variantLabel("8d")).toBe("8D Audio");
-    expect(variantLabel("bass_boosted")).toBe("Бас-буст");
-    expect(variantLabel("tiktok")).toBe("TikTok-версия");
+    expect(variantLabel("bass_boosted")).toBe("Bass boosted");
+    expect(variantLabel("tiktok")).toBe("TikTok version");
+  });
+
+  it("RU (lang явно) — те же 12 типов", () => {
+    expect(variantLabel("remix", "ru")).toBe("Ремикс");
+    expect(variantLabel("sped_up", "ru")).toBe("Спидап");
+    expect(variantLabel("slowed", "ru")).toBe("Замедленная");
+    expect(variantLabel("mashup", "ru")).toBe("Мэшап");
+    expect(variantLabel("cover", "ru")).toBe("Кавер");
+    expect(variantLabel("karaoke", "ru")).toBe("Караоке");
+    expect(variantLabel("bass_boosted", "ru")).toBe("Бас-буст");
+    expect(variantLabel("tiktok", "ru")).toBe("TikTok-версия");
   });
 
   it("null → null (canonicalVariantType у обычной группы с оригиналом)", () => {
@@ -37,18 +48,25 @@ describe("variantLabel (T37)", () => {
   });
 });
 
-describe("pluralVersions (T37)", () => {
-  it("1 → версия, 2-4 → версии, 5-20 → версий (включая 11-14 исключение)", () => {
-    expect(pluralVersions(1)).toBe("версия");
-    expect(pluralVersions(21)).toBe("версия");
-    expect(pluralVersions(2)).toBe("версии");
-    expect(pluralVersions(3)).toBe("версии");
-    expect(pluralVersions(4)).toBe("версии");
-    expect(pluralVersions(5)).toBe("версий");
-    expect(pluralVersions(11)).toBe("версий");
-    expect(pluralVersions(12)).toBe("версий");
-    expect(pluralVersions(14)).toBe("версий");
-    expect(pluralVersions(0)).toBe("версий");
+describe("pluralVersions (T37, i18n T-media)", () => {
+  it("RU: 1 → версия, 2-4 → версии, 5-20 → версий (включая 11-14 исключение)", () => {
+    expect(pluralVersions(1, "ru")).toBe("версия");
+    expect(pluralVersions(21, "ru")).toBe("версия");
+    expect(pluralVersions(2, "ru")).toBe("версии");
+    expect(pluralVersions(3, "ru")).toBe("версии");
+    expect(pluralVersions(4, "ru")).toBe("версии");
+    expect(pluralVersions(5, "ru")).toBe("версий");
+    expect(pluralVersions(11, "ru")).toBe("версий");
+    expect(pluralVersions(12, "ru")).toBe("версий");
+    expect(pluralVersions(14, "ru")).toBe("версий");
+    expect(pluralVersions(0, "ru")).toBe("версий");
+  });
+
+  it("EN (дефолт, без lang): 1 → version, иначе — versions", () => {
+    expect(pluralVersions(1)).toBe("version");
+    expect(pluralVersions(2)).toBe("versions");
+    expect(pluralVersions(0)).toBe("versions");
+    expect(pluralVersions(21)).toBe("versions"); // EN не знает RU-исключения на 11-14/21
   });
 });
 

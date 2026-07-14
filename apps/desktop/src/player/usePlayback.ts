@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MuzaApi } from "@muza/api-client";
 import type { Prefs, RepeatMode } from "../types";
+import { translate, type TParams, type TranslationKey } from "../i18n";
 import { engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
 import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
@@ -88,6 +89,11 @@ export function usePlayback({
   stateRef.current = { queue, index, playing, repeat, shuffle, speed, track, pos };
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+  // i18n (T-media): usePlayback не рендерится внутри своего LanguageProvider
+  // (тот выше, в Player/App) — как T31 в App.tsx, зовём чистую translate()
+  // напрямую с prefs.language вместо хука useT(). prefsRef уже существует
+  // (см. выше) — читаем язык на момент вызова, не на момент рендера.
+  const t = (key: TranslationKey, params?: TParams) => translate(prefsRef.current.language, key, params);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
   const onPlayEndRef = useRef(onPlayEnd);
@@ -165,7 +171,7 @@ export function usePlayback({
           setBuffering(false);
           onErrorRef.current(message);
         },
-      });
+      }, t);
     }
     return engineRef.current;
   };
@@ -212,7 +218,7 @@ export function usePlayback({
     if (t.kind === "local") {
       // анонимный локальный трек: серверных источников нет в принципе
       const path = await localResolve(t.localHash ?? "");
-      if (!path) throw new Error("Локальный файл не найден на этом устройстве");
+      if (!path) throw new Error(translate(prefsRef.current.language, "media.player.errors.localFileNotFound"));
       return { url: convertFileSrc(path), fromCache: true, provider: "local" };
     }
     const sources = await api.getTrackSources(t.id).catch(() => null);
@@ -223,10 +229,10 @@ export function usePlayback({
         if (path) return { url: convertFileSrc(path), fromCache: true, provider: "local" };
       }
       // оффлайн: кэш добычи отдаёт файл и без сети (пустая лестница = только кэш)
-      return resolvePlayable(t.id, [], quality);
+      return resolvePlayable(t.id, [], quality, prefsRef.current.language);
     }
     // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
-    return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality);
+    return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality, prefsRef.current.language);
   };
 
   /** Запустить трек очереди по индексу. fadeSec>0 (кроссфейд/gapless) —
@@ -257,7 +263,7 @@ export function usePlayback({
 
     if (!engineAvailable()) {
       setPlaying(false);
-      onErrorRef.current("Каталожные треки играют только в приложении Muza (движок добычи)");
+      onErrorRef.current(translate(prefsRef.current.language, "media.player.errors.desktopOnly"));
       return;
     }
 
@@ -288,7 +294,7 @@ export function usePlayback({
     } catch (e) {
       if (playSeqRef.current !== seq) return;
       setPlaying(false);
-      onErrorRef.current(e instanceof Error ? e.message : "Не удалось добыть трек");
+      onErrorRef.current(e instanceof Error ? e.message : translate(prefsRef.current.language, "media.player.errors.trackFetchFailed"));
     } finally {
       if (playSeqRef.current === seq) setBuffering(false);
     }

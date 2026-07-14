@@ -5,7 +5,15 @@
  *  Ctrl/Alt/Shift в фиксированном порядке. Пример: "Ctrl+ArrowRight", "KeyL".
  *
  *  Обработчики живут в App (мапа actionId → колбэк); здесь — определения,
- *  дефолты, парс/матч/формат. Вкладка «Клавиши» и оверлей «?» читают отсюда. */
+ *  дефолты, парс/матч/формат. Вкладка «Клавиши» и оверлей «?» читают отсюда.
+ *
+ *  i18n (эпик W5, T-media): HOTKEY_ACTIONS[].label — та же ситуация, что у
+ *  NAV_ITEM_META (см. lib/navItems.ts) — потребители (App.tsx, SettingsView.tsx)
+ *  вне зоны этой правки читают `.label` плоским полем, дефолт вычислен через
+ *  `translate(DEFAULT_LANG, key)` (было RU, стало EN); `hotkeyActionLabel()`
+ *  ниже — готовая точка для будущей языковой правки потребителя. */
+
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 export type HotkeyAction =
   | "playPause"
@@ -21,17 +29,23 @@ export type HotkeyAction =
 
 /** Порядок = порядок в настройках и справке. */
 export const HOTKEY_ACTIONS: { id: HotkeyAction; label: string }[] = [
-  { id: "playPause", label: "Играть / пауза" },
-  { id: "next", label: "Следующий трек" },
-  { id: "prev", label: "Предыдущий трек" },
-  { id: "seekFwd", label: "Перемотка +5 с" },
-  { id: "seekBack", label: "Перемотка −5 с" },
-  { id: "like", label: "Лайк" },
-  { id: "mute", label: "Без звука" },
-  { id: "search", label: "Поиск" },
-  { id: "navBack", label: "Назад по вкладкам" },
-  { id: "navForward", label: "Вперёд по вкладкам" },
+  { id: "playPause", label: translate(DEFAULT_LANG, "media.hotkeys.actions.playPause") },
+  { id: "next", label: translate(DEFAULT_LANG, "media.hotkeys.actions.next") },
+  { id: "prev", label: translate(DEFAULT_LANG, "media.hotkeys.actions.prev") },
+  { id: "seekFwd", label: translate(DEFAULT_LANG, "media.hotkeys.actions.seekFwd") },
+  { id: "seekBack", label: translate(DEFAULT_LANG, "media.hotkeys.actions.seekBack") },
+  { id: "like", label: translate(DEFAULT_LANG, "media.hotkeys.actions.like") },
+  { id: "mute", label: translate(DEFAULT_LANG, "media.hotkeys.actions.mute") },
+  { id: "search", label: translate(DEFAULT_LANG, "media.hotkeys.actions.search") },
+  { id: "navBack", label: translate(DEFAULT_LANG, "media.hotkeys.actions.navBack") },
+  { id: "navForward", label: translate(DEFAULT_LANG, "media.hotkeys.actions.navForward") },
 ];
+
+/** Локализованная метка действия — для будущей правки потребителя (App.tsx/
+ *  SettingsView.tsx, вне зоны этого набора файлов). */
+export function hotkeyActionLabel(id: HotkeyAction, lang: Lang): string {
+  return translate(lang, `media.hotkeys.actions.${id}`);
+}
 
 export const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
   playPause: "Space",

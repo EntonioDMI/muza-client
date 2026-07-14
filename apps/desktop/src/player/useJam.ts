@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JamMember, JamSnapshot, JamState, MuzaApi } from "@muza/api-client";
+import { DEFAULT_LANG, translate, type Lang, type TParams, type TranslationKey } from "../i18n";
 import { fromCatalog, type PlayerTrack } from "./types";
 
 /** Порог дрейфа позиции у гостя, сек. */
@@ -57,13 +58,20 @@ export function useJam({
   enabled,
   pb,
   onNotify,
+  lang = DEFAULT_LANG,
 }: {
   api: MuzaApi;
   /** Серверная сессия; аноним jam не видит. */
   enabled: boolean;
   pb: JamPlayback;
   onNotify: (text: string, icon?: string) => void;
+  /** Язык тостов (App.tsx может передать prefs.language); необязателен —
+   *  без него тосты остаются на EN (DEFAULT_LANG). Опциональный, а не
+   *  проп-дриллинг: вызывающий (App.tsx) — вне зоны этой правки (см.
+   *  комментарий в i18n/en.media.ts), добавлять сюда сам вызов не могли. */
+  lang?: Lang;
 }): JamUi {
+  const t = (key: TranslationKey, params?: TParams) => translate(lang, key, params);
   const [session, setSession] = useState<{ code: string; isHost: boolean; hostName: string } | null>(null);
   const [members, setMembers] = useState<JamMember[]>([]);
   const [hostState, setHostState] = useState<JamState | null>(null);
@@ -113,7 +121,7 @@ export function useJam({
           p.playContext([fromCatalog(track)], track.id);
         })
         .catch(() => {
-          onNotifyRef.current("Не удалось получить трек хоста", "x");
+          onNotifyRef.current(t("media.jam.hostTrackFetchFailed"), "x");
         })
         .finally(() => {
           if (applyingTrackRef.current === state.trackId) applyingTrackRef.current = null;
@@ -145,13 +153,13 @@ export function useJam({
           // трек гостя падает в конец очереди ХОСТА; гостям — только тост
           const p = pbRef.current;
           if (isHost) p.insertInQueue(fromCatalog(event.track), p.queueLength);
-          onNotifyRef.current(`${event.by} добавил «${event.track.title}» в jam`, "list-plus");
+          onNotifyRef.current(t("media.jam.trackAdded", { by: event.by, title: event.track.title }), "list-plus");
           break;
         }
         case "ended":
           if (sessionRef.current) {
             onNotifyRef.current(
-              sessionRef.current.isHost ? "Jam завершён" : "Хост завершил jam", "radio-tower",
+              sessionRef.current.isHost ? t("media.jam.ended") : t("media.jam.hostEnded"), "radio-tower",
             );
             cleanup();
           }
@@ -172,7 +180,7 @@ export function useJam({
     try {
       applySnapshot(await api.createJam());
     } catch (e) {
-      onNotifyRef.current(e instanceof Error ? e.message : "Не удалось создать jam", "x");
+      onNotifyRef.current(e instanceof Error ? e.message : t("media.jam.createFailed"), "x");
     } finally {
       setBusy(false);
     }
@@ -183,10 +191,10 @@ export function useJam({
     try {
       const snap = await api.joinJam(code.trim().toUpperCase());
       applySnapshot(snap);
-      onNotifyRef.current(`Ты в jam у ${snap.host.username}`, "radio-tower");
+      onNotifyRef.current(t("media.jam.joinedAs", { username: snap.host.username }), "radio-tower");
       if (!snap.isHost && snap.state) applyState(snap.state);
     } catch (e) {
-      onNotifyRef.current(e instanceof Error ? e.message : "Не удалось войти в jam", "x");
+      onNotifyRef.current(e instanceof Error ? e.message : t("media.jam.joinFailed"), "x");
       throw e;
     } finally {
       setBusy(false);
@@ -198,7 +206,7 @@ export function useJam({
     if (!s) return;
     cleanup(); // локально выходим сразу — сервер догонит
     await api.leaveJam(s.code).catch(() => undefined);
-    onNotifyRef.current(s.isHost ? "Jam завершён" : "Ты вышел из jam", "radio-tower");
+    onNotifyRef.current(s.isHost ? t("media.jam.ended") : t("media.jam.left"), "radio-tower");
   };
 
   const addTrack = async (trackId: string) => {
@@ -207,7 +215,7 @@ export function useJam({
     try {
       await api.addJamTrack(s.code, trackId);
     } catch (e) {
-      onNotifyRef.current(e instanceof Error ? e.message : "Не удалось добавить в jam", "x");
+      onNotifyRef.current(e instanceof Error ? e.message : t("media.jam.addFailed"), "x");
     }
   };
 

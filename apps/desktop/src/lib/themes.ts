@@ -2,6 +2,7 @@
  *  Prefs (THEME_KEYS) + CSS-тир. Хранение локальное (localStorage), обмен —
  *  JSON через буфер (файловый экспорт — беклог) и маркетплейс (сервер). */
 
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import { LEGACY_ENUM_TO_NUMBER, migrateLegacyValue } from "./legacyPrefs";
 
@@ -92,11 +93,14 @@ export function tokensFromPrefs(prefs: Prefs): ThemeTokens {
   return tokens;
 }
 
-/** Сохранить текущее оформление как тему (одноимённая перезаписывается). */
-export function saveTheme(name: string, prefs: Prefs): SavedTheme {
+/** Сохранить текущее оформление как тему (одноимённая перезаписывается).
+ *  `lang` — язык дефолтного имени, если пользователь ничего не ввёл
+ *  (потребитель, views/SettingsView.tsx, вне зоны этой правки — без lang
+ *  дефолт EN, было RU). */
+export function saveTheme(name: string, prefs: Prefs, lang: Lang = DEFAULT_LANG): SavedTheme {
   const theme: SavedTheme = {
     id: crypto.randomUUID(),
-    name: name.trim() || "Моя тема",
+    name: name.trim() || translate(lang, "media.themes.myTheme"),
     createdAt: new Date().toISOString(),
     tokens: tokensFromPrefs(prefs),
   };
@@ -110,10 +114,10 @@ export function deleteTheme(id: string): void {
 }
 
 /** Добавить готовую тему (импорт/маркетплейс) в локальный список. */
-export function addTheme(name: string, tokens: ThemeTokens): SavedTheme {
+export function addTheme(name: string, tokens: ThemeTokens, lang: Lang = DEFAULT_LANG): SavedTheme {
   const theme: SavedTheme = {
     id: crypto.randomUUID(),
-    name: name.trim() || "Тема",
+    name: name.trim() || translate(lang, "media.themes.theme"),
     createdAt: new Date().toISOString(),
     tokens: sanitizeTokens(tokens),
   };

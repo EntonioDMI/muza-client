@@ -1,7 +1,17 @@
 /** Компоновка сайдбара: нормализация prefs.navItems (состав/порядок/свои
  *  имена вкладок). Главная выключаться не умеет — приложению нужен дом.
- *  T44: плагинные вкладки живут тут же под ключами `plugin:<id>:<tab>`. */
+ *  T44: плагинные вкладки живут тут же под ключами `plugin:<id>:<tab>`.
+ *
+ *  i18n (эпик W5, T-media): `label` в NAV_ITEM_META — ДЕФОЛТНАЯ метка вкладки
+ *  (не путать с NavItemPref.label — это СВОЙ текст пользователя, override,
+ *  данные — не трогаем). Потребители (shell/Sidebar.tsx, views/SettingsView.tsx)
+ *  вне зоны этой правки и читают `.label` как плоское поле без вызова t(),
+ *  поэтому дефолт вычислен один раз через `translate(DEFAULT_LANG, key)` —
+ *  было захардкожено RU, стало EN константой; живое переключение языка для
+ *  этих меток потребует правки потребителя (см. navItemLabel ниже — уже
+ *  готовая функция для этой будущей правки). */
 
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { NAV_ITEM_KEYS, type NavItemKey } from "../types";
 import { isPluginKey } from "./pluginSlots";
 
@@ -39,9 +49,16 @@ export function normalizeNavItems(saved: NavItemPref[], pluginKeys: readonly str
 }
 
 export const NAV_ITEM_META: Record<NavItemKey, { label: string; icon: string }> = {
-  home: { label: "Главная", icon: "home" },
-  search: { label: "Поиск", icon: "search" },
-  favorites: { label: "Любимое", icon: "heart" },
-  library: { label: "Библиотека", icon: "library-big" },
-  stats: { label: "Статистика", icon: "chart-line" },
+  home: { label: translate(DEFAULT_LANG, "media.nav.home"), icon: "home" },
+  search: { label: translate(DEFAULT_LANG, "media.nav.search"), icon: "search" },
+  favorites: { label: translate(DEFAULT_LANG, "media.nav.favorites"), icon: "heart" },
+  library: { label: translate(DEFAULT_LANG, "media.nav.library"), icon: "library-big" },
+  stats: { label: translate(DEFAULT_LANG, "media.nav.stats"), icon: "chart-line" },
 };
+
+/** Локализованная метка вкладки — для будущей правки потребителя (Sidebar/
+ *  SettingsView, вне зоны этого набора файлов): вместо NAV_ITEM_META[key].label
+ *  (статичный EN) зовёт `navItemLabel(key, prefs.language)`. */
+export function navItemLabel(key: NavItemKey, lang: Lang): string {
+  return translate(lang, `media.nav.${key}`);
+}

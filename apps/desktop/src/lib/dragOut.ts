@@ -5,6 +5,7 @@
 
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 export function dragOutAvailable(): boolean {
   return isTauri();
@@ -57,11 +58,14 @@ export function maybeAltFileDrag(
   e: React.DragEvent,
   exportFile: () => Promise<string>,
   onError: (message: string) => void,
+  /** Язык фолбэк-сообщения об ошибке (потребители — views/*, вне зоны этой
+   *  правки); без него — EN (DEFAULT_LANG). */
+  lang: Lang = DEFAULT_LANG,
 ): boolean {
   if (!e.altKey || !dragOutAvailable()) return false;
   e.preventDefault();
   exportFile()
     .then((path) => startTrackFileDrag(path))
-    .catch((err) => onError(err instanceof Error ? err.message : "Не удалось подготовить файл"));
+    .catch((err) => onError(err instanceof Error ? err.message : translate(lang, "media.dragOut.errors.prepareFailed")));
   return true;
 }

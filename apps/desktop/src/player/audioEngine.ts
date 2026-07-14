@@ -9,7 +9,14 @@
  *
  *  Fallback «plain»: MediaElementSource без CORS-чистого источника выдаёт
  *  тишину — перед постройкой графа источник проверяется fetch-пробой; если
- *  CORS не прошёл, играем элементами напрямую (без EQ и буста нормализации). */
+ *  CORS не прошёл, играем элементами напрямую (без EQ и буста нормализации).
+ *
+ *  i18n (эпик W5, T-media): класс не React и не подписан на LanguageProvider —
+ *  сообщения об ошибках переводятся через функцию `t`, которую владелец
+ *  (usePlayback.ts) передаёт вторым параметром конструктора — там же и живёт
+ *  prefs.language, см. `translate(prefs.language, key, params)`, как решал
+ *  T31 для App.tsx (не-React вызов чистой translate() вместо хука useT()). */
+import type { TParams, TranslationKey } from "../i18n";
 
 const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 /** Целевая integrated loudness для нормализации (стриминговый стандарт). */
@@ -67,7 +74,12 @@ export class AudioEngine {
   private eqOn = false;
   private eqBands: number[] = EQ_FREQS.map(() => 0);
 
-  constructor(private readonly cb: EngineCallbacks) {}
+  constructor(
+    private readonly cb: EngineCallbacks,
+    /** Перевод ошибок движка (см. шапку файла); опционален для тестов/старых
+     *  вызовов — без него ошибки остаются на английском (DEFAULT_LANG). */
+    private readonly t: (key: TranslationKey, params?: TParams) => string = (key) => key,
+  ) {}
 
   private makeSlot(): Slot {
     const el = new Audio();
@@ -89,7 +101,7 @@ export class AudioEngine {
     });
     el.addEventListener("error", () => {
       if (this.slots[this.active] === slot && slot.url) {
-        this.cb.onError("Не удалось воспроизвести файл");
+        this.cb.onError(this.t("media.player.errors.playFailed"));
       }
     });
     return slot;
@@ -232,7 +244,7 @@ export class AudioEngine {
     try {
       await slot.el.play();
     } catch (e) {
-      this.cb.onError(e instanceof Error ? e.message : "Воспроизведение не стартовало");
+      this.cb.onError(e instanceof Error ? e.message : this.t("media.player.errors.playbackDidNotStart"));
     }
   }
 

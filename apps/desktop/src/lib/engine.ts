@@ -4,6 +4,7 @@
 
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import type { MuzaApi, TrackSource } from "@muza/api-client";
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { localResolve } from "./localFiles";
 
 export function engineAvailable(): boolean {
@@ -65,6 +66,9 @@ export async function resolvePlayable(
   trackId: string,
   sources: TrackSource[],
   quality: StreamQuality = "auto",
+  /** Язык тоста-ошибки (usePlayback.ts передаёт prefs.language); без него —
+   *  EN (DEFAULT_LANG), см. шапку en.media.ts про non-React потребителей. */
+  lang: Lang = DEFAULT_LANG,
 ): Promise<ResolveResult> {
   const locals = sources.filter((s) => s.provider === "local");
   const remotes = sources.filter((s) => s.provider !== "local");
@@ -72,7 +76,7 @@ export async function resolvePlayable(
     const path = await localResolve(locals[0].sourceId);
     if (path) return { url: convertFileSrc(path), fromCache: true, provider: "local" };
     if (remotes.length === 0) {
-      throw new Error("Локальный трек: файла нет на этом устройстве");
+      throw new Error(translate(lang, "media.engine.errors.localTrackMissing"));
     }
   }
   // пустая лестница тоже осмысленна: Rust сперва смотрит кэш добычи (оффлайн)
