@@ -19,6 +19,7 @@ import type {
   JamSnapshot,
   Lyrics,
   MarketTheme,
+  MarketPlugin,
   PlaylistDetail,
   PlaylistMeta,
   RecipeEnvelope,
@@ -173,6 +174,29 @@ export interface MuzaApi {
   deleteMarketTheme(id: string): Promise<void>;
   /** Пожаловаться на чужую тему (порог жалоб авто-скрывает её). */
   reportMarketTheme(id: string): Promise<void>;
+
+  // Маркетплейс плагинов (эпик W8, T45a). payload = { manifest, code, css?,
+  // strings? }; install ставится через рантайм T44/T44b (клиент сам валидирует
+  // манифест и сканирует код/CSS перед записью на диск).
+  getMarketPlugins(): Promise<MarketPlugin[]>;
+  /** Опубликовать/обновить; свой manifest.id = обновление записи (full-access
+   *  снова уходит в pending — код изменился, ревью заново). */
+  publishMarketPlugin(
+    manifest: Record<string, unknown>,
+    code: string,
+    css?: string,
+    strings?: Record<string, string>,
+  ): Promise<MarketPlugin>;
+  /** Установка: инкремент счётчика + полный payload плагина. */
+  installMarketPlugin(id: string): Promise<MarketPlugin>;
+  /** Снять с публикации (свой; админ — любой). */
+  deleteMarketPlugin(id: string): Promise<void>;
+  /** Пожаловаться на чужой плагин (порог жалоб авто-скрывает его). */
+  reportMarketPlugin(id: string): Promise<void>;
+  /** Модерация (только админ): скрыть/вернуть плагин в витрину. */
+  hideMarketPlugin(id: string, hidden: boolean): Promise<void>;
+  /** Премодерация full-access (только админ): одобрить публикацию. */
+  approveMarketPlugin(id: string): Promise<void>;
 
   // Совместные плейлисты (Stage 7): инвайт-код → вход по коду → участник
   // добавляет/убирает треки. Код видит и отзывает только владелец.

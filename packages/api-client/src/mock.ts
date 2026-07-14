@@ -15,6 +15,7 @@ import {
   type JamSnapshot,
   type Lyrics,
   type MarketTheme,
+  type MarketPlugin,
   type PlaylistDetail,
   type PlaylistMeta,
   type RecipeEnvelope,
@@ -390,6 +391,27 @@ export class MockMuzaApi implements MuzaApi {
   async deleteMarketTheme(): Promise<void> {}
 
   async reportMarketTheme(): Promise<void> {}
+
+  // Маркетплейс плагинов в моке недоступен (нужен сервер)
+  async getMarketPlugins(): Promise<MarketPlugin[]> {
+    return [];
+  }
+
+  async publishMarketPlugin(): Promise<MarketPlugin> {
+    throw new Error("Мок: маркетплейс живёт на сервере");
+  }
+
+  async installMarketPlugin(): Promise<MarketPlugin> {
+    throw new Error("Мок: маркетплейс живёт на сервере");
+  }
+
+  async deleteMarketPlugin(): Promise<void> {}
+
+  async reportMarketPlugin(): Promise<void> {}
+
+  async hideMarketPlugin(): Promise<void> {}
+
+  async approveMarketPlugin(): Promise<void> {}
 
   // Админка в моке недоступна
   async adminPing(): Promise<boolean> {

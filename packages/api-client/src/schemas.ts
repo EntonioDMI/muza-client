@@ -289,6 +289,32 @@ export interface MarketTheme {
   hidden: boolean;
 }
 
+// ── Маркетплейс плагинов (эпик W8, T45a) ───────────────────────────
+
+/** Опубликованный плагин. payload = { manifest, code, css?, strings? } —
+ *  install ставит целиком через рантайм T44/T44b (@muza/core parsePluginManifest
+ *  + scanPluginScript/scanPluginCss на клиенте, сервер это не гарантирует
+ *  бесплатно — см. muza-server/src/market/market-plugin.controller.ts). */
+export interface MarketPlugin {
+  id: string;
+  /** manifest.id плагина — путь установки на клиенте, глобально уникален. */
+  pluginId: string;
+  name: string;
+  author: string;
+  version: string;
+  installs: number;
+  createdAt: string;
+  payload: Record<string, unknown>;
+  /** app:full-access в манифесте — бейдж «Полный доступ» в витрине. */
+  fullAccess: boolean;
+  /** На премодерации (только full-access); видно всем, кроме автора — false. */
+  pending: boolean;
+  /** Опубликован текущим пользователем — можно снять с публикации. */
+  isMine: boolean;
+  /** Скрыт модерацией/жалобами (в списке видна только автору). */
+  hidden: boolean;
+}
+
 // ── Сессии и устройства (настройки → Аккаунт) ─────────────────────
 
 /** Активная сессия (refresh-строка); createdAt = последняя активность
