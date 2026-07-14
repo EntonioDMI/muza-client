@@ -47,3 +47,9 @@ export interface PlayerSnapshot {
 }
 
 export { PLAYLIST_ICON_IDS, pickRandomPlaylistIcon, playlistIconUrl } from "./playlistIcons";
+
+// Плагины уровня 1 (эпик W8, T44) — манифест/протокол-мост/скан, общие для
+// клиента и сервера (T45 держит свою копию — репозитории раздельные).
+export * from "./plugin/manifest";
+export * from "./plugin/messages";
+export * from "./plugin/scan";

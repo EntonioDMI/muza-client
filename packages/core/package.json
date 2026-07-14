@@ -11,5 +11,9 @@
   },
   "devDependencies": {
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "acorn": "^8.17.0",
+    "zod": "^4.4.3"
   }
 }
