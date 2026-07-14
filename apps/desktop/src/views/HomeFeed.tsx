@@ -37,10 +37,12 @@ const sectionH2: React.CSSProperties = {
   color: "var(--text-1)",
 };
 
-/** Главная (Stage 5): при серверной сессии — живая лента рекомендаций
+/** Главная (Stage 5, T25): при серверной сессии — живая лента рекомендаций
  *  (/home: «Для тебя», «Потому что вы любите X», «В тренде», «Новое»),
- *  «Для тебя» — списком с действиями, остальные — карусели. Аноним или
- *  пустая лента (совсем свежий аккаунт без каталога) — демо-полки Stage 1. */
+ *  «Для тебя» — списком с действиями, остальные — карусели. Демо-полки
+ *  Stage 1 показываются ТОЛЬКО анониму (сервер его не знает) и явно
+ *  помечены как демо. У залогиненного пустая лента и ошибка загрузки —
+ *  честный текст без подмены демо-каталогом (T25: раньше подмена была). */
 export function HomeFeed({
   api,
   canSearch,
@@ -192,47 +194,23 @@ export function HomeFeed({
       {feed.status === "loading" ? (
         <FeedSkeleton />
       ) : feed.status === "error" ? (
-        <>
-          <Notice
-            icon="server-off"
-            text="Сервер недоступен, а оффлайн-копии ленты ещё нет. Закреплённые оффлайн треки играют из кэша."
-            action="Повторить"
-            onAction={load}
-          />
-          <DemoShelves
-            labeled
-            currentId={currentId}
-            playing={playing}
-            likes={likes}
-            onPlayTrack={onPlayTrack}
-            onQueueDemo={onQueueDemo}
-            rowShow={rowShow}
-            onLike={onLike}
-            onTrackMenu={onTrackMenu}
-            onOpen={onOpen}
-          />
-        </>
+        // T25: честная ошибка без демо-заглушек — залогиненному не подсовываем
+        // вымышленный каталог вместо реальной ленты, даже с пометкой.
+        <Notice
+          icon="server-off"
+          text="Сервер недоступен, а оффлайн-копии ленты ещё нет. Закреплённые оффлайн треки играют из кэша."
+          action="Повторить"
+          onAction={load}
+        />
       ) : feed.status === "live" && sections.length === 0 ? (
-        <>
-          <Notice
-            icon="sparkles"
-            text="Лента появится после первых прослушиваний: включи что-нибудь через Поиск — рекомендации начнут собираться."
-            action="Открыть поиск"
-            onAction={() => onOpen("search")}
-          />
-          <DemoShelves
-            labeled
-            currentId={currentId}
-            playing={playing}
-            likes={likes}
-            onPlayTrack={onPlayTrack}
-            onQueueDemo={onQueueDemo}
-            rowShow={rowShow}
-            onLike={onLike}
-            onTrackMenu={onTrackMenu}
-            onOpen={onOpen}
-          />
-        </>
+        // T25: реально пустая лента (новый аккаунт без сигнала) — честный
+        // текст, а не демо-полки: это не «примеры», это заглушка под чужим видом.
+        <Notice
+          icon="sparkles"
+          text="Лента наполнится по мере прослушиваний: включи что-нибудь через Поиск — рекомендации начнут собираться."
+          action="Открыть поиск"
+          onAction={() => onOpen("search")}
+        />
       ) : null}
 
       {live ? (
@@ -305,6 +283,8 @@ export function HomeFeed({
           <div style={{ paddingBottom: "var(--sp-6)" }} />
         </>
       ) : feed.status === "demo" ? (
+        // T25: демо-каталог показываем только анониму — DemoShelves сама
+        // всегда рисует подпись «демо», выдавать его за реальную ленту нельзя.
         <DemoShelves
           currentId={currentId}
           playing={playing}
@@ -381,10 +361,10 @@ function FeedSkeleton() {
   );
 }
 
-/** Демо-полки Stage 1. labeled — явная подпись, что это НЕ персональная
- *  лента (сервер недоступен / истории ещё нет). */
+/** Демо-полки Stage 1 (T25: только для анонима — сервер его не знает,
+ *  живой ленты быть не может). Подпись рисуется всегда: демо не должно
+ *  выглядеть как реальные тренды/рекомендации. */
 function DemoShelves({
-  labeled = false,
   currentId,
   playing,
   likes,
@@ -395,7 +375,6 @@ function DemoShelves({
   onTrackMenu,
   onOpen,
 }: {
-  labeled?: boolean;
   currentId: string;
   playing: boolean;
   likes: string[];
@@ -410,11 +389,9 @@ function DemoShelves({
 }) {
   return (
     <>
-      {labeled ? (
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-          Ниже — демо-каталог для знакомства с интерфейсом, не персональные рекомендации.
-        </div>
-      ) : null}
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+        Демо: примеры для знакомства с интерфейсом, не реальные тренды и рекомендации.
+      </div>
       <Shelf title="Продолжить слушать">
         {TRACKS.map((t) => (
           <Tile
