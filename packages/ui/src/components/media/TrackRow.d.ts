@@ -10,6 +10,8 @@ export interface TrackRowProps {
   duration?: string;
   /** false — скрыть колонку длительности (настройка «Строка трека»). */
   showDuration?: boolean;
+  /** Compact source-provider badge (e.g. "SoundCloud"); omit to hide. */
+  source?: string;
   /** This row is the current track (accent title). */
   active?: boolean;
   /** Playback running (equalizer glyph instead of index). */

@@ -2,19 +2,12 @@ import { useEffect, useState } from "react";
 import { Button, Dialog, Icon } from "@muza/ui";
 import type { MuzaApi, Track, TrackSource } from "@muza/api-client";
 import { cacheRemove } from "../lib/engine";
-import { fmtTime } from "../lib/format";
+import { fmtTime, providerLabel } from "../lib/format";
 
 /** Разворот «Версии и источники» (Stage 4): опциональный выбор конкретного
  *  источника канонического трека. Выбор запоминается per-user на сервере
  *  (UserTrackSource) и не перебивается авто-матчингом; смена выбора выбивает
  *  трек из локального кэша добычи — иначе продолжит играть старый файл. */
-
-const PROVIDER_LABEL: Record<string, string> = {
-  youtube: "YouTube",
-  soundcloud: "SoundCloud",
-  bandcamp: "Bandcamp",
-  local: "Локальный файл",
-};
 
 const KIND_LABEL: Record<string, string> = {
   direct: "добавлен ссылкой",
@@ -63,7 +56,7 @@ export function VersionsDialog({
       await api.chooseTrackSource(track.id, s.id);
       await cacheRemove(track.id); // старый файл кэша — от прежней версии
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: x.id === s.id })));
-      onNotify(`Теперь играет: ${PROVIDER_LABEL[s.provider] ?? s.provider}`, "check");
+      onNotify(`Теперь играет: ${providerLabel(s.provider)}`, "check");
     } catch (e) {
       onNotify(e instanceof Error ? e.message : "Не удалось выбрать источник", "x");
     } finally {
@@ -144,7 +137,7 @@ export function VersionsDialog({
               />
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 600 }}>
-                  {PROVIDER_LABEL[s.provider] ?? s.provider}
+                  {providerLabel(s.provider)}
                 </span>
                 <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
                   {meta || s.sourceId}

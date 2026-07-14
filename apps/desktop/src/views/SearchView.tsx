@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, SearchInput, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { TRACKS, type DemoTrack } from "../data/demo";
-import { fmtTime } from "../lib/format";
+import { fmtTime, primarySourceLabel } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
@@ -146,6 +146,7 @@ export function SearchView({
                   artist={t.artist}
                   duration={fmtTime(t.durationSec)}
                   showDuration={rowShow?.duration !== false}
+                  source={primarySourceLabel(t.sources)}
                   active={currentId === t.id}
                   playing={currentId === t.id && playing}
                   liked={likes.includes(t.id)}

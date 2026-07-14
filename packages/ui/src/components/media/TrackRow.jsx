@@ -12,6 +12,7 @@ export function TrackRow({
   artist,
   duration,
   showDuration = true,
+  source,
   active = false,
   playing = false,
   liked = false,
@@ -110,6 +111,28 @@ export function TrackRow({
         </div>
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{artist}</div>
       </div>
+      {/* Источник трека — тихий информ-бейдж (всегда виден, не по ховеру): откуда добывается */}
+      {source ? (
+        <span
+          title={`Источник: ${source}`}
+          style={{
+            flex: "none",
+            maxWidth: 132,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 11,
+            fontWeight: "var(--fw-medium)",
+            lineHeight: 1.55,
+            color: "var(--text-2)",
+            background: "var(--surface-3)",
+            borderRadius: "var(--r-sm)",
+            padding: "2px 8px",
+          }}
+        >
+          {source}
+        </span>
+      ) : null}
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}>
         {lit || liked ? (
           <IconButton icon="heart" size="sm" active={liked} filled={liked} label="Нравится" onClick={onLike} style={{ opacity: liked || lit ? 1 : 0 }} />
