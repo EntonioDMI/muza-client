@@ -135,11 +135,13 @@ export interface Prefs {
   closeToTray: boolean;
   normalize: boolean;
   crossfade: boolean;
-  /** Честный gapless-стык (T19): вместо длинного слышимого кроссфейда —
-   *  короткий (~50мс) micro-fade на границе треков, запланированный заранее
-   *  по timeupdate (см. player/gaplessPlan.ts). Взаимоисключим с crossfade —
-   *  если оба включены, работает crossfade (его длинная кривая надёжнее
-   *  прячет джиттер таймингов). Поведенческий преф — НЕ в THEME_KEYS. */
+  /** Честный gapless-стык (T19, точный триггер — fast-follow ревью #2):
+   *  вместо длинного слышимого кроссфейда — короткий (~50мс) micro-fade на
+   *  границе треков, запланированный заранее по engine().position() (не по
+   *  timeupdate — см. player/usePlayback.pollGapless и player/gaplessPlan.ts).
+   *  Взаимоисключим с crossfade — если оба включены, работает crossfade (его
+   *  длинная кривая надёжнее прячет джиттер таймингов). Поведенческий преф —
+   *  НЕ в THEME_KEYS. */
   gapless: boolean;
   blur: number;
   glassOpacity: number;

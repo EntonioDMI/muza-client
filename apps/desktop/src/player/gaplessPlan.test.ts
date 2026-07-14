@@ -93,6 +93,17 @@ describe("planAutoAdvance — защитные условия", () => {
   });
 });
 
+describe("GAPLESS_LEAD_SEC — T19 fast-follow: узкое окно, не костыль под грубый timeupdate", () => {
+  it("остаётся вплотную к micro-fade, а не в 30 раз шире (регресс на 1.5с)", () => {
+    // Точный триггер (usePlayback.pollGapless, self-adjusting setTimeout от
+    // engine().position()) делает широкое окно ненужным — если кто-то в
+    // будущем накрутит LEAD обратно "для надёжности", этот тест напомнит,
+    // что задача ревью #2 была ровно обратной.
+    expect(GAPLESS_LEAD_SEC).toBeGreaterThan(GAPLESS_XFADE_SEC);
+    expect(GAPLESS_LEAD_SEC).toBeLessThanOrEqual(0.15);
+  });
+});
+
 describe("pickAutoFadeSec", () => {
   it("crossfade приоритетнее gapless", () => {
     expect(pickAutoFadeSec({ crossfade: true, gapless: true })).toBe(CROSSFADE_SEC);

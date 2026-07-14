@@ -17,6 +17,21 @@ import type { PlayerTrack } from "./types";
 /** За сколько секунд до конца начинать преднагрузку следующего трека. */
 const PRELOAD_AHEAD_SEC = 20;
 
+/** T19 fast-follow (точный триггер gapless, см. pollGapless ниже и
+ *  gaplessPlan.ts): пока до конца трека дальше этого порога — один дешёвый
+ *  setTimeout "на глаз" (не важна точность); внутри — тесный опрос с шагом
+ *  GAPLESS_POLL_STEP_MS. Заведомо больше GAPLESS_LEAD_SEC — запас на то, что
+ *  сама "дальняя" задержка может прийти с опозданием (см. gaplessPlan.ts). */
+const GAPLESS_ARM_LEAD_SEC = 2;
+/** Шаг тесного опроса engine().position() в последние GAPLESS_ARM_LEAD_SEC
+ *  секунд трека. Живой замер (T19 fast-follow) показал: пока окно ВИДИМО,
+ *  setTimeout не троттлится, и такой шаг даёт точность в единицах мс; когда
+ *  окно скрыто/свёрнуто, браузер сам выравнивает любые таймеры страницы на
+ *  ~1 срабатывание/сек независимо от запрошенного шага — тогда 20мс не хуже
+ *  и не лучше более крупного числа, но и не вредят (тот же самый setTimeout,
+ *  просто редкий на практике). */
+const GAPLESS_POLL_STEP_MS = 20;
+
 export interface PlayEndInfo {
   track: PlayerTrack;
   playedMs: number;
@@ -106,6 +121,9 @@ export function usePlayback({
   const playSeqRef = useRef(0);
   // Ранний стык (кроссфейд/gapless) на естественном переходе уже запущен для этого pos
   const autoAdvancedRef = useRef(false);
+  // T19 fast-follow: id таймера точного gapless-опроса (pollGapless ниже) —
+  // один setTimeout в моменте, self-adjusting (перепланирует сам себя).
+  const gaplessTimerRef = useRef<number | null>(null);
   // id трека, чей URL реально загружен в движок (успешный engine().play()).
   // T2: очередь при монтировании может содержать восстановленный трек, для
   // которого startAt ЕЩЁ не вызывался (playing нарочно false) — toggle()
@@ -223,6 +241,7 @@ export function usePlayback({
     setPos(0);
     setPlaying(true);
     autoAdvancedRef.current = false;
+    stopGaplessPoll(); // новый трек — старый прицел точного триггера уже неактуален
     rememberPlayed(t.id);
     // «Последний активный трек» — материал для восстановления при следующем
     // запуске (App.tsx). Пишем на каждый реальный старт (клик/авто-переход),
@@ -256,6 +275,7 @@ export function usePlayback({
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
       await engine().play(url, norm, opts?.fadeSec ?? 0);
       startedIdRef.current = t.id; // движок реально держит URL этого трека
+      pollGapless(); // T19 fast-follow: точный прицел на конец нового трека
       // «Продолжить с места»: если сохранена осмысленная позиция (не у начала
       // и не у конца) — досикиваем. Ручной старт с 0 через seek не трогаем.
       if (prefsRef.current.resumePosition) {
@@ -320,6 +340,7 @@ export function usePlayback({
       flushPlayEnd(true);
       setPlaying(false);
       setPos(s.track.duration);
+      stopGaplessPoll(); // конец очереди без продолжения — опрашивать больше нечего
       return;
     }
     // fadeSec пересчитывается здесь заново (не переносится из onTime-триггера):
@@ -327,6 +348,56 @@ export function usePlayback({
     // пришёл сюда из onEnded, всё равно просим движок попробовать фейд — он
     // молча откатится на мгновенный переход, раз текущий слот уже не играет.
     await startAt(ni, { fadeSec: auto ? pickAutoFadeSec(prefsRef.current) : 0 });
+  };
+
+  /** Остановить точный gapless-опрос (пауза/новый трек/сик/размонтирование). */
+  const stopGaplessPoll = () => {
+    if (gaplessTimerRef.current !== null) {
+      window.clearTimeout(gaplessTimerRef.current);
+      gaplessTimerRef.current = null;
+    }
+  };
+
+  /** T19 fast-follow (ревью #2, точный триггер вместо окна 1.5с): решает то
+   *  же, что и onTime ниже (planAutoAdvance по remaining), но читает
+   *  engine().position() напрямую через self-adjusting setTimeout — не ждёт
+   *  timeupdate, у которого гранулярность иногда куда грубее учебных
+   *  "4 раза/сек" (особенно в фоне/без OS-фокуса, см. gaplessPlan.ts). Пока
+   *  до конца трека дальше GAPLESS_ARM_LEAD_SEC — один дешёвый прыжок «на
+   *  глаз»; ближе к концу — тесный опрос с шагом GAPLESS_POLL_STEP_MS. Это
+   *  ДОПОЛНЕНИЕ к timeupdate-триггеру в onTime (crossfade он двигает как и
+   *  раньше — его окно широкое, само по себе надёжно), не замена: если этот
+   *  опрос почему-то не запустился, старый путь всё равно есть как подстраховка.
+   *
+   *  Намеренно НЕ проверяет stateRef.current.playing: вызывающие сами следят
+   *  за жизненным циклом (stopGaplessPoll на каждую паузу/останов — toggle,
+   *  pause, removeFromQueue, advance при конце очереди, seek, startAt, размонтирование;
+   *  pollGapless на каждый resume/старт) — проверка тут была бы обманчиво
+   *  «свежей»: toggle() вызывает pollGapless() ДО того, как setPlaying(true)
+   *  долетит до stateRef.current (React-стейт обновляется асинхронно), так
+   *  что s.playing внутри читался бы ещё старым (false) и опрос немедленно
+   *  бы остановился на каждом resume. */
+  const pollGapless = () => {
+    gaplessTimerRef.current = null;
+    const s = stateRef.current;
+    if (s.track.kind === "demo") return;
+    const remaining = s.track.duration - engine().position();
+    const plan = planAutoAdvance({
+      remaining,
+      crossfadeEnabled: prefsRef.current.crossfade,
+      gaplessEnabled: prefsRef.current.gapless,
+      repeatOne: s.repeat === "one",
+      hasNext: nextIndexFor(1, true) !== null,
+      alreadyAdvanced: autoAdvancedRef.current,
+    });
+    if (plan.trigger) {
+      autoAdvancedRef.current = true;
+      void advance(1, true);
+      return;
+    }
+    if (!prefsRef.current.gapless && !prefsRef.current.crossfade) return; // обе фичи выкл — нечего опрашивать
+    const delay = remaining > GAPLESS_ARM_LEAD_SEC ? (remaining - GAPLESS_ARM_LEAD_SEC) * 1000 : GAPLESS_POLL_STEP_MS;
+    gaplessTimerRef.current = window.setTimeout(pollGapless, delay);
   };
 
   const handleTrackEnd = () => {
@@ -381,6 +452,7 @@ export function usePlayback({
       if (s.playing) {
         engine().pause();
         setPlaying(false);
+        stopGaplessPoll(); // пауза — точный опрос ждёт до resume ниже
         return;
       }
       // Трек в очереди мог попасть туда БЕЗ startAt (T2: восстановление
@@ -394,6 +466,7 @@ export function usePlayback({
         return;
       }
       void engine().resume();
+      pollGapless(); // T19 fast-follow: перезапустить точный прицел после паузы
     }
     setPlaying(!s.playing);
   };
@@ -403,7 +476,10 @@ export function usePlayback({
 
   /** Явная пауза (sleep-таймер и т.п.) — с остановкой движка. */
   const pause = () => {
-    if (stateRef.current.track.kind !== "demo") engine().pause();
+    if (stateRef.current.track.kind !== "demo") {
+      engine().pause();
+      stopGaplessPoll();
+    }
     setPlaying(false);
   };
 
@@ -411,7 +487,13 @@ export function usePlayback({
     const s = stateRef.current;
     const clamped = Math.max(0, Math.min(sec, s.track.duration));
     setPos(clamped);
-    if (s.track.kind !== "demo") engine().seek(clamped);
+    if (s.track.kind !== "demo") {
+      engine().seek(clamped);
+      // Позиция скакнула — старый прицел точного триггера (посчитан от
+      // старой remaining) неактуален; пересчитываем, если всё ещё играем.
+      stopGaplessPoll();
+      if (s.playing) pollGapless();
+    }
     autoAdvancedRef.current = false;
   };
 
@@ -465,6 +547,7 @@ export function usePlayback({
         engine().stop();
         setPlaying(false);
         setPos(0);
+        stopGaplessPoll();
       } else {
         void startAt(Math.min(i, nextQueue.length - 1));
       }
@@ -506,7 +589,14 @@ export function usePlayback({
   }, [prefs.eqOn, prefs.eqBands]);
 
   // Смена спикеров/выхода не наша забота; при размонтировании — тишина
-  useEffect(() => () => engineRef.current?.stop(), []);
+  useEffect(
+    () => () => {
+      engineRef.current?.stop();
+      stopGaplessPoll();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   return useMemo(
     () => ({
