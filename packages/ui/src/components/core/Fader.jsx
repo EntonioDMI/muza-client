@@ -43,7 +43,7 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
       aria-valuenow={Math.round(value)}
       aria-valuemin={min}
       aria-valuemax={max}
-      aria-valuetext={`${value > 0 ? "+" : ""}${Math.round(value)} дБ`}
+      aria-valuetext={`${value > 0 ? "+" : ""}${Math.round(value)} dB`}
       tabIndex={disabled ? -1 : 0}
       onKeyDown={onKeyDown}
       onMouseEnter={() => setHover(true)}

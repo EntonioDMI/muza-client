@@ -1,14 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, SearchInput, TrackRow } from "@muza/ui";
-import type { MuzaApi, Track } from "@muza/api-client";
+import type { GroupedSearchResult, MuzaApi, Track } from "@muza/api-client";
 import { TRACKS, type DemoTrack } from "../data/demo";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
+import { flattenGroupedResults, nextGroupLimit } from "../lib/searchGrouping";
+import { SearchGroupCard } from "./SearchGroupCard";
+import { useT } from "../i18n";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
  *  каталогу (scope=catalog), Enter/кнопка — полный с провайдерами (scope=full,
  *  секунды: два запуска yt-dlp на сервере). Stage 3: клик по результату
- *  реально играет (очередь = список результатов). */
+ *  реально играет (очередь = список результатов).
+ *
+ *  T37 (эпик W6): searchGrouping=true (дефолт) переключает выдачу на
+ *  api.searchGrouped() (?group=1 сервера T36) — ремиксы/спидапы/кавера
+ *  сворачиваются под одной карточкой канона, лайк карточки бьёт по канону,
+ *  разворот показывает варианты отдельными строками с человеческой подписью
+ *  категории. Нераспознанные декорированные одиночки сервер уже кладёт в
+ *  хвост выдачи (see grouping.ts сервера) — клиент рендерит их как обычные
+ *  строки, ничего дополнительно не двигая. Выкл (searchGrouping=false) —
+ *  прежний плоский путь, полностью не тронут. */
 export function SearchView({
   api,
   canSearch,
@@ -17,6 +30,7 @@ export function SearchView({
   likes,
   instantSearch = true,
   searchScope = "all",
+  searchGrouping = true,
   onPlayTrack,
   onPlayCatalog,
   onQueueCatalog,
@@ -37,6 +51,8 @@ export function SearchView({
   instantSearch?: boolean;
   /** «Где искать»: каталог + источники или только каталог (без yt-dlp). */
   searchScope?: "all" | "catalog";
+  /** T37: группировка ремиксов/версий (настройки → Поиск). */
+  searchGrouping?: boolean;
   onPlayTrack: (id: string) => void;
   /** Играть каталожный трек в контексте списка (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
@@ -51,14 +67,26 @@ export function SearchView({
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
 }) {
+  const { t, lang } = useT();
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<Track[] | null>(null); // null — запроса ещё не было
+  const [results, setResults] = useState<Track[] | null>(null); // null — запроса ещё не было (плоский режим)
+  const [groupedResults, setGroupedResults] = useState<GroupedSearchResult[] | null>(null); // grouped-режим
+  // «Загрузить ещё» в grouped-режиме: лестница limit 30→60→90 (group=1
+  // сервера поддерживает только offset=0 — см. lib/searchGrouping.ts).
+  const [groupLimit, setGroupLimit] = useState(30);
+  const [groupScope, setGroupScope] = useState<"catalog" | "full">("catalog");
+  const [groupExhausted, setGroupExhausted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [moreBusy, setMoreBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // отбрасываем ответы устаревших запросов (быстрый ввод, гонка catalog/full)
   const seqRef = useRef(0);
 
   const query = q.trim();
+
+  // Плоский список для очереди воспроизведения (канон → варианты → singles,
+  // в порядке карточек) — тот же принцип, что в веб-аналоге T41.
+  const groupedFlat = useMemo(() => flattenGroupedResults(groupedResults ?? []), [groupedResults]);
 
   // живой каталожный поиск с debounce («Мгновенный поиск»; выкл = по Enter)
   useEffect(() => {
@@ -66,6 +94,9 @@ export function SearchView({
     if (query.length < 2) {
       seqRef.current += 1;
       setResults(null);
+      setGroupedResults(null);
+      setGroupLimit(30);
+      setGroupExhausted(false);
       setError(null);
       setBusy(false);
       return;
@@ -73,15 +104,33 @@ export function SearchView({
     if (!instantSearch) return;
     const seq = ++seqRef.current;
     const t = setTimeout(() => {
-      api
-        .search(query, { scope: "catalog" })
-        .then((found) => {
-          if (seqRef.current === seq) setResults(found);
-        })
-        .catch(() => undefined); // живой ввод ошибок не показывает — есть полный поиск
+      if (searchGrouping) {
+        setGroupScope("catalog");
+        setGroupLimit(30);
+        setGroupExhausted(false);
+        api
+          .searchGrouped(query, { scope: "catalog", limit: 30 })
+          .then((found) => {
+            if (seqRef.current === seq) {
+              setGroupedResults(found);
+              setResults(null);
+            }
+          })
+          .catch(() => undefined); // живой ввод ошибок не показывает — есть полный поиск
+      } else {
+        api
+          .search(query, { scope: "catalog" })
+          .then((found) => {
+            if (seqRef.current === seq) {
+              setResults(found);
+              setGroupedResults(null);
+            }
+          })
+          .catch(() => undefined);
+      }
     }, 250);
     return () => clearTimeout(t);
-  }, [api, query, canSearch, instantSearch]);
+  }, [api, query, canSearch, instantSearch, searchGrouping]);
 
   const runSearch = async (scope: "catalog" | "full") => {
     if (!canSearch || query.length < 2 || busy) return;
@@ -89,10 +138,24 @@ export function SearchView({
     setBusy(true);
     setError(null);
     try {
-      const found = await api.search(query, { scope });
-      if (seqRef.current === seq) setResults(found);
+      if (searchGrouping) {
+        setGroupScope(scope);
+        setGroupLimit(30);
+        setGroupExhausted(false);
+        const found = await api.searchGrouped(query, { scope, limit: 30 });
+        if (seqRef.current === seq) {
+          setGroupedResults(found);
+          setResults(null);
+        }
+      } else {
+        const found = await api.search(query, { scope });
+        if (seqRef.current === seq) {
+          setResults(found);
+          setGroupedResults(null);
+        }
+      }
     } catch (e) {
-      if (seqRef.current === seq) setError(e instanceof Error ? e.message : "Что-то пошло не так");
+      if (seqRef.current === seq) setError(e instanceof Error ? e.message : t("views.search.somethingWrong"));
     } finally {
       if (seqRef.current === seq) setBusy(false);
     }
@@ -100,10 +163,78 @@ export function SearchView({
   // Enter/кнопка: «только каталог» не запускает yt-dlp на сервере
   const fullSearch = () => runSearch(searchScope === "catalog" ? "catalog" : "full");
 
+  /** «Загрузить ещё» (grouped-режим): group=1 сервера поддерживает только
+   *  offset=0 — «ещё» растит limit целиком (30→60→90), группировка
+   *  пересобирается заново над бОльшим пулом (task-T37-brief.md п.3). Если
+   *  рост limit не добавил ни одного трека в плоский счёт — каталог
+   *  исчерпан (кнопка прячется), это отдельно от достижения потолка 90. */
+  const loadMoreGrouped = async () => {
+    const next = nextGroupLimit(groupLimit);
+    if (!canSearch || query.length < 2 || moreBusy || next === null) return;
+    const seq = ++seqRef.current;
+    setMoreBusy(true);
+    try {
+      const found = await api.searchGrouped(query, { scope: groupScope, limit: next });
+      if (seqRef.current === seq) {
+        const prevCount = groupedFlat.length;
+        const nextCount = flattenGroupedResults(found).length;
+        setGroupedResults(found);
+        setGroupLimit(next);
+        if (nextCount <= prevCount) setGroupExhausted(true);
+      }
+    } catch (e) {
+      if (seqRef.current === seq) setError(e instanceof Error ? e.message : t("views.search.loadMoreFailed"));
+    } finally {
+      if (seqRef.current === seq) setMoreBusy(false);
+    }
+  };
+
   const showServerResults = canSearch && query.length >= 2;
   const demoFound = TRACKS.filter(
-    (t) => !query || `${t.title} ${t.artist}`.toLowerCase().includes(query.toLowerCase()),
+    (tr) => !query || `${tr.title} ${tr.artist}`.toLowerCase().includes(query.toLowerCase()),
   );
+
+  /** Строка трека: тач-таргет/драг-источник (Alt+drag — файл, T18) — общая
+   *  для плоского и grouped-режима, чтобы не дублировать DnD/очередь/
+   *  лайк/меню. index не задан — TrackRow просто не рисует номер (варианты
+   *  внутри развёрнутой группы). */
+  const renderRow = (tr: Track, index?: number) => (
+    <div
+      key={tr.id}
+      draggable
+      onDragStart={(e) => {
+        if (maybeAltFileDrag(e, () => exportCachedTrack(tr.id, tr.artist, tr.title), (m) => onNotify(m, "x"))) return;
+        startTrackDrag(e, tr.id, tr.title, tr.artist);
+      }}
+    >
+      <TrackRow
+        index={index}
+        cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+        title={tr.title}
+        artist={tr.artist}
+        duration={fmtTime(tr.durationSec)}
+        showDuration={rowShow?.duration !== false}
+        source={primarySourceLabel(tr.sources, lang)}
+        active={currentId === tr.id}
+        playing={currentId === tr.id && playing}
+        liked={likes.includes(tr.id)}
+        onPlay={() => onPlayCatalog(searchGrouping ? groupedFlat : (results ?? []), tr.id)}
+        onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(tr) : undefined}
+        onLike={() => onLike(tr.id)}
+        onMore={(e: React.MouseEvent) => onCatalogMenu(tr, e)}
+      />
+    </div>
+  );
+
+  const isEmptyResults = searchGrouping
+    ? groupedResults !== null && groupedResults.length === 0
+    : results !== null && results.length === 0;
+  const canLoadMoreGrouped =
+    searchGrouping &&
+    groupedResults !== null &&
+    groupedResults.length > 0 &&
+    !groupExhausted &&
+    nextGroupLimit(groupLimit) !== null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -113,58 +244,53 @@ export function SearchView({
           if (e.key === "Enter") void fullSearch();
         }}
       >
-        <SearchInput value={q} onChange={setQ} placeholder="Трек, артист, альбом" autoFocus style={{ maxWidth: 520, flex: 1 }} />
+        <SearchInput value={q} onChange={setQ} placeholder={t("views.search.placeholder")} autoFocus style={{ maxWidth: 520, flex: 1 }} />
         {showServerResults && searchScope !== "catalog" ? (
           <Button variant="secondary" icon="search" disabled={busy} onClick={() => void fullSearch()}>
-            {busy ? "Ищем…" : "Искать в источниках"}
+            {busy ? t("views.search.searching") : t("views.search.searchSources")}
           </Button>
         ) : null}
       </div>
 
       {!canSearch && query.length >= 2 ? (
         <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-          Поиск по каталогу доступен после входа с аккаунтом: анонимный аккаунт живёт только на этом устройстве.
+          {t("views.search.needsAccount")}
         </div>
       ) : null}
 
       {showServerResults ? (
         <div>
           <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
-            Результаты
+            {t("views.search.results")}
           </h2>
           {error ? (
             <div style={{ padding: "0 0 var(--sp-3)", color: "var(--danger)", fontSize: "var(--fs-caption)" }}>{error}</div>
           ) : null}
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {(results ?? []).map((t, i) => (
-              // draggable: строку можно унести в плейлист сайдбара
-              <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
-                <TrackRow
-                  index={i + 1}
-                  cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
-                  title={t.title}
-                  artist={t.artist}
-                  duration={fmtTime(t.durationSec)}
-                  showDuration={rowShow?.duration !== false}
-                  source={primarySourceLabel(t.sources)}
-                  active={currentId === t.id}
-                  playing={currentId === t.id && playing}
-                  liked={likes.includes(t.id)}
-                  onPlay={() => onPlayCatalog(results ?? [], t.id)}
-                  onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(t) : undefined}
-                  onLike={() => onLike(t.id)}
-                  onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
-                />
-              </div>
-            ))}
-            {results !== null && results.length === 0 && !busy ? (
+            {searchGrouping
+              ? (groupedResults ?? []).map((r, i) =>
+                  r.kind === "single" ? (
+                    renderRow(r.track, i + 1)
+                  ) : (
+                    <SearchGroupCard key={`g-${r.canonical.id}-${i}`} result={r} index={i + 1} renderRow={renderRow} />
+                  ),
+                )
+              : (results ?? []).map((tr, i) => renderRow(tr, i + 1))}
+            {isEmptyResults && !busy ? (
               <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-                В каталоге пока пусто. Нажми «Искать в источниках» — поищем в YouTube Music и SoundCloud.
+                {t("views.search.catalogEmpty")}
               </div>
             ) : null}
             {busy ? (
               <div style={{ padding: "var(--sp-4)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
-                Ищем в источниках — это несколько секунд…
+                {t("views.search.searchingSources")}
+              </div>
+            ) : null}
+            {canLoadMoreGrouped ? (
+              <div style={{ padding: "var(--sp-4)", display: "flex", justifyContent: "center" }}>
+                <Button variant="secondary" disabled={moreBusy} onClick={() => void loadMoreGrouped()}>
+                  {moreBusy ? t("views.search.loadingMore") : t("views.search.loadMore")}
+                </Button>
               </div>
             ) : null}
           </div>
@@ -172,31 +298,31 @@ export function SearchView({
       ) : (
         <div>
           <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
-            {query ? "Результаты" : "Часто ищут"}
+            {query ? t("views.search.results") : t("views.search.trending")}
           </h2>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {demoFound.map((t, i) => (
+            {demoFound.map((tr, i) => (
               <TrackRow
-                key={t.id}
+                key={tr.id}
                 index={i + 1}
-                cover={rowShow?.cover === false ? undefined : t.cover}
-                title={t.title}
-                artist={t.artist}
-                duration={fmtTime(t.duration)}
+                cover={rowShow?.cover === false ? undefined : tr.cover}
+                title={tr.title}
+                artist={tr.artist}
+                duration={fmtTime(tr.duration)}
                 showDuration={rowShow?.duration !== false}
-                explicit={t.explicit}
-                active={currentId === t.id}
-                playing={currentId === t.id && playing}
-                liked={likes.includes(t.id)}
-                onPlay={() => onPlayTrack(t.id)}
-                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(t.id) : undefined}
-                onLike={() => onLike(t.id)}
-                onMore={(e: React.MouseEvent) => onTrackMenu(t, e)}
+                explicit={tr.explicit}
+                active={currentId === tr.id}
+                playing={currentId === tr.id && playing}
+                liked={likes.includes(tr.id)}
+                onPlay={() => onPlayTrack(tr.id)}
+                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(tr.id) : undefined}
+                onLike={() => onLike(tr.id)}
+                onMore={(e: React.MouseEvent) => onTrackMenu(tr, e)}
               />
             ))}
             {demoFound.length === 0 ? (
               <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-                Ничего не нашлось. Попробуй короче — например, имя артиста.
+                {t("views.search.nothingFound")}
               </div>
             ) : null}
           </div>

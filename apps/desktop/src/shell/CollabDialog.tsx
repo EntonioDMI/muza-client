@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, Icon, IconButton, Tooltip } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail } from "@muza/api-client";
+import { useT } from "../i18n";
 
 /** «Совместный доступ» плейлиста (Stage 7). Владелец: инвайт-код
  *  (создать/скопировать/отозвать) + участники с киком. Участник: список
@@ -29,6 +30,7 @@ export function CollabDialog({
   /** Сам покинул плейлист — закрыть его страницу. */
   onLeft: () => void;
 }) {
+  const { t } = useT();
   const [busy, setBusy] = useState(false);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
   if (!detail) return null;
@@ -40,7 +42,7 @@ export function CollabDialog({
       await api.createPlaylistInvite(playlistId);
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось создать код", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.collab.createFailed"), "x");
     } finally {
       setBusy(false);
     }
@@ -50,10 +52,10 @@ export function CollabDialog({
     setBusy(true);
     try {
       await api.revokePlaylistInvite(playlistId);
-      onNotify("Код отозван — новые не войдут", "shield");
+      onNotify(t("dialogs.collab.codeRevoked"), "shield");
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось отозвать код", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.collab.revokeFailed"), "x");
     } finally {
       setBusy(false);
     }
@@ -63,29 +65,29 @@ export function CollabDialog({
     if (!detail.inviteCode) return;
     try {
       await navigator.clipboard.writeText(detail.inviteCode);
-      onNotify("Код скопирован — отправь другу", "copy");
+      onNotify(t("dialogs.collab.codeCopied"), "copy");
     } catch {
-      onNotify("Не удалось скопировать", "x");
+      onNotify(t("dialogs.copyFailed"), "x");
     }
   };
 
   const kick = async (userId: string, username: string) => {
     try {
       await api.removePlaylistMember(playlistId, userId);
-      onNotify(`${username} убран из плейлиста`, "user-x");
+      onNotify(t("dialogs.collab.memberRemoved", { username }), "user-x");
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось убрать участника", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.collab.kickFailed"), "x");
     }
   };
 
   const leave = async () => {
     try {
       await api.removePlaylistMember(playlistId, myUserId);
-      onNotify("Ты покинул плейлист", "log-out");
+      onNotify(t("dialogs.collab.left"), "log-out");
       onLeft();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось выйти", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.collab.leaveFailed"), "x");
     }
   };
 
@@ -108,13 +110,13 @@ export function CollabDialog({
       </span>
       <span style={{ flex: 1, minWidth: 0, fontSize: "var(--fs-body)", color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {username}
-        {isMe ? <span style={{ color: "var(--text-3)" }}> (ты)</span> : null}
+        {isMe ? <span style={{ color: "var(--text-3)" }}>{t("dialogs.collab.youSuffix")}</span> : null}
       </span>
       {badge ? (
         <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{badge}</span>
       ) : canKick ? (
-        <Tooltip label="Убрать из плейлиста">
-          <IconButton icon="user-x" size="sm" label={`Убрать ${username}`} onClick={() => void kick(id, username)} />
+        <Tooltip label={t("dialogs.collab.removeFromPlaylist")}>
+          <IconButton icon="user-x" size="sm" label={t("dialogs.collab.removeAria", { username })} onClick={() => void kick(id, username)} />
         </Tooltip>
       ) : null}
     </div>
@@ -123,25 +125,25 @@ export function CollabDialog({
   return (
     <Dialog
       open={open}
-      title="Совместный доступ"
+      title={t("dialogs.collab.title")}
       onClose={onClose}
       actions={
         isOwner ? (
           <Button variant="ghost" onClick={onClose}>
-            Готово
+            {t("dialogs.collab.done")}
           </Button>
         ) : (
           <>
             <Button variant="ghost" onClick={onClose}>
-              Закрыть
+              {t("dialogs.close")}
             </Button>
             {leaveConfirm ? (
               <Button variant="primary" icon="log-out" onClick={() => void leave()}>
-                Точно покинуть
+                {t("dialogs.collab.confirmLeave")}
               </Button>
             ) : (
               <Button variant="secondary" icon="log-out" onClick={() => setLeaveConfirm(true)}>
-                Покинуть плейлист
+                {t("dialogs.collab.leavePlaylist")}
               </Button>
             )}
           </>
@@ -152,7 +154,7 @@ export function CollabDialog({
         {isOwner ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
             <span style={{ fontSize: "var(--fs-caption)", fontWeight: 600, letterSpacing: "var(--ls-caps)", textTransform: "uppercase", color: "var(--text-3)" }}>
-              Инвайт-код
+              {t("dialogs.collab.inviteCodeLabel")}
             </span>
             {detail.inviteCode ? (
               <>
@@ -173,46 +175,51 @@ export function CollabDialog({
                   >
                     {detail.inviteCode}
                   </code>
-                  <Tooltip label="Скопировать код">
-                    <IconButton icon="copy" label="Скопировать код" onClick={() => void copyCode()} />
+                  <Tooltip label={t("dialogs.copyCode")}>
+                    <IconButton icon="copy" label={t("dialogs.copyCode")} onClick={() => void copyCode()} />
                   </Tooltip>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
                   <span style={{ flex: 1, fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-                    Друг вводит код у себя: Библиотека → «По коду».
+                    {t("dialogs.collab.enterCodeHint")}
                   </span>
                   <Button variant="ghost" icon="shield-off" disabled={busy} onClick={() => void revokeCode()}>
-                    Отозвать
+                    {t("dialogs.collab.revoke")}
                   </Button>
                 </div>
               </>
             ) : (
               <>
                 <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
-                  Создай код и отправь другу — он сможет добавлять и убирать треки вместе с тобой.
+                  {t("dialogs.collab.createCodeHint")}
                 </div>
                 <Button variant="primary" icon="users" disabled={busy} onClick={() => void createCode()}>
-                  Создать код
+                  {t("dialogs.collab.createCode")}
                 </Button>
               </>
             )}
           </div>
         ) : (
           <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
-            Совместный плейлист {detail.ownerUsername ? <>пользователя <b style={{ color: "var(--text-1)" }}>{detail.ownerUsername}</b></> : null}.
-            Ты можешь добавлять и убирать треки.
+            {t("dialogs.collab.sharedPrefix")}{" "}
+            {detail.ownerUsername ? (
+              <>
+                {t("dialogs.collab.sharedByUser")} <b style={{ color: "var(--text-1)" }}>{detail.ownerUsername}</b>
+              </>
+            ) : null}
+            . {t("dialogs.collab.sharedCanEdit")}
           </div>
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
           <span style={{ fontSize: "var(--fs-caption)", fontWeight: 600, letterSpacing: "var(--ls-caps)", textTransform: "uppercase", color: "var(--text-3)" }}>
-            Участники · {detail.collaborators.length + 1}
+            {t("dialogs.collab.membersHeading", { count: detail.collaborators.length + 1 })}
           </span>
-          {memberRow("owner", detail.ownerUsername || "владелец", "владелец", false, isOwner)}
+          {memberRow("owner", detail.ownerUsername || t("dialogs.collab.ownerFallback"), t("dialogs.collab.ownerFallback"), false, isOwner)}
           {detail.collaborators.map((c) => memberRow(c.id, c.username, null, isOwner, c.id === myUserId))}
           {detail.collaborators.length === 0 ? (
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              Пока только ты. {isOwner && !detail.inviteCode ? "Создай код и позови кого-нибудь." : ""}
+              {t("dialogs.collab.onlyYou")} {isOwner && !detail.inviteCode ? t("dialogs.collab.createCodeAndInvite") : ""}
             </div>
           ) : null}
         </div>

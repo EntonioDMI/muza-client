@@ -5,6 +5,7 @@
 
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 export function dragOutAvailable(): boolean {
   return isTauri();
@@ -43,4 +44,28 @@ function dragIcon(): string {
 /** Запустить нативный drag файла (зовётся из pointermove-жеста). */
 export async function startTrackFileDrag(path: string): Promise<void> {
   await startDrag({ item: [path], icon: dragIcon() });
+}
+
+/** T18, единый UX списков: обычный drag строки = в плейлист (HTML5),
+ *  Alt+drag = нативный файл на рабочий стол / в проводник.
+ *  Зовётся ПЕРВЫМ в onDragStart draggable-обёртки: если Alt зажат и мы в
+ *  Tauri — HTML5-drag отменяется (preventDefault) и запускается файл-drag
+ *  (кнопка мыши ещё зажата — OLE-drag подхватывает курсор, как в PlayerBar).
+ *  Вернул true — вызывающий НЕ должен стартовать startTrackDrag.
+ *  exportFile бросает честную ошибку («Трека нет в кэше…») — она уходит в
+ *  onError-тост, файл-drag просто не начинается. */
+export function maybeAltFileDrag(
+  e: React.DragEvent,
+  exportFile: () => Promise<string>,
+  onError: (message: string) => void,
+  /** Язык фолбэк-сообщения об ошибке (потребители — views/*, вне зоны этой
+   *  правки); без него — EN (DEFAULT_LANG). */
+  lang: Lang = DEFAULT_LANG,
+): boolean {
+  if (!e.altKey || !dragOutAvailable()) return false;
+  e.preventDefault();
+  exportFile()
+    .then((path) => startTrackFileDrag(path))
+    .catch((err) => onError(err instanceof Error ? err.message : translate(lang, "media.dragOut.errors.prepareFailed")));
+  return true;
 }

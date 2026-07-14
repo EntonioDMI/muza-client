@@ -91,6 +91,66 @@ export interface ImportReport {
  *  catalog — мгновенно, только по накопленной базе (живой ввод). */
 export type SearchScope = "full" | "catalog";
 
+// ── Группировка ремиксов/версий в поиске (T36 сервера, T41 клиента) ───────
+// ?group=1 — форма ответа /search меняется с плоского Track[] на
+// GroupedSearchResult[] (два вида: group|single). Точная форма — зеркало
+// muza-server/src/catalog/dto.ts (GroupResultOut/SingleResultOut/
+// GroupedSearchResponse); snake_case проводной формы разбирается в http.ts.
+
+/** Категория версии/ремикса (parseVariant сервера): словарь из 12 типов,
+ *  декорации тайтла ru+en. "8d" — единственный не-slug-подобный литерал,
+ *  зеркалит серверный VariantType буквально. */
+export const VariantTypeSchema = z.enum([
+  "remix",
+  "sped_up",
+  "slowed",
+  "mashup",
+  "cover",
+  "live",
+  "acoustic",
+  "instrumental",
+  "karaoke",
+  "8d",
+  "bass_boosted",
+  "tiktok",
+]);
+export type VariantType = z.infer<typeof VariantTypeSchema>;
+
+/** Один вариант внутри карточки-группы: сам трек + его категория. */
+export const GroupVariantSchema = z.object({
+  track: TrackSchema,
+  variantType: VariantTypeSchema,
+});
+export type GroupVariant = z.infer<typeof GroupVariantSchema>;
+
+/** Карточка-группа: оригинал/канон + его версии одной строкой выдачи.
+ *  hasOriginal=false — трека БЕЗ variantType в выдаче не нашлось, canonical
+ *  тогда — заглушка (лучший из вариантов), canonicalVariantType объясняет
+ *  её собственную категорию (иначе null). */
+export const GroupSearchResultSchema = z.object({
+  kind: z.literal("group"),
+  canonical: TrackSchema,
+  hasOriginal: z.boolean(),
+  canonicalVariantType: VariantTypeSchema.nullable(),
+  variants: z.array(GroupVariantSchema),
+});
+export type GroupSearchResult = z.infer<typeof GroupSearchResultSchema>;
+
+/** Нераспознанная строка — трек без пары, идёт в выдаче как обычно (хвост —
+ *  только для декорированных одиночек, см. дизайн-док). */
+export const SingleSearchResultSchema = z.object({
+  kind: z.literal("single"),
+  track: TrackSchema,
+});
+export type SingleSearchResult = z.infer<typeof SingleSearchResultSchema>;
+
+/** Элемент ответа группированного поиска — ДВУХ видов (дискриминатор kind). */
+export const GroupedSearchResultSchema = z.discriminatedUnion("kind", [
+  GroupSearchResultSchema,
+  SingleSearchResultSchema,
+]);
+export type GroupedSearchResult = z.infer<typeof GroupedSearchResultSchema>;
+
 /** Плейлист в списке (без треков). Stage 7: свои + совместные
  *  (role=collaborator — вошёл по инвайт-коду). */
 export const PlaylistMetaSchema = z.object({
@@ -101,6 +161,9 @@ export const PlaylistMetaSchema = z.object({
   role: z.enum(["owner", "collaborator"]).default("owner"),
   ownerUsername: z.string().default(""),
   collaboratorsCount: z.number().default(0),
+  /** T47: id иконки-обложки из манифеста @muza/core ("pi-01".."pi-38");
+   *  null — без иконки (клиент рисует фолбэк). */
+  icon: z.string().nullable().default(null),
 });
 export type PlaylistMeta = z.infer<typeof PlaylistMetaSchema>;
 
@@ -116,6 +179,9 @@ export const PlaylistDetailSchema = z.object({
   collaborators: z.array(z.object({ id: z.string(), username: z.string() })).default([]),
   /** Кто добавил трек (совместным видно): trackId → username. */
   addedBy: z.record(z.string(), z.string()).default({}),
+  /** T47: id иконки-обложки из манифеста @muza/core ("pi-01".."pi-38");
+   *  null — без иконки (клиент рисует фолбэк). */
+  icon: z.string().nullable().default(null),
 });
 export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>;
 
@@ -220,6 +286,32 @@ export interface MarketTheme {
   /** Опубликована текущим пользователем — можно снять с публикации. */
   isMine: boolean;
   /** Скрыта модерацией/жалобами (в списке видна только автору). */
+  hidden: boolean;
+}
+
+// ── Маркетплейс плагинов (эпик W8, T45a) ───────────────────────────
+
+/** Опубликованный плагин. payload = { manifest, code, css?, strings? } —
+ *  install ставит целиком через рантайм T44/T44b (@muza/core parsePluginManifest
+ *  + scanPluginScript/scanPluginCss на клиенте, сервер это не гарантирует
+ *  бесплатно — см. muza-server/src/market/market-plugin.controller.ts). */
+export interface MarketPlugin {
+  id: string;
+  /** manifest.id плагина — путь установки на клиенте, глобально уникален. */
+  pluginId: string;
+  name: string;
+  author: string;
+  version: string;
+  installs: number;
+  createdAt: string;
+  payload: Record<string, unknown>;
+  /** app:full-access в манифесте — бейдж «Полный доступ» в витрине. */
+  fullAccess: boolean;
+  /** На премодерации (только full-access); видно всем, кроме автора — false. */
+  pending: boolean;
+  /** Опубликован текущим пользователем — можно снять с публикации. */
+  isMine: boolean;
+  /** Скрыт модерацией/жалобами (в списке видна только автору). */
   hidden: boolean;
 }
 

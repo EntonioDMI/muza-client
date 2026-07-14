@@ -46,6 +46,48 @@
   background: rgba(18, 17, 16, 0.76);
 }
 
+/* W2-хвосты: Wrapped — намеренно «тёмное шоу» (T11). Скрим выше захардкожен
+   тёмным независимо от темы приложения, поэтому фактическая подложка внутри
+   оверлея всегда тёмная — но токены текста/поверхностей в светлой теме
+   (data-theme="light" в themes.css) переключаются на «тёмный-на-светлом»
+   вариант и становятся невидимы на тёмном скриме. Фикс: форсируем внутри
+   .wrapped ту же тёмную рампу, что действует по умолчанию (:root в
+   colors.css) — независимо от текущей темы приложения. Акцентные токены
+   учитывают выбранный data-accent (red/bolt), чтобы хue акцента не менялся —
+   только его «тёмный» вариант вместо «тёмный-на-светлом». Тёмная тема не
+   тронута: правила применяются только под [data-theme="light"], а значения
+   в них дословно совпадают с её же дефолтами. */
+[data-theme="light"] .wrapped {
+  --bg-0: #121110;
+  --bg-1: #171614;
+  --surface-1: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --surface-3: rgba(255, 255, 255, 0.11);
+  --surface-4: rgba(255, 255, 255, 0.15);
+  --text-1: #f4f3f1;
+  --text-2: rgba(244, 243, 241, 0.62);
+  --text-3: rgba(244, 243, 241, 0.38);
+  --text-on-accent: #ffffff;
+  --accent: #3b82f6;
+  --accent-hover: #5c96f7;
+  --accent-text: #85b3fa;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+}
+
+[data-theme="light"][data-accent="red"] .wrapped {
+  --accent: #f76967;
+  --accent-hover: #f9807e;
+  --accent-text: #fa9b99;
+  --accent-soft: rgba(247, 105, 103, 0.16);
+}
+
+[data-theme="light"][data-accent="bolt"] .wrapped {
+  --accent: #327ad9;
+  --accent-hover: #4f8fe0;
+  --accent-text: #7fb0ec;
+  --accent-soft: rgba(50, 122, 217, 0.16);
+}
+
 .wrapped__ambient {
   inset: auto;
   width: min(58vw, 620px);
@@ -776,24 +818,53 @@
   line-height: 1.45;
 }
 
-.wrapped__timeline {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 56%;
-  height: 1px;
-  overflow: hidden;
-  background: var(--surface-3);
-  transform: rotate(-4deg);
-  transform-origin: center;
+/* Ось суток: 00→24 с отметкой пикового часа. Заливка растёт слева до пика,
+   точка = любимый час — осмысленный график вместо случайной диагонали. */
+.wrapped__dayline {
+  max-width: 320px;
+  margin-top: 26px;
 }
 
-.wrapped__timeline span {
-  display: block;
-  width: 62%;
-  height: 100%;
+.wrapped__dayline-track {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+}
+
+.wrapped__dayline-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  min-width: 6px;
+  border-radius: inherit;
   background: var(--accent);
+  opacity: 0.55;
+  transform-origin: left;
   animation: wrappedLineIn 720ms var(--ease-out) both;
+}
+
+.wrapped__dayline-peak {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  outline: 3px solid rgba(18, 17, 16, 0.92);
+  transform: translate(-50%, -50%);
+  animation: wrappedDaylinePeak 420ms var(--ease-out) 300ms both;
+}
+
+.wrapped__dayline-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 11px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
 }
 
 .wrapped__rhythm-facts {
@@ -1017,6 +1088,10 @@
   from { transform: scaleX(0); transform-origin: left; }
 }
 
+@keyframes wrappedDaylinePeak {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+}
+
 @keyframes wrappedLoading {
   from { transform: translateX(-10%); }
   to { transform: translateX(145%); }
@@ -1161,7 +1236,8 @@
   .wrapped__art,
   .wrapped__track-list li,
   .wrapped__artist-list li,
-  .wrapped__timeline span,
+  .wrapped__dayline-fill,
+  .wrapped__dayline-peak,
   .wrapped__loading-line span {
     animation: none;
   }

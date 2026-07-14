@@ -1,10 +1,26 @@
-import { useEffect, useRef, useState } from "react";
-import { Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
-import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
+import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
-import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
-import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
-import { NAV_ITEM_META, normalizeNavItems } from "../lib/navItems";
+import { useT, type TParams, type TranslationKey } from "../i18n";
+import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
+import { barButtonLabel, normalizeBarButtons } from "../lib/barButtons";
+import { NAV_ITEM_META, navItemLabel, normalizeNavItems } from "../lib/navItems";
+import { isPluginKey, parsePluginKey, pluginSlotKey } from "../lib/pluginSlots";
+import { isFullAccessManifest, PERMISSION_INFO, type PluginPermission } from "@muza/core";
+import {
+  cancelInstall,
+  finalizeInstall,
+  listInstalled,
+  pickAndStagePlugin,
+  setPluginEnabled,
+  stagePluginFromMarket,
+  uninstallPlugin,
+  type StagedPlugin,
+} from "../plugins/install";
+import { fullAccessHost } from "../plugins/fullAccessHost";
+import type { InstalledPluginInfo } from "../plugins/types";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { formatTemplate, rpcAvailable } from "../lib/discord";
 import { openExternal } from "../lib/system";
@@ -14,6 +30,7 @@ import {
   DEFAULT_HOTKEYS,
   formatCombo,
   HOTKEY_ACTIONS,
+  hotkeyActionLabel,
   type HotkeyAction,
 } from "../lib/hotkeys";
 import {
@@ -29,12 +46,18 @@ import {
   type SavedTheme,
 } from "../lib/themes";
 
+/** Функция перевода — тип совпадает с useT().t; передаётся параметром в
+ *  свободные (module-level) функции без доступа к React-контексту. */
+type T = (key: TranslationKey, params?: TParams) => string;
+
 /** Демо-значения для предпросмотра шаблонов Discord-активности. */
-const DISCORD_PREVIEW_VARS = { track: "Кометы над городом", artist: "Северный ветер", album: "Полночь" };
+function discordPreviewVars(t: T) {
+  return { track: t("settings.integrations.discord.preview.track"), artist: t("settings.integrations.discord.preview.artist"), album: t("settings.integrations.discord.preview.album") };
+}
 
 /** Человеческое имя устройства из user-agent (грубая эвристика для списка сессий). */
-function deviceLabel(ua: string | null): string {
-  if (!ua) return "Неизвестное устройство";
+function deviceLabel(ua: string | null, t: T): string {
+  if (!ua) return t("settings.account.sessions.unknownDevice");
   const low = ua.toLowerCase();
   const os = low.includes("windows")
     ? "Windows"
@@ -46,8 +69,8 @@ function deviceLabel(ua: string | null): string {
           ? "macOS"
           : low.includes("linux")
             ? "Linux"
-            : "Устройство";
-  const app = low.includes("muza") || low.includes("tauri") ? "Muza" : "браузер";
+            : t("settings.account.sessions.genericDevice");
+  const app = low.includes("muza") || low.includes("tauri") ? "Muza" : t("settings.account.sessions.browser");
   return `${os} · ${app}`;
 }
 
@@ -60,6 +83,7 @@ function deviceLabel(ua: string | null): string {
 
 function SettingRow({
   title,
+  titleExtra,
   hint,
   onClick,
   chevron,
@@ -67,6 +91,8 @@ function SettingRow({
   children,
 }: {
   title: string;
+  /** Доп. узел справа от заголовка — бейджи и т.п. (T44b: «Полный доступ»). */
+  titleExtra?: React.ReactNode;
   hint?: string;
   onClick?: () => void;
   chevron?: boolean;
@@ -91,6 +117,12 @@ function SettingRow({
         boxSizing: "border-box",
         textAlign: "left",
         borderRadius: "var(--r-md)",
+        // T6: на сильном скруглении (radiusTiles до 200%) контролы у правого
+        // края (Switch/кнопки) своим прямоугольным боксом вылезали за
+        // скруглённый силуэт плашки — border-radius родителя не клипает детей
+        // сам по себе. Клип, не запас padding: фокус-кольца/тени контролов
+        // остаются внутри padding var(--sp-4/5), проверено живьём на 200%.
+        overflow: "hidden",
         background: onClick && hover ? "var(--surface-3)" : "var(--surface-2)",
         cursor: onClick ? "pointer" : "default",
         fontFamily: "var(--font-ui)",
@@ -98,7 +130,10 @@ function SettingRow({
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: "var(--fs-body)", fontWeight: 500, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          <div style={{ fontSize: "var(--fs-body)", fontWeight: 500, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
+          {titleExtra}
+        </div>
         {hint ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>{hint}</div> : null}
       </div>
       {children}
@@ -165,6 +200,7 @@ function RecsTuning({
   enabled: boolean;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t } = useT();
   const [s, setS] = useState<RecsSettings | null>(null);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -188,14 +224,14 @@ function RecsTuning({
       api
         .updateRecsSettings(next)
         .then(setS)
-        .catch(() => onNotify("Не удалось сохранить настройки рекомендаций", "x"));
+        .catch(() => onNotify(t("settings.playback.recs.saveFailed"), "x"));
     }, 600);
   };
 
   if (!enabled || s === null) {
     return (
-      <SettingRow title="Новизна и повторы" hint={enabled ? "Загружаем…" : "Слайдеры рекомендаций доступны после входа с аккаунтом"}>
-        <DisabledSlider value={30} max={100} label="Рекомендации" />
+      <SettingRow title={t("settings.playback.recs.title")} hint={enabled ? t("common.loading") : t("settings.playback.recs.needsAccount")}>
+        <DisabledSlider value={30} max={100} label={t("settings.playback.recs.title")} />
       </SettingRow>
     );
   }
@@ -207,11 +243,11 @@ function RecsTuning({
 
   return (
     <>
-      <SettingRow title="Новизна" hint="Доля незнакомого вперемешку с лучшим (ε-исследование в ленте и радио)">
+      <SettingRow title={t("settings.playback.recs.novelty.title")} hint={t("settings.playback.recs.novelty.hint")}>
         <LiveSlider
           value={Math.round(s.epsilon * 100)}
           max={Math.round(s.epsilonMax * 100)}
-          label="Новизна"
+          label={t("settings.playback.recs.novelty.title")}
           suffix={`${Math.round(s.epsilon * 100)} %`}
           onChange={(v) => {
             const epsilon = Math.round(v) / 100;
@@ -220,11 +256,11 @@ function RecsTuning({
           }}
         />
       </SettingRow>
-      <SettingRow title="Повторы любимого" hint="Левее — любимое возвращается чаще, правее — реже">
+      <SettingRow title={t("settings.playback.recs.repeats.title")} hint={t("settings.playback.recs.repeats.hint")}>
         <LiveSlider
           value={tauPos}
           max={100}
-          label="Повторы любимого"
+          label={t("settings.playback.recs.repeats.title")}
           suffix={`×${s.tauScale}`}
           onChange={(v) => {
             const tauScale = tauFromPos(v);
@@ -268,6 +304,7 @@ function HotkeyRow({
   conflict: boolean;
   onCapture: (combo: string) => void;
 }) {
+  const { t } = useT();
   const [capturing, setCapturing] = useState(false);
   useEffect(() => {
     if (!capturing) return;
@@ -289,7 +326,7 @@ function HotkeyRow({
   }, [capturing, onCapture]);
 
   return (
-    <SettingRow title={label} hint={conflict ? "⚠ конфликт: комбинация занята другим действием" : undefined}>
+    <SettingRow title={label} hint={conflict ? t("settings.hotkeys.conflictHint") : undefined}>
       <button
         type="button"
         onClick={() => setCapturing((v) => !v)}
@@ -309,7 +346,7 @@ function HotkeyRow({
           transition: "background var(--dur-fast) var(--ease-out)",
         }}
       >
-        {capturing ? "Нажми клавишу…" : formatCombo(combo)}
+        {capturing ? t("settings.hotkeys.pressKey") : formatCombo(combo)}
       </button>
     </SettingRow>
   );
@@ -375,6 +412,7 @@ function StepsEditor({
   fallback: number[];
   suffix?: string;
 }) {
+  const { t } = useT();
   const [raw, setRaw] = useState(values.join(", "));
   // значения могли поменяться извне (сброс) — синхронизируем черновик
   useEffect(() => setRaw(values.join(", ")), [values]);
@@ -395,7 +433,7 @@ function StepsEditor({
         <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", flex: "none" }}>{suffix}</span>
       ) : null}
       <Button variant="ghost" icon="check" onClick={apply}>
-        Применить
+        {t("common.apply")}
       </Button>
     </div>
   );
@@ -413,63 +451,13 @@ function CustomAccentSwatch({
   selected: boolean;
   onPick: (hex: string) => void;
 }) {
-  return <ColorPicker value={color} selected={selected} size={44} label="Свой акцентный цвет" onChange={onPick} />;
+  const { t } = useT();
+  return <ColorPicker value={color} selected={selected} size={44} label={t("settings.appearance.accent.customLabel")} onChange={onPick} />;
 }
 
 /** Цветовая точка фона — тоже ДС ColorPicker. */
 function ColorDot({ color, label, onPick }: { color: string; label: string; onPick: (hex: string) => void }) {
   return <ColorPicker value={color} size={36} label={label} onChange={onPick} />;
-}
-
-/** Карточка витрины маркетплейса: тема (градиент-превью) или плагин (иконка). */
-function MarketCard({ item }: { item: (typeof MARKET_ITEMS)[number] }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--sp-3)",
-        padding: "var(--sp-4)",
-        borderRadius: "var(--r-md)",
-        background: "var(--surface-2)",
-      }}
-    >
-      {item.kind === "theme" ? (
-        <div
-          aria-hidden="true"
-          style={{
-            height: 64,
-            borderRadius: "var(--r-sm)",
-            background: `linear-gradient(120deg, ${item.colors![0]} 0%, ${item.colors![0]} 45%, ${item.colors![1]} 45%, ${item.colors![1]} 75%, ${item.colors![2]} 75%)`,
-          }}
-        ></div>
-      ) : (
-        <div
-          aria-hidden="true"
-          style={{
-            height: 64,
-            borderRadius: "var(--r-sm)",
-            background: "var(--accent-soft)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Icon name={item.icon!} size={28} color="var(--accent-text)" />
-        </div>
-      )}
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{item.name}</div>
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.5 }}>{item.desc}</div>
-        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
-          {item.author} · {item.meta}
-        </div>
-      </div>
-      <Button variant="secondary" icon="download" disabled style={{ alignSelf: "flex-start" }}>
-        Установить
-      </Button>
-    </div>
-  );
 }
 
 /** Карточка темы маркетплейса (Stage 6): превью из payload + живая установка. */
@@ -484,6 +472,7 @@ function MarketThemeCard({
   onRemove?: () => void;
   onReport?: () => void;
 }) {
+  const { t } = useT();
   const p = theme.payload as { accent?: string; customAccent?: string; bgColor?: string; baseBg?: string; bgType?: string; customCss?: string };
   const accent =
     p.accent === "custom" && typeof p.customAccent === "string"
@@ -519,16 +508,98 @@ function MarketThemeCard({
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{theme.name}</div>
         <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
-          {theme.author} · {theme.installs} устан.{hasCss ? " · содержит CSS" : ""}
-          {theme.hidden ? <span style={{ color: "var(--danger)" }}> · скрыта модерацией</span> : null}
+          {theme.author} · {t("settings.market.installsCount", { n: theme.installs })}
+          {hasCss ? ` · ${t("settings.market.hasCss")}` : ""}
+          {theme.hidden ? <span style={{ color: "var(--danger)" }}> · {t("settings.market.hiddenByModeration")}</span> : null}
         </div>
       </div>
       <div style={{ display: "flex", gap: "var(--sp-2)" }}>
         <Button variant="secondary" icon="download" onClick={onInstall}>
-          Установить
+          {t("common.install")}
         </Button>
-        {onRemove ? <IconButton icon="trash-2" label="Снять с публикации" onClick={onRemove} /> : null}
-        {onReport ? <IconButton icon="flag" label="Пожаловаться" onClick={onReport} /> : null}
+        {onRemove ? <IconButton icon="trash-2" label={t("settings.market.unpublish")} onClick={onRemove} /> : null}
+        {onReport ? <IconButton icon="flag" label={t("settings.market.report")} onClick={onReport} /> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Карточка плагина маркетплейса (T45b): бейджи «Полный доступ»/«На
+ *  модерации», установка через рантайм T44/T44b (стейджинг из данных →
+ *  тот же экран согласия, что и установка из файла), report + hide/approve
+ *  для админа. */
+function MarketPluginCard({
+  item,
+  isAdmin,
+  installing,
+  onInstall,
+  onRemove,
+  onReport,
+  onHideToggle,
+  onApprove,
+}: {
+  item: MarketPlugin;
+  isAdmin: boolean;
+  installing: boolean;
+  onInstall: () => void;
+  onRemove?: () => void;
+  onReport?: () => void;
+  onHideToggle?: () => void;
+  onApprove?: () => void;
+}) {
+  const { t } = useT();
+  const manifest = (item.payload as { manifest?: { description?: string } }).manifest;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", padding: "var(--sp-4)", borderRadius: "var(--r-md)", background: "var(--surface-2)" }}>
+      <div
+        aria-hidden="true"
+        style={{
+          height: 64,
+          borderRadius: "var(--r-sm)",
+          background: "var(--accent-soft)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon name="puzzle" size={28} color="var(--accent-text)" />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{item.name}</span>
+          {item.fullAccess ? (
+            <Badge tone="accent" style={{ background: "color-mix(in srgb, var(--danger) 22%, transparent)", color: "var(--danger)" }}>
+              {t("settings.extensions.fullAccessBadge")}
+            </Badge>
+          ) : null}
+          {item.pending ? <Badge tone="neutral">{t("settings.market.pendingBadge")}</Badge> : null}
+        </div>
+        {manifest?.description ? (
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.5 }}>{manifest.description}</div>
+        ) : null}
+        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+          {item.author} · v{item.version} · {t("settings.market.installsCount", { n: item.installs })}
+          {item.hidden ? <span style={{ color: "var(--danger)" }}> · {t("settings.market.hiddenByModerationShort")}</span> : null}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+        <Button variant="secondary" icon="download" disabled={installing} onClick={onInstall}>
+          {installing ? t("settings.market.installing") : t("common.install")}
+        </Button>
+        {onRemove ? <IconButton icon="trash-2" label={t("settings.market.unpublish")} onClick={onRemove} /> : null}
+        {onReport ? <IconButton icon="flag" label={t("settings.market.report")} onClick={onReport} /> : null}
+        {isAdmin && onHideToggle ? (
+          <IconButton
+            icon={item.hidden ? "eye" : "eye-off"}
+            label={item.hidden ? t("settings.market.unhide") : t("settings.market.hide")}
+            onClick={onHideToggle}
+          />
+        ) : null}
+        {isAdmin && item.pending && onApprove ? (
+          <Button variant="primary" icon="check" onClick={onApprove}>
+            {t("settings.market.approve")}
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -536,9 +607,10 @@ function MarketThemeCard({
 
 /** Шапка под-экрана: назад + заголовок. */
 function SubHeader({ title, onBack }: { title: string; onBack: () => void }) {
+  const { t } = useT();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
-      <IconButton icon="arrow-left" label="Назад" onClick={onBack} />
+      <IconButton icon="arrow-left" label={t("common.back")} onClick={onBack} />
       <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>{title}</h2>
     </div>
   );
@@ -631,18 +703,23 @@ const paneStyle: React.CSSProperties = {
   paddingBottom: "var(--sp-6)",
 };
 
-const TABS = [
-  { key: "account", label: "Аккаунт" },
-  { key: "appearance", label: "Внешний вид" },
-  { key: "playback", label: "Воспроизведение" },
-  { key: "sources", label: "Источники" },
-  { key: "lyrics", label: "Тексты" },
-  { key: "library", label: "Библиотека" },
-  { key: "integrations", label: "Интеграции" },
-  { key: "hotkeys", label: "Клавиши" },
-  { key: "extensions", label: "Расширения" },
-  { key: "system", label: "Система" }, // «О приложении» — секция внутри Системы
-];
+/** Ключи вкладок настроек — порядок массива = порядок сегментов Tabs.
+ *  Подписи НЕ хранятся здесь (модуль верхнего уровня не имеет доступа к
+ *  useT()) — берутся в компоненте из словаря по `settings.tabs.<key>`
+ *  (T28, i18n): ключи этого массива буквально совпадают с ключами словаря,
+ *  см. i18n/en.ts. «О приложении» — секция внутри Системы, не своя вкладка. */
+const SETTINGS_TAB_KEYS = [
+  "account",
+  "appearance",
+  "playback",
+  "sources",
+  "lyrics",
+  "library",
+  "integrations",
+  "hotkeys",
+  "extensions",
+  "system",
+] as const;
 
 // Хоткеи переназначаемы — определения/дефолты в lib/hotkeys, биндинги в prefs.hotkeys
 
@@ -660,22 +737,39 @@ type Sub =
   | "privacy"
   | null;
 
-/** Открытый код внутри клиента: имя · лицензия · сайт (под-экран «Лицензии»). */
-const OSS_LICENSES: { name: string; license: string; url: string }[] = [
-  { name: "React / React DOM", license: "MIT", url: "https://react.dev" },
-  { name: "Tauri (ядро и плагины)", license: "MIT / Apache-2.0", url: "https://tauri.app" },
-  { name: "Vite", license: "MIT", url: "https://vite.dev" },
-  { name: "TypeScript", license: "Apache-2.0", url: "https://www.typescriptlang.org" },
-  { name: "lucide (иконки)", license: "ISC", url: "https://lucide.dev" },
-  { name: "Golos Text (шрифт)", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Golos+Text" },
-  { name: "Unbounded (шрифт)", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Unbounded" },
-  { name: "Zod", license: "MIT", url: "https://zod.dev" },
-  { name: "yt-dlp (сайдкар добычи)", license: "Unlicense", url: "https://github.com/yt-dlp/yt-dlp" },
-  { name: "Deno (JS-рантайм добычи)", license: "MIT", url: "https://deno.com" },
-  { name: "serde (Rust)", license: "MIT / Apache-2.0", url: "https://serde.rs" },
-  { name: "ed25519-dalek (Rust)", license: "BSD-3-Clause", url: "https://github.com/dalek-cryptography/curve25519-dalek" },
-  { name: "lofty (Rust, теги)", license: "MIT / Apache-2.0", url: "https://github.com/Serial-ATA/lofty-rs" },
-  { name: "vitest", license: "MIT", url: "https://vitest.dev" },
+/** Открытый код внутри клиента: id (→ имя из словаря) · лицензия · сайт
+ *  (под-экран «Лицензии»). id — стабильный ключ словаря `settings.system.licenses.items.*`,
+ *  не переводится (не показывается пользователю напрямую). */
+type LicenseId =
+  | "react"
+  | "tauri"
+  | "vite"
+  | "typescript"
+  | "lucide"
+  | "golosText"
+  | "unbounded"
+  | "zod"
+  | "ytdlp"
+  | "deno"
+  | "serde"
+  | "ed25519Dalek"
+  | "lofty"
+  | "vitest";
+const OSS_LICENSES: { id: LicenseId; license: string; url: string }[] = [
+  { id: "react", license: "MIT", url: "https://react.dev" },
+  { id: "tauri", license: "MIT / Apache-2.0", url: "https://tauri.app" },
+  { id: "vite", license: "MIT", url: "https://vite.dev" },
+  { id: "typescript", license: "Apache-2.0", url: "https://www.typescriptlang.org" },
+  { id: "lucide", license: "ISC", url: "https://lucide.dev" },
+  { id: "golosText", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Golos+Text" },
+  { id: "unbounded", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Unbounded" },
+  { id: "zod", license: "MIT", url: "https://zod.dev" },
+  { id: "ytdlp", license: "Unlicense", url: "https://github.com/yt-dlp/yt-dlp" },
+  { id: "deno", license: "MIT", url: "https://deno.com" },
+  { id: "serde", license: "MIT / Apache-2.0", url: "https://serde.rs" },
+  { id: "ed25519Dalek", license: "BSD-3-Clause", url: "https://github.com/dalek-cryptography/curve25519-dalek" },
+  { id: "lofty", license: "MIT / Apache-2.0", url: "https://github.com/Serial-ATA/lofty-rs" },
+  { id: "vitest", license: "MIT", url: "https://vitest.dev" },
 ];
 
 /** Запрос извне открыть под-экран (кнопка эквалайзера в плеер-баре). */
@@ -699,28 +793,19 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   privacy: "account",
 };
 
-/** Витрина маркетплейса (демо-каталог; установка — Stage 6). */
-const MARKET_ITEMS: {
-  kind: "theme" | "plugin";
-  name: string;
-  author: string;
-  desc: string;
-  meta: string;
-  colors?: [string, string, string];
-  icon?: string;
-}[] = [
-  { kind: "theme", name: "Nord", author: "arctic", desc: "Холодный сине-серый минимализм", meta: "12 400 установок", colors: ["#2e3440", "#5e81ac", "#88c0d0"] },
-  { kind: "theme", name: "AMOLED", author: "muza", desc: "Чистый чёрный для OLED-экранов", meta: "9 800 установок", colors: ["#000000", "#111111", "#3b82f6"] },
-  { kind: "theme", name: "Синтвейв", author: "neon_dreams", desc: "Розовый неон и фиолетовый закат", meta: "7 150 установок", colors: ["#241734", "#ff3caa", "#7c3aed"] },
-  { kind: "theme", name: "Крем", author: "daylight", desc: "Тёплая светлая тема (превью)", meta: "3 020 установок", colors: ["#f5efe6", "#d9a441", "#8a6d3b"] },
-  { kind: "plugin", name: "Синхро-переводчик", author: "polyglot", desc: "Перевод строк текста на лету, вторая строка под оригиналом", meta: "21 300 установок", icon: "languages" },
-  { kind: "plugin", name: "Каденс", author: "vjlab", desc: "Визуализатор в режиме прослушивания: волны и частицы в такт", meta: "15 700 установок", icon: "audio-waveform" },
-  { kind: "plugin", name: "Скробблер+", author: "fmtools", desc: "Расширенный скробблинг: оффлайн-очередь, правила пропуска", meta: "8 400 установок", icon: "radio-tower" },
-  { kind: "plugin", name: "Автотеги", author: "muza", desc: "Жанры и настроения для локальных файлов по акустике", meta: "5 900 установок", icon: "tags" },
-];
-
-/** Полосы эквалайзера (десятиполосник) и пресеты. Значения в дБ (−12..+12). */
-const EQ_BANDS = ["31", "62", "125", "250", "500", "1к", "2к", "4к", "8к", "16к"];
+/** Полосы эквалайзера (десятиполосник) в Гц + пресеты. Значения в дБ (−12..+12).
+ *  Частоты — числа (не строки): подпись «1к»/«1k» собирается форматтером
+ *  `eqBandLabel` через словарь, а не хардкодится с языко-зависимой буквой. */
+const EQ_BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+/** Подпись частоты полосы эквалайзера: до 1 кГц — как есть, дальше «1k»/«1к» и т.п. */
+function eqBandLabel(hz: number, t: T): string {
+  return hz >= 1000 ? `${hz / 1000}${t("settings.playback.equalizer.kiloSuffix")}` : `${hz}`;
+}
+/** ВАЖНО: ключи EQ_PRESETS (рус. слова) — это ПЕРСИСТЕНТНЫЕ значения prefs.eqPreset,
+ *  разделяемые с DEFAULT_PREFS.eqPreset (types.ts) и веб-клиентом (apps/web) —
+ *  вне зоны этой правки (T29/T30: только SettingsView.tsx + i18n), переименование
+ *  сломало бы совместимость с уже сохранёнными prefs и требует правок в types.ts
+ *  и apps/web. Сознательно НЕ переведено — см. отчёт T29/T30. */
 const EQ_PRESETS: Record<string, number[]> = {
   Ровный: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   Бас: [6, 5, 4, 2, 0, 0, 0, 0, 0, 0],
@@ -735,8 +820,11 @@ export function SettingsView({
   prefs,
   setPrefs,
   username,
+  isAdmin,
   onLogout,
   onNotify,
+  onOpenHotkeys,
+  onPluginsChanged,
   intent,
 }: {
   api: MuzaApi;
@@ -745,12 +833,149 @@ export function SettingsView({
   prefs: Prefs;
   setPrefs: (p: Prefs) => void;
   username: string;
+  /** T45b: показывает hide/approve на карточках маркетплейса плагинов. */
+  isAdmin?: boolean;
   onLogout: () => void;
   onNotify: (text: string, icon?: string) => void;
+  /** T9: строка «Помощь / закрыть» кликабельна — открывает диалог горячих клавиш (App). */
+  onOpenHotkeys: () => void;
+  /** T45b-fix: installed.json изменился (установка/toggle/удаление плагина) —
+   *  дёргает usePlugins.refresh() в Player, чтобы уровень-1 плагин ожил
+   *  (слоты/iframe) БЕЗ перезагрузки приложения. См. docs/notes про gap T45b. */
+  onPluginsChanged?: () => void;
   intent?: SettingsIntent | null;
 }) {
+  const { t, lang } = useT();
   const [tab, setTab] = useState("appearance");
   const [sub, setSub] = useState<Sub>(null);
+
+  // Плагины уровня 1 (T44) + «Полный доступ» (T44b): установленные + мастер
+  // установки из файла
+  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginInfo[]>([]);
+  // T45b-fix: обновляет и локальный список (эта вкладка), и рантайм usePlugins
+  // в Player (App.tsx) — иначе новый/переключённый L1-плагин не оживал бы
+  // (не появлялся в слотах/iframe) до перезагрузки приложения.
+  const refreshPlugins = () => {
+    void listInstalled().then(setInstalledPlugins).catch(() => setInstalledPlugins([]));
+    onPluginsChanged?.();
+  };
+  useEffect(() => {
+    refreshPlugins();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [staged, setStaged] = useState<StagedPlugin | null>(null);
+  const [installBusy, setInstallBusy] = useState(false);
+  const startInstall = async () => {
+    setInstallBusy(true);
+    try {
+      const s = await pickAndStagePlugin(lang);
+      if (s) setStaged(s); // откроется модалка согласия
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.readFailed"), "x");
+    } finally {
+      setInstallBusy(false);
+    }
+  };
+  // T44b: громкий экран согласия для app:full-access — чекбокс + задержка
+  // кнопки (несколько секунд, чтобы не кликнули на автомате), кнопка отказа
+  // остаётся дефолтным фокусом Dialog (первая в actions). Сбрасывается на
+  // каждый новый staged (новый выбор файла/повтор согласия при апгрейде —
+  // finalizeInstall/plugin_finalize_install переустанавливает целиком, так
+  // что «апгрейд до full-access» — это тот же путь установки заново).
+  const FULL_ACCESS_DELAY_SEC = 5;
+  const [fullAccessAck, setFullAccessAck] = useState(false);
+  const [fullAccessRemaining, setFullAccessRemaining] = useState(FULL_ACCESS_DELAY_SEC);
+  useEffect(() => {
+    if (!staged || !isFullAccessManifest(staged.manifest)) return;
+    setFullAccessAck(false);
+    setFullAccessRemaining(FULL_ACCESS_DELAY_SEC);
+    const iv = setInterval(() => setFullAccessRemaining((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staged]);
+  const fullAccessBlocked = (m: StagedPlugin["manifest"]) =>
+    isFullAccessManifest(m) && (!fullAccessAck || fullAccessRemaining > 0);
+  const confirmInstall = async () => {
+    if (!staged) return;
+    // Дублирует disabled на кнопке ниже (программный вызов/гонка) — то же
+    // рассуждение, что и в plugins.rs::plugin_finalize_install: не доверяем
+    // одному только disabled в разметке.
+    if (fullAccessBlocked(staged.manifest)) return;
+    try {
+      await finalizeInstall(staged, staged.manifest.permissions);
+      onNotify(t("settings.extensions.pluginInstalled", { name: staged.manifest.name }), "puzzle");
+      setStaged(null);
+      refreshPlugins();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.installFailed"), "x");
+    }
+  };
+  const declineInstall = () => {
+    if (staged) void cancelInstall(staged);
+    setStaged(null);
+  };
+  // T44b: выключение full-access-плагина не выгружает уже исполненный код
+  // (realm не умеет — §5.3 дока) — предлагаем рестарт сразу после toggle off.
+  const [restartPromptName, setRestartPromptName] = useState<string | null>(null);
+  const togglePlugin = async (id: string, on: boolean) => {
+    try {
+      await setPluginEnabled(id, on);
+      if (!on) {
+        const p = installedPlugins.find((pl) => pl.id === id);
+        if (p && isFullAccessManifest(p.manifest)) setRestartPromptName(p.manifest.name);
+      }
+      refreshPlugins();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.toggleFailed"), "x");
+    }
+  };
+  const removePlugin = async (id: string, name: string) => {
+    try {
+      await uninstallPlugin(id);
+      onNotify(t("settings.extensions.pluginRemoved", { name }), "trash-2");
+      refreshPlugins();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.removeFailed"), "x");
+    }
+  };
+  // T44b: хост-реестр ошибок full-access-плагинов (репорт из try/catch
+  // IIFE в plugins.rs::build_full_access_script + ошибки самого invoke).
+  const fullAccessErrorsVersion = useSyncExternalStore(
+    (cb) => fullAccessHost.subscribe(cb),
+    () => fullAccessHost.runtimeVersion(),
+  );
+  void fullAccessErrorsVersion;
+  const fullAccessErrors = fullAccessHost.getErrors();
+  // Валидные плагинные ключи композиции (только включённые уровень-1 плагины)
+  const enabledLevel1 = installedPlugins.filter((p) => p.enabled && !isFullAccessManifest(p.manifest));
+  const pluginBarKeys = enabledLevel1.flatMap((p) =>
+    (p.manifest.contributes?.barButtons ?? []).map((b) => pluginSlotKey(p.id, b.id)),
+  );
+  const pluginNavKeys = enabledLevel1.flatMap((p) =>
+    (p.manifest.contributes?.navItems ?? []).map((n) => pluginSlotKey(p.id, n.id)),
+  );
+  // Мета для строк композиции: родной ключ → *_META, плагинный → contributes
+  const barMeta = (key: string): { label: string; hint: string } => {
+    if (isPluginKey(key)) {
+      const pk = parsePluginKey(key);
+      const pl = installedPlugins.find((p) => p.id === pk?.pluginId);
+      const item = pl?.manifest.contributes?.barButtons?.find((b) => b.id === pk?.slotId);
+      return {
+        label: item?.title ?? t("settings.appearance.plugin.genericLabel"),
+        hint: pl ? t("settings.appearance.plugin.hint", { name: pl.manifest.name }) : t("settings.appearance.plugin.genericLabel"),
+      };
+    }
+    return barButtonLabel(key as BarButtonKey, lang);
+  };
+  const navMeta = (key: string): { label: string; icon: string } => {
+    if (isPluginKey(key)) {
+      const pk = parsePluginKey(key);
+      const pl = installedPlugins.find((p) => p.id === pk?.pluginId);
+      const item = pl?.manifest.contributes?.navItems?.find((n) => n.id === pk?.slotId);
+      return { label: item?.title ?? t("settings.appearance.plugin.genericLabel"), icon: item?.icon ?? "puzzle" };
+    }
+    return { label: navItemLabel(key as NavItemKey, lang), icon: NAV_ITEM_META[key as NavItemKey].icon };
+  };
 
   // Смена пароля (слайс «Аккаунт»): диалог старый → новый → повтор
   const [pwdOpen, setPwdOpen] = useState(false);
@@ -768,11 +993,11 @@ export function SettingsView({
   };
   const submitPwd = async () => {
     if (pwdNew.length < 8) {
-      setPwdErr("Новый пароль — минимум 8 символов");
+      setPwdErr(t("settings.account.password.errors.tooShort"));
       return;
     }
     if (pwdNew !== pwdRepeat) {
-      setPwdErr("Пароли не совпадают");
+      setPwdErr(t("settings.account.password.errors.mismatch"));
       return;
     }
     setPwdBusy(true);
@@ -780,9 +1005,9 @@ export function SettingsView({
     try {
       await api.changePassword(pwdCur, pwdNew);
       setPwdOpen(false);
-      onNotify("Пароль изменён — другие устройства разлогинены", "shield-check");
+      onNotify(t("settings.account.password.changed"), "shield-check");
     } catch (e) {
-      setPwdErr(e instanceof ApiError ? e.message : "Не удалось сменить пароль");
+      setPwdErr(e instanceof ApiError ? e.message : t("settings.account.password.errors.changeFailed"));
     } finally {
       setPwdBusy(false);
     }
@@ -811,7 +1036,7 @@ export function SettingsView({
   };
   const submitEmailChange = async () => {
     if (!emailNew.includes("@")) {
-      setEmailErr("Похоже, это не почта");
+      setEmailErr(t("settings.account.email.errors.notAnEmail"));
       return;
     }
     setEmailBusy(true);
@@ -823,13 +1048,13 @@ export function SettingsView({
         setEmailConfirmUrl(confirmUrl);
       } else {
         setEmailOpen(false);
-        onNotify("Письмо отправлено на новую почту — подтверди по ссылке", "mail");
+        onNotify(t("settings.account.email.sent"), "mail");
       }
     } catch (e) {
       // generic-текст + деталь от сервера (429 rate-limit / 502 SMTP / занятая
       // почта и т.п.), когда она есть — иначе просто generic
       const detail = e instanceof ApiError ? e.message : null;
-      setEmailErr(detail ? `Не удалось отправить письмо: ${detail}` : "Не удалось отправить письмо");
+      setEmailErr(detail ? t("settings.account.email.errors.sendFailedDetail", { detail }) : t("settings.account.email.errors.sendFailed"));
     } finally {
       setEmailBusy(false);
     }
@@ -856,9 +1081,9 @@ export function SettingsView({
     try {
       await api.revokeSession(id);
       setSessions((list) => list?.filter((s) => s.id !== id) ?? list);
-      onNotify("Устройство разлогинено", "shield-check");
+      onNotify(t("settings.account.sessions.revoked"), "shield-check");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : "Не удалось отозвать сессию", "x");
+      onNotify(e instanceof ApiError ? e.message : t("settings.account.sessions.errors.revokeFailed"), "x");
     }
   };
 
@@ -883,7 +1108,7 @@ export function SettingsView({
           }
           const { invoke } = await import("@tauri-apps/api/core");
           await invoke("share_save_file", { path, dataBase64: btoa(binary) });
-          onNotify("Данные выгружены", "download");
+          onNotify(t("settings.privacy.exported"), "download");
         }
       } else {
         const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
@@ -894,7 +1119,7 @@ export function SettingsView({
         URL.revokeObjectURL(url);
       }
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : "Не удалось выгрузить данные", "x");
+      onNotify(e instanceof ApiError ? e.message : t("settings.privacy.errors.exportFailed"), "x");
     } finally {
       setExportBusy(false);
     }
@@ -909,18 +1134,20 @@ export function SettingsView({
     try {
       await api.deleteAccount(delPwd);
       setDelOpen(false);
-      onNotify("Аккаунт удалён", "trash-2");
+      onNotify(t("settings.privacy.accountDeleted"), "trash-2");
       onLogout();
     } catch (e) {
-      setDelErr(e instanceof ApiError ? e.message : "Не удалось удалить аккаунт");
+      setDelErr(e instanceof ApiError ? e.message : t("settings.privacy.errors.deleteFailed"));
     } finally {
       setDelBusy(false);
     }
   };
 
-  // Маркетплейс: фильтр витрины (открывается из «Расширений» с нужной категорией)
-  const [marketFilter, setMarketFilter] = useState("Всё");
-  const openMarket = (filter: string) => {
+  // Маркетплейс: фильтр витрины (открывается из «Расширений» с нужной категорией).
+  // Ключи ("all"/"themes"/"plugins") — эфемерный локальный стейт (не persisted в
+  // Prefs), можно использовать английские id + перевод через ChipGroup {key,label}.
+  const [marketFilter, setMarketFilter] = useState<"all" | "themes" | "plugins">("all");
+  const openMarket = (filter: "themes" | "plugins") => {
     setMarketFilter(filter);
     setSub("market");
   };
@@ -947,7 +1174,7 @@ export function SettingsView({
       await updFound.install(setUpdPct); // дальше relaunch — код ниже не выполнится
     } catch {
       setUpdState("error");
-      onNotify("Не удалось установить обновление", "x");
+      onNotify(t("settings.system.update.errors.installFailed"), "x");
     }
   };
 
@@ -969,30 +1196,30 @@ export function SettingsView({
     saveTheme(themeName, prefs);
     setThemes(listThemes());
     setThemeNameOpen(false);
-    onNotify("Тема сохранена", "save");
+    onNotify(t("settings.customize.themes.saved"), "save");
   };
-  const applySavedTheme = (t: SavedTheme) => {
-    setPrefs(applyTheme(t.tokens, prefs));
-    setCssDraft(typeof t.tokens.customCss === "string" ? t.tokens.customCss : "");
-    onNotify(`Тема «${t.name}» применена`, "paintbrush");
+  const applySavedTheme = (theme: SavedTheme) => {
+    setPrefs(applyTheme(theme.tokens, prefs));
+    setCssDraft(typeof theme.tokens.customCss === "string" ? theme.tokens.customCss : "");
+    onNotify(t("settings.customize.themes.applied", { name: theme.name }), "paintbrush");
   };
   const removeTheme = (id: string) => {
     deleteTheme(id);
     setThemes(listThemes());
-    onNotify("Тема удалена", "trash-2");
+    onNotify(t("settings.customize.themes.removed"), "trash-2");
   };
-  const copyTheme = async (t: SavedTheme) => {
+  const copyTheme = async (theme: SavedTheme) => {
     try {
-      await navigator.clipboard.writeText(serializeTheme(t.name, t.tokens));
-      onNotify("JSON темы в буфере — делись", "copy");
+      await navigator.clipboard.writeText(serializeTheme(theme.name, theme.tokens));
+      onNotify(t("settings.customize.themes.copied"), "copy");
     } catch {
-      onNotify("Буфер обмена недоступен", "x");
+      onNotify(t("settings.customize.themes.errors.clipboardUnavailable"), "x");
     }
   };
   const submitImportTheme = () => {
     const parsed = parseTheme(themeImportText);
     if (!parsed) {
-      setThemeImportErr("Это не похоже на JSON темы Muza");
+      setThemeImportErr(t("settings.customize.themes.errors.notMuzaJson"));
       return;
     }
     const next = applyTheme(parsed.tokens, prefs);
@@ -1003,7 +1230,7 @@ export function SettingsView({
     setThemeImportOpen(false);
     setThemeImportText("");
     setThemeImportErr(null);
-    onNotify(`Тема «${parsed.name}» импортирована и применена`, "clipboard-paste");
+    onNotify(t("settings.customize.themes.imported", { name: parsed.name }), "clipboard-paste");
   };
 
   // ── Маркетплейс тем (Stage 6): серверный каталог ─────────────────
@@ -1020,8 +1247,8 @@ export function SettingsView({
     let alive = true;
     api
       .getMarketThemes()
-      .then((t) => {
-        if (alive) setMarketThemes(t);
+      .then((themes) => {
+        if (alive) setMarketThemes(themes);
       })
       .catch(() => {
         if (alive) setMarketThemes([]);
@@ -1031,44 +1258,44 @@ export function SettingsView({
     };
   }, [sub, serverSession, api]);
 
-  const doInstallTheme = async (t: MarketTheme) => {
+  const doInstallTheme = async (theme: MarketTheme) => {
     // счётчик — best-effort: сервер лёг, а payload уже у нас
-    const installed = await api.installMarketTheme(t.id).catch(() => null);
-    const tokens = sanitizeTokens(installed?.payload ?? t.payload);
-    addTheme(t.name, tokens);
+    const installed = await api.installMarketTheme(theme.id).catch(() => null);
+    const tokens = sanitizeTokens(installed?.payload ?? theme.payload);
+    addTheme(theme.name, tokens);
     setThemes(listThemes());
     const next = applyTheme(tokens, prefs);
     setPrefs(next);
     setCssDraft(next.customCss);
-    setMarketThemes((list) => list?.map((x) => (x.id === t.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
-    onNotify(`Тема «${t.name}» установлена и применена`, "download");
+    setMarketThemes((list) => list?.map((x) => (x.id === theme.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
+    onNotify(t("settings.market.themeInstalled", { name: theme.name }), "download");
   };
 
-  const installTheme = async (t: MarketTheme) => {
-    const css = (t.payload as { customCss?: unknown }).customCss;
+  const installTheme = async (theme: MarketTheme) => {
+    const css = (theme.payload as { customCss?: unknown }).customCss;
     if (typeof css === "string" && css.trim().length > 0) {
-      setCssWarnTheme(t); // CSS может переопределить что угодно — спрашиваем
+      setCssWarnTheme(theme); // CSS может переопределить что угодно — спрашиваем
       return;
     }
-    await doInstallTheme(t);
+    await doInstallTheme(theme);
   };
 
-  const unpublishTheme = async (t: MarketTheme) => {
+  const unpublishTheme = async (theme: MarketTheme) => {
     try {
-      await api.deleteMarketTheme(t.id);
-      setMarketThemes((list) => list?.filter((x) => x.id !== t.id) ?? list);
-      onNotify("Тема снята с публикации", "trash-2");
+      await api.deleteMarketTheme(theme.id);
+      setMarketThemes((list) => list?.filter((x) => x.id !== theme.id) ?? list);
+      onNotify(t("settings.market.themeUnpublished"), "trash-2");
     } catch {
-      onNotify("Не удалось снять тему", "x");
+      onNotify(t("settings.market.errors.unpublishThemeFailed"), "x");
     }
   };
 
-  const reportTheme = async (t: MarketTheme) => {
+  const reportTheme = async (theme: MarketTheme) => {
     try {
-      await api.reportMarketTheme(t.id);
-      onNotify("Жалоба отправлена — спасибо", "flag");
+      await api.reportMarketTheme(theme.id);
+      onNotify(t("settings.market.reportSent"), "flag");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : "Не удалось отправить жалобу", "x");
+      onNotify(e instanceof ApiError ? e.message : t("settings.market.errors.reportFailed"), "x");
     }
   };
 
@@ -1079,7 +1306,7 @@ export function SettingsView({
   };
   const submitPublishTheme = async () => {
     if (publishName.trim().length < 2) {
-      setPublishErr("Название — от 2 символов");
+      setPublishErr(t("settings.market.errors.nameTooShort"));
       return;
     }
     setPublishBusy(true);
@@ -1091,11 +1318,109 @@ export function SettingsView({
         return [published, ...rest];
       });
       setPublishOpen(false);
-      onNotify(`Тема «${published.name}» опубликована`, "upload");
+      onNotify(t("settings.market.themePublished", { name: published.name }), "upload");
     } catch (e) {
-      setPublishErr(e instanceof ApiError ? e.message : "Не удалось опубликовать");
+      setPublishErr(e instanceof ApiError ? e.message : t("settings.market.errors.publishFailed"));
     } finally {
       setPublishBusy(false);
+    }
+  };
+
+  // ── Маркетплейс плагинов (T45b): серверный каталог, установка через
+  // тот же рантайм-пайплайн T44/T44b (staged → согласие → finalizeInstall) ─
+  const [marketPlugins, setMarketPlugins] = useState<MarketPlugin[] | null>(null);
+  const [marketPluginInstalling, setMarketPluginInstalling] = useState<string | null>(null);
+  useEffect(() => {
+    if (sub !== "market" || !serverSession) return;
+    let alive = true;
+    api
+      .getMarketPlugins()
+      .then((p) => {
+        if (alive) setMarketPlugins(p);
+      })
+      .catch(() => {
+        if (alive) setMarketPlugins([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sub, serverSession, api]);
+
+  /** Скачивает payload целиком (install = инкремент счётчика + payload) и
+   *  стейджит его тем же Rust-путём, что и .muzaplugin — дальше открывается
+   *  ОДНА И ТА ЖЕ модалка согласия (staged), full-access получает тот же
+   *  громкий экран T44b, без изменений в UI-коде согласия. */
+  const installFromMarket = async (m: MarketPlugin) => {
+    setMarketPluginInstalling(m.id);
+    try {
+      const installed = await api.installMarketPlugin(m.id);
+      const payload = installed.payload as {
+        manifest?: Record<string, unknown>;
+        code?: string;
+        css?: string;
+        strings?: Record<string, string>;
+      };
+      if (!payload.manifest || typeof payload.code !== "string") {
+        throw new Error(t("settings.market.errors.corruptPayload"));
+      }
+      const s = await stagePluginFromMarket(
+        {
+          manifest: payload.manifest,
+          code: payload.code,
+          css: payload.css,
+          strings: payload.strings,
+        },
+        lang,
+      );
+      setStaged(s); // модалка согласия T44/T44b — confirmInstall/declineInstall уже готовы
+      setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("settings.market.errors.installPluginFailed"), "x");
+    } finally {
+      setMarketPluginInstalling(null);
+    }
+  };
+
+  const unpublishMarketPlugin = async (m: MarketPlugin) => {
+    try {
+      await api.deleteMarketPlugin(m.id);
+      setMarketPlugins((list) => list?.filter((x) => x.id !== m.id) ?? list);
+      onNotify(t("settings.market.pluginUnpublished"), "trash-2");
+    } catch {
+      onNotify(t("settings.market.errors.unpublishPluginFailed"), "x");
+    }
+  };
+
+  const reportMarketPlugin = async (m: MarketPlugin) => {
+    try {
+      await api.reportMarketPlugin(m.id);
+      onNotify(t("settings.market.reportSent"), "flag");
+    } catch (e) {
+      onNotify(e instanceof ApiError ? e.message : t("settings.market.errors.reportFailed"), "x");
+    }
+  };
+
+  /** Модерация (админ): скрыть/вернуть — гейтится на видимость в текущем
+   *  списке (§5.4 дока: pending/hidden видит только автор — если сервер
+   *  когда-нибудь добавит isAdmin-бypass в GET /market/plugins, кнопка
+   *  заработает и для чужих скрытых строк без изменений здесь). */
+  const toggleHideMarketPlugin = async (m: MarketPlugin) => {
+    try {
+      await api.hideMarketPlugin(m.id, !m.hidden);
+      setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, hidden: !x.hidden } : x)) ?? list);
+      onNotify(m.hidden ? t("settings.market.pluginUnhidden") : t("settings.market.pluginHidden"), m.hidden ? "eye" : "eye-off");
+    } catch {
+      onNotify(t("settings.market.errors.visibilityFailed"), "x");
+    }
+  };
+
+  const approveMarketPluginRow = async (m: MarketPlugin) => {
+    try {
+      await api.approveMarketPlugin(m.id);
+      setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, pending: false } : x)) ?? list);
+      onNotify(t("settings.market.pluginApproved", { name: m.name }), "check");
+    } catch {
+      onNotify(t("settings.market.errors.approveFailed"), "x");
     }
   };
 
@@ -1171,7 +1496,7 @@ export function SettingsView({
     try {
       const { token, authUrl } = await api.lastfmConnectStart();
       await openExternal(authUrl);
-      onNotify("Разреши доступ в браузере — ждём подтверждения", "radio-tower");
+      onNotify(t("settings.integrations.lastfm.allowInBrowser"), "radio-tower");
       for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 4000));
         if (lfmCancelRef.current) return;
@@ -1180,16 +1505,16 @@ export function SettingsView({
           setScrob((s) =>
             s ? { ...s, lastfm: { ...s.lastfm, connected: true, username } } : s,
           );
-          onNotify(`Last.fm подключён: ${username}`, "radio-tower");
+          onNotify(t("settings.integrations.lastfm.connected", { username }), "radio-tower");
           return;
         } catch (e) {
           // 409 = ещё не нажал «Разрешить» — ждём дальше
           if (!(e instanceof ApiError && e.status === 409)) throw e;
         }
       }
-      onNotify("Не дождались подтверждения Last.fm — попробуй ещё раз", "x");
+      onNotify(t("settings.integrations.lastfm.errors.timeout"), "x");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : "Не удалось подключить Last.fm", "x");
+      onNotify(e instanceof ApiError ? e.message : t("settings.integrations.lastfm.errors.connectFailed"), "x");
     } finally {
       setLfmWaiting(false);
     }
@@ -1199,16 +1524,16 @@ export function SettingsView({
     try {
       await api.lastfmDisconnect();
       setScrob((s) => (s ? { ...s, lastfm: { ...s.lastfm, connected: false, username: null } } : s));
-      onNotify("Last.fm отключён", "radio-tower");
+      onNotify(t("settings.integrations.lastfm.disconnected"), "radio-tower");
     } catch {
-      onNotify("Не удалось отключить Last.fm", "x");
+      onNotify(t("settings.integrations.lastfm.errors.disconnectFailed"), "x");
     }
   };
 
   const lbConnect = async () => {
     const token = lbToken.trim();
     if (token.length < 8) {
-      setLbErr("Вставь user token со страницы listenbrainz.org/settings");
+      setLbErr(t("settings.integrations.listenbrainz.errors.pasteToken"));
       return;
     }
     setLbBusy(true);
@@ -1218,9 +1543,9 @@ export function SettingsView({
       setScrob((s) => (s ? { ...s, listenbrainz: { connected: true, username } } : s));
       setLbOpen(false);
       setLbToken("");
-      onNotify(`ListenBrainz подключён: ${username}`, "radio-tower");
+      onNotify(t("settings.integrations.listenbrainz.connected", { username }), "radio-tower");
     } catch (e) {
-      setLbErr(e instanceof ApiError ? e.message : "Не удалось подключить ListenBrainz");
+      setLbErr(e instanceof ApiError ? e.message : t("settings.integrations.listenbrainz.errors.connectFailed"));
     } finally {
       setLbBusy(false);
     }
@@ -1230,9 +1555,9 @@ export function SettingsView({
     try {
       await api.listenbrainzDisconnect();
       setScrob((s) => (s ? { ...s, listenbrainz: { connected: false, username: null } } : s));
-      onNotify("ListenBrainz отключён", "radio-tower");
+      onNotify(t("settings.integrations.listenbrainz.disconnected"), "radio-tower");
     } catch {
-      onNotify("Не удалось отключить ListenBrainz", "x");
+      onNotify(t("settings.integrations.listenbrainz.errors.disconnectFailed"), "x");
     }
   };
   const set = (patch: Partial<Prefs>) => setPrefs({ ...prefs, ...patch });
@@ -1255,8 +1580,8 @@ export function SettingsView({
   }, [sub]);
   const fmtGb = (bytes: number) =>
     bytes >= 1024 * 1024 * 1024
-      ? `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} ГБ`
-      : `${Math.round(bytes / (1024 * 1024))} МБ`;
+      ? t("settings.library.units.gb", { n: (bytes / (1024 * 1024 * 1024)).toFixed(1) })
+      : t("settings.library.units.mb", { n: Math.round(bytes / (1024 * 1024)) });
   // Анимация панели — только при переключении вкладки/под-экрана пользователем.
   // Вход в сами настройки анимирует обёртка <main> в App, поэтому первую панель
   // НЕ анимируем. Старый `mounted`-ref был багом: он переключался в true при
@@ -1270,9 +1595,30 @@ export function SettingsView({
   const paneClass = switchedRef.current ? "muza-view" : undefined;
 
   const presets = [
-    { key: "muza", name: "Муза", hint: "Синий · мягкие углы", accent: "blue" as const, accentColor: "#3b82f6", radius: "soft" as const },
-    { key: "flame", name: "Пламя", hint: "Красный · круглее", accent: "red" as const, accentColor: "#f76967", radius: "round" as const },
-    { key: "graphite", name: "Графит", hint: "Молния · строже", accent: "bolt" as const, accentColor: "#327ad9", radius: "mild" as const },
+    {
+      key: "muza",
+      name: t("settings.appearance.presets.muza.name"),
+      hint: t("settings.appearance.presets.muza.hint"),
+      accent: "blue" as const,
+      accentColor: "#3b82f6",
+      radius: "soft" as const,
+    },
+    {
+      key: "flame",
+      name: t("settings.appearance.presets.flame.name"),
+      hint: t("settings.appearance.presets.flame.hint"),
+      accent: "red" as const,
+      accentColor: "#f76967",
+      radius: "round" as const,
+    },
+    {
+      key: "graphite",
+      name: t("settings.appearance.presets.graphite.name"),
+      hint: t("settings.appearance.presets.graphite.hint"),
+      accent: "bolt" as const,
+      accentColor: "#327ad9",
+      radius: "mild" as const,
+    },
   ];
 
   // Текущий hex акцента — им сеются роли акцента при включении
@@ -1285,67 +1631,73 @@ export function SettingsView({
 
   const customizePane = (
     <div key="customize" className={paneClass} style={paneStyle}>
-      <SubHeader title="Кастомизация" onBack={() => setSub(null)} />
+      <SubHeader title={t("settings.customize.title")} onBack={() => setSub(null)} />
 
-      <GroupTitle>Стекло и эффекты</GroupTitle>
-      <SettingRow title="Размытие панелей" hint="Сила blur на матовом стекле">
-        <LiveSlider value={prefs.blur} max={64} label="Размытие панелей" suffix={`${prefs.blur} px`} onChange={(v) => set({ blur: Math.round(v) })} />
+      <GroupTitle>{t("settings.customize.glass.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.glass.panelBlur.title")} hint={t("settings.customize.glass.panelBlur.hint")}>
+        <LiveSlider
+          value={prefs.blur}
+          max={64}
+          label={t("settings.customize.glass.panelBlur.title")}
+          suffix={`${prefs.blur} px`}
+          onChange={(v) => set({ blur: Math.round(v) })}
+        />
       </SettingRow>
-      <SettingRow title="Размытие фона" hint="Blur обложки или картинки за интерфейсом">
+      <SettingRow title={t("settings.customize.glass.bgBlur.title")} hint={t("settings.customize.glass.bgBlur.hint")}>
         <LiveSlider
           value={prefs.blurScenery}
           max={80}
-          label="Размытие фона"
+          label={t("settings.customize.glass.bgBlur.title")}
           suffix={`${prefs.blurScenery} px`}
           onChange={(v) => set({ blurScenery: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Прозрачность по зонам" hint="Своя плотность фона у плеера, меню, диалогов, сайдбара и «Сейчас играет»">
-        <Switch checked={prefs.glassZonesOn} onChange={(glassZonesOn: boolean) => set({ glassZonesOn })} label="Прозрачность по зонам" />
+      <SettingRow title={t("settings.customize.glass.zones.title")} hint={t("settings.customize.glass.zones.hint")}>
+        <Switch checked={prefs.glassZonesOn} onChange={(glassZonesOn: boolean) => set({ glassZonesOn })} label={t("settings.customize.glass.zones.title")} />
       </SettingRow>
       {prefs.glassZonesOn ? (
         <>
-          <SettingRow title="Плеер" hint="Стекло плеер-бара и очереди">
+          <SettingRow title={t("settings.customize.glass.zonePlayer.title")} hint={t("settings.customize.glass.zonePlayer.hint")}>
             <LiveSlider
               value={prefs.glassPlayer}
               max={100}
-              label="Плотность стекла плеера"
+              label={t("settings.customize.glass.zonePlayer.ariaLabel")}
               suffix={`${prefs.glassPlayer} %`}
               onChange={(v) => set({ glassPlayer: Math.round(v) })}
             />
           </SettingRow>
-          <SettingRow title="Меню" hint="Контекстные меню и выпадающие списки">
+          <SettingRow title={t("settings.customize.glass.zoneMenu.title")} hint={t("settings.customize.glass.zoneMenu.hint")}>
             <LiveSlider
               value={prefs.glassMenu}
               max={100}
-              label="Плотность стекла меню"
+              label={t("settings.customize.glass.zoneMenu.ariaLabel")}
               suffix={`${prefs.glassMenu} %`}
               onChange={(v) => set({ glassMenu: Math.round(v) })}
             />
           </SettingRow>
-          <SettingRow title="Диалоги" hint="100 % — глухая панель, меньше — стекло">
+          <SettingRow title={t("settings.customize.glass.zoneDialog.title")} hint={t("settings.customize.glass.zoneDialog.hint")}>
             <LiveSlider
               value={prefs.glassDialog}
               max={100}
-              label="Плотность окна диалога"
+              label={t("settings.customize.glass.zoneDialog.ariaLabel")}
               suffix={`${prefs.glassDialog} %`}
               onChange={(v) => set({ glassDialog: Math.round(v) })}
             />
           </SettingRow>
-          <SettingRow title="Сайдбар" hint="Плотность поверхности слева (дефолт лёгкий — 4 %)">
+          <SettingRow title={t("settings.customize.glass.zoneSidebar.title")} hint={t("settings.customize.glass.zoneSidebar.hint")}>
             <LiveSlider
               value={prefs.glassSidebar}
               max={100}
-              label="Плотность поверхности сайдбара"
+              label={t("settings.customize.glass.zoneSidebar.ariaLabel")}
               suffix={`${prefs.glassSidebar} %`}
               onChange={(v) => set({ glassSidebar: Math.round(v) })}
             />
           </SettingRow>
-          <SettingRow title="«Сейчас играет»" hint="Правая панель с текстом">
+          <SettingRow title={t("settings.customize.glass.zoneNowPlaying.title")} hint={t("settings.customize.glass.zoneNowPlaying.hint")}>
             <LiveSlider
               value={prefs.glassNowPlaying}
               max={100}
-              label="Плотность панели «Сейчас играет»"
+              label={t("settings.customize.glass.zoneNowPlaying.ariaLabel")}
               suffix={`${prefs.glassNowPlaying} %`}
               onChange={(v) => set({ glassNowPlaying: Math.round(v) })}
             />
@@ -1353,20 +1705,20 @@ export function SettingsView({
         </>
       ) : null}
 
-      <GroupTitle>Цвета и слои</GroupTitle>
-      <SettingRow title="Базовый фон" hint="Тон и температура bg-слоёв">
+      <GroupTitle>{t("settings.customize.colors.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.colors.baseBg.title")} hint={t("settings.customize.colors.baseBg.hint")}>
         <Tabs
           items={[
-            { key: "graphite", label: "Графит" },
-            { key: "warm", label: "Тёплый" },
-            { key: "cold", label: "Холодный" },
-            { key: "amoled", label: "AMOLED" },
+            { key: "graphite", label: t("settings.customize.colors.baseBg.graphite") },
+            { key: "warm", label: t("settings.customize.colors.baseBg.warm") },
+            { key: "cold", label: t("settings.customize.colors.baseBg.cold") },
+            { key: "amoled", label: t("settings.customize.colors.baseBg.amoled") },
           ]}
           value={prefs.baseBg}
           onChange={(k: string) => set({ baseBg: k as Prefs["baseBg"] })}
         />
       </SettingRow>
-      <SettingRow title="Роли акцента" hint="Отдельные цвета для play-кнопок, слайдеров и активного трека">
+      <SettingRow title={t("settings.customize.colors.accentRoles.title")} hint={t("settings.customize.colors.accentRoles.hint")}>
         <Switch
           checked={prefs.accentRolesOn}
           onChange={(on: boolean) =>
@@ -1378,258 +1730,285 @@ export function SettingsView({
                 : { accentRolesOn: false },
             )
           }
-          label="Роли акцента"
+          label={t("settings.customize.colors.accentRoles.title")}
         />
       </SettingRow>
       {prefs.accentRolesOn ? (
         <>
-          <SettingRow title="Кнопки play" hint="Play в плеере, плитках и режиме прослушивания">
-            <ColorDot color={prefs.accentPlay} label="Цвет play-кнопок" onPick={(accentPlay) => set({ accentPlay })} />
+          <SettingRow title={t("settings.customize.colors.accentPlay.title")} hint={t("settings.customize.colors.accentPlay.hint")}>
+            <ColorDot color={prefs.accentPlay} label={t("settings.customize.colors.accentPlay.pickerLabel")} onPick={(accentPlay) => set({ accentPlay })} />
           </SettingRow>
-          <SettingRow title="Слайдеры" hint="Прогресс, громкость, эквалайзер">
-            <ColorDot color={prefs.accentSlider} label="Цвет слайдеров" onPick={(accentSlider) => set({ accentSlider })} />
+          <SettingRow title={t("settings.customize.colors.accentSlider.title")} hint={t("settings.customize.colors.accentSlider.hint")}>
+            <ColorDot
+              color={prefs.accentSlider}
+              label={t("settings.customize.colors.accentSlider.pickerLabel")}
+              onPick={(accentSlider) => set({ accentSlider })}
+            />
           </SettingRow>
-          <SettingRow title="Активный трек" hint="Подсветка играющего трека в списках">
-            <ColorDot color={prefs.accentActive} label="Цвет активного трека" onPick={(accentActive) => set({ accentActive })} />
+          <SettingRow title={t("settings.customize.colors.accentActive.title")} hint={t("settings.customize.colors.accentActive.hint")}>
+            <ColorDot
+              color={prefs.accentActive}
+              label={t("settings.customize.colors.accentActive.pickerLabel")}
+              onPick={(accentActive) => set({ accentActive })}
+            />
           </SettingRow>
         </>
       ) : null}
-      <SettingRow title="Приглушение текста" hint="Яркость вторичного текста (подписи, хинты)">
+      <SettingRow title={t("settings.customize.colors.textDim.title")} hint={t("settings.customize.colors.textDim.hint")}>
         <LiveSlider
           value={prefs.textDim - 40}
           max={40}
-          label="Приглушение текста"
+          label={t("settings.customize.colors.textDim.title")}
           suffix={`${prefs.textDim} %`}
           onChange={(v) => set({ textDim: 40 + Math.round(v) })}
         />
       </SettingRow>
 
-      <GroupTitle>Форма и размеры</GroupTitle>
-      <SettingRow title="Плитки и строки" hint="Обложки, карточки, строки треков — процент от пресета «Скругление»">
+      <GroupTitle>{t("settings.customize.shape.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.shape.tiles.title")} hint={t("settings.customize.shape.tiles.hint")}>
         <LiveSlider
-          value={prefs.radiusTiles - 50}
-          max={110}
-          label="Скругление плиток и строк"
+          value={prefs.radiusTiles}
+          max={200}
+          label={t("settings.customize.shape.tiles.title")}
           suffix={`${prefs.radiusTiles} %`}
-          onChange={(v) => set({ radiusTiles: 50 + Math.round(v) })}
+          onChange={(v) => set({ radiusTiles: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Кнопки" hint="Форма кнопок: от строгих углов до пилюли (правый край, дефолт ДС)">
+      <SettingRow title={t("settings.customize.shape.buttons.title")} hint={t("settings.customize.shape.buttons.hint")}>
         <LiveSlider
-          value={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? 21 : prefs.radiusControls - 6}
-          max={21}
-          label="Скругление кнопок"
-          suffix={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? "пилюля" : `${prefs.radiusControls} px`}
-          onChange={(v) => set({ radiusControls: Math.round(v) >= 21 ? RADIUS_OVERRIDE_OFF : 6 + Math.round(v) })}
+          value={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusControls}
+          max={27}
+          label={t("settings.customize.shape.buttons.title")}
+          suffix={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.pill") : `${prefs.radiusControls} px`}
+          onChange={(v) => set({ radiusControls: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Поля ввода" hint="Поиск, селекты, текстовые поля; правый край — как в пресете">
+      <SettingRow title={t("settings.customize.shape.tabs.title")} hint={t("settings.customize.shape.tabs.hint")}>
         <LiveSlider
-          value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 21 : prefs.radiusFields - 6}
-          max={21}
-          label="Скругление полей ввода"
-          suffix={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? "пресет" : `${prefs.radiusFields} px`}
-          onChange={(v) => set({ radiusFields: Math.round(v) >= 21 ? RADIUS_OVERRIDE_OFF : 6 + Math.round(v) })}
+          value={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusTabs}
+          max={27}
+          label={t("settings.customize.shape.tabs.title")}
+          suffix={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.pill") : `${prefs.radiusTabs} px`}
+          onChange={(v) => set({ radiusTabs: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Панели и зоны" hint="Сайдбар, плеер, диалоги — процент от пресета «Скругление»">
+      <SettingRow title={t("settings.customize.shape.fields.title")} hint={t("settings.customize.shape.fields.hint")}>
         <LiveSlider
-          value={prefs.radiusPanels - 50}
-          max={110}
-          label="Скругление панелей и зон"
+          value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusFields}
+          max={27}
+          label={t("settings.customize.shape.fields.title")}
+          suffix={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.preset") : `${prefs.radiusFields} px`}
+          onChange={(v) => set({ radiusFields: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.shape.panels.title")} hint={t("settings.customize.shape.panels.hint")}>
+        <LiveSlider
+          value={prefs.radiusPanels}
+          max={200}
+          label={t("settings.customize.shape.panels.title")}
           suffix={`${prefs.radiusPanels} %`}
-          onChange={(v) => set({ radiusPanels: 50 + Math.round(v) })}
+          onChange={(v) => set({ radiusPanels: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Плотность интерфейса" hint="Отступы зон и высота строк трека: влево плотнее, вправо просторнее">
+      <SettingRow title={t("settings.customize.shape.density.title")} hint={t("settings.customize.shape.density.hint")}>
         <LiveSlider
           value={prefs.density}
           max={100}
-          label="Плотность интерфейса"
+          label={t("settings.customize.shape.density.title")}
           suffix={`${52 + Math.round((16 * prefs.density) / 100)} px`}
           onChange={(v) => set({ density: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Ширина сайдбара" hint="На узком окне сайдбар всё равно ужимается">
+      <SettingRow title={t("settings.customize.shape.sidebarWidth.title")} hint={t("settings.customize.shape.sidebarWidth.hint")}>
         <LiveSlider
           value={prefs.wSidebar - 240}
           max={100}
-          label="Ширина сайдбара"
+          label={t("settings.customize.shape.sidebarWidth.title")}
           suffix={`${prefs.wSidebar} px`}
           onChange={(v) => set({ wSidebar: 240 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Ширина «Сейчас играет»" hint="Правая панель с текстом">
+      <SettingRow title={t("settings.customize.shape.nowPlayingWidth.title")} hint={t("settings.customize.shape.nowPlayingWidth.hint")}>
         <LiveSlider
           value={prefs.wNowPlaying - 300}
           max={120}
-          label="Ширина панели «Сейчас играет»"
+          label={t("settings.customize.shape.nowPlayingWidth.title")}
           suffix={`${prefs.wNowPlaying} px`}
           onChange={(v) => set({ wNowPlaying: 300 + Math.round(v) })}
         />
       </SettingRow>
 
-      <GroupTitle>Типографика</GroupTitle>
-      <SettingRow title="Размер текста" hint="Только текст (масштаб всего интерфейса — «Масштаб интерфейса» выше)">
+      <GroupTitle>{t("settings.customize.typography.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.typography.fontScale.title")} hint={t("settings.customize.typography.fontScale.hint")}>
         <LiveSlider
           value={prefs.fontScale - 85}
           max={40}
-          label="Размер текста"
+          label={t("settings.customize.typography.fontScale.title")}
           suffix={`${prefs.fontScale} %`}
           onChange={(v) => set({ fontScale: 85 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Межстрочный интервал" hint="Плотность строк UI-текста">
+      <SettingRow title={t("settings.customize.typography.lineSpacing.title")} hint={t("settings.customize.typography.lineSpacing.hint")}>
         <LiveSlider
           value={prefs.lineSpacing - 125}
           max={35}
-          label="Межстрочный интервал"
-          suffix={(prefs.lineSpacing / 100).toFixed(2).replace(".", ",")}
+          label={t("settings.customize.typography.lineSpacing.title")}
+          suffix={(prefs.lineSpacing / 100).toFixed(2).replace(".", lang === "ru" ? "," : ".")}
           onChange={(v) => set({ lineSpacing: 125 + Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания">
+      <SettingRow title={t("settings.customize.typography.karaokeSize.title")} hint={t("settings.customize.typography.karaokeSize.hint")}>
         <LiveSlider
           value={prefs.karaokeSize - 36}
           max={36}
-          label="Размер караоке-текста"
+          label={t("settings.customize.typography.karaokeSize.title")}
           suffix={`${prefs.karaokeSize} px`}
           onChange={(v) => set({ karaokeSize: 36 + Math.round(v) })}
         />
       </SettingRow>
 
-      <GroupTitle>Движение</GroupTitle>
-      <SettingRow title="Анимации" hint="Плавные переходы интерфейса">
-        <Switch checked={prefs.anims} onChange={(anims: boolean) => set({ anims })} label="Анимации" />
+      <GroupTitle>{t("settings.customize.motion.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.motion.anims.title")} hint={t("settings.customize.motion.anims.hint")}>
+        <Switch checked={prefs.anims} onChange={(anims: boolean) => set({ anims })} label={t("settings.customize.motion.anims.title")} />
       </SettingRow>
-      <SettingRow title="Скорость анимаций" hint="Влево быстрее, вправо мягче (процент длительности)">
+      <SettingRow title={t("settings.customize.motion.animSpeed.title")} hint={t("settings.customize.motion.animSpeed.hint")}>
         <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
           <LiveSlider
             value={prefs.animSpeed - 60}
             max={110}
-            label="Скорость анимаций"
+            label={t("settings.customize.motion.animSpeed.title")}
             suffix={`${prefs.animSpeed} %`}
             onChange={(v) => set({ animSpeed: 60 + Math.round(v) })}
           />
         </div>
       </SettingRow>
 
-      <GroupTitle>Компоновка и элементы</GroupTitle>
-      <SettingRow title="Кнопки плеер-бара" hint="Состав и порядок кнопок бара" onClick={() => setSub("bar")} chevron></SettingRow>
-      <SettingRow title="Вкладки сайдбара" hint="Состав, порядок и свои имена вкладок" onClick={() => setSub("nav")} chevron></SettingRow>
-      <SettingRow title="Строка трека: обложка" hint="Мини-обложка слева в списках">
+      <GroupTitle>{t("settings.customize.layout.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.layout.barButtons.title")} hint={t("settings.customize.layout.barButtons.hint")} onClick={() => setSub("bar")} chevron></SettingRow>
+      <SettingRow title={t("settings.customize.layout.navTabs.title")} hint={t("settings.customize.layout.navTabs.hint")} onClick={() => setSub("nav")} chevron></SettingRow>
+      <SettingRow title={t("settings.customize.layout.rowCover.title")} hint={t("settings.customize.layout.rowCover.hint")}>
         <Switch
           checked={prefs.rowShow.cover}
           onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, cover: on } })}
-          label="Обложка в строке трека"
+          label={t("settings.customize.layout.rowCover.title")}
         />
       </SettingRow>
-      <SettingRow title="Строка трека: длительность" hint="Тайм-код справа; альбом и источник появятся вместе с данными каталога">
+      <SettingRow title={t("settings.customize.layout.rowDuration.title")} hint={t("settings.customize.layout.rowDuration.hint")}>
         <Switch
           checked={prefs.rowShow.duration}
           onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, duration: on } })}
-          label="Длительность в строке трека"
+          label={t("settings.customize.layout.rowDuration.title")}
         />
       </SettingRow>
 
-      <GroupTitle>Фон</GroupTitle>
-      <SettingRow title="Тип фона" hint="Что за интерфейсом">
+      <GroupTitle>{t("settings.customize.background.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.background.type.title")} hint={t("settings.customize.background.type.hint")}>
         <Select
-          ariaLabel="Тип фона"
+          ariaLabel={t("settings.customize.background.type.title")}
           items={[
-            { key: "none", label: "Выкл", icon: "circle-off" },
-            { key: "cover", label: "Обложка трека", icon: "image" },
-            { key: "color", label: "Цвет", icon: "paintbrush" },
-            { key: "gradient", label: "Градиент", icon: "blend" },
-            { key: "image", label: "Картинка по URL", icon: "link" },
+            { key: "none", label: t("common.off"), icon: "circle-off" },
+            { key: "cover", label: t("settings.customize.background.type.cover"), icon: "image" },
+            { key: "color", label: t("settings.customize.background.type.color"), icon: "paintbrush" },
+            { key: "gradient", label: t("settings.customize.background.type.gradient"), icon: "blend" },
+            { key: "image", label: t("settings.customize.background.type.image"), icon: "link" },
+            { key: "animated", label: t("settings.customize.background.type.animated"), icon: "sparkles" },
           ]}
           value={prefs.bgType}
           onChange={(k: string) => set({ bgType: k as Prefs["bgType"] })}
         />
       </SettingRow>
+      {prefs.bgType === "animated" ? (
+        <SettingRow title={t("settings.customize.background.invert.title")} hint={t("settings.customize.background.invert.hint")}>
+          <Switch
+            checked={prefs.bgAnimatedInvert}
+            onChange={(bgAnimatedInvert: boolean) => set({ bgAnimatedInvert })}
+            label={t("settings.customize.background.invert.ariaLabel")}
+          />
+        </SettingRow>
+      ) : null}
       {prefs.bgType === "color" || prefs.bgType === "gradient" ? (
-        <SettingRow title={prefs.bgType === "gradient" ? "Цвета градиента" : "Цвет фона"} hint="Пипетка открывает пикер">
+        <SettingRow
+          title={prefs.bgType === "gradient" ? t("settings.customize.background.color.gradientTitle") : t("settings.customize.background.color.title")}
+          hint={t("settings.customize.background.color.hint")}
+        >
           <div style={{ display: "flex", gap: "var(--sp-3)" }}>
-            <ColorDot color={prefs.bgColor} label="Цвет фона" onPick={(bgColor) => set({ bgColor })} />
+            <ColorDot color={prefs.bgColor} label={t("settings.customize.background.color.title")} onPick={(bgColor) => set({ bgColor })} />
             {prefs.bgType === "gradient" ? (
-              <ColorDot color={prefs.bgColor2} label="Второй цвет градиента" onPick={(bgColor2) => set({ bgColor2 })} />
+              <ColorDot color={prefs.bgColor2} label={t("settings.customize.background.color.secondGradientColor")} onPick={(bgColor2) => set({ bgColor2 })} />
             ) : null}
           </div>
         </SettingRow>
       ) : null}
       {prefs.bgType === "image" ? (
-        <SettingRow title="Картинка по URL" hint="Ссылка на изображение; размытие — слайдером выше (0 = без blur)">
+        <SettingRow title={t("settings.customize.background.imageUrl.title")} hint={t("settings.customize.background.imageUrl.hint")}>
           <SettingInput value={prefs.bgImageUrl} onChange={(bgImageUrl) => set({ bgImageUrl })} placeholder="https://…" width={260} />
         </SettingRow>
       ) : null}
-      <SettingRow title="Затемнение фона" hint="Чтобы контент читался поверх">
+      <SettingRow title={t("settings.customize.background.dim.title")} hint={t("settings.customize.background.dim.hint")}>
         <LiveSlider
           value={prefs.bgDim}
           max={80}
-          label="Затемнение фона"
+          label={t("settings.customize.background.dim.title")}
           suffix={`${prefs.bgDim} %`}
           onChange={(v) => set({ bgDim: Math.round(v) })}
         />
       </SettingRow>
-      <SettingRow title="Реакция на обложку" hint="Базовый фон подкрашивается доминирующим цветом обложки трека">
-        <Switch checked={prefs.bgTint} onChange={(bgTint: boolean) => set({ bgTint })} label="Реакция на обложку" />
+      <SettingRow title={t("settings.customize.background.tint.title")} hint={t("settings.customize.background.tint.hint")}>
+        <Switch checked={prefs.bgTint} onChange={(bgTint: boolean) => set({ bgTint })} label={t("settings.customize.background.tint.title")} />
       </SettingRow>
 
-      <GroupTitle>Поведение</GroupTitle>
-      <SettingRow title="Действие по двойному клику" hint="Дабл-клик по строке трека; кнопка-номер всегда играет">
+      <GroupTitle>{t("settings.customize.behavior.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.behavior.doubleClick.title")} hint={t("settings.customize.behavior.doubleClick.hint")}>
         <Tabs
           items={[
-            { key: "play", label: "Играть" },
-            { key: "queue", label: "В очередь" },
+            { key: "play", label: t("settings.customize.behavior.doubleClick.play") },
+            { key: "queue", label: t("settings.customize.behavior.doubleClick.queue") },
           ]}
           value={prefs.doubleClickAction}
           onChange={(k: string) => set({ doubleClickAction: k as Prefs["doubleClickAction"] })}
         />
       </SettingRow>
-      <SettingRow title="Стартовый экран" hint="Что открывается при запуске">
+      <SettingRow title={t("settings.customize.behavior.startView.title")} hint={t("settings.customize.behavior.startView.hint")}>
         <Select
-          ariaLabel="Стартовый экран"
+          ariaLabel={t("settings.customize.behavior.startView.title")}
           items={[
-            { key: "home", label: "Главная", icon: "home" },
-            { key: "search", label: "Поиск", icon: "search" },
-            { key: "favorites", label: "Любимое", icon: "heart" },
-            { key: "library", label: "Библиотека", icon: "library-big" },
+            { key: "home", label: t("settings.customize.behavior.startView.home"), icon: "home" },
+            { key: "search", label: t("settings.customize.behavior.startView.search"), icon: "search" },
+            { key: "favorites", label: t("settings.customize.behavior.startView.favorites"), icon: "heart" },
+            { key: "library", label: t("settings.customize.behavior.startView.library"), icon: "library-big" },
           ]}
           value={prefs.startView}
           onChange={(k: string) => set({ startView: k as Prefs["startView"] })}
         />
       </SettingRow>
 
-      <GroupTitle>Темы</GroupTitle>
-      <SettingRow title="Сохранить как тему" hint="Текущее оформление целиком, включая CSS-тир">
+      <GroupTitle>{t("settings.customize.themes.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.themes.saveAs.title")} hint={t("settings.customize.themes.saveAs.hint")}>
         <Button variant="ghost" icon="save" onClick={openSaveTheme}>
-          Сохранить
+          {t("common.save")}
         </Button>
       </SettingRow>
-      {themes.map((t) => (
-        <SettingRow key={t.id} title={t.name} hint={new Date(t.createdAt).toLocaleDateString("ru")}>
+      {themes.map((theme) => (
+        <SettingRow key={theme.id} title={theme.name} hint={new Date(theme.createdAt).toLocaleDateString(lang)}>
           <div style={{ display: "flex", gap: "var(--sp-2)" }}>
-            <Button variant="secondary" icon="paintbrush" onClick={() => applySavedTheme(t)}>
-              Применить
+            <Button variant="secondary" icon="paintbrush" onClick={() => applySavedTheme(theme)}>
+              {t("common.apply")}
             </Button>
-            <IconButton icon="copy" label="Скопировать JSON темы" onClick={() => void copyTheme(t)} />
-            <IconButton icon="trash-2" label="Удалить тему" onClick={() => removeTheme(t.id)} />
+            <IconButton icon="copy" label={t("settings.customize.themes.copyJson")} onClick={() => void copyTheme(theme)} />
+            <IconButton icon="trash-2" label={t("settings.customize.themes.deleteTheme")} onClick={() => removeTheme(theme.id)} />
           </div>
         </SettingRow>
       ))}
-      <SettingRow title="Импорт темы" hint="Вставь JSON темы (из буфера или маркетплейса)">
+      <SettingRow title={t("settings.customize.themes.importRow.title")} hint={t("settings.customize.themes.importRow.hint")}>
         <Button variant="ghost" icon="clipboard-paste" onClick={() => setThemeImportOpen(true)}>
-          Вставить
+          {t("settings.customize.themes.importRow.button")}
         </Button>
       </SettingRow>
-      <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами" onClick={() => openMarket("Темы")} chevron></SettingRow>
+      <SettingRow title={t("settings.customize.themes.marketRow.title")} hint={t("settings.customize.themes.marketRow.hint")} onClick={() => openMarket("themes")} chevron></SettingRow>
 
-      <GroupTitle>CSS-тир</GroupTitle>
-      <SettingRow
-        title="Свой CSS"
-        hint="Опасная зона: переопределяет любые токены и стили; сломанный вид лечится выключателем или сбросом"
-      >
-        <Switch checked={prefs.customCssOn} onChange={(customCssOn: boolean) => set({ customCssOn })} label="Свой CSS" />
+      <GroupTitle>{t("settings.customize.css.groupTitle")}</GroupTitle>
+      <SettingRow title={t("settings.customize.css.toggle.title")} hint={t("settings.customize.css.toggle.hint")}>
+        <Switch checked={prefs.customCssOn} onChange={(customCssOn: boolean) => set({ customCssOn })} label={t("settings.customize.css.toggle.title")} />
       </SettingRow>
       {prefs.customCssOn ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
@@ -1638,7 +2017,7 @@ export function SettingsView({
             onChange={(e) => setCssDraft(e.target.value)}
             spellCheck={false}
             placeholder={":root { --accent: #22c55e; }\n.muza-view { /* … */ }"}
-            aria-label="Свой CSS"
+            aria-label={t("settings.customize.css.toggle.title")}
             style={{
               minHeight: 140,
               resize: "vertical",
@@ -1655,12 +2034,9 @@ export function SettingsView({
           />
           <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
             <Button variant="secondary" icon="check" disabled={cssDraft === prefs.customCss} onClick={() => set({ customCss: cssDraft })}>
-              Применить CSS
+              {t("settings.customize.css.apply")}
             </Button>
-            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              Применяется поверх всех токенов; входит в сохранённую тему. Настройки вроде своего акцента живут
-              inline — их перебивает только !important.
-            </span>
+            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.customize.css.appliesHint")}</span>
           </div>
         </div>
       ) : null}
@@ -1678,6 +2054,7 @@ export function SettingsView({
               radiusPanels: DEFAULT_PREFS.radiusPanels,
               radiusControls: DEFAULT_PREFS.radiusControls,
               radiusFields: DEFAULT_PREFS.radiusFields,
+              radiusTabs: DEFAULT_PREFS.radiusTabs,
               blur: DEFAULT_PREFS.blur,
               glassOpacity: DEFAULT_PREFS.glassOpacity,
               glassZonesOn: DEFAULT_PREFS.glassZonesOn,
@@ -1693,6 +2070,7 @@ export function SettingsView({
               bgImageUrl: DEFAULT_PREFS.bgImageUrl,
               bgDim: DEFAULT_PREFS.bgDim,
               bgTint: DEFAULT_PREFS.bgTint,
+              bgAnimatedInvert: DEFAULT_PREFS.bgAnimatedInvert,
               blurScenery: DEFAULT_PREFS.blurScenery,
               baseBg: DEFAULT_PREFS.baseBg,
               textDim: DEFAULT_PREFS.textDim,
@@ -1705,7 +2083,7 @@ export function SettingsView({
             })
           }
         >
-          Сбросить оформление
+          {t("settings.customize.resetAppearance")}
         </Button>
       </div>
     </div>
@@ -1713,11 +2091,14 @@ export function SettingsView({
 
   const equalizerPane = (
     <div key="equalizer" className={paneClass} style={paneStyle}>
-      <SubHeader title="Эквалайзер" onBack={() => setSub(null)} />
-      <SettingRow title="Включить" hint="Живой десятиполосник — крутит звук каталожных треков">
-        <Switch checked={eqOn} onChange={setEqOn} label="Эквалайзер" />
+      <SubHeader title={t("settings.equalizer.title")} onBack={() => setSub(null)} />
+      <SettingRow title={t("settings.equalizer.enable.title")} hint={t("settings.equalizer.enable.hint")}>
+        <Switch checked={eqOn} onChange={setEqOn} label={t("settings.equalizer.title")} />
       </SettingRow>
       <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+        {/* Ключи пресетов (EQ_PRESETS) — персистентные значения prefs.eqPreset,
+            общие с DEFAULT_PREFS (types.ts) и apps/web — вне зоны этой правки,
+            сознательно не переведены (см. комментарий у EQ_PRESETS). */}
         <ChipGroup items={[...Object.keys(EQ_PRESETS), "Свой"]} value={eqPreset} onChange={applyPreset} />
       </div>
       {/* Панель полос — нативный десятиполосник: вертикальные фейдеры в ряд */}
@@ -1746,55 +2127,59 @@ export function SettingsView({
             >
               {eqBands[i] > 0 ? `+${eqBands[i]}` : eqBands[i]}
             </span>
-            <Fader value={eqBands[i]} min={-12} max={12} height={150} disabled={!eqOn} onChange={(v: number) => setBand(i, v)} ariaLabel={`Полоса ${f} Гц`} />
-            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{f}</span>
+            <Fader
+              value={eqBands[i]}
+              min={-12}
+              max={12}
+              height={150}
+              disabled={!eqOn}
+              onChange={(v: number) => setBand(i, v)}
+              ariaLabel={t("settings.equalizer.bandAria", { freq: eqBandLabel(f, t) })}
+            />
+            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{eqBandLabel(f, t)}</span>
           </div>
         ))}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <Button variant="ghost" icon="rotate-ccw" disabled={!eqOn} onClick={() => applyPreset("Ровный")}>
-          Сбросить полосы
+          {t("settings.equalizer.resetBands")}
         </Button>
-        <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>дБ, от −12 до +12</span>
+        <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.equalizer.dbRange")}</span>
       </div>
     </div>
   );
 
   const discordPane = (
     <div key="discord" className={paneClass} style={paneStyle}>
-      <SubHeader title="Discord Rich Presence" onBack={() => setSub(null)} />
+      <SubHeader title={t("settings.integrations.discord.title")} onBack={() => setSub(null)} />
       <SettingRow
-        title="Показывать в Discord"
-        hint={
-          discordAvail === false
-            ? "Нужен Discord Application ID — RPC заглушен до его добавления; настройка сохранится и заработает сама, когда владелец его пришлёт"
-            : "Статус «слушает Muza»; нужен запущенный Discord и зарегистрированное приложение (client id)"
-        }
+        title={t("settings.integrations.discord.enable.title")}
+        hint={discordAvail === false ? t("settings.integrations.discord.enable.hintNoAppId") : t("settings.integrations.discord.enable.hint")}
       >
-        <Switch checked={prefs.discordRpcOn} onChange={(discordRpcOn: boolean) => set({ discordRpcOn })} label="Discord RPC" />
+        <Switch checked={prefs.discordRpcOn} onChange={(discordRpcOn: boolean) => set({ discordRpcOn })} label={t("settings.integrations.discord.enable.ariaLabel")} />
       </SettingRow>
-      <GroupTitle>Что показывать</GroupTitle>
-      <SettingRow title="Обложка трека" hint="Discord тянет обложку по https-ссылке сам">
-        <Switch checked={prefs.discordShowCover} onChange={(discordShowCover: boolean) => set({ discordShowCover })} label="Обложка" />
+      <GroupTitle>{t("settings.integrations.discord.whatToShow")}</GroupTitle>
+      <SettingRow title={t("settings.integrations.discord.cover.title")} hint={t("settings.integrations.discord.cover.hint")}>
+        <Switch checked={prefs.discordShowCover} onChange={(discordShowCover: boolean) => set({ discordShowCover })} label={t("settings.integrations.discord.cover.ariaLabel")} />
       </SettingRow>
-      <SettingRow title="Первая строка" hint="Подстановки: {track}, {artist}, {album}; альбома у каталожных пока нет">
+      <SettingRow title={t("settings.integrations.discord.line1.title")} hint={t("settings.integrations.discord.line1.hint")}>
         <SettingInput value={prefs.discordLine1} placeholder="{track}" onChange={(v) => set({ discordLine1: v.slice(0, 128) })} />
       </SettingRow>
-      <SettingRow title="Вторая строка" hint="Пустые подстановки подчищаются вместе с разделителями">
+      <SettingRow title={t("settings.integrations.discord.line2.title")} hint={t("settings.integrations.discord.line2.hint")}>
         <SettingInput value={prefs.discordLine2} placeholder="{artist}" onChange={(v) => set({ discordLine2: v.slice(0, 128) })} />
       </SettingRow>
-      <GroupTitle>Кнопка в активности</GroupTitle>
-      <SettingRow title="Показывать кнопку" hint="Кнопка под статусом в профиле Discord; заработает вместе с RPC">
-        <Switch checked={prefs.discordBtnOn} onChange={(discordBtnOn: boolean) => set({ discordBtnOn })} label="Кнопка активности" />
+      <GroupTitle>{t("settings.integrations.discord.buttonGroup")}</GroupTitle>
+      <SettingRow title={t("settings.integrations.discord.btnOn.title")} hint={t("settings.integrations.discord.btnOn.hint")}>
+        <Switch checked={prefs.discordBtnOn} onChange={(discordBtnOn: boolean) => set({ discordBtnOn })} label={t("settings.integrations.discord.btnOn.ariaLabel")} />
       </SettingRow>
-      <SettingRow title="Текст кнопки" hint="До 32 символов — лимит Discord">
+      <SettingRow title={t("settings.integrations.discord.btnLabel.title")} hint={t("settings.integrations.discord.btnLabel.hint")}>
         <SettingInput
           value={prefs.discordBtnLabel}
-          placeholder="Открыть в Muza"
+          placeholder={t("settings.integrations.discord.btnLabel.placeholder")}
           onChange={(v) => set({ discordBtnLabel: v.slice(0, 32) })}
         />
       </SettingRow>
-      <SettingRow title="Ссылка кнопки" hint="Куда ведёт клик: сайт, профиль, трек">
+      <SettingRow title={t("settings.integrations.discord.btnUrl.title")} hint={t("settings.integrations.discord.btnUrl.hint")}>
         <SettingInput
           value={prefs.discordBtnUrl}
           placeholder="https://…"
@@ -1802,7 +2187,7 @@ export function SettingsView({
           onChange={(v) => set({ discordBtnUrl: v })}
         />
       </SettingRow>
-      <GroupTitle>Предпросмотр</GroupTitle>
+      <GroupTitle>{t("settings.integrations.discord.previewGroup")}</GroupTitle>
       {/* Карточка активности как в профиле Discord */}
       <div
         style={{
@@ -1816,7 +2201,7 @@ export function SettingsView({
         }}
       >
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-3)" }}>
-          Слушает Muza
+          {t("settings.integrations.discord.preview.listeningTo")}
         </div>
         <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center" }}>
           <div
@@ -1835,10 +2220,10 @@ export function SettingsView({
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)" }}>
-              {formatTemplate(prefs.discordLine1, DISCORD_PREVIEW_VARS) || "Кометы над городом"}
+              {formatTemplate(prefs.discordLine1, discordPreviewVars(t)) || t("settings.integrations.discord.preview.track")}
             </div>
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
-              {formatTemplate(prefs.discordLine2, DISCORD_PREVIEW_VARS) || "Северный ветер"}
+              {formatTemplate(prefs.discordLine2, discordPreviewVars(t)) || t("settings.integrations.discord.preview.artist")}
             </div>
           </div>
         </div>
@@ -1857,64 +2242,85 @@ export function SettingsView({
             }}
             title={prefs.discordBtnUrl}
           >
-            {prefs.discordBtnLabel.trim() || "Открыть в Muza"}
+            {prefs.discordBtnLabel.trim() || t("settings.integrations.discord.btnLabel.placeholder")}
           </div>
         ) : null}
-        <div style={{ fontSize: 11, color: "var(--text-3)" }}>Предпросмотр карточки активности</div>
+        <div style={{ fontSize: 11, color: "var(--text-3)" }}>{t("settings.integrations.discord.preview.caption")}</div>
       </div>
     </div>
   );
 
   const marketPane = (
     <div key="market" className={paneClass} style={paneStyle}>
-      <SubHeader title="Маркетплейс" onBack={() => setSub(null)} />
+      <SubHeader title={t("settings.market.title")} onBack={() => setSub(null)} />
       <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-        <ChipGroup items={["Всё", "Темы", "Плагины"]} value={marketFilter} onChange={setMarketFilter} />
-        {serverSession && marketFilter !== "Плагины" ? (
+        <ChipGroup
+          items={[
+            { key: "all", label: t("settings.market.filter.all") },
+            { key: "themes", label: t("settings.market.filter.themes") },
+            { key: "plugins", label: t("settings.market.filter.plugins") },
+          ]}
+          value={marketFilter}
+          onChange={(k) => setMarketFilter(k as "all" | "themes" | "plugins")}
+        />
+        {serverSession && marketFilter !== "plugins" ? (
           <Button variant="secondary" icon="upload" onClick={openPublishTheme} style={{ marginLeft: "auto" }}>
-            Опубликовать оформление
+            {t("settings.market.publishTheme")}
           </Button>
         ) : null}
       </div>
 
-      {marketFilter !== "Плагины" ? (
+      {marketFilter !== "plugins" ? (
         // Темы — настоящий серверный каталог (Stage 6)
         !serverSession ? (
-          <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
-            Маркетплейс тем доступен после входа с аккаунтом — анонимный аккаунт живёт только на устройстве.
-          </div>
+          <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.themesNeedAccount")}</div>
         ) : marketThemes === null ? (
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>Загружаем каталог…</div>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("common.loading")}</div>
         ) : marketThemes.length === 0 ? (
-          <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
-            Пока пусто. Собери оформление в Кастомизации и стань первым — «Опубликовать оформление».
-          </div>
+          <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.themesEmpty")}</div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
-            {marketThemes.map((t) => (
+            {marketThemes.map((theme) => (
               <MarketThemeCard
-                key={t.id}
-                theme={t}
-                onInstall={() => void installTheme(t)}
-                onRemove={t.isMine ? () => void unpublishTheme(t) : undefined}
-                onReport={!t.isMine ? () => void reportTheme(t) : undefined}
+                key={theme.id}
+                theme={theme}
+                onInstall={() => void installTheme(theme)}
+                onRemove={theme.isMine ? () => void unpublishTheme(theme) : undefined}
+                onReport={!theme.isMine ? () => void reportTheme(theme) : undefined}
               />
             ))}
           </div>
         )
       ) : null}
 
-      {marketFilter !== "Темы" ? (
+      {marketFilter !== "themes" ? (
         <>
-          {marketFilter === "Всё" ? <GroupTitle>Плагины</GroupTitle> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
-            {MARKET_ITEMS.filter((m) => m.kind === "plugin").map((m) => (
-              <MarketCard key={m.name} item={m} />
-            ))}
-          </div>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-            Плагины — витрина: внешняя плагин-система требует песочницу (в работе). Встроенные расширения — во вкладке «Расширения».
-          </div>
+          {marketFilter === "all" ? <GroupTitle>{t("settings.market.filter.plugins")}</GroupTitle> : null}
+          {!serverSession ? (
+            <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.pluginsNeedAccount")}</div>
+          ) : !engineAvailable() ? (
+            <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.pluginsAppOnly")}</div>
+          ) : marketPlugins === null ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("common.loading")}</div>
+          ) : marketPlugins.length === 0 ? (
+            <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.pluginsEmpty")}</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
+              {marketPlugins.map((m) => (
+                <MarketPluginCard
+                  key={m.id}
+                  item={m}
+                  isAdmin={!!isAdmin}
+                  installing={marketPluginInstalling === m.id}
+                  onInstall={() => void installFromMarket(m)}
+                  onRemove={m.isMine ? () => void unpublishMarketPlugin(m) : undefined}
+                  onReport={!m.isMine ? () => void reportMarketPlugin(m) : undefined}
+                  onHideToggle={isAdmin ? () => void toggleHideMarketPlugin(m) : undefined}
+                  onApprove={isAdmin ? () => void approveMarketPluginRow(m) : undefined}
+                />
+              ))}
+            </div>
+          )}
         </>
       ) : null}
     </div>
@@ -1938,57 +2344,49 @@ export function SettingsView({
 
   const dataPane = (
     <div key="data" className={paneClass} style={paneStyle}>
-      <SubHeader title="Данные: что и где живёт" onBack={() => setSub(null)} />
-      {dataDocBlock("Остаётся только на этом устройстве", [
-        "— Аудио-кэш прослушанного и оффлайн-загрузки (байты музыки сервер не проходят: клиент добывает их сам).",
-        "— Локальные файлы и их пути на диске.",
-        "— Настройки, тема, ключи текущей сессии.",
+      <SubHeader title={t("settings.data.title")} onBack={() => setSub(null)} />
+      {dataDocBlock(t("settings.data.deviceOnly.title"), [
+        t("settings.data.deviceOnly.item1"),
+        t("settings.data.deviceOnly.item2"),
+        t("settings.data.deviceOnly.item3"),
       ])}
-      {dataDocBlock("Хранится на сервере — для твоих же функций, видно только тебе", [
-        "— Аккаунт: ник и хэш пароля; email — только если сам указал (восстановление пароля).",
-        "— Лайки, дизлайки, плейлисты, выбранные версии треков.",
-        "— История прослушиваний — из неё строится твоя статистика (и позже рекомендации).",
-        "— От локальных файлов — только название, артист и отпечаток файла (hash), не сам файл и не путь.",
+      {dataDocBlock(t("settings.data.serverStored.title"), [
+        t("settings.data.serverStored.item1"),
+        t("settings.data.serverStored.item2"),
+        t("settings.data.serverStored.item3"),
+        t("settings.data.serverStored.item4"),
       ])}
-      {dataDocBlock("Анонимная статистика (галочка в «Аккаунте»)", [
-        "— Раз в ~10 минут уходят суммарные счётчики: сколько добыч удалось и с какими ошибками (по ним чинится добыча без обновления приложения) и сколько было прослушиваний.",
-        "— Без привязки к аккаунту: ни ника, ни id, ни названий треков в этих счётчиках нет.",
+      {dataDocBlock(t("settings.data.anonymousStats.title"), [t("settings.data.anonymousStats.item1"), t("settings.data.anonymousStats.item2")])}
+      {dataDocBlock(t("settings.data.whatWeDontDo.title"), [
+        t("settings.data.whatWeDontDo.item1"),
+        t("settings.data.whatWeDontDo.item2"),
+        t("settings.data.whatWeDontDo.item3"),
       ])}
-      {dataDocBlock("Чего мы не делаем", [
-        "— Не продаём и не передаём данные.",
-        "— Не собираем пофамильную историю в аналитику — агрегаты обезличены.",
-        "— Не шлём писем без дела: только верификация и восстановление пароля.",
-      ])}
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-        Удаление аккаунта удаляет всё серверное. Кнопка появится к релизу — пока это делается по запросу.
-      </div>
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>{t("settings.data.deletionNote")}</div>
     </div>
   );
 
   // Под-экран «Сессии и устройства» (C2): активные refresh-сессии
   const sessionsPane = (
     <div key="sessions" className={paneClass} style={paneStyle}>
-      <SubHeader title="Сессии и устройства" onBack={() => setSub(null)} />
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-        Каждая строка — устройство со входом в аккаунт. Дата — последняя активность. Не узнаёшь устройство — разлогинь
-        его и смени пароль.
-      </div>
+      <SubHeader title={t("settings.account.sessions.title")} onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>{t("settings.account.sessions.hint")}</div>
       {sessions === null ? (
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>Загружаем…</div>
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("common.loading")}</div>
       ) : sessions.length === 0 ? (
-        <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>Не удалось загрузить список сессий.</div>
+        <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.account.sessions.loadFailed")}</div>
       ) : (
         sessions.map((s) => (
           <SettingRow
             key={s.id}
-            title={`${deviceLabel(s.userAgent)}${s.current ? " · текущая" : ""}`}
-            hint={`${s.ip ?? "ip неизвестен"} · ${new Date(s.createdAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`}
+            title={`${deviceLabel(s.userAgent, t)}${s.current ? ` · ${t("settings.account.sessions.currentSuffix")}` : ""}`}
+            hint={`${s.ip ?? t("settings.account.sessions.unknownIp")} · ${new Date(s.createdAt).toLocaleString(lang === "ru" ? "ru-RU" : "en-US", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`}
           >
             {s.current ? (
-              <RowValue>это устройство</RowValue>
+              <RowValue>{t("settings.account.sessions.thisDevice")}</RowValue>
             ) : (
               <Button variant="ghost" icon="log-out" onClick={() => void revokeSession(s.id)}>
-                Выйти
+                {t("settings.account.sessions.signOut")}
               </Button>
             )}
           </SettingRow>
@@ -2000,17 +2398,13 @@ export function SettingsView({
   // Под-экран «Выгрузить или удалить данные» (C3)
   const privacyPane = (
     <div key="privacy" className={paneClass} style={paneStyle}>
-      <SubHeader title="Данные аккаунта" onBack={() => setSub(null)} />
-      <SettingRow title="Выгрузить данные" hint="Профиль, лайки, история, плейлисты — одним JSON, без паролей и токенов">
+      <SubHeader title={t("settings.privacy.title")} onBack={() => setSub(null)} />
+      <SettingRow title={t("settings.privacy.export.title")} hint={t("settings.privacy.export.hint")}>
         <Button variant="secondary" icon="download" disabled={exportBusy} onClick={() => void doExport()}>
-          {exportBusy ? "Собираем…" : "Выгрузить JSON"}
+          {exportBusy ? t("settings.privacy.export.busy") : t("settings.privacy.export.button")}
         </Button>
       </SettingRow>
-      <SettingRow
-        title="Удалить аккаунт"
-        hint="Навсегда: лайки, плейлисты, история и совместные доступы. Локальные файлы и кэш на устройстве останутся"
-        danger
-      >
+      <SettingRow title={t("settings.privacy.deleteAccount.title")} hint={t("settings.privacy.deleteAccount.hint")} danger>
         <Button
           variant="ghost"
           icon="trash-2"
@@ -2020,9 +2414,15 @@ export function SettingsView({
             setDelOpen(true);
           }}
         >
-          Удалить…
+          {t("settings.privacy.deleteAccount.button")}
         </Button>
       </SettingRow>
+      <SettingRow
+        title={t("settings.privacy.privacyDoc.title")}
+        hint={t("settings.privacy.privacyDoc.hint")}
+        onClick={() => void openExternal("https://muza.lol/privacy")}
+        chevron
+      ></SettingRow>
     </div>
   );
 
@@ -2030,12 +2430,16 @@ export function SettingsView({
   // полная машинная выжимка сотен транзитивных пакетов тут никому не помогает)
   const licensesPane = (
     <div key="licenses" className={paneClass} style={paneStyle}>
-      <SubHeader title="Лицензии открытого кода" onBack={() => setSub(null)} />
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-        Muza построена на открытом коде. Ниже — ключевые зависимости клиента и их лицензии; клик открывает сайт проекта.
-      </div>
+      <SubHeader title={t("settings.system.licenses.title")} onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>{t("settings.system.licenses.hint")}</div>
       {OSS_LICENSES.map((d) => (
-        <SettingRow key={d.name} title={d.name} hint={d.url.replace("https://", "")} onClick={() => void openExternal(d.url)} chevron>
+        <SettingRow
+          key={d.id}
+          title={t(`settings.system.licenses.items.${d.id}`)}
+          hint={d.url.replace("https://", "")}
+          onClick={() => void openExternal(d.url)}
+          chevron
+        >
           <RowValue>{d.license}</RowValue>
         </SettingRow>
       ))}
@@ -2044,8 +2448,8 @@ export function SettingsView({
 
   // Под-экраны компоновки (волна 3): кнопки бара и вкладки сайдбара —
   // тот же паттерн, что statsBlocks (Switch + ↑/↓, порядок массива = порядок в UI)
-  const barButtons = normalizeBarButtons(prefs.barButtons);
-  const barToggle = (key: BarButtonKey, on: boolean) =>
+  const barButtons = normalizeBarButtons(prefs.barButtons, pluginBarKeys);
+  const barToggle = (key: string, on: boolean) =>
     set({ barButtons: barButtons.map((b) => (b.key === key ? { ...b, on } : b)) });
   const barMove = (i: number, delta: -1 | 1) => {
     const j = i + delta;
@@ -2056,36 +2460,33 @@ export function SettingsView({
   };
   const barPane = (
     <div key="bar" className={paneClass} style={paneStyle}>
-      <SubHeader title="Кнопки плеер-бара" onBack={() => setSub(null)} />
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-        Порядок действует на правую часть бара; «Перемешать» и «Повтор» живут вокруг транспорта. Обложка, лайк,
-        prev/play/next и прогресс несъёмные.
-      </div>
+      <SubHeader title={t("settings.bar.title")} onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>{t("settings.bar.hint")}</div>
       {barButtons.map((b, i) => (
-        <SettingRow key={b.key} title={BAR_BUTTON_META[b.key].label} hint={BAR_BUTTON_META[b.key].hint}>
+        <SettingRow key={b.key} title={barMeta(b.key).label} hint={barMeta(b.key).hint}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
             <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-up" size="sm" label={`Выше: ${BAR_BUTTON_META[b.key].label}`} onClick={() => barMove(i, -1)} />
+              <IconButton icon="chevron-up" size="sm" label={t("settings.bar.moveUp", { name: barMeta(b.key).label })} onClick={() => barMove(i, -1)} />
             </span>
             <span style={{ opacity: i === barButtons.length - 1 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${BAR_BUTTON_META[b.key].label}`} onClick={() => barMove(i, 1)} />
+              <IconButton icon="chevron-down" size="sm" label={t("settings.bar.moveDown", { name: barMeta(b.key).label })} onClick={() => barMove(i, 1)} />
             </span>
-            <Switch checked={b.on} onChange={(on: boolean) => barToggle(b.key, on)} label={BAR_BUTTON_META[b.key].label} />
+            <Switch checked={b.on} onChange={(on: boolean) => barToggle(b.key, on)} label={barMeta(b.key).label} />
           </div>
         </SettingRow>
       ))}
       <div>
         <Button variant="ghost" icon="rotate-ccw" onClick={() => set({ barButtons: DEFAULT_PREFS.barButtons })}>
-          Сбросить компоновку бара
+          {t("settings.bar.reset")}
         </Button>
       </div>
     </div>
   );
 
-  const navItems = normalizeNavItems(prefs.navItems);
-  const navToggle = (key: NavItemKey, on: boolean) =>
+  const navItems = normalizeNavItems(prefs.navItems, pluginNavKeys);
+  const navToggle = (key: string, on: boolean) =>
     set({ navItems: navItems.map((n) => (n.key === key ? { ...n, on } : n)) });
-  const navRename = (key: NavItemKey, label: string) =>
+  const navRename = (key: string, label: string) =>
     set({ navItems: navItems.map((n) => (n.key === key ? { ...n, label: label || undefined } : n)) });
   const navMove = (i: number, delta: -1 | 1) => {
     const j = i + delta;
@@ -2096,38 +2497,35 @@ export function SettingsView({
   };
   const navPane = (
     <div key="nav" className={paneClass} style={paneStyle}>
-      <SubHeader title="Вкладки сайдбара" onBack={() => setSub(null)} />
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-        Скрытая вкладка не исчезает из приложения — её экран остаётся доступен (стартовый экран, хоткеи). Пустое имя
-        возвращает стандартное. «Настройки» и «Админка» живут отдельно, внизу.
-      </div>
+      <SubHeader title={t("settings.nav.title")} onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>{t("settings.nav.hint")}</div>
       {navItems.map((n, i) => (
-        <SettingRow key={n.key} title={NAV_ITEM_META[n.key].label} hint={n.key === "home" ? "Дом выключить нельзя" : undefined}>
+        <SettingRow key={n.key} title={navMeta(n.key).label} hint={n.key === "home" ? t("settings.nav.homeCannotDisable") : undefined}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
             <SettingInput
               value={n.label ?? ""}
-              placeholder={NAV_ITEM_META[n.key].label}
+              placeholder={navMeta(n.key).label}
               width={140}
               onChange={(v) => navRename(n.key, v.trim().slice(0, 24))}
             />
             <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-up" size="sm" label={`Выше: ${NAV_ITEM_META[n.key].label}`} onClick={() => navMove(i, -1)} />
+              <IconButton icon="chevron-up" size="sm" label={t("settings.bar.moveUp", { name: navMeta(n.key).label })} onClick={() => navMove(i, -1)} />
             </span>
             <span style={{ opacity: i === navItems.length - 1 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${NAV_ITEM_META[n.key].label}`} onClick={() => navMove(i, 1)} />
+              <IconButton icon="chevron-down" size="sm" label={t("settings.bar.moveDown", { name: navMeta(n.key).label })} onClick={() => navMove(i, 1)} />
             </span>
             <Switch
               checked={n.on}
               disabled={n.key === "home"}
               onChange={(on: boolean) => navToggle(n.key, on)}
-              label={NAV_ITEM_META[n.key].label}
+              label={navMeta(n.key).label}
             />
           </div>
         </SettingRow>
       ))}
       <div>
         <Button variant="ghost" icon="rotate-ccw" onClick={() => set({ navItems: DEFAULT_PREFS.navItems })}>
-          Сбросить вкладки
+          {t("settings.nav.reset")}
         </Button>
       </div>
     </div>
@@ -2147,17 +2545,17 @@ export function SettingsView({
   };
   const statsPane = (
     <div key="stats" className={paneClass} style={paneStyle}>
-      <SubHeader title="Статистика" onBack={() => setSub(null)} />
+      <SubHeader title={t("settings.stats.title")} onBack={() => setSub(null)} />
 
-      <GroupTitle>Блоки страницы</GroupTitle>
+      <GroupTitle>{t("settings.stats.blocksGroup")}</GroupTitle>
       {statsBlocks.map((b, i) => (
-        <SettingRow key={b.key} title={STATS_BLOCK_META[b.key].label} hint={STATS_BLOCK_META[b.key].hint}>
+        <SettingRow key={b.key} title={statsBlockLabel(b.key, lang).label} hint={statsBlockLabel(b.key, lang).hint}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
             <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
               <IconButton
                 icon="chevron-up"
                 size="sm"
-                label={`Выше: ${STATS_BLOCK_META[b.key].label}`}
+                label={t("settings.bar.moveUp", { name: statsBlockLabel(b.key, lang).label })}
                 onClick={() => statsMove(i, -1)}
               />
             </span>
@@ -2165,23 +2563,23 @@ export function SettingsView({
               <IconButton
                 icon="chevron-down"
                 size="sm"
-                label={`Ниже: ${STATS_BLOCK_META[b.key].label}`}
+                label={t("settings.bar.moveDown", { name: statsBlockLabel(b.key, lang).label })}
                 onClick={() => statsMove(i, 1)}
               />
             </span>
-            <Switch checked={b.on} onChange={(on: boolean) => statsToggle(b.key, on)} label={STATS_BLOCK_META[b.key].label} />
+            <Switch checked={b.on} onChange={(on: boolean) => statsToggle(b.key, on)} label={statsBlockLabel(b.key, lang).label} />
           </div>
         </SettingRow>
       ))}
 
-      <GroupTitle>Период по умолчанию</GroupTitle>
-      <SettingRow title="Период" hint="С каким периодом открывается страница">
+      <GroupTitle>{t("settings.stats.periodGroup")}</GroupTitle>
+      <SettingRow title={t("settings.stats.period.title")} hint={t("settings.stats.period.hint")}>
         <Tabs
           items={[
-            { key: "week", label: "Неделя" },
-            { key: "month", label: "Месяц" },
-            { key: "year", label: "Год" },
-            { key: "all", label: "Всё время" },
+            { key: "week", label: t("settings.stats.period.week") },
+            { key: "month", label: t("settings.stats.period.month") },
+            { key: "year", label: t("settings.stats.period.year") },
+            { key: "all", label: t("settings.stats.period.allTime") },
           ]}
           value={prefs.statsPeriod}
           onChange={(k: string) => set({ statsPeriod: k as Prefs["statsPeriod"] })}
@@ -2217,57 +2615,42 @@ export function SettingsView({
       privacyPane
     ) : tab === "account" ? (
       <div key="account" className={paneClass} style={paneStyle}>
-        <SettingRow title="Профиль" hint={username}>
+        <SettingRow title={t("settings.account.profile.title")} hint={username}>
           <Button variant="ghost" icon="log-out" onClick={onLogout}>
-            Выйти
+            {t("settings.account.profile.signOut")}
           </Button>
         </SettingRow>
         <SettingRow
-          title="Email"
-          hint={
-            serverSession
-              ? "Для восстановления пароля; смена подтверждается письмом на новый адрес"
-              : "Нужен аккаунт — у анонима почты нет"
-          }
+          title={t("settings.account.email.title")}
+          hint={serverSession ? t("settings.account.email.hint") : t("settings.account.needsAccount")}
           onClick={serverSession ? openEmailChange : undefined}
           chevron={serverSession}
         ></SettingRow>
         <SettingRow
-          title="Сменить пароль"
-          hint={
-            serverSession
-              ? "Старый → новый; остальные устройства разлогинятся"
-              : "Нужен аккаунт — у анонима пароля нет"
-          }
+          title={t("settings.account.password.title")}
+          hint={serverSession ? t("settings.account.password.hint") : t("settings.account.needsAccountPassword")}
           onClick={serverSession ? openPwd : undefined}
           chevron={serverSession}
         ></SettingRow>
         <SettingRow
-          title="Сессии и устройства"
-          hint={serverSession ? "Где выполнен вход; чужое устройство можно разлогинить" : "Нужен аккаунт"}
+          title={t("settings.account.sessions.rowTitle")}
+          hint={serverSession ? t("settings.account.sessions.rowHint") : t("settings.account.needsAccountShort")}
           onClick={serverSession ? () => setSub("sessions") : undefined}
           chevron={serverSession}
         ></SettingRow>
-        <GroupTitle>Приватность</GroupTitle>
-        <SettingRow
-          title="Анонимная статистика"
-          hint="Обезличенные агрегаты добычи и прослушиваний — по ним чинится добыча; без ника, id и названий треков"
-        >
-          <Switch
-            checked={prefs.telemetry}
-            onChange={(on: boolean) => set({ telemetry: on })}
-            label="Анонимная статистика"
-          />
+        <GroupTitle>{t("settings.account.privacyGroup")}</GroupTitle>
+        <SettingRow title={t("settings.account.telemetry.title")} hint={t("settings.account.telemetry.hint")}>
+          <Switch checked={prefs.telemetry} onChange={(on: boolean) => set({ telemetry: on })} label={t("settings.account.telemetry.title")} />
         </SettingRow>
         <SettingRow
-          title="Документ о данных"
-          hint="Что остаётся на устройстве, что хранит сервер и что уходит в статистику"
+          title={t("settings.account.dataDoc.title")}
+          hint={t("settings.account.dataDoc.hint")}
           onClick={() => setSub("data")}
           chevron
         ></SettingRow>
         <SettingRow
-          title="Выгрузить или удалить данные"
-          hint={serverSession ? "JSON-выгрузка всего или полное удаление аккаунта" : "Нужен аккаунт — у анонима на сервере ничего нет"}
+          title={t("settings.account.exportOrDelete.title")}
+          hint={serverSession ? t("settings.account.exportOrDelete.hint") : t("settings.account.needsAccountServer")}
           onClick={serverSession ? () => setSub("privacy") : undefined}
           danger
           chevron={serverSession}
@@ -2275,6 +2658,20 @@ export function SettingsView({
       </div>
     ) : tab === "appearance" ? (
       <div key="appearance" className={paneClass} style={paneStyle}>
+        {/* T28 (i18n): переключатель — первый элемент вкладки по требованию
+            владельца («Внешний вид» вверху). Живой, без перезагрузки —
+            меняет prefs.language, LanguageProvider (App) перерендерит все
+            места, использующие useT(). */}
+        <SettingRow title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
+          <Tabs
+            items={[
+              { key: "en", label: t("settings.appearance.language.optionEn") },
+              { key: "ru", label: t("settings.appearance.language.optionRu") },
+            ]}
+            value={prefs.language}
+            onChange={(k: string) => set({ language: k as Prefs["language"] })}
+          />
+        </SettingRow>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--sp-3)" }}>
           {presets.map((p) => (
             <PresetTile
@@ -2288,21 +2685,21 @@ export function SettingsView({
             />
           ))}
         </div>
-        <SettingRow title="Тема" hint="Светлая инвертирует слои оформления — фон, поверхности, текст">
+        <SettingRow title={t("settings.appearance.theme.title")} hint={t("settings.appearance.theme.hint")}>
           <Tabs
             items={[
-              { key: "dark", label: "Тёмная" },
-              { key: "light", label: "Светлая" },
+              { key: "dark", label: t("settings.appearance.theme.dark") },
+              { key: "light", label: t("settings.appearance.theme.light") },
             ]}
             value={prefs.theme}
             onChange={(k: string) => set({ theme: k as Prefs["theme"] })}
           />
         </SettingRow>
-        <SettingRow title="Акцентный цвет" hint="Готовые или любой свой — пипетка справа">
+        <SettingRow title={t("settings.appearance.accent.title")} hint={t("settings.appearance.accent.hint")}>
           <div style={{ display: "flex", gap: "var(--sp-3)" }}>
-            <AccentSwatch color="#3b82f6" label="Синий" selected={prefs.accent === "blue"} onClick={() => set({ accent: "blue" })} />
-            <AccentSwatch color="#f76967" label="Красный" selected={prefs.accent === "red"} onClick={() => set({ accent: "red" })} />
-            <AccentSwatch color="#327ad9" label="Молния" selected={prefs.accent === "bolt"} onClick={() => set({ accent: "bolt" })} />
+            <AccentSwatch color="#3b82f6" label={t("settings.appearance.accent.blue")} selected={prefs.accent === "blue"} onClick={() => set({ accent: "blue" })} />
+            <AccentSwatch color="#f76967" label={t("settings.appearance.accent.red")} selected={prefs.accent === "red"} onClick={() => set({ accent: "red" })} />
+            <AccentSwatch color="#327ad9" label={t("settings.appearance.accent.bolt")} selected={prefs.accent === "bolt"} onClick={() => set({ accent: "bolt" })} />
             <CustomAccentSwatch
               color={prefs.customAccent}
               selected={prefs.accent === "custom"}
@@ -2310,64 +2707,78 @@ export function SettingsView({
             />
           </div>
         </SettingRow>
-        <SettingRow title="Скругление" hint="Насколько мягкие углы у плиток">
+        <SettingRow title={t("settings.appearance.radius.title")} hint={t("settings.appearance.radius.hint")}>
           <Tabs
             items={[
-              { key: "mild", label: "Меньше" },
-              { key: "soft", label: "Стандарт" },
-              { key: "round", label: "Больше" },
+              { key: "mild", label: t("settings.appearance.radius.mild") },
+              { key: "soft", label: t("settings.appearance.radius.soft") },
+              { key: "round", label: t("settings.appearance.radius.round") },
             ]}
             value={prefs.radius}
             onChange={(radius: string) => set({ radius: radius as Prefs["radius"] })}
           />
         </SettingRow>
-        <SettingRow title="Стекло" hint="Общая плотность матовых панелей">
+        <SettingRow title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
           <LiveSlider
             value={prefs.glassOpacity - GLASS_MIN}
             max={100 - GLASS_MIN}
-            label="Плотность стекла"
+            label={t("settings.appearance.glass.title")}
             suffix={`${prefs.glassOpacity} %`}
             onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
           />
         </SettingRow>
-        <SettingRow title="Фон" hint="Быстрый тумблер «из обложки»; все типы фона — в Кастомизации">
+        <SettingRow title={t("settings.appearance.background.title")} hint={t("settings.appearance.background.hint")}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-            <RowValue>{prefs.bgType === "cover" ? "Из обложки" : prefs.bgType === "none" ? "Выкл" : "Свой"}</RowValue>
+            <RowValue>
+              {prefs.bgType === "cover"
+                ? t("settings.appearance.background.fromCover")
+                : prefs.bgType === "none"
+                  ? t("common.off")
+                  : t("settings.appearance.background.custom")}
+            </RowValue>
             <Switch
               checked={prefs.bgType === "cover"}
               onChange={(on: boolean) => set({ bgType: on ? "cover" : "none" })}
-              label="Фон из обложки"
+              label={t("settings.appearance.background.ariaLabel")}
             />
           </div>
         </SettingRow>
-        <SettingRow title="Масштаб интерфейса" hint="Весь интерфейс крупнее или мельче">
+        <SettingRow title={t("settings.appearance.scale.title")} hint={t("settings.appearance.scale.hint")}>
           <LiveSlider
             value={prefs.uiScale - 85}
             max={40}
-            label="Масштаб интерфейса"
+            label={t("settings.appearance.scale.title")}
             suffix={`${prefs.uiScale} %`}
             onChange={(v) => set({ uiScale: 85 + Math.round(v) })}
           />
         </SettingRow>
-        <SettingRow title="Кастомизация" hint="Редактор темы: слои, форма, типографика, темы, CSS" onClick={() => setSub("customize")} chevron></SettingRow>
+        <SettingRow
+          title={t("settings.appearance.customize.title")}
+          hint={t("settings.appearance.customize.hint")}
+          onClick={() => setSub("customize")}
+          chevron
+        ></SettingRow>
       </div>
     ) : tab === "playback" ? (
       <div key="playback" className={paneClass} style={paneStyle}>
-        <GroupTitle>Переходы</GroupTitle>
-        <SettingRow title="Кроссфейд" hint="Плавный переход между треками (4 секунды)">
-          <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label="Кроссфейд" />
+        <GroupTitle>{t("settings.playback.transitionsGroup")}</GroupTitle>
+        <SettingRow title={t("settings.playback.crossfade.title")} hint={t("settings.playback.crossfade.hint")}>
+          <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label={t("settings.playback.crossfade.title")} />
         </SettingRow>
-        <SettingRow title="Gapless" hint="Преднагрузка следующего трека уже работает; идеальный стык — позже">
-          <Switch checked disabled label="Gapless" />
+        <SettingRow
+          title={t("settings.playback.gapless.title")}
+          hint={prefs.crossfade ? t("settings.playback.gapless.hintCrossfadeOn") : t("settings.playback.gapless.hint")}
+        >
+          <Switch checked={prefs.gapless} onChange={(v: boolean) => set({ gapless: v })} label={t("settings.playback.gapless.title")} />
         </SettingRow>
-        <GroupTitle>Звук</GroupTitle>
-        <SettingRow title="Эквалайзер" hint="Пресеты и свои полосы — звук живой" onClick={() => setSub("equalizer")} chevron>
-          <RowValue>{eqOn ? eqPreset : "Выкл"}</RowValue>
+        <GroupTitle>{t("settings.playback.soundGroup")}</GroupTitle>
+        <SettingRow title={t("settings.playback.equalizer.rowTitle")} hint={t("settings.playback.equalizer.rowHint")} onClick={() => setSub("equalizer")} chevron>
+          <RowValue>{eqOn ? eqPreset : t("common.off")}</RowValue>
         </SettingRow>
-        <SettingRow title="Нормализация громкости" hint="Выравнивает громкость между треками (−14 LUFS, если громкость трека измерена)">
-          <Switch checked={prefs.normalize} onChange={(v: boolean) => set({ normalize: v })} label="Нормализация" />
+        <SettingRow title={t("settings.playback.normalize.title")} hint={t("settings.playback.normalize.hint")}>
+          <Switch checked={prefs.normalize} onChange={(v: boolean) => set({ normalize: v })} label={t("settings.playback.normalize.title")} />
         </SettingRow>
-        <SettingRow title="Шаги скорости" hint="Кнопка «1×» в баре циклит эти значения; свои шаги — через запятую (0.25–4)">
+        <SettingRow title={t("settings.playback.speedSteps.title")} hint={t("settings.playback.speedSteps.hint")}>
           <StepsEditor
             values={prefs.speedSteps}
             onApply={(speedSteps) => set({ speedSteps })}
@@ -2378,31 +2789,31 @@ export function SettingsView({
             suffix="×"
           />
         </SettingRow>
-        <GroupTitle>Очередь</GroupTitle>
-        <SettingRow title="Бесконечное радио" hint="Очередь кончилась — продолжаем похожими треками (радио от последнего)">
-          <Switch checked={prefs.radioEndless} onChange={(v: boolean) => set({ radioEndless: v })} label="Бесконечное радио" />
+        <GroupTitle>{t("settings.playback.queueGroup")}</GroupTitle>
+        <SettingRow title={t("settings.playback.radioEndless.title")} hint={t("settings.playback.radioEndless.hint")}>
+          <Switch checked={prefs.radioEndless} onChange={(v: boolean) => set({ radioEndless: v })} label={t("settings.playback.radioEndless.title")} />
         </SettingRow>
-        <GroupTitle>Рекомендации</GroupTitle>
+        <GroupTitle>{t("settings.playback.recsGroup")}</GroupTitle>
         <RecsTuning api={api} enabled={serverSession} onNotify={onNotify} />
-        <SettingRow title="Запоминать позицию трека" hint="Продолжать с места остановки при повторном запуске трека">
+        <SettingRow title={t("settings.playback.resumePosition.title")} hint={t("settings.playback.resumePosition.hint")}>
           <Switch
             checked={prefs.resumePosition}
             onChange={(resumePosition: boolean) => set({ resumePosition })}
-            label="Запоминать позицию"
+            label={t("settings.playback.resumePosition.ariaLabel")}
           />
         </SettingRow>
-        <GroupTitle>Стрим</GroupTitle>
-        <SettingRow title="Качество стрима" hint="Эконом добывает форматы поменьше (меньше трафика и диска); уже скачанное играет как есть">
+        <GroupTitle>{t("settings.playback.streamGroup")}</GroupTitle>
+        <SettingRow title={t("settings.playback.streamQuality.title")} hint={t("settings.playback.streamQuality.hint")}>
           <Tabs
             items={[
-              { key: "auto", label: "Авто" },
-              { key: "econom", label: "Эконом" },
+              { key: "auto", label: t("settings.playback.streamQuality.auto") },
+              { key: "econom", label: t("settings.playback.streamQuality.econom") },
             ]}
             value={prefs.streamQuality}
             onChange={(k: string) => set({ streamQuality: k as Prefs["streamQuality"] })}
           />
         </SettingRow>
-        <SettingRow title="Sleep timer" hint="Пресеты луны в баре: выкл → эти минуты → конец трека">
+        <SettingRow title={t("settings.playback.sleepTimer.title")} hint={t("settings.playback.sleepTimer.hint")}>
           <StepsEditor
             values={prefs.sleepPresets}
             onApply={(sleepPresets) => set({ sleepPresets: sleepPresets.map(Math.round) })}
@@ -2410,24 +2821,24 @@ export function SettingsView({
             max={600}
             maxCount={6}
             fallback={DEFAULT_PREFS.sleepPresets}
-            suffix="мин"
+            suffix={t("settings.playback.sleepTimer.minSuffix")}
           />
         </SettingRow>
       </div>
     ) : tab === "sources" ? (
       <div key="sources" className={paneClass} style={paneStyle}>
-        <SettingRow title="Что предпочитать" hint="Глобальный порядок добычи; выбранная версия трека («⋯ → Версии и источники») сильнее">
+        <SettingRow title={t("settings.sources.policy.title")} hint={t("settings.sources.policy.hint")}>
           <Tabs
             items={[
-              { key: "official", label: "Официальное" },
-              { key: "soundcloudFirst", label: "SoundCloud вперёд" },
+              { key: "official", label: t("settings.sources.policy.official") },
+              { key: "soundcloudFirst", label: t("settings.sources.policy.soundcloudFirst") },
             ]}
             value={prefs.sourcePolicy}
             onChange={(k: string) => set({ sourcePolicy: k as Prefs["sourcePolicy"] })}
           />
         </SettingRow>
-        <GroupTitle>Источники по приоритету</GroupTitle>
-        <SettingRow title="YouTube / YT Music" hint="Официальный каталог — основной источник добычи">
+        <GroupTitle>{t("settings.sources.priorityGroup")}</GroupTitle>
+        <SettingRow title="YouTube / YT Music" hint={t("settings.sources.youtube.hint")}>
           <Switch
             checked={prefs.sourcesEnabled.youtube}
             disabled={prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.bandcamp}
@@ -2435,7 +2846,7 @@ export function SettingsView({
             label="YouTube / YT Music"
           />
         </SettingRow>
-        <SettingRow title="SoundCloud" hint="Фолбэк; политикой выше можно поставить вперёд">
+        <SettingRow title="SoundCloud" hint={t("settings.sources.soundcloud.hint")}>
           <Switch
             checked={prefs.sourcesEnabled.soundcloud}
             disabled={prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.bandcamp}
@@ -2443,7 +2854,7 @@ export function SettingsView({
             label="SoundCloud"
           />
         </SettingRow>
-        <SettingRow title="Bandcamp" hint="По прямой ссылке уже работает; в поиске — позже">
+        <SettingRow title="Bandcamp" hint={t("settings.sources.bandcamp.hint")}>
           <Switch
             checked={prefs.sourcesEnabled.bandcamp}
             disabled={prefs.sourcesEnabled.bandcamp && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud}
@@ -2451,69 +2862,72 @@ export function SettingsView({
             label="Bandcamp"
           />
         </SettingRow>
-        <GroupTitle>Поиск</GroupTitle>
-        <SettingRow title="Где искать" hint="«Только каталог» не запускает yt-dlp на сервере; локальные файлы — в Библиотеке">
+        <GroupTitle>{t("settings.sources.searchGroup")}</GroupTitle>
+        <SettingRow title={t("settings.sources.searchScope.title")} hint={t("settings.sources.searchScope.hint")}>
           <Tabs
             items={[
-              { key: "all", label: "Каталог и источники" },
-              { key: "catalog", label: "Только каталог" },
+              { key: "all", label: t("settings.sources.searchScope.all") },
+              { key: "catalog", label: t("settings.sources.searchScope.catalogOnly") },
             ]}
             value={prefs.searchScope}
             onChange={(k: string) => set({ searchScope: k as Prefs["searchScope"] })}
           />
         </SettingRow>
-        <SettingRow title="Мгновенный поиск" hint="Каталог при вводе; выкл — поиск только по Enter">
-          <Switch checked={prefs.instantSearch} onChange={(instantSearch: boolean) => set({ instantSearch })} label="Мгновенный поиск" />
+        <SettingRow title={t("settings.sources.instantSearch.title")} hint={t("settings.sources.instantSearch.hint")}>
+          <Switch checked={prefs.instantSearch} onChange={(instantSearch: boolean) => set({ instantSearch })} label={t("settings.sources.instantSearch.title")} />
         </SettingRow>
-        <SettingRow title="Прямые и локальные источники" hint="Работает: файлы, папки и ссылки — в Медиатеке">
-          <RowValue>Медиатека → Локальные / По ссылке</RowValue>
+        <SettingRow title={t("settings.sources.searchGrouping.title")} hint={t("settings.sources.searchGrouping.hint")}>
+          <Switch
+            checked={prefs.searchGrouping}
+            onChange={(searchGrouping: boolean) => set({ searchGrouping })}
+            label={t("settings.sources.searchGrouping.title")}
+          />
+        </SettingRow>
+        <SettingRow title={t("settings.sources.directLocal.title")} hint={t("settings.sources.directLocal.hint")}>
+          <RowValue>{t("settings.sources.directLocal.value")}</RowValue>
         </SettingRow>
       </div>
     ) : tab === "lyrics" ? (
       <div key="lyrics" className={paneClass} style={paneStyle}>
-        <GroupTitle>Отображение</GroupTitle>
-        <SettingRow title="Синхро-текст" hint="Караоке-строки в такт; выкл — обычный список без подсветки">
-          <Switch checked={prefs.syncedLyrics} onChange={(syncedLyrics: boolean) => set({ syncedLyrics })} label="Синхро-текст" />
+        <GroupTitle>{t("settings.lyrics.displayGroup")}</GroupTitle>
+        <SettingRow title={t("settings.lyrics.synced.title")} hint={t("settings.lyrics.synced.hint")}>
+          <Switch checked={prefs.syncedLyrics} onChange={(syncedLyrics: boolean) => set({ syncedLyrics })} label={t("settings.lyrics.synced.title")} />
         </SettingRow>
-        <SettingRow title="Автоскролл" hint="Следовать за текущей строкой; выкл — свободный скролл всего текста">
-          <Switch checked={prefs.lyricsAutoScroll} onChange={(lyricsAutoScroll: boolean) => set({ lyricsAutoScroll })} label="Автоскролл" />
+        <SettingRow title={t("settings.lyrics.autoScroll.title")} hint={t("settings.lyrics.autoScroll.hint")}>
+          <Switch checked={prefs.lyricsAutoScroll} onChange={(lyricsAutoScroll: boolean) => set({ lyricsAutoScroll })} label={t("settings.lyrics.autoScroll.title")} />
         </SettingRow>
-        <SettingRow title="Размер караоке-текста" hint="Строка в режиме прослушивания (тот же слайдер — в Кастомизации)">
+        <SettingRow title={t("settings.lyrics.karaokeSize.title")} hint={t("settings.lyrics.karaokeSize.hint")}>
           <LiveSlider
             value={prefs.karaokeSize - 36}
             max={36}
-            label="Размер караоке-текста"
+            label={t("settings.lyrics.karaokeSize.title")}
             suffix={`${prefs.karaokeSize} px`}
             onChange={(v) => set({ karaokeSize: 36 + Math.round(v) })}
           />
         </SettingRow>
-        <GroupTitle>Понимание</GroupTitle>
-        <SettingRow title="Перевод" hint="Перевод строк на выбранный язык (позже)">
-          <RowValue>Выкл</RowValue>
+        <GroupTitle>{t("settings.lyrics.understandingGroup")}</GroupTitle>
+        <SettingRow title={t("settings.lyrics.translation.title")} hint={t("settings.lyrics.translation.hint")}>
+          <RowValue>{t("common.off")}</RowValue>
         </SettingRow>
-        <SettingRow title="Режим смысла" hint="Пунктирные строки с объяснениями Genius — клик открывает карточку">
-          <Switch checked={prefs.meaningMode} onChange={(meaningMode: boolean) => set({ meaningMode })} label="Режим смысла" />
+        <SettingRow title={t("settings.lyrics.meaningMode.title")} hint={t("settings.lyrics.meaningMode.hint")}>
+          <Switch checked={prefs.meaningMode} onChange={(meaningMode: boolean) => set({ meaningMode })} label={t("settings.lyrics.meaningMode.title")} />
         </SettingRow>
       </div>
     ) : tab === "library" ? (
       <div key="library" className={paneClass} style={paneStyle}>
-        <SettingRow title="Локальные файлы" hint="Добавление файлов и папок — в Медиатеке, вкладка «Локальные»">
-          <RowValue>Медиатека → Локальные</RowValue>
+        <SettingRow title={t("settings.library.localFiles.title")} hint={t("settings.library.localFiles.hint")}>
+          <RowValue>{t("settings.library.localFiles.value")}</RowValue>
         </SettingRow>
         <SettingRow
-          title="Кэш прослушанного"
-          hint={
-            cache
-              ? `Занято ${fmtGb(cache.bytes)} · ${cache.files} файл(ов); очистка не трогает оффлайн`
-              : "LRU-кэш добытого аудио — живой, эвикция по лимиту"
-          }
+          title={t("settings.library.cache.title")}
+          hint={cache ? t("settings.library.cache.hintFilled", { size: fmtGb(cache.bytes), files: cache.files }) : t("settings.library.cache.hintEmpty")}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
             <LiveSlider
               value={prefs.cacheLimitGb - 1}
               max={15}
-              label="Лимит кэша"
-              suffix={`${prefs.cacheLimitGb} ГБ`}
+              label={t("settings.library.cache.limitLabel")}
+              suffix={t("settings.library.units.gb", { n: prefs.cacheLimitGb })}
               onChange={(v) => set({ cacheLimitGb: 1 + Math.round(v) })}
             />
             <Button
@@ -2524,73 +2938,68 @@ export function SettingsView({
                 void cacheClear().then(reloadCache);
               }}
             >
-              Очистить
+              {t("settings.library.cache.clear")}
             </Button>
           </div>
         </SettingRow>
-        <SettingRow title="Оффлайн-загрузки" hint="«Сохранить оффлайн» у трека или плейлиста; не эвиктится и переживает очистку">
+        <SettingRow title={t("settings.library.offline.title")} hint={t("settings.library.offline.hint")}>
           <RowValue>
-            {cache ? `${cache.pinnedFiles} тр. · ${fmtGb(cache.pinnedBytes)}` : "0 треков"}
+            {cache ? t("settings.library.offline.value", { n: cache.pinnedFiles, size: fmtGb(cache.pinnedBytes) }) : t("settings.library.offline.empty")}
           </RowValue>
         </SettingRow>
-        <SettingRow title="Импорт плейлистов" hint="Spotify, YouTube / YT Music, Apple Music — кнопка в Медиатеке">
-          <RowValue>Медиатека → Импорт</RowValue>
+        <SettingRow title={t("settings.library.importPlaylists.title")} hint={t("settings.library.importPlaylists.hint")}>
+          <RowValue>{t("settings.library.importPlaylists.value")}</RowValue>
         </SettingRow>
-        <SettingRow
-          title="Статистика"
-          hint="Блоки страницы, их порядок и период по умолчанию"
-          onClick={() => setSub("stats")}
-          chevron
-        ></SettingRow>
+        <SettingRow title={t("settings.library.stats.title")} hint={t("settings.library.stats.hint")} onClick={() => setSub("stats")} chevron></SettingRow>
       </div>
     ) : tab === "integrations" ? (
       <div key="integrations" className={paneClass} style={paneStyle}>
-        <SettingRow title="Discord Rich Presence" hint="Статус, кнопка, обложка и шаблоны строк (нужен Application ID из Dev Portal)" onClick={() => setSub("discord")} chevron>
-          <RowValue>{prefs.discordRpcOn ? "Вкл" : "Выкл"}</RowValue>
+        <SettingRow title={t("settings.integrations.discord.rowTitle")} hint={t("settings.integrations.discord.rowHint")} onClick={() => setSub("discord")} chevron>
+          <RowValue>{prefs.discordRpcOn ? t("common.on") : t("common.off")}</RowValue>
         </SettingRow>
         <SettingRow
-          title="Скробблинг Last.fm"
+          title={t("settings.integrations.lastfm.title")}
           hint={
             !serverSession
-              ? "Нужен аккаунт Muza (у анонима синхронизации нет)"
+              ? t("settings.integrations.needsAccount")
               : !scrob
                 ? scrobErr
-                  ? "Сервер недоступен — проверю сам, как только поднимется"
-                  : "Проверяем статус…"
+                  ? t("settings.integrations.serverUnavailable")
+                  : t("settings.integrations.checkingStatus")
                 : scrob.lastfm.connected
-                  ? `Подключён как ${scrob.lastfm.username} — прослушивания уходят сами`
+                  ? t("settings.integrations.lastfm.connectedAs", { username: scrob.lastfm.username ?? "" })
                   : scrob.lastfm.available
-                    ? "Прослушивания будут уходить в твой профиль Last.fm"
-                    : "На сервере нет API-ключей Last.fm — впиши LASTFM_API_KEY и LASTFM_API_SECRET в .env (last.fm/api)"
+                    ? t("settings.integrations.lastfm.willSync")
+                    : t("settings.integrations.lastfm.noApiKeys")
           }
         >
           {serverSession && scrob?.lastfm.connected ? (
             <Button variant="ghost" icon="unlink" onClick={() => void lfmDisconnect()}>
-              Отключить
+              {t("common.disconnect")}
             </Button>
           ) : serverSession && scrob?.lastfm.available ? (
             <Button variant="secondary" icon="link" disabled={lfmWaiting} onClick={() => void lfmConnect()}>
-              {lfmWaiting ? "Ждём браузер…" : "Подключить"}
+              {lfmWaiting ? t("settings.integrations.lastfm.waitingBrowser") : t("common.connect")}
             </Button>
           ) : (
-            <RowValue>{serverSession && scrob ? "Недоступен" : "Не подключён"}</RowValue>
+            <RowValue>{serverSession && scrob ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
           )}
         </SettingRow>
         <SettingRow
-          title="Скробблинг ListenBrainz"
+          title={t("settings.integrations.listenbrainz.title")}
           hint={
             !serverSession
-              ? "Нужен аккаунт Muza (у анонима синхронизации нет)"
+              ? t("settings.integrations.needsAccount")
               : !scrob && scrobErr
-                ? "Сервер недоступен — проверю сам, как только поднимется"
+                ? t("settings.integrations.serverUnavailable")
                 : scrob?.listenbrainz.connected
-                  ? `Подключён как ${scrob.listenbrainz.username} — прослушивания уходят сами`
-                  : "Открытая альтернатива Last.fm; нужен только user token"
+                  ? t("settings.integrations.listenbrainz.connectedAs", { username: scrob.listenbrainz.username ?? "" })
+                  : t("settings.integrations.listenbrainz.hint")
           }
         >
           {serverSession && scrob?.listenbrainz.connected ? (
             <Button variant="ghost" icon="unlink" onClick={() => void lbDisconnect()}>
-              Отключить
+              {t("common.disconnect")}
             </Button>
           ) : serverSession && scrob ? (
             <Button
@@ -2602,14 +3011,14 @@ export function SettingsView({
                 setLbOpen(true);
               }}
             >
-              Подключить
+              {t("common.connect")}
             </Button>
           ) : (
-            <RowValue>Не подключён</RowValue>
+            <RowValue>{t("settings.integrations.notConnected")}</RowValue>
           )}
         </SettingRow>
-        <SettingRow title="Медиаклавиши" hint="Play/Pause/Next с клавиатуры и системный медиа-оверлей (SMTC)">
-          <Switch checked={prefs.mediaKeys} onChange={(mediaKeys: boolean) => set({ mediaKeys })} label="Медиаклавиши" />
+        <SettingRow title={t("settings.integrations.mediaKeys.title")} hint={t("settings.integrations.mediaKeys.hint")}>
+          <Switch checked={prefs.mediaKeys} onChange={(mediaKeys: boolean) => set({ mediaKeys })} label={t("settings.integrations.mediaKeys.title")} />
         </SettingRow>
       </div>
     ) : tab === "hotkeys" ? (
@@ -2623,13 +3032,13 @@ export function SettingsView({
             {HOTKEY_ACTIONS.map((a) => (
               <HotkeyRow
                 key={a.id}
-                label={a.label}
+                label={hotkeyActionLabel(a.id, lang)}
                 combo={prefs.hotkeys[a.id]}
                 conflict={(counts.get(prefs.hotkeys[a.id]) ?? 0) > 1}
                 onCapture={(combo) => setKey(a.id, combo)}
               />
             ))}
-            <SettingRow title="Помощь / закрыть" hint="Фиксированные — не переназначаются">
+            <SettingRow title={t("settings.hotkeys.help.title")} hint={t("settings.hotkeys.help.hint")} onClick={onOpenHotkeys} chevron>
               <div style={{ display: "flex", gap: "var(--sp-2)" }}>
                 <Kbd>?</Kbd>
                 <Kbd>Esc</Kbd>
@@ -2637,7 +3046,7 @@ export function SettingsView({
             </SettingRow>
             <div style={{ marginTop: "var(--sp-2)" }}>
               <Button variant="ghost" icon="rotate-ccw" onClick={() => set({ hotkeys: { ...DEFAULT_HOTKEYS } })}>
-                Сбросить все
+                {t("settings.hotkeys.resetAll")}
               </Button>
             </div>
           </div>
@@ -2645,75 +3054,120 @@ export function SettingsView({
       })()
     ) : tab === "extensions" ? (
       <div key="extensions" className={paneClass} style={paneStyle}>
-        <GroupTitle>Встроенные</GroupTitle>
-        <SettingRow title="Визуализатор" hint="Спектр или волна в такт в режиме прослушивания (каталожные треки)">
+        <GroupTitle>{t("settings.extensions.builtInGroup")}</GroupTitle>
+        <SettingRow title={t("settings.extensions.visualizer.title")} hint={t("settings.extensions.visualizer.hint")}>
           <Switch
             checked={prefs.visualizer !== "off"}
             onChange={(on: boolean) => set({ visualizer: on ? "bars" : "off" })}
-            label="Визуализатор"
+            label={t("settings.extensions.visualizer.title")}
           />
         </SettingRow>
         {prefs.visualizer !== "off" ? (
-          <SettingRow title="Вид визуализатора" hint="Бары — спектр частот, волна — форма сигнала">
+          <SettingRow title={t("settings.extensions.visualizerKind.title")} hint={t("settings.extensions.visualizerKind.hint")}>
             <Tabs
               items={[
-                { key: "bars", label: "Бары" },
-                { key: "wave", label: "Волна" },
+                { key: "bars", label: t("settings.extensions.visualizerKind.bars") },
+                { key: "wave", label: t("settings.extensions.visualizerKind.wave") },
               ]}
               value={prefs.visualizer}
               onChange={(k: string) => set({ visualizer: k as Prefs["visualizer"] })}
             />
           </SettingRow>
         ) : null}
-        <GroupTitle>Внешние плагины</GroupTitle>
-        <SettingRow title="Плагины" hint="Внешняя плагин-система требует песочницу и capability-права — в работе">
-          <RowValue>0 установлено</RowValue>
+        <SettingRow title={t("settings.extensions.bassShake.title")} hint={t("settings.extensions.bassShake.hint")}>
+          <Switch checked={prefs.bassShake} onChange={(on: boolean) => set({ bassShake: on })} label={t("settings.extensions.bassShake.title")} />
         </SettingRow>
-        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — пока витрина" onClick={() => openMarket("Плагины")} chevron></SettingRow>
-        <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — работает" onClick={() => openMarket("Темы")} chevron></SettingRow>
-        <SettingRow title="Установить из файла" hint="Для разработчиков (с плагин-системой)">
-          <Button variant="ghost" icon="folder-open" disabled>
-            Выбрать файл
+        <GroupTitle>{t("settings.extensions.externalGroup")}</GroupTitle>
+        <SettingRow
+          title={t("settings.extensions.installFromFile.title")}
+          hint={engineAvailable() ? t("settings.extensions.installFromFile.hint") : t("settings.extensions.appOnly")}
+        >
+          <Button variant="ghost" icon="folder-open" disabled={!engineAvailable() || installBusy} onClick={() => void startInstall()}>
+            {t("settings.extensions.installFromFile.button")}
           </Button>
         </SettingRow>
+        {installedPlugins.length === 0 ? (
+          <SettingRow title={t("settings.extensions.installed.title")} hint={t("settings.extensions.installed.emptyHint")}>
+            <RowValue>{t("settings.extensions.installed.zero")}</RowValue>
+          </SettingRow>
+        ) : (
+          installedPlugins.map((p) => (
+            <SettingRow
+              key={p.id}
+              title={p.manifest.name}
+              titleExtra={
+                isFullAccessManifest(p.manifest) ? (
+                  <Badge tone="accent" style={{ background: "color-mix(in srgb, var(--danger) 22%, transparent)", color: "var(--danger)" }}>
+                    {t("settings.extensions.fullAccessBadge")}
+                  </Badge>
+                ) : undefined
+              }
+              hint={t("settings.extensions.installed.hint", { version: p.version, author: p.manifest.author, n: p.granted.length })}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                <Switch
+                  checked={p.enabled}
+                  onChange={(on: boolean) => void togglePlugin(p.id, on)}
+                  label={t("settings.extensions.installed.enableAria", { name: p.manifest.name })}
+                />
+                <IconButton
+                  icon="trash-2"
+                  size="sm"
+                  label={t("settings.extensions.installed.deleteAria", { name: p.manifest.name })}
+                  onClick={() => void removePlugin(p.id, p.manifest.name)}
+                />
+              </div>
+            </SettingRow>
+          ))
+        )}
+        {fullAccessErrors.length > 0 ? (
+          <>
+            <GroupTitle>{t("settings.extensions.errorsGroup")}</GroupTitle>
+            {fullAccessErrors.map((err, i) => (
+              <SettingRow
+                key={`${err.pluginId}-${err.at}-${i}`}
+                title={installedPlugins.find((p) => p.id === err.pluginId)?.manifest.name ?? err.pluginId}
+                hint={err.message}
+                danger
+              >
+                <RowValue>{new Date(err.at).toLocaleTimeString()}</RowValue>
+              </SettingRow>
+            ))}
+            <SettingRow title={t("settings.extensions.errorLog.title")} hint={t("settings.extensions.errorLog.hint", { n: fullAccessErrors.length })}>
+              <Button variant="ghost" icon="trash-2" onClick={() => fullAccessHost.clearErrors()}>
+                {t("settings.extensions.errorLog.clear")}
+              </Button>
+            </SettingRow>
+          </>
+        ) : null}
+        <SettingRow title={t("settings.extensions.pluginMarket.title")} hint={t("settings.extensions.pluginMarket.hint")} onClick={() => openMarket("plugins")} chevron></SettingRow>
+        <SettingRow title={t("settings.extensions.themeMarket.title")} hint={t("settings.extensions.themeMarket.hint")} onClick={() => openMarket("themes")} chevron></SettingRow>
       </div>
     ) : (
       <div key="system" className={paneClass} style={paneStyle}>
         <SettingRow
-          title="Запускать при старте Windows"
-          hint={engineAvailable() ? "Muza стартует вместе с системой" : "Работает только в приложении (не в браузере)"}
+          title={t("settings.system.autostart.title")}
+          hint={engineAvailable() ? t("settings.system.autostart.hint") : t("settings.system.appOnly")}
         >
           <Switch
             checked={prefs.autostart}
             disabled={!engineAvailable()}
             onChange={(autostart: boolean) => set({ autostart })}
-            label="Автозапуск"
+            label={t("settings.system.autostart.title")}
           />
         </SettingRow>
-        <SettingRow
-          title="Иконка в трее"
-          hint={engineAvailable() ? "Muza в области уведомлений: клик открывает окно" : "Работает только в приложении (не в браузере)"}
-        >
-          <Switch
-            checked={prefs.tray}
-            disabled={!engineAvailable()}
-            onChange={(tray: boolean) => set({ tray })}
-            label="Трей"
-          />
+        <SettingRow title={t("settings.system.tray.title")} hint={engineAvailable() ? t("settings.system.tray.hint") : t("settings.system.appOnly")}>
+          <Switch checked={prefs.tray} disabled={!engineAvailable()} onChange={(tray: boolean) => set({ tray })} label={t("settings.system.tray.title")} />
         </SettingRow>
         <SettingRow
-          title="При закрытии окна"
-          hint={
-            prefs.tray
-              ? "«Сворачивать» прячет в трей — музыка играет дальше"
-              : "Без иконки в трее окно всегда закрывается с выходом"
-          }
+          title={t("settings.system.closeAction.title")}
+          hint={prefs.tray ? t("settings.system.closeAction.hintTray") : t("settings.system.closeAction.hintNoTray")}
         >
           <div style={prefs.tray && engineAvailable() ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
             <Tabs
               items={[
-                { key: "tray", label: "Сворачивать" },
-                { key: "exit", label: "Выходить" },
+                { key: "tray", label: t("settings.system.closeAction.minimize") },
+                { key: "exit", label: t("settings.system.closeAction.exit") },
               ]}
               value={prefs.closeToTray ? "tray" : "exit"}
               onChange={(k: string) => set({ closeToTray: k === "tray" })}
@@ -2721,32 +3175,28 @@ export function SettingsView({
           </div>
         </SettingRow>
         <SettingRow
-          title="Автообновление"
-          hint={
-            updaterAvailable()
-              ? "GitHub Releases: подписанные сборки, стабильный канал"
-              : "Работает только в приложении (не в браузере)"
-          }
+          title={t("settings.system.update.title")}
+          hint={updaterAvailable() ? t("settings.system.update.hint") : t("settings.system.appOnly")}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
             <RowValue>
               {updState === "checking"
-                ? "Проверяем…"
+                ? t("settings.system.update.checking")
                 : updState === "none"
-                  ? "Актуальная версия"
+                  ? t("settings.system.update.upToDate")
                   : updState === "found"
-                    ? `Доступна ${updFound?.version ?? ""}`
+                    ? t("settings.system.update.available", { version: updFound?.version ?? "" })
                     : updState === "installing"
                       ? updPct >= 0
-                        ? `Скачиваем… ${updPct}%`
-                        : "Скачиваем…"
+                        ? t("settings.system.update.downloadingPct", { pct: updPct })
+                        : t("settings.system.update.downloading")
                       : updState === "error"
-                        ? "Не получилось проверить"
-                        : "Стабильный канал"}
+                        ? t("settings.system.update.checkFailed")
+                        : t("settings.system.update.stableChannel")}
             </RowValue>
             {updState === "found" || updState === "installing" ? (
               <Button variant="primary" icon="download" disabled={updState === "installing"} onClick={() => void installUpdate()}>
-                {updState === "installing" ? "Ставим…" : "Установить"}
+                {updState === "installing" ? t("settings.market.installing") : t("common.install")}
               </Button>
             ) : (
               <Button
@@ -2755,74 +3205,187 @@ export function SettingsView({
                 disabled={!updaterAvailable() || updState === "checking"}
                 onClick={() => void checkUpdates()}
               >
-                Проверить
+                {t("settings.system.update.check")}
               </Button>
             )}
           </div>
         </SettingRow>
-        <SettingRow title="Мини-плеер" hint="Компактное окно поверх всех: обложка, транспорт, лайк; тянется за фон">
+        <SettingRow title={t("settings.system.miniPlayer.title")} hint={t("settings.system.miniPlayer.hint")}>
           <Switch
             checked={prefs.miniPlayer}
             disabled={!engineAvailable()}
             onChange={(miniPlayer: boolean) => set({ miniPlayer })}
-            label="Мини-плеер"
+            label={t("settings.system.miniPlayer.title")}
           />
         </SettingRow>
-        <SettingRow title="Язык интерфейса" hint="Пока только русский">
-          <RowValue>Русский</RowValue>
-        </SettingRow>
-        <GroupTitle>О приложении</GroupTitle>
-        <SettingRow title="Версия" hint="Muza · сборка разработки">
+        {/* T28: переключатель языка переехал в «Внешний вид» (первый элемент
+            вкладки, по требованию владельца) — здесь была заглушка-стаб. */}
+        <GroupTitle>{t("settings.system.aboutGroup")}</GroupTitle>
+        <SettingRow title={t("settings.system.version.title")} hint={t("settings.system.version.hint")}>
           <RowValue>0.1.0</RowValue>
         </SettingRow>
-        <SettingRow title="Лицензии открытого кода" hint="Что внутри и под чем" onClick={() => setSub("licenses")} chevron></SettingRow>
-        <SettingRow title="Сайт" hint="muza.lol — лендинг и веб-плеер" onClick={() => void openExternal("https://muza.lol")} chevron></SettingRow>
-        <SettingRow title="Исходники клиента" hint="github.com/EntonioDMI/muza-client" onClick={() => void openExternal("https://github.com/EntonioDMI/muza-client")} chevron></SettingRow>
+        <SettingRow title={t("settings.system.licenses.rowTitle")} hint={t("settings.system.licenses.rowHint")} onClick={() => setSub("licenses")} chevron></SettingRow>
+        <SettingRow title={t("settings.system.website.title")} hint={t("settings.system.website.hint")} onClick={() => void openExternal("https://muza.lol")} chevron></SettingRow>
+        <SettingRow
+          title={t("settings.system.sourceCode.title")}
+          hint={t("settings.system.sourceCode.hint")}
+          onClick={() => void openExternal("https://github.com/EntonioDMI/muza-client")}
+          chevron
+        ></SettingRow>
       </div>
     );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 720 }}>
-      <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>Настройки</h1>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 720, margin: "0 auto" }}>
+      <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>{t("settings.title")}</h1>
       {/* wrap: разделов много — все вкладки видны при любой ширине,
           скрытый горизонтальный скролл был антипаттерном */}
       <Tabs
         wrap
-        items={TABS}
+        items={SETTINGS_TAB_KEYS.map((key) => ({ key, label: t(`settings.tabs.${key}`) }))}
         value={tab}
-        onChange={(t: string) => {
+        onChange={(nextTab: string) => {
+          // T28: параметр переименован из "t" в "nextTab" — совпадало по имени
+          // с useT().t (переводчик) в замыкающей области видимости, затеняло его
           setSub(null); // под-экран живёт внутри вкладки — смена вкладки закрывает его
-          setTab(t);
+          setTab(nextTab);
         }}
       />
       {pane}
 
+      {/* T44/T44b: согласие на права при установке плагина из файла —
+          app:full-access получает отдельный громкий экран (чекбокс + задержка
+          кнопки), обычные права — честный список с выделением опасных. */}
+      <Dialog
+        open={staged !== null}
+        title={staged ? t("settings.extensions.installDialog.title", { name: staged.manifest.name }) : t("settings.extensions.installDialog.titleGeneric")}
+        onClose={declineInstall}
+        actions={
+          <>
+            {/* Кнопка отказа — первая в разметке = дефолтный фокус Dialog
+                (см. muza-design-system Dialog: focus jumps to first field/button). */}
+            <Button variant="ghost" onClick={declineInstall}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="primary"
+              icon="download"
+              disabled={!staged || fullAccessBlocked(staged.manifest)}
+              onClick={() => void confirmInstall()}
+            >
+              {staged && isFullAccessManifest(staged.manifest) && fullAccessRemaining > 0
+                ? t("settings.extensions.installDialog.wait", { n: fullAccessRemaining })
+                : t("common.install")}
+            </Button>
+          </>
+        }
+      >
+        {staged ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320, maxWidth: 420 }}>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              {staged.manifest.description} · v{staged.manifest.version} · {staged.manifest.author}
+            </div>
+            {isFullAccessManifest(staged.manifest) ? (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "var(--sp-3)",
+                    padding: "var(--sp-4)",
+                    borderRadius: "var(--r-md)",
+                    background: "color-mix(in srgb, var(--danger) 14%, transparent)",
+                  }}
+                >
+                  <Icon name="shield-alert" size={22} color="var(--danger)" />
+                  <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 600, lineHeight: 1.4 }}>
+                    {t("settings.extensions.installDialog.fullAccessWarning", { author: staged.manifest.author })}
+                  </div>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", cursor: "pointer" }}>
+                  <Switch checked={fullAccessAck} onChange={setFullAccessAck} label={t("settings.extensions.installDialog.trustAuthor")} />
+                  <span style={{ fontSize: "var(--fs-body)", color: "var(--text-1)" }}>{t("settings.extensions.installDialog.trustAuthor")}</span>
+                </label>
+              </>
+            ) : staged.manifest.permissions.length === 0 ? (
+              <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.extensions.installDialog.noPermissions")}</div>
+            ) : (
+              <>
+                <div style={{ fontSize: "var(--fs-body)", color: "var(--text-1)", fontWeight: 600 }}>{t("settings.extensions.installDialog.permissionsAsk")}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+                  {staged.manifest.permissions.map((perm) => {
+                    const info = PERMISSION_INFO[perm as PluginPermission];
+                    return (
+                      <div key={perm} style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                        <Icon
+                          name={info?.dangerous ? "shield-alert" : "check"}
+                          size={16}
+                          color={info?.dangerous ? "var(--danger)" : "var(--accent-text)"}
+                        />
+                        <span style={{ fontSize: "var(--fs-body)", color: info?.dangerous ? "var(--danger)" : "var(--text-2)" }}>
+                          {info?.label ?? perm}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {staged.manifest.net_allow?.length ? (
+                  <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+                    {t("settings.extensions.installDialog.network", { list: staged.manifest.net_allow.join(", ") })}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+      </Dialog>
+
+      {/* T44b: выключение full-access-плагина не выгружает исполненный код
+          (realm живёт до рестарта, §5.3 дока) — предлагаем рестарт сразу. */}
+      <Dialog
+        open={restartPromptName !== null}
+        title={t("settings.extensions.restartDialog.title")}
+        onClose={() => setRestartPromptName(null)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setRestartPromptName(null)}>
+              {t("settings.extensions.restartDialog.later")}
+            </Button>
+            <Button variant="primary" icon="refresh-cw" onClick={() => void relaunch()}>
+              {t("settings.extensions.restartDialog.restart")}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+          {t("settings.extensions.restartDialog.body", { name: restartPromptName ?? "" })}
+        </div>
+      </Dialog>
+
       {/* Смена пароля: старый → новый (сервер разлогинит остальные устройства) */}
       <Dialog
         open={pwdOpen}
-        title="Сменить пароль"
+        title={t("settings.account.password.dialogTitle")}
         onClose={() => setPwdOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setPwdOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="shield-check" disabled={pwdBusy} onClick={() => void submitPwd()}>
-              {pwdBusy ? "Меняем…" : "Сменить"}
+              {pwdBusy ? t("settings.account.password.changing") : t("settings.account.password.submit")}
             </Button>
           </>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
-          <SettingInput type="password" value={pwdCur} onChange={setPwdCur} placeholder="Текущий пароль" width={300} />
-          <SettingInput type="password" value={pwdNew} onChange={setPwdNew} placeholder="Новый пароль (от 8 символов)" width={300} />
-          <SettingInput type="password" value={pwdRepeat} onChange={setPwdRepeat} placeholder="Новый пароль ещё раз" width={300} />
+          <SettingInput type="password" value={pwdCur} onChange={setPwdCur} placeholder={t("settings.account.password.currentPlaceholder")} width={300} />
+          <SettingInput type="password" value={pwdNew} onChange={setPwdNew} placeholder={t("settings.account.password.newPlaceholder")} width={300} />
+          <SettingInput type="password" value={pwdRepeat} onChange={setPwdRepeat} placeholder={t("settings.account.password.repeatPlaceholder")} width={300} />
           {pwdErr ? (
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{pwdErr}</div>
           ) : (
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              После смены все остальные устройства разлогинятся; это — останется в сессии.
-            </div>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.account.password.otherDevicesNote")}</div>
           )}
         </div>
       </Dialog>
@@ -2832,20 +3395,20 @@ export function SettingsView({
           ссылку подтверждения прямо в диалоге, иначе её негде увидеть. */}
       <Dialog
         open={emailOpen}
-        title="Сменить почту"
+        title={t("settings.account.email.dialogTitle")}
         onClose={closeEmailChange}
         actions={
           emailConfirmUrl ? (
             <Button variant="primary" onClick={closeEmailChange}>
-              Готово
+              {t("settings.account.email.done")}
             </Button>
           ) : (
             <>
               <Button variant="ghost" onClick={closeEmailChange}>
-                Отмена
+                {t("common.cancel")}
               </Button>
               <Button variant="primary" icon="mail" disabled={emailBusy} onClick={() => void submitEmailChange()}>
-                {emailBusy ? "Отправляем…" : "Отправить письмо"}
+                {emailBusy ? t("settings.account.email.sending") : t("settings.account.email.submit")}
               </Button>
             </>
           )
@@ -2853,28 +3416,24 @@ export function SettingsView({
       >
         {emailConfirmUrl ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
-              Письма в dev не уходят — открой ссылку подтверждения, чтобы завершить смену почты.
-            </div>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.account.email.devNote")}</div>
             <Button
               variant="ghost"
               icon="external-link"
               onClick={() => void openExternal(emailConfirmUrl)}
               style={{ alignSelf: "flex-start" }}
             >
-              Открыть ссылку подтверждения
+              {t("settings.account.email.openConfirmLink")}
             </Button>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
-            <SettingInput type="password" value={emailPwd} onChange={setEmailPwd} placeholder="Пароль аккаунта" width={300} />
-            <SettingInput value={emailNew} onChange={setEmailNew} placeholder="Новая почта" width={300} />
+            <SettingInput type="password" value={emailPwd} onChange={setEmailPwd} placeholder={t("settings.account.email.passwordPlaceholder")} width={300} />
+            <SettingInput value={emailNew} onChange={setEmailNew} placeholder={t("settings.account.email.newEmailPlaceholder")} width={300} />
             {emailErr ? (
               <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{emailErr}</div>
             ) : (
-              <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-                На новую почту придёт письмо — адрес сменится после клика по ссылке из него.
-              </div>
+              <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.account.email.confirmNote")}</div>
             )}
           </div>
         )}
@@ -2883,25 +3442,22 @@ export function SettingsView({
       {/* Удаление аккаунта (C3): двухшаговое — кнопка в под-экране, тут пароль */}
       <Dialog
         open={delOpen}
-        title="Удалить аккаунт навсегда?"
+        title={t("settings.privacy.deleteDialog.title")}
         onClose={() => setDelOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setDelOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="trash-2" disabled={delBusy || delPwd.length < 8} onClick={() => void submitDelete()}>
-              {delBusy ? "Удаляем…" : "Удалить навсегда"}
+              {delBusy ? t("settings.privacy.deleteDialog.deleting") : t("settings.privacy.deleteDialog.confirm")}
             </Button>
           </>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
-            Сервер удалит всё: лайки, плейлисты, историю, совместные доступы и опубликованные темы. Это не
-            отменяется. Локальные файлы и кэш на устройстве останутся.
-          </div>
-          <SettingInput type="password" value={delPwd} onChange={setDelPwd} placeholder="Пароль для подтверждения" width={300} />
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.privacy.deleteDialog.body")}</div>
+          <SettingInput type="password" value={delPwd} onChange={setDelPwd} placeholder={t("settings.privacy.deleteDialog.passwordPlaceholder")} width={300} />
           {delErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{delErr}</div> : null}
         </div>
       </Dialog>
@@ -2909,75 +3465,68 @@ export function SettingsView({
       {/* ListenBrainz: user token со страницы настроек LB */}
       <Dialog
         open={lbOpen}
-        title="Подключить ListenBrainz"
+        title={t("settings.integrations.listenbrainz.dialogTitle")}
         onClose={() => setLbOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setLbOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="link" disabled={lbBusy} onClick={() => void lbConnect()}>
-              {lbBusy ? "Проверяем…" : "Подключить"}
+              {lbBusy ? t("settings.integrations.listenbrainz.checking") : t("common.connect")}
             </Button>
           </>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
-            Скопируй user token со страницы настроек ListenBrainz и вставь сюда — токен проверится и
-            сохранится на сервере Muza.
-          </div>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.listenbrainz.dialogBody")}</div>
           <Button
             variant="ghost"
             icon="external-link"
             onClick={() => void openExternal("https://listenbrainz.org/settings/")}
             style={{ alignSelf: "flex-start" }}
           >
-            Открыть listenbrainz.org/settings
+            {t("settings.integrations.listenbrainz.openSettings")}
           </Button>
-          <SettingInput value={lbToken} onChange={setLbToken} placeholder="User token" width={320} />
-          {lbErr ? (
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{lbErr}</div>
-          ) : null}
+          <SettingInput value={lbToken} onChange={setLbToken} placeholder={t("settings.integrations.listenbrainz.tokenPlaceholder")} width={320} />
+          {lbErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{lbErr}</div> : null}
         </div>
       </Dialog>
 
       {/* Сохранить тему: имя (одноимённая перезаписывается) */}
       <Dialog
         open={themeNameOpen}
-        title="Сохранить тему"
+        title={t("settings.customize.themes.saveDialog.title")}
         onClose={() => setThemeNameOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setThemeNameOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="save" onClick={submitSaveTheme}>
-              Сохранить
+              {t("common.save")}
             </Button>
           </>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
-          <SettingInput value={themeName} onChange={setThemeName} placeholder="Название темы" width={300} />
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-            В тему входит только оформление (цвета, фон, форма, CSS) — поведение и звук не переносятся.
-          </div>
+          <SettingInput value={themeName} onChange={setThemeName} placeholder={t("settings.customize.themes.namePlaceholder")} width={300} />
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.customize.themes.saveDialog.hint")}</div>
         </div>
       </Dialog>
 
       {/* Импорт темы: JSON из буфера (Ctrl+V) */}
       <Dialog
         open={themeImportOpen}
-        title="Импорт темы"
+        title={t("settings.customize.themes.importDialog.title")}
         onClose={() => setThemeImportOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setThemeImportOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="clipboard-paste" onClick={submitImportTheme}>
-              Импортировать
+              {t("settings.customize.themes.importDialog.submit")}
             </Button>
           </>
         }
@@ -2988,7 +3537,7 @@ export function SettingsView({
             onChange={(e) => setThemeImportText(e.target.value)}
             spellCheck={false}
             placeholder='{"muzaTheme": 1, "name": "…", "tokens": { … }}'
-            aria-label="JSON темы"
+            aria-label={t("settings.customize.themes.importDialog.ariaLabel")}
             style={{
               minHeight: 120,
               resize: "vertical",
@@ -3005,9 +3554,7 @@ export function SettingsView({
           {themeImportErr ? (
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{themeImportErr}</div>
           ) : (
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              Применится сразу и появится в списке тем. Чужие поля отбрасываются.
-            </div>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.customize.themes.importDialog.hint")}</div>
           )}
         </div>
       </Dialog>
@@ -3015,27 +3562,25 @@ export function SettingsView({
       {/* Публикация темы в маркетплейс */}
       <Dialog
         open={publishOpen}
-        title="Опубликовать оформление"
+        title={t("settings.market.publishDialog.title")}
         onClose={() => setPublishOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setPublishOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="upload" disabled={publishBusy} onClick={() => void submitPublishTheme()}>
-              {publishBusy ? "Публикуем…" : "Опубликовать"}
+              {publishBusy ? t("settings.market.publishDialog.publishing") : t("settings.market.publishDialog.submit")}
             </Button>
           </>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 300 }}>
-          <SettingInput value={publishName} onChange={setPublishName} placeholder="Название темы" width={300} />
+          <SettingInput value={publishName} onChange={setPublishName} placeholder={t("settings.customize.themes.namePlaceholder")} width={300} />
           {publishErr ? (
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{publishErr}</div>
           ) : (
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              Публикуется текущее оформление под твоим ником. Повторная публикация с тем же названием обновит тему.
-            </div>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.market.publishDialog.hint")}</div>
           )}
         </div>
       </Dialog>
@@ -3043,30 +3588,29 @@ export function SettingsView({
       {/* Тема с чужим CSS: честное предупреждение перед установкой */}
       <Dialog
         open={cssWarnTheme !== null}
-        title="Тема содержит свой CSS"
+        title={t("settings.market.cssWarnDialog.title")}
         onClose={() => setCssWarnTheme(null)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setCssWarnTheme(null)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
               icon="download"
               onClick={() => {
-                const t = cssWarnTheme;
+                const theme = cssWarnTheme;
                 setCssWarnTheme(null);
-                if (t) void doInstallTheme(t);
+                if (theme) void doInstallTheme(theme);
               }}
             >
-              Установить всё равно
+              {t("settings.market.cssWarnDialog.installAnyway")}
             </Button>
           </>
         }
       >
         <div style={{ maxWidth: 360, fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.55 }}>
-          CSS автора может переопределить любой вид интерфейса. Это безопасно для данных, но если вид сломается —
-          выключи «Свой CSS» в Кастомизации или нажми «Сбросить оформление».
+          {t("settings.market.cssWarnDialog.body")}
         </div>
       </Dialog>
     </div>

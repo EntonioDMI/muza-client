@@ -11,6 +11,7 @@ import type {
   Annotations,
   Credentials,
   EmailChangeStartResult,
+  GroupedSearchResult,
   HistoryItem,
   HomeSection,
   ImportReport,
@@ -18,6 +19,7 @@ import type {
   JamSnapshot,
   Lyrics,
   MarketTheme,
+  MarketPlugin,
   PlaylistDetail,
   PlaylistMeta,
   RecipeEnvelope,
@@ -83,6 +85,11 @@ export interface MuzaApi {
   // Каталог (Stage 2, слайс 3). Требует серверной сессии (аноним — локальный,
   // сервер его не знает → поиск недоступен).
   search(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]>;
+  /** T41: тот же поиск, но с группировкой ремиксов/версий (T36 сервера,
+   *  ?group=1) — оригинал/канон + variants одной карточкой; нераспознанные
+   *  декорированные одиночки остаются как kind:"single" в хвосте. offset
+   *  на сервере фиксирован в 0 — «ещё» растит limit, как и у search(). */
+  searchGrouped(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<GroupedSearchResult[]>;
   getTrack(id: string): Promise<Track>;
   /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
    *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */
@@ -111,9 +118,13 @@ export interface MuzaApi {
   addFavorite(trackId: string): Promise<void>;
   removeFavorite(trackId: string): Promise<void>;
   getPlaylists(): Promise<PlaylistMeta[]>;
-  createPlaylist(name: string): Promise<PlaylistMeta>;
+  /** icon — id из манифеста @muza/core ("pi-01".."pi-38"); клиент обычно
+   *  подбирает случайный сам (T47) и передаёт сюда, но поле опционально. */
+  createPlaylist(name: string, icon?: string): Promise<PlaylistMeta>;
   getPlaylist(id: string): Promise<PlaylistDetail>;
   renamePlaylist(id: string, name: string): Promise<void>;
+  /** Сменить иконку-обложку (T47, ПКМ → «Сменить иконку»); только владелец. */
+  setPlaylistIcon(id: string, icon: string): Promise<void>;
   deletePlaylist(id: string): Promise<void>;
   addPlaylistTrack(playlistId: string, trackId: string): Promise<void>;
   removePlaylistTrack(playlistId: string, trackId: string): Promise<void>;
@@ -164,6 +175,29 @@ export interface MuzaApi {
   deleteMarketTheme(id: string): Promise<void>;
   /** Пожаловаться на чужую тему (порог жалоб авто-скрывает её). */
   reportMarketTheme(id: string): Promise<void>;
+
+  // Маркетплейс плагинов (эпик W8, T45a). payload = { manifest, code, css?,
+  // strings? }; install ставится через рантайм T44/T44b (клиент сам валидирует
+  // манифест и сканирует код/CSS перед записью на диск).
+  getMarketPlugins(): Promise<MarketPlugin[]>;
+  /** Опубликовать/обновить; свой manifest.id = обновление записи (full-access
+   *  снова уходит в pending — код изменился, ревью заново). */
+  publishMarketPlugin(
+    manifest: Record<string, unknown>,
+    code: string,
+    css?: string,
+    strings?: Record<string, string>,
+  ): Promise<MarketPlugin>;
+  /** Установка: инкремент счётчика + полный payload плагина. */
+  installMarketPlugin(id: string): Promise<MarketPlugin>;
+  /** Снять с публикации (свой; админ — любой). */
+  deleteMarketPlugin(id: string): Promise<void>;
+  /** Пожаловаться на чужой плагин (порог жалоб авто-скрывает его). */
+  reportMarketPlugin(id: string): Promise<void>;
+  /** Модерация (только админ): скрыть/вернуть плагин в витрину. */
+  hideMarketPlugin(id: string, hidden: boolean): Promise<void>;
+  /** Премодерация full-access (только админ): одобрить публикацию. */
+  approveMarketPlugin(id: string): Promise<void>;
 
   // Совместные плейлисты (Stage 7): инвайт-код → вход по коду → участник
   // добавляет/убирает треки. Код видит и отзывает только владелец.

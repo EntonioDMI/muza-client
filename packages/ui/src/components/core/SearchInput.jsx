@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Icon } from "./Icon.jsx";
 
 /** Search field — pill, surface step on focus, thin search glyph. */
-export function SearchInput({ value, onChange, placeholder = "Поиск", icon = "search", autoFocus = false, style }) {
+export function SearchInput({ value, onChange, placeholder = "Search", icon = "search", autoFocus = false, style }) {
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState(false);
   return (

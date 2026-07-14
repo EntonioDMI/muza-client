@@ -4,3 +4,36 @@ body,
   height: 100%;
   overflow: hidden;
 }
+
+/* T15: фон «Анимированный» — два диска-обложки вращаются навстречу друг
+   другу. Медленно (фон, не карусель), только transform (GPU-компоузинг,
+   без layout thrash); will-change подсказывает браузеру заранее. Класс
+   ставится в App.tsx только когда prefs.anims=true и OS не просит
+   reduced-motion (JS-проверка) — CSS-медиазапрос ниже это дублирует как
+   защиту на случай прямого системного переключения на лету. */
+.muza-orb-spin--cw,
+.muza-orb-spin--ccw {
+  will-change: transform;
+}
+.muza-orb-spin--cw {
+  animation: muzaOrbCW 64s linear infinite;
+}
+.muza-orb-spin--ccw {
+  animation: muzaOrbCCW 64s linear infinite;
+}
+@keyframes muzaOrbCW {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes muzaOrbCCW {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .muza-orb-spin--cw,
+  .muza-orb-spin--ccw {
+    animation: none;
+  }
+}

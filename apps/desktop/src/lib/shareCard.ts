@@ -4,6 +4,7 @@
  *  (глассморфизм бренда), обложка с закруглением, глиф+wordmark Muza. */
 
 import glyphUrl from "@muza/ui/assets/logo/glyph.svg";
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 export type ShareData =
   | { kind: "track"; title: string; artist: string; coverUrl: string | null }
@@ -132,7 +133,7 @@ function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
 
 async function toBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas.toBlob вернул null"))), "image/png");
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(translate(DEFAULT_LANG, "media.shareCard.errors.canvasBlobFailed")))), "image/png");
   });
 }
 
@@ -141,12 +142,14 @@ function makeCanvas(): CanvasRenderingContext2D {
   canvas.width = SIZE;
   canvas.height = SIZE;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas 2d недоступен");
+  if (!ctx) throw new Error(translate(DEFAULT_LANG, "media.shareCard.errors.canvas2dUnavailable"));
   return ctx;
 }
 
-/** Отрисовать карточку по данным. accent — живой цвет темы пользователя. */
-export async function renderShareCard(data: ShareData, accent: string): Promise<Blob> {
+/** Отрисовать карточку по данным. accent — живой цвет темы пользователя.
+ *  `lang` — язык подписей на карточке; потребитель shell/ShareDialog.tsx
+ *  (T34a) уже прокидывает свой lang из useT() — без явного lang дефолт EN. */
+export async function renderShareCard(data: ShareData, accent: string, lang: Lang = DEFAULT_LANG): Promise<Blob> {
   await document.fonts.ready; // Unbounded/Golos уже подключены приложением
   const ctx = makeCanvas();
   const glyph = await loadImage(glyphUrl);
@@ -207,20 +210,23 @@ export async function renderShareCard(data: ShareData, accent: string): Promise<
     ctx.fillText(ellipsize(ctx, data.name, SIZE - 160), SIZE / 2, 796);
     ctx.font = "400 38px 'Golos Text', sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
-    const meta = `${data.trackCount} тр.${data.owner ? ` · от ${data.owner}` : ""}`;
+    const meta =
+      translate(lang, "media.shareCard.trackCount", { count: data.trackCount }) +
+      (data.owner ? translate(lang, "media.shareCard.fromOwner", { owner: data.owner }) : "");
     ctx.fillText(ellipsize(ctx, meta, SIZE - 200), SIZE / 2, 862);
     drawBranding(ctx, glyph, 984);
   } else {
     // Wrapped: цифры — герои
+    const locale = lang === "ru" ? "ru" : "en";
     ctx.font = "600 48px Unbounded, sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.85)";
-    ctx.fillText(`Мои итоги ${data.year}`, SIZE / 2, 150);
+    ctx.fillText(translate(lang, "media.shareCard.myYearRecap", { year: data.year }), SIZE / 2, 150);
     ctx.font = "700 176px 'Golos Text', sans-serif";
     ctx.fillStyle = accent;
-    ctx.fillText(String(data.minutes.toLocaleString("ru")), SIZE / 2, 340);
+    ctx.fillText(String(data.minutes.toLocaleString(locale)), SIZE / 2, 340);
     ctx.font = "400 44px 'Golos Text', sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
-    ctx.fillText("минут музыки", SIZE / 2, 452);
+    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), SIZE / 2, 452);
 
     const line = (label: string, value: string, y: number) => {
       ctx.font = "400 34px 'Golos Text', sans-serif";
@@ -232,27 +238,38 @@ export async function renderShareCard(data: ShareData, accent: string): Promise<
     };
     let y = 566;
     if (data.topArtist) {
-      line("артист года", data.topArtist, y);
+      line(translate(lang, "media.shareCard.artistOfYear"), data.topArtist, y);
       y += 130;
     }
     if (data.topTrack) {
-      line("трек года", data.topTrack, y);
+      line(translate(lang, "media.shareCard.trackOfYear"), data.topTrack, y);
       y += 130;
     }
     ctx.font = "400 34px 'Golos Text', sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.5)";
-    ctx.fillText(`${data.plays.toLocaleString("ru")} прослушиваний · ${data.artists} артистов`, SIZE / 2, y + 10);
+    ctx.fillText(
+      translate(lang, "media.shareCard.playsAndArtists", { plays: data.plays.toLocaleString(locale), artists: data.artists }),
+      SIZE / 2,
+      y + 10,
+    );
     drawBranding(ctx, glyph, 984);
   }
 
   return toBlob(ctx.canvas);
 }
 
-/** Текст для «Скопировать текст» — вставляется в любой мессенджер. */
-export function shareText(data: ShareData): string {
-  if (data.kind === "track") return `«${data.title}» — ${data.artist} · слушаю в Muza · https://muza.lol`;
-  if (data.kind === "playlist")
-    return `Плейлист «${data.name}» — ${data.trackCount} тр. · собран в Muza · https://muza.lol`;
-  const top = data.topArtist ? ` Артист года — ${data.topArtist}.` : "";
-  return `Мой ${data.year} в Muza: ${data.minutes.toLocaleString("ru")} минут музыки, ${data.plays.toLocaleString("ru")} прослушиваний.${top} · https://muza.lol`;
+/** Текст для «Скопировать текст» — вставляется в любой мессенджер.
+ *  `lang` — потребитель shell/ShareDialog.tsx (T34a) уже прокидывает свой
+ *  lang из useT(); без явного lang дефолт EN. */
+export function shareText(data: ShareData, lang: Lang = DEFAULT_LANG): string {
+  const locale = lang === "ru" ? "ru" : "en";
+  if (data.kind === "track") return translate(lang, "media.share.track", { title: data.title, artist: data.artist });
+  if (data.kind === "playlist") return translate(lang, "media.share.playlist", { name: data.name, count: data.trackCount });
+  const top = data.topArtist ? translate(lang, "media.share.wrappedTopArtist", { topArtist: data.topArtist }) : "";
+  return translate(lang, "media.share.wrapped", {
+    year: data.year,
+    minutes: data.minutes.toLocaleString(locale),
+    plays: data.plays.toLocaleString(locale),
+    top,
+  });
 }

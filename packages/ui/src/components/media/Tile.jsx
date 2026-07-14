@@ -4,7 +4,7 @@ import { IconButton } from "../core/IconButton.jsx";
 /** Media tile — soft rounded card with square cover; play pill appears on
  *  hover AND keyboard focus. The tile itself is a keyboard target
  *  (role=button, Enter/Space = onClick). */
-export function Tile({ cover, title, subtitle, width = 176, playing = false, onPlay, onClick }) {
+export function Tile({ cover, title, subtitle, width = 176, playing = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
   const lit = hover || focused;
@@ -15,6 +15,15 @@ export function Tile({ cover, title, subtitle, width = 176, playing = false, onP
       aria-label={onClick ? title : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      // ПКМ = то же меню, что «⋯» у TrackRow (нативное браузерное меню в плеере — мусор)
+      onContextMenu={
+        onMenu
+          ? (e) => {
+              e.preventDefault();
+              onMenu(e);
+            }
+          : undefined
+      }
       onFocus={() => setFocused(true)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
@@ -62,7 +71,7 @@ export function Tile({ cover, title, subtitle, width = 176, playing = false, onP
           <IconButton
             icon={playing ? "pause" : "play"}
             variant="accent"
-            label={playing ? "Пауза" : "Слушать"}
+            label={playing ? pauseLabel : playLabel}
             onClick={(e) => { if (e) e.stopPropagation(); if (onPlay) onPlay(); }}
           />
         </div>

@@ -23,16 +23,39 @@ describe("migrateLegacyValue", () => {
   });
 
   it("клампит числа в диапазон", () => {
-    expect(migrateLegacyValue("radiusTiles", 500)).toBe(160);
-    expect(migrateLegacyValue("radiusTiles", 1)).toBe(50);
+    expect(migrateLegacyValue("radiusTiles", 500)).toBe(200);
+    expect(migrateLegacyValue("radiusTiles", -10)).toBe(0);
     expect(migrateLegacyValue("density", 63.7)).toBe(64);
+  });
+
+  it("T7: углы «до упора» — radiusTiles/Panels пропускают 0 и 200 без клампа", () => {
+    expect(migrateLegacyValue("radiusTiles", 0)).toBe(0);
+    expect(migrateLegacyValue("radiusTiles", 200)).toBe(200);
+    expect(migrateLegacyValue("radiusPanels", 0)).toBe(0);
+    expect(migrateLegacyValue("radiusPanels", 200)).toBe(200);
   });
 
   it("для кнопок/полей «выше max» = сентинел выкл (пилюля/пресет)", () => {
     expect(migrateLegacyValue("radiusControls", 999)).toBe(RADIUS_OVERRIDE_OFF);
     expect(migrateLegacyValue("radiusControls", 300)).toBe(RADIUS_OVERRIDE_OFF);
     expect(migrateLegacyValue("radiusFields", 26)).toBe(26);
-    expect(migrateLegacyValue("radiusFields", 2)).toBe(6);
+    expect(migrateLegacyValue("radiusFields", 27)).toBe(RADIUS_OVERRIDE_OFF);
+  });
+
+  it("T7: radiusControls/Fields минимум теперь 0px (было 6px)", () => {
+    expect(migrateLegacyValue("radiusControls", 0)).toBe(0);
+    expect(migrateLegacyValue("radiusFields", 0)).toBe(0);
+    expect(migrateLegacyValue("radiusFields", -5)).toBe(0);
+  });
+
+  it("T8: radiusTabs — та же схема кламп/сентинел, что у radiusControls/Fields", () => {
+    expect(migrateLegacyValue("radiusTabs", 0)).toBe(0);
+    expect(migrateLegacyValue("radiusTabs", 26)).toBe(26);
+    expect(migrateLegacyValue("radiusTabs", 12.4)).toBe(12);
+    expect(migrateLegacyValue("radiusTabs", 999)).toBe(RADIUS_OVERRIDE_OFF);
+    expect(migrateLegacyValue("radiusTabs", 27)).toBe(RADIUS_OVERRIDE_OFF);
+    expect(migrateLegacyValue("radiusTabs", 300)).toBe(RADIUS_OVERRIDE_OFF);
+    expect(migrateLegacyValue("radiusTabs", -5)).toBe(0);
   });
 });
 
@@ -52,9 +75,17 @@ describe("sanitizeTokens: легаси-темы со строковыми пре
 
   it("числовые значения проходят с клампом, мусор отбрасывается", () => {
     const tokens = sanitizeTokens({ radiusPanels: 9000, animSpeed: true, radiusFields: 12 });
-    expect(tokens.radiusPanels).toBe(160);
+    expect(tokens.radiusPanels).toBe(200);
     expect("animSpeed" in tokens).toBe(false);
     expect(tokens.radiusFields).toBe(12);
+  });
+
+  it("T7: тема маркетплейса с новыми крайними значениями (0/200) проходит без клампа", () => {
+    const tokens = sanitizeTokens({ radiusTiles: 0, radiusPanels: 200, radiusControls: 0, radiusFields: 0 });
+    expect(tokens.radiusTiles).toBe(0);
+    expect(tokens.radiusPanels).toBe(200);
+    expect(tokens.radiusControls).toBe(0);
+    expect(tokens.radiusFields).toBe(0);
   });
 
   it("density/lineSpacing — не тема (в THEME_KEYS не входят)", () => {

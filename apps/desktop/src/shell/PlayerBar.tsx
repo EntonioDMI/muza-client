@@ -3,19 +3,34 @@ import { IconButton, Slider, Tooltip } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
 import type { BarButtonKey, RepeatMode } from "../types";
 import { normalizeBarButtons, type BarButtonPref } from "../lib/barButtons";
+import { isPluginKey } from "../lib/pluginSlots";
 import { fmtTime } from "../lib/format";
 import { startTrackFileDrag } from "../lib/dragOut";
+import { useT } from "../i18n";
+
+/** Плагинная кнопка бара (T44): иконка/подпись из contributes + рантайм-
+ *  состояние (UI.setBarButtonState/setBadge). Клик уведомляет плагин. */
+export interface PluginBarButtonView {
+  key: string;
+  pluginId: string;
+  slotId: string;
+  title: string;
+  icon: string;
+  active?: boolean;
+  badge?: string;
+}
 
 /** Кнопка скорости: текст «1×», клик циклит пресеты (как в голосовых Telegram).
  *  Частая настройка — живёт прямо в баре, а не в недрах настроек. */
 function SpeedButton({ speed, onClick }: { speed: number; onClick: () => void }) {
+  const { t } = useT();
   const [hover, setHover] = useState(false);
   const label = `${speed}×`.replace(".", ",");
   return (
-    <Tooltip label="Скорость воспроизведения">
+    <Tooltip label={t("player.speedTooltip")}>
       <button
         type="button"
-        aria-label={`Скорость: ${label}`}
+        aria-label={t("player.speedAria", { speed: label })}
         onClick={onClick}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
@@ -75,6 +90,9 @@ export function PlayerBar({
   onJam,
   onCoverDragOut,
   buttons,
+  pluginButtons = [],
+  pluginKeys = [],
+  onPluginButton,
 }: {
   track: PlayerTrack;
   playing: boolean;
@@ -115,13 +133,21 @@ export function PlayerBar({
   /** Компоновка (настройки → «Кнопки плеер-бара»): состав и порядок.
    *  Несъёмное — обложка/инфо/лайк, prev/play/next, прогресс. */
   buttons?: BarButtonPref[];
+  /** T44: плагинные кнопки бара (мета + рантайм-состояние). */
+  pluginButtons?: PluginBarButtonView[];
+  /** T44: валидные плагинные ключи для нормализатора композиции. */
+  pluginKeys?: readonly string[];
+  /** T44: клик по плагинной кнопке — уведомить плагин. */
+  onPluginButton?: (pluginId: string, slotId: string) => void;
 }) {
-  const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
+  const { t } = useT();
+  const repeatLabel = repeat === "one" ? t("player.repeat.one") : repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
   // Компоновка: shuffle/repeat живут в центре вокруг транспорта, остальные —
   // справа в порядке массива; выключенное не рендерится
-  const layout = normalizeBarButtons(buttons ?? []);
+  const layout = normalizeBarButtons(buttons ?? [], pluginKeys);
   const barOn = (key: BarButtonKey) => layout.find((b) => b.key === key)?.on !== false;
   const rightOrder = layout.filter((b) => b.on && b.key !== "shuffle" && b.key !== "repeat");
+  const pluginBtn = (key: string) => pluginButtons.find((b) => b.key === key);
   // Жест drag-out с обложки: pointerdown взводит экспорт, движение >12px
   // запускает нативный драг, клик без движения — обычный «Режим прослушивания»
   const dragRef = useRef<{ x: number; y: number; file: Promise<string | null>; started: boolean } | null>(null);
@@ -148,12 +174,12 @@ export function PlayerBar({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
-        <Tooltip label={onCoverDragOut ? "Режим прослушивания · тяни на рабочий стол" : "Режим прослушивания"}>
+        <Tooltip label={onCoverDragOut ? t("player.listeningModeTooltipDrag") : t("player.listeningModeTooltip")}>
           {/* настоящая кнопка: клавиатура открывает режим прослушивания;
               с зажатой ЛКМ обложка утаскивается файлом (drag-out) */}
           <button
             type="button"
-            aria-label="Режим прослушивания"
+            aria-label={t("player.listeningModeTooltip")}
             onClick={() => {
               if (draggedRef.current) {
                 draggedRef.current = false; // это был drag, не клик
@@ -228,28 +254,28 @@ export function PlayerBar({
             {track.artist}
           </div>
         </div>
-        <Tooltip label="Нравится">
-          <IconButton icon="heart" size="sm" active={liked} filled={liked} label="Нравится" onClick={onLike} />
+        <Tooltip label={t("common.like")}>
+          <IconButton icon="heart" size="sm" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
         </Tooltip>
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           {barOn("shuffle") ? (
-            <Tooltip label="Перемешать">
-              <IconButton icon="shuffle" size="sm" active={shuffle} label="Перемешать" onClick={onShuffle} />
+            <Tooltip label={t("player.shuffle")}>
+              <IconButton icon="shuffle" size="sm" active={shuffle} label={t("player.shuffle")} onClick={onShuffle} />
             </Tooltip>
           ) : null}
-          <Tooltip label="Предыдущий">
-            <IconButton icon="skip-back" label="Предыдущий" onClick={onPrev} />
+          <Tooltip label={t("player.previous")}>
+            <IconButton icon="skip-back" label={t("player.previous")} onClick={onPrev} />
           </Tooltip>
           <IconButton
             icon={buffering ? "loader-circle" : playing ? "pause" : "play"}
             variant="accent"
-            label={buffering ? "Добываем трек…" : playing ? "Пауза" : "Слушать"}
+            label={buffering ? t("player.buffering") : playing ? t("player.pause") : t("player.play")}
             onClick={onTogglePlay}
           />
-          <Tooltip label="Следующий">
-            <IconButton icon="skip-forward" label="Следующий" onClick={onNext} />
+          <Tooltip label={t("player.next")}>
+            <IconButton icon="skip-forward" label={t("player.next")} onClick={onNext} />
           </Tooltip>
           {barOn("repeat") ? (
             <Tooltip label={repeatLabel}>
@@ -273,8 +299,8 @@ export function PlayerBar({
             value={pos}
             max={track.duration}
             onChange={onSeek}
-            ariaLabel="Прогресс"
-            valueText={`${fmtTime(pos)} из ${fmtTime(track.duration)}`}
+            ariaLabel={t("player.progress")}
+            valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track.duration) })}
             style={{ flex: 1 }}
           />
           <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums", width: 36 }}>
@@ -295,53 +321,68 @@ export function PlayerBar({
               return <SpeedButton key={key} speed={speed} onClick={onSpeed} />;
             case "equalizer":
               return (
-                <Tooltip key={key} label="Эквалайзер">
-                  <IconButton icon="sliders-vertical" size="sm" label="Эквалайзер" onClick={onEqualizer} />
+                <Tooltip key={key} label={t("settings.equalizer.title")}>
+                  <IconButton icon="sliders-vertical" size="sm" label={t("settings.equalizer.title")} onClick={onEqualizer} />
                 </Tooltip>
               );
             case "lyrics":
               return (
-                <Tooltip key={key} label="Текст">
-                  <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label="Текст" onClick={onLyrics} />
+                <Tooltip key={key} label={t("player.lyrics")}>
+                  <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label={t("player.lyrics")} onClick={onLyrics} />
                 </Tooltip>
               );
             case "jam":
               return (
-                <Tooltip key={key} label={jamActive ? "Jam идёт — открыть" : "Jam: слушать вместе"}>
-                  <IconButton icon="radio-tower" size="sm" active={jamActive} label="Jam: слушать вместе" onClick={onJam} />
+                <Tooltip key={key} label={jamActive ? t("player.jamActiveTooltip") : t("player.jamTooltip")}>
+                  <IconButton icon="radio-tower" size="sm" active={jamActive} label={t("player.jamTooltip")} onClick={onJam} />
                 </Tooltip>
               );
             case "queue":
               return (
-                <Tooltip key={key} label="Очередь">
-                  <IconButton icon="list-music" size="sm" active={queueOn} label="Очередь" onClick={onQueue} />
+                <Tooltip key={key} label={t("player.queue")}>
+                  <IconButton icon="list-music" size="sm" active={queueOn} label={t("player.queue")} onClick={onQueue} />
                 </Tooltip>
               );
             case "volume":
               // клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость
               return (
                 <div key={key} style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-                  <Tooltip label={vol === 0 ? "Включить звук" : "Без звука"}>
+                  <Tooltip label={vol === 0 ? t("player.unmute") : t("player.mute")}>
                     <IconButton
                       icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
                       size="sm"
-                      label={vol === 0 ? "Включить звук" : "Без звука"}
+                      label={vol === 0 ? t("player.unmute") : t("player.mute")}
                       onClick={onMute}
                     />
                   </Tooltip>
                   <div onWheel={(e) => onVol(Math.max(0, Math.min(100, vol + (e.deltaY < 0 ? 5 : -5))))} style={{ display: "flex" }}>
-                    <Slider value={vol} onChange={onVol} ariaLabel="Громкость" valueText={`${Math.round(vol)} %`} style={{ width: 110 }} />
+                    <Slider value={vol} onChange={onVol} ariaLabel={t("player.volume")} valueText={`${Math.round(vol)} %`} style={{ width: 110 }} />
                   </div>
                 </div>
               );
             case "fullscreen":
               return (
-                <Tooltip key={key} label="Во весь экран">
-                  <IconButton icon="maximize-2" size="sm" label="Режим прослушивания" onClick={onExpand} />
+                <Tooltip key={key} label={t("player.fullscreen")}>
+                  <IconButton icon="maximize-2" size="sm" label={t("player.listeningModeTooltip")} onClick={onExpand} />
                 </Tooltip>
               );
-            default:
-              return null;
+            default: {
+              // T44: плагинная кнопка бара (ключ plugin:<id>:<slot>)
+              if (!isPluginKey(key)) return null;
+              const pb = pluginBtn(key);
+              if (!pb) return null;
+              return (
+                <Tooltip key={key} label={pb.badge ? `${pb.title} · ${pb.badge}` : pb.title}>
+                  <IconButton
+                    icon={pb.icon}
+                    size="sm"
+                    active={pb.active}
+                    label={pb.title}
+                    onClick={() => onPluginButton?.(pb.pluginId, pb.slotId)}
+                  />
+                </Tooltip>
+              );
+            }
           }
         })}
       </div>

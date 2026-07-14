@@ -7,6 +7,7 @@ import {
   type Annotations,
   type Credentials,
   type EmailChangeStartResult,
+  type GroupedSearchResult,
   type HistoryItem,
   type HomeSection,
   type ImportReport,
@@ -14,6 +15,7 @@ import {
   type JamSnapshot,
   type Lyrics,
   type MarketTheme,
+  type MarketPlugin,
   type PlaylistDetail,
   type PlaylistMeta,
   type RecipeEnvelope,
@@ -30,6 +32,22 @@ import {
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
+
+/** T41: фикстур-трек для grouped-мока (каталога в моке нет — search() отдаёт
+ *  [], но searchGrouped() должен показать саму ФОРМУ ответа сборщикам UI). */
+function mockTrack(id: string, artist: string, title: string): Track {
+  return {
+    id,
+    artist,
+    title,
+    durationSec: 210,
+    coverUrl: null,
+    isCached: false,
+    sources: ["youtube"],
+    loudness: null,
+    localHash: null,
+  };
+}
 
 function makeSession(username: string | null, anonymous: boolean): Session {
   return {
@@ -157,6 +175,25 @@ export class MockMuzaApi implements MuzaApi {
     return []; // мок: каталога нет
   }
 
+  /** T41: демонстрирует форму grouped-ответа (1 группа с 2 версиями + 1
+   *  нераспознанный single в хвосте) — независимо от query/opts, как и
+   *  плоский search() выше; настоящий каталог/группировка живут на сервере. */
+  async searchGrouped(_query: string, _opts?: { scope?: SearchScope; limit?: number }): Promise<GroupedSearchResult[]> {
+    return [
+      {
+        kind: "group",
+        canonical: mockTrack("mock-canon-1", "Mock Artist", "Mock Song"),
+        hasOriginal: true,
+        canonicalVariantType: null,
+        variants: [
+          { track: mockTrack("mock-remix-1", "Mock Artist", "Mock Song (Remix)"), variantType: "remix" },
+          { track: mockTrack("mock-spedup-1", "Mock Artist", "Mock Song (Sped Up)"), variantType: "sped_up" },
+        ],
+      },
+      { kind: "single", track: mockTrack("mock-single-1", "Other Artist", "Unrelated Track (Edit)") },
+    ];
+  }
+
   async getTrack(id: string): Promise<Track> {
     throw new Error(`Мок: трек ${id} не найден`);
   }
@@ -200,7 +237,7 @@ export class MockMuzaApi implements MuzaApi {
     return [...this.playlists.values()];
   }
 
-  async createPlaylist(name: string): Promise<PlaylistMeta> {
+  async createPlaylist(name: string, icon?: string): Promise<PlaylistMeta> {
     const p: PlaylistMeta = {
       id: crypto.randomUUID(),
       name,
@@ -209,9 +246,16 @@ export class MockMuzaApi implements MuzaApi {
       role: "owner",
       ownerUsername: "",
       collaboratorsCount: 0,
+      icon: icon ?? null,
     };
     this.playlists.set(p.id, p);
     return p;
+  }
+
+  /** Мок: эхо-запись иконки в in-memory плейлист (сервера нет — просто echo). */
+  async setPlaylistIcon(id: string, icon: string): Promise<void> {
+    const p = this.playlists.get(id);
+    if (p) this.playlists.set(id, { ...p, icon });
   }
 
   async getPlaylist(id: string): Promise<PlaylistDetail> {
@@ -226,6 +270,7 @@ export class MockMuzaApi implements MuzaApi {
       inviteCode: null,
       collaborators: [],
       addedBy: {},
+      icon: p.icon,
     };
   }
 
@@ -346,6 +391,27 @@ export class MockMuzaApi implements MuzaApi {
   async deleteMarketTheme(): Promise<void> {}
 
   async reportMarketTheme(): Promise<void> {}
+
+  // Маркетплейс плагинов в моке недоступен (нужен сервер)
+  async getMarketPlugins(): Promise<MarketPlugin[]> {
+    return [];
+  }
+
+  async publishMarketPlugin(): Promise<MarketPlugin> {
+    throw new Error("Мок: маркетплейс живёт на сервере");
+  }
+
+  async installMarketPlugin(): Promise<MarketPlugin> {
+    throw new Error("Мок: маркетплейс живёт на сервере");
+  }
+
+  async deleteMarketPlugin(): Promise<void> {}
+
+  async reportMarketPlugin(): Promise<void> {}
+
+  async hideMarketPlugin(): Promise<void> {}
+
+  async approveMarketPlugin(): Promise<void> {}
 
   // Админка в моке недоступна
   async adminPing(): Promise<boolean> {

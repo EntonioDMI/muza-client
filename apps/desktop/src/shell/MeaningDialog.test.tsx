@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import type { Annotation } from "@muza/api-client";
 import { MeaningDialog } from "./MeaningDialog";
@@ -44,7 +44,8 @@ describe("MeaningDialog", () => {
     const dialog = screen.getByRole("dialog");
 
     fireEvent.click(dialog.parentElement!);
-    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+    // T34a (i18n): вне LanguageProvider useT() фолбэкает на DEFAULT_LANG="en".
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.keyDown(window, { key: "Escape" });
 
     expect(onClose).toHaveBeenCalledTimes(3);
@@ -60,7 +61,7 @@ describe("MeaningDialog", () => {
     expect(stopImmediatePropagation).toHaveBeenCalledOnce();
   });
 
-  it("keeps listening mode open when Escape closes the dialog above it", () => {
+  it("keeps listening mode open when Escape closes the dialog above it", async () => {
     const noop = vi.fn();
     function Harness() {
       const [dialogOpen, setDialogOpen] = useState(true);
@@ -93,7 +94,10 @@ describe("MeaningDialog", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
 
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByRole("button", { name: "Свернуть" })).toBeTruthy();
+    // Dialog делает delayed-unmount на время exit-анимации (T13) — узел
+    // уходит из DOM асинхронно (onAnimationEnd/таймаут-фолбэк), не сразу.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // T31 (i18n): вне LanguageProvider useT() фолбэкает на DEFAULT_LANG="en".
+    expect(screen.getByRole("button", { name: "Minimize" })).toBeTruthy();
   });
 });

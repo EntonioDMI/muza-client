@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Dialog, Icon, Tabs } from "@muza/ui";
+import { translate, type Lang, type TranslationKey, type TParams } from "../i18n";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { ApiError, CredentialsSchema, EmailSchema, type MuzaApi, type Session } from "@muza/api-client";
 
@@ -46,7 +47,10 @@ type Confirm = { pendingId: string; email: string; dead: string | null };
 
 /** Экран входа: вход/регистрация (email опционален — с ним verify-before-create),
  *  аноним = аккаунт-на-устройстве, честная модалка «синхронизации не будет» (№32). */
-export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: Session) => void }) {
+export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession: (s: Session) => void; lang: Lang }) {
+  // LoginScreen живёт ВНЕ <LanguageProvider> (показывается до сессии/Player), поэтому
+  // язык приходит пропом (App.loadPrefs().language) и переводим через translate напрямую.
+  const t = (key: TranslationKey, params?: TParams) => translate(lang, key, params);
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -88,16 +92,16 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
           if (!cancelled) onSession(session);
         } catch (e) {
           if (!cancelled) {
-            const msg = e instanceof Error ? e.message : "Не получилось завершить регистрацию";
+            const msg = e instanceof Error ? e.message : t("auth.errors.completeFailed");
             setConfirm((c) => (c ? { ...c, dead: msg } : c));
           }
         } finally {
           completingRef.current = false;
         }
       } else if (status === "expired") {
-        setConfirm((c) => (c ? { ...c, dead: "Срок подтверждения истёк — начни заново." } : c));
+        setConfirm((c) => (c ? { ...c, dead: t("auth.errors.expired") } : c));
       } else if (status === "notfound") {
-        setConfirm((c) => (c ? { ...c, dead: "Заявка не найдена — начни заново." } : c));
+        setConfirm((c) => (c ? { ...c, dead: t("auth.errors.notFound") } : c));
       }
     };
     tick();
@@ -113,16 +117,16 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
     setNotice(null);
     if (mode === "recover") {
       if (!EmailSchema.safeParse(email.trim()).success) {
-        setError("Похоже, это не email.");
+        setError(t("auth.errors.notEmail"));
         return;
       }
       setBusy(true);
       try {
         await api.recoveryStart(email.trim());
         // сервер всегда 204: формулировка не выдаёт, есть ли такая почта
-        setNotice("Если такая почта привязана к аккаунту — письмо со ссылкой уже летит. Ссылка действует 30 минут.");
+        setNotice(t("auth.recoverySent"));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Что-то пошло не так");
+        setError(e instanceof Error ? e.message : t("auth.errors.somethingWrong"));
       } finally {
         setBusy(false);
       }
@@ -130,13 +134,13 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
     }
     const parsed = CredentialsSchema.safeParse({ username, password });
     if (!parsed.success) {
-      setError("Имя — от 3 символов, пароль — от 8.");
+      setError(t("auth.errors.credsTooShort"));
       return;
     }
     const trimmedEmail = email.trim();
     const wantEmail = mode === "register" && trimmedEmail.length > 0;
     if (wantEmail && !EmailSchema.safeParse(trimmedEmail).success) {
-      setError("Похоже, это не email.");
+      setError(t("auth.errors.notEmail"));
       return;
     }
     setBusy(true);
@@ -152,7 +156,7 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
         onSession(await api.register(parsed.data));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Что-то пошло не так");
+      setError(e instanceof Error ? e.message : t("auth.errors.somethingWrong"));
     } finally {
       setBusy(false);
     }
@@ -164,12 +168,12 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
     try {
       await api.registerResend(confirm.pendingId);
       setCooldown(60);
-      setResendNote("Письмо отправлено ещё раз.");
+      setResendNote(t("auth.check.resent"));
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         setConfirm((c) => (c ? { ...c, dead: e.message } : c));
       } else {
-        setResendNote(e instanceof Error ? e.message : "Не получилось отправить письмо");
+        setResendNote(e instanceof Error ? e.message : t("auth.errors.resendFailed"));
       }
     }
   };
@@ -247,11 +251,12 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
                 color={confirm.dead ? "var(--danger)" : "var(--accent)"}
               />
               <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 20, color: "var(--text-1)" }}>
-                Проверь почту
+                {t("auth.check.title")}
               </div>
               <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
-                Мы отправили письмо на <span style={{ color: "var(--text-1)" }}>{confirm.email}</span>. Открой ссылку из
-                письма — аккаунт создастся сам, это окно можно не закрывать.
+                {t("auth.check.sentToPrefix")}
+                <span style={{ color: "var(--text-1)" }}>{confirm.email}</span>
+                {t("auth.check.sentToSuffix")}
               </div>
               <div
                 style={{
@@ -260,7 +265,7 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
                   fontFamily: "var(--font-ui)",
                 }}
               >
-                {confirm.dead ?? "Ждём подтверждения…"}
+                {confirm.dead ?? t("auth.check.waiting")}
               </div>
               {resendNote ? (
                 <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", fontFamily: "var(--font-ui)" }}>
@@ -270,15 +275,15 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
             </div>
             {confirm.dead ? (
               <Button variant="primary" size="lg" onClick={backToForm} style={{ width: "100%" }}>
-                Начать заново
+                {t("auth.check.startOver")}
               </Button>
             ) : (
               <>
                 <Button variant="ghost" disabled={cooldown > 0} onClick={resend} style={{ width: "100%" }}>
-                  {cooldown > 0 ? `Отправить ещё раз (${cooldown} с)` : "Отправить письмо ещё раз"}
+                  {cooldown > 0 ? t("auth.check.resendIn", { count: cooldown }) : t("auth.check.resend")}
                 </Button>
                 <Button variant="ghost" onClick={backToForm} style={{ width: "100%" }}>
-                  Назад
+                  {t("auth.check.back")}
                 </Button>
               </>
             )}
@@ -288,9 +293,9 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
             <Tabs
               stretch
               items={[
-                { key: "login", label: "Вход" },
-                { key: "register", label: "Регистрация" },
-                { key: "recover", label: "Восстановление" },
+                { key: "login", label: t("auth.tabs.login") },
+                { key: "register", label: t("auth.tabs.register") },
+                { key: "recover", label: t("auth.tabs.recover") },
               ]}
               value={mode}
               onChange={(m: string) => {
@@ -301,19 +306,19 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
             />
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
               {mode !== "recover" ? (
-                <Field value={username} onChange={setUsername} placeholder="Имя пользователя" autoFocus />
+                <Field value={username} onChange={setUsername} placeholder={t("auth.fields.username")} autoFocus />
               ) : null}
               {mode !== "login" ? (
                 <Field
                   value={email}
                   onChange={setEmail}
-                  placeholder={mode === "recover" ? "Email аккаунта" : "Email (не обязательно)"}
+                  placeholder={mode === "recover" ? t("auth.fields.emailAccount") : t("auth.fields.emailOptional")}
                   type="email"
                   autoFocus={mode === "recover"}
                 />
               ) : null}
               {mode !== "recover" ? (
-                <Field value={password} onChange={setPassword} placeholder="Пароль" type="password" />
+                <Field value={password} onChange={setPassword} placeholder={t("auth.fields.password")} type="password" />
               ) : null}
               {error ? (
                 <div style={{ color: "var(--danger)", fontSize: "var(--fs-caption)", fontFamily: "var(--font-ui)" }}>
@@ -327,10 +332,10 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
               ) : null}
             </div>
             <Button variant="primary" size="lg" disabled={busy} onClick={submit} style={{ width: "100%" }}>
-              {mode === "login" ? "Войти" : mode === "register" ? "Создать аккаунт" : "Отправить ссылку"}
+              {mode === "login" ? t("auth.submit.login") : mode === "register" ? t("auth.submit.register") : t("auth.submit.recover")}
             </Button>
             <Button variant="ghost" disabled={busy} onClick={() => setAnonDialog(true)} style={{ width: "100%" }}>
-              Продолжить анонимно
+              {t("auth.continueAnon")}
             </Button>
             <div
               style={{
@@ -342,10 +347,10 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
               }}
             >
               {mode === "login"
-                ? "Email не нужен. Никакой персональной истории прослушиваний."
+                ? t("auth.hint.login")
                 : mode === "register"
-                  ? "Email не обязателен: без него всё работает, но пароль будет не восстановить."
-                  : "Сработает, только если при регистрации был указан email."}
+                  ? t("auth.hint.register")
+                  : t("auth.hint.recover")}
             </div>
           </>
         )}
@@ -353,22 +358,21 @@ export function LoginScreen({ api, onSession }: { api: MuzaApi; onSession: (s: S
 
       <Dialog
         open={anonDialog}
-        title="Без синхронизации"
+        title={t("auth.anon.title")}
         onClose={() => setAnonDialog(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setAnonDialog(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="user" onClick={goAnonymous}>
-              Продолжить
+              {t("auth.anon.continue")}
             </Button>
           </>
         }
       >
         <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
-          Анонимный аккаунт живёт только на этом устройстве: плейлисты и лайки не будут синхронизироваться и не
-          восстановятся при переустановке. Позже можно создать полноценный аккаунт в настройках.
+          {t("auth.anon.body")}
         </div>
       </Dialog>
     </div>

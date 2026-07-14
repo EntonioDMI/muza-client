@@ -1,7 +1,7 @@
 {
   "app": {
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost http://localhost:8000"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost http://localhost:8000"
     }
   }
 }

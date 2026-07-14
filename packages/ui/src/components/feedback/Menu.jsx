@@ -1,13 +1,68 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 
+// Фолбэк-таймаут delayed-unmount: см. Dialog.jsx. Покрывает --dur-fast на
+// максимальной скорости анимаций (170% → 150ms*1.7≈255ms) с запасом.
+const EXIT_FALLBACK_MS = 400;
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 /** Context / dropdown menu — frosted panel anchored at a point.
  *  Keyboard: focus jumps into the menu on open (and back on close),
- *  Arrows/Home/End walk items, Enter activates, Escape closes. */
+ *  Arrows/Home/End walk items, Enter activates, Escape closes.
+ *  Закрытие — delayed-unmount (см. Dialog.jsx): узел остаётся в DOM на время
+ *  exit-анимации (muzaMenuOut), снимается по onAnimationEnd с
+ *  таймаут-фолбэком; reduced-motion и повторное открытие во время закрытия
+ *  обрабатываются так же, как в Dialog. */
 export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   const panelRef = useRef(null);
   const restoreRef = useRef(null);
+  const closeTimerRef = useRef(null);
+  const [mounted, setMounted] = useState(open);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+      setClosing(false);
+      setMounted(true);
+      return;
+    }
+    if (!mounted) return;
+    if (prefersReducedMotion()) {
+      setClosing(false);
+      setMounted(false);
+      return;
+    }
+    setClosing(true);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      setClosing(false);
+      setMounted(false);
+    }, EXIT_FALLBACK_MS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
+
+  const finishClosing = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    setClosing(false);
+    setMounted(false);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -45,14 +100,20 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     else if (e.key === "Tab") { e.preventDefault(); moveFocus(e.shiftKey ? -1 : 1); }
   };
 
-  if (!open) return null;
+  if (!mounted) return null;
   return (
-    <div onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose && onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 150 }}>
+    <div
+      onClick={closing ? undefined : onClose}
+      onContextMenu={(e) => { e.preventDefault(); if (!closing && onClose) onClose(); }}
+      inert={closing || undefined}
+      style={{ position: "fixed", inset: 0, zIndex: 150 }}
+    >
       <div
         ref={panelRef}
         role="menu"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onMenuKeyDown}
+        onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finishClosing(); }}
         style={{
           position: "absolute",
           left: x,
@@ -67,10 +128,12 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           display: "flex",
           flexDirection: "column",
           gap: 2,
-          animation: "muzaMenuIn var(--dur-fast) var(--ease-out)",
+          animation: closing
+            ? "muzaMenuOut var(--dur-fast) var(--ease-out) forwards"
+            : "muzaMenuIn var(--dur-fast) var(--ease-out)",
         }}
       >
-        <style>{"@keyframes muzaMenuIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=menu]{animation:none!important}}"}</style>
+        <style>{"@keyframes muzaMenuIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@keyframes muzaMenuOut{to{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=menu]{animation:none!important}}"}</style>
         {items.map((it, i) =>
           it === "-" ? (
             <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--surface-3)", margin: "var(--sp-1) var(--sp-2)" }}></div>

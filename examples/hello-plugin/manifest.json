@@ -1,0 +1,18 @@
+{
+  "id": "hello-plugin",
+  "name": "Hello Plugin",
+  "version": "1.0.0",
+  "api_version": 1,
+  "description": "Пример плагина уровня 1 (песочница): кнопка в баре, своя вкладка, пункт меню трека и тосты — минимальный набор, чтобы увидеть весь структурный API живьём.",
+  "author": "muza",
+  "entry": "index.js",
+  "permissions": ["player.read", "ui.tab", "ui.slots"],
+  "contributes": {
+    "tabs": [{ "id": "hello", "title": "Hello", "icon": "sparkles" }],
+    "navItems": [{ "id": "hello", "title": "Hello", "icon": "sparkles" }],
+    "barButtons": [{ "id": "greet", "title": "Поздороваться", "icon": "hand" }],
+    "menus": {
+      "track": [{ "id": "hello-track", "title": "Поздороваться с треком", "icon": "sparkles" }]
+    }
+  }
+}

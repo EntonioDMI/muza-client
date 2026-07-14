@@ -21,7 +21,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # single-flight резолвов, LRU-touch файлов кэша
 ed25519-dalek = "2"
 base64 = "0.22"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "net"] }
 filetime = "0.2"
 # Канонический разбор provider URL на нативной SSRF-границе.
 url = "2"
@@ -41,3 +41,14 @@ tauri-plugin-process = "2"
 # Нативный drag-out: перетаскивание трека из приложения на рабочий стол
 # (файл из кэша добычи с человеческим именем; CrabNebula drag-rs)
 tauri-plugin-drag = "2.1.1"
+# Плагины уровня 1 (T44, plugins.rs): распаковка .muzaplugin (zip-slip/бомба
+# защита через enclosed_name()+лимит), net.fetch (reqwest уже в дереве через
+# tauri-plugin-updater — тот же rustls-бэкенд, версия уже разрешена в
+# Cargo.lock, доп. компиляции почти нет). Парсинг URL для net_allow — крейт
+# `url` уже объявлен выше (SSRF-граница remediation), общий.
+zip = { version = "4", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# CSPRNG для nonce/staging-токена плагинов (T44-fix: security review) — версия
+# зафиксирована на уже разрешённой в дереве (tauri сама тянет getrandom 0.3.4),
+# доп. компиляции почти нет
+getrandom = "0.3"

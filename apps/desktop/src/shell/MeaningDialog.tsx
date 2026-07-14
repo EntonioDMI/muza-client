@@ -2,6 +2,7 @@ import { Dialog, Icon, IconButton } from "@muza/ui";
 import type { Annotation } from "@muza/api-client";
 import type { LyricLine } from "../data/demo";
 import { openExternal } from "../lib/system";
+import { useT } from "../i18n";
 
 export function MeaningDialog({
   open,
@@ -16,13 +17,14 @@ export function MeaningDialog({
   geniusUrl?: string | null;
   onClose: () => void;
 }) {
+  const { t } = useT();
   return (
     <Dialog
       open={open && Boolean(line)}
-      title="Смысл строки"
+      title={t("dialogs.meaning.title")}
       width={560}
       onClose={onClose}
-      headerAction={<IconButton icon="x" size="sm" label="Закрыть" onClick={onClose} />}
+      headerAction={<IconButton icon="x" size="sm" label={t("dialogs.close")} onClick={onClose} />}
     >
       {line ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
@@ -48,8 +50,8 @@ export function MeaningDialog({
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "var(--sp-2)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
               <span>
                 Genius
-                {annotation.verified ? " · от автора" : ""}
-                {annotation.votes > 0 ? ` · ▲ ${annotation.votes}` : ""}
+                {annotation.verified ? t("dialogs.meaning.verifiedSuffix") : ""}
+                {annotation.votes > 0 ? t("dialogs.meaning.votesSuffix", { votes: annotation.votes }) : ""}
               </span>
               {geniusUrl ? (
                 <button
@@ -57,12 +59,12 @@ export function MeaningDialog({
                   onClick={() => void openExternal(geniusUrl)}
                   style={{ border: "none", background: "none", padding: 0, color: "var(--accent-text)", font: "inherit", cursor: "pointer" }}
                 >
-                  Открыть на Genius
+                  {t("dialogs.meaning.openOnGenius")}
                 </button>
               ) : null}
             </div>
           ) : (
-            <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>Режим смысла · демо</div>
+            <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>{t("dialogs.meaning.demoLabel")}</div>
           )}
         </div>
       ) : null}

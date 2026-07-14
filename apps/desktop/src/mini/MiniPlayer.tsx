@@ -8,12 +8,17 @@ import { IconButton } from "@muza/ui";
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import { fmtTime } from "../lib/format";
 import { miniCommand, miniHello, miniOnState, type MiniState } from "../lib/miniBridge";
+import { resolveMigratedLanguage, translate } from "../i18n";
 
-function loadThemePrefs(): Pick<Prefs, "theme" | "accent" | "customAccent"> {
+function loadThemePrefs(): Pick<Prefs, "theme" | "accent" | "customAccent" | "language"> {
   try {
     const raw = localStorage.getItem("muza.prefs.v1");
     if (!raw) return DEFAULT_PREFS;
-    return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<Prefs>) };
+    const stored = JSON.parse(raw) as Partial<Prefs>;
+    // T28 (i18n): raw уже существовал → мигрируем как App.loadPrefs
+    // (см. i18n/index.tsx::resolveMigratedLanguage) — иначе профили без
+    // language читали бы дефолт "en" вместо привычного "ru".
+    return { ...DEFAULT_PREFS, ...stored, language: resolveMigratedLanguage(stored.language) };
   } catch {
     return DEFAULT_PREFS;
   }
@@ -87,29 +92,29 @@ export function MiniPlayer() {
               textOverflow: "ellipsis",
             }}
           >
-            {state ? `${state.artist} · ${fmtTime(state.pos)} / ${fmtTime(state.duration)}` : "ждём музыку из главного окна"}
+            {state ? `${state.artist} · ${fmtTime(state.pos)} / ${fmtTime(state.duration)}` : translate(prefs.language, "mini.waitingForMusic")}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-1)" }}>
-          <IconButton icon="skip-back" size="sm" label="Предыдущий" onClick={() => void miniCommand("prev")} />
+          <IconButton icon="skip-back" size="sm" label={translate(prefs.language, "player.previous")} onClick={() => void miniCommand("prev")} />
           <IconButton
             icon={state?.playing ? "pause" : "play"}
             variant="accent"
             size="sm"
-            label={state?.playing ? "Пауза" : "Слушать"}
+            label={translate(prefs.language, state?.playing ? "player.pause" : "player.play")}
             onClick={() => void miniCommand("toggle")}
           />
-          <IconButton icon="skip-forward" size="sm" label="Следующий" onClick={() => void miniCommand("next")} />
+          <IconButton icon="skip-forward" size="sm" label={translate(prefs.language, "player.next")} onClick={() => void miniCommand("next")} />
           <IconButton
             icon="heart"
             size="sm"
             active={state?.liked ?? false}
             filled={state?.liked ?? false}
-            label="Нравится"
+            label={translate(prefs.language, "common.like")}
             onClick={() => void miniCommand("like")}
           />
           <span style={{ marginLeft: "auto" }}>
-            <IconButton icon="x" size="sm" label="Закрыть мини-плеер" onClick={() => void miniCommand("close")} />
+            <IconButton icon="x" size="sm" label={translate(prefs.language, "mini.closeMiniPlayer")} onClick={() => void miniCommand("close")} />
           </span>
         </div>
       </div>

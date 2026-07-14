@@ -3,17 +3,15 @@ import { Button, Dialog, Icon } from "@muza/ui";
 import type { MuzaApi, Track, TrackSource } from "@muza/api-client";
 import { cacheRemove } from "../lib/engine";
 import { fmtTime, providerLabel } from "../lib/format";
+import { useT } from "../i18n";
 
 /** Разворот «Версии и источники» (Stage 4): опциональный выбор конкретного
  *  источника канонического трека. Выбор запоминается per-user на сервере
  *  (UserTrackSource) и не перебивается авто-матчингом; смена выбора выбивает
  *  трек из локального кэша добычи — иначе продолжит играть старый файл. */
 
-const KIND_LABEL: Record<string, string> = {
-  direct: "добавлен ссылкой",
-  local: "файл на устройстве",
-};
-
+// Имена провайдеров — из lib/format.ts (providerLabel, единый источник с
+// бейджем в поиске); вид источника (kind) переводится локальным kindLabel(t).
 const PROVIDER_ICON: Record<string, string> = {
   youtube: "play",
   soundcloud: "cloud",
@@ -33,9 +31,13 @@ export function VersionsDialog({
   onClose: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t, lang } = useT();
   const [sources, setSources] = useState<TrackSource[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  const kindLabel = (kind: string) =>
+    kind === "direct" ? t("dialogs.versions.kindDirect") : kind === "local" ? t("dialogs.versions.kindLocal") : kind;
 
   useEffect(() => {
     setSources(null);
@@ -44,7 +46,7 @@ export function VersionsDialog({
     api
       .getTrackSources(track.id)
       .then(setSources)
-      .catch((e) => setError(e instanceof Error ? e.message : "Не удалось загрузить источники"));
+      .catch((e) => setError(e instanceof Error ? e.message : t("dialogs.versions.loadFailed")));
   }, [api, track]);
 
   const chosen = sources?.find((s) => s.isChosen) ?? null;
@@ -56,9 +58,9 @@ export function VersionsDialog({
       await api.chooseTrackSource(track.id, s.id);
       await cacheRemove(track.id); // старый файл кэша — от прежней версии
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: x.id === s.id })));
-      onNotify(`Теперь играет: ${providerLabel(s.provider)}`, "check");
+      onNotify(t("dialogs.versions.nowPlaying", { provider: providerLabel(s.provider, lang) }), "check");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось выбрать источник", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.versions.chooseFailed"), "x");
     } finally {
       setBusyId(null);
     }
@@ -71,9 +73,9 @@ export function VersionsDialog({
       await api.resetTrackSource(track.id);
       await cacheRemove(track.id);
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: false })));
-      onNotify("Выбор сброшен — играет лучший источник", "check");
+      onNotify(t("dialogs.versions.resetDone"), "check");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось сбросить", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.versions.resetFailed"), "x");
     } finally {
       setBusyId(null);
     }
@@ -82,17 +84,17 @@ export function VersionsDialog({
   return (
     <Dialog
       open={track !== null}
-      title={track ? `«${track.title}» — версии и источники` : "Версии и источники"}
+      title={track ? t("dialogs.versions.titleWithTrack", { title: track.title }) : t("menu.catalog.versions")}
       onClose={onClose}
       actions={
         <>
           {chosen ? (
             <Button variant="ghost" icon="rotate-ccw" onClick={() => void reset()}>
-              Сбросить выбор
+              {t("dialogs.versions.resetChoice")}
             </Button>
           ) : null}
           <Button variant="ghost" onClick={onClose}>
-            Закрыть
+            {t("dialogs.close")}
           </Button>
         </>
       }
@@ -100,13 +102,13 @@ export function VersionsDialog({
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 360 }}>
         {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-body)" }}>{error}</div> : null}
         {sources === null && !error ? (
-          <div style={{ color: "var(--text-3)", fontSize: "var(--fs-body)" }}>Загружаем источники…</div>
+          <div style={{ color: "var(--text-3)", fontSize: "var(--fs-body)" }}>{t("dialogs.versions.loading")}</div>
         ) : null}
         {(sources ?? []).map((s) => {
           const meta = [
-            KIND_LABEL[s.kind],
+            kindLabel(s.kind),
             s.durationSec ? fmtTime(s.durationSec) : null,
-            s.provider === "local" ? null : `приоритет ${s.priority}`,
+            s.provider === "local" ? null : t("dialogs.versions.priority", { n: s.priority }),
           ]
             .filter(Boolean)
             .join(" · ");
@@ -137,7 +139,7 @@ export function VersionsDialog({
               />
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 600 }}>
-                  {providerLabel(s.provider)}
+                  {providerLabel(s.provider, lang)}
                 </span>
                 <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
                   {meta || s.sourceId}
@@ -149,11 +151,11 @@ export function VersionsDialog({
         })}
         {sources !== null && sources.length === 0 ? (
           <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-            Живых источников нет — трек пока не сыграть.
+            {t("dialogs.versions.noSources")}
           </div>
         ) : null}
         <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", lineHeight: 1.5, marginTop: "var(--sp-1)" }}>
-          Выбор запоминается для тебя и не сбивается авто-подбором. Лайки и текст остаются на самом треке.
+          {t("dialogs.versions.footerHint")}
         </div>
       </div>
     </Dialog>

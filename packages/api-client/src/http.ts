@@ -5,11 +5,15 @@ import {
   type AdminOverview,
   type AdminUsers,
   type MarketTheme,
+  type MarketPlugin,
   type Annotation,
   type Annotations,
   type Credentials,
   type EmailChangeStartResult,
   EmailChangeStartResultSchema,
+  type GroupedSearchResult,
+  GroupedSearchResultSchema,
+  type VariantType,
   type HistoryItem,
   type HomeSection,
   type ImportReport,
@@ -85,7 +89,41 @@ function trackFromWire(wire: TrackWire): Track {
   });
 }
 
-/** Проводной формат плейлиста (Stage 7: роль/владелец/участники). */
+/** Проводная форма одного варианта внутри группы (snake_case сервера). */
+interface GroupVariantWire {
+  track: TrackWire;
+  variant_type: VariantType;
+}
+
+/** Проводная форма ДВУХ видов элемента grouped-поиска — зеркало
+ *  muza-server/src/catalog/dto.ts (GroupResultOut/SingleResultOut). */
+interface GroupResultWire {
+  kind: "group";
+  canonical: TrackWire;
+  has_original: boolean;
+  canonical_variant_type: VariantType | null;
+  variants: GroupVariantWire[];
+}
+interface SingleResultWire {
+  kind: "single";
+  track: TrackWire;
+}
+type GroupedResultWire = GroupResultWire | SingleResultWire;
+
+function groupedResultFromWire(wire: GroupedResultWire): GroupedSearchResult {
+  if (wire.kind === "single") {
+    return GroupedSearchResultSchema.parse({ kind: "single", track: trackFromWire(wire.track) });
+  }
+  return GroupedSearchResultSchema.parse({
+    kind: "group",
+    canonical: trackFromWire(wire.canonical),
+    hasOriginal: wire.has_original,
+    canonicalVariantType: wire.canonical_variant_type,
+    variants: wire.variants.map((v) => ({ track: trackFromWire(v.track), variantType: v.variant_type })),
+  });
+}
+
+/** Проводной формат плейлиста (Stage 7: роль/владелец/участники; T47: icon). */
 interface PlaylistMetaWire {
   id: string;
   name: string;
@@ -94,6 +132,7 @@ interface PlaylistMetaWire {
   role?: "owner" | "collaborator";
   owner_username?: string;
   collaborators_count?: number;
+  icon?: string | null;
 }
 
 function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
@@ -105,6 +144,7 @@ function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
     role: w.role ?? "owner",
     ownerUsername: w.owner_username ?? "",
     collaboratorsCount: w.collaborators_count ?? 0,
+    icon: w.icon ?? null,
   });
 }
 
@@ -192,6 +232,38 @@ function marketThemeFromWire(w: MarketThemeWire): MarketTheme {
     installs: w.installs,
     createdAt: w.created_at,
     payload: w.payload ?? {},
+    isMine: w.is_mine,
+    hidden: w.hidden ?? false,
+  };
+}
+
+interface MarketPluginWire {
+  id: string;
+  plugin_id: string;
+  name: string;
+  author: string;
+  version: string;
+  installs: number;
+  created_at: string;
+  payload: Record<string, unknown>;
+  full_access: boolean;
+  pending: boolean;
+  is_mine: boolean;
+  hidden: boolean;
+}
+
+function marketPluginFromWire(w: MarketPluginWire): MarketPlugin {
+  return {
+    id: w.id,
+    pluginId: w.plugin_id,
+    name: w.name,
+    author: w.author,
+    version: w.version,
+    installs: w.installs,
+    createdAt: w.created_at,
+    payload: w.payload ?? {},
+    fullAccess: w.full_access,
+    pending: w.pending,
     isMine: w.is_mine,
     hidden: w.hidden ?? false,
   };
@@ -359,6 +431,23 @@ export class HttpMuzaApi implements MuzaApi {
     return out.results.map(trackFromWire);
   }
 
+  /** T41: тот же поиск, но с группировкой ремиксов/версий (T36 сервера,
+   *  ?group=1&offset=0 — сервер поддерживает group=1 ТОЛЬКО на первой
+   *  странице, растущий limit — рекомендованный способ «загрузить ещё»).
+   *  Отдельный метод, а не флаг/оверлоад в search(): форма ответа другая
+   *  (GroupedSearchResult[], не Track[]) — оверлоад на одном имени размыл бы
+   *  типы существующих плоских вызывателей (десктоп) без всякой выгоды. */
+  async searchGrouped(
+    query: string,
+    opts?: { scope?: SearchScope; limit?: number },
+  ): Promise<GroupedSearchResult[]> {
+    const params = new URLSearchParams({ q: query, group: "1", offset: "0" });
+    if (opts?.scope) params.set("scope", opts.scope);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const out = await this.authedRequest<{ query: string; results: GroupedResultWire[] }>(`/search?${params}`);
+    return out.results.map(groupedResultFromWire);
+  }
+
   async getTrack(id: string): Promise<Track> {
     return trackFromWire(await this.authedRequest<TrackWire>(`/tracks/${encodeURIComponent(id)}`));
   }
@@ -472,12 +561,20 @@ export class HttpMuzaApi implements MuzaApi {
     return rows.map(playlistMetaFromWire);
   }
 
-  async createPlaylist(name: string): Promise<PlaylistMeta> {
+  async createPlaylist(name: string, icon?: string): Promise<PlaylistMeta> {
     const p = await this.authedRequest<PlaylistMetaWire>("/me/playlists", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(icon !== undefined ? { name, icon } : { name }),
     });
     return playlistMetaFromWire(p);
+  }
+
+  /** Сменить иконку-обложку плейлиста (T47): владелец, id из манифеста @muza/core. */
+  async setPlaylistIcon(id: string, icon: string): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(id)}/icon`, {
+      method: "PATCH",
+      body: JSON.stringify({ icon }),
+    });
   }
 
   async getPlaylist(id: string): Promise<PlaylistDetail> {
@@ -490,6 +587,7 @@ export class HttpMuzaApi implements MuzaApi {
       invite_code?: string | null;
       collaborators?: { id: string; username: string }[];
       added_by?: Record<string, string>;
+      icon?: string | null;
     }>(`/me/playlists/${encodeURIComponent(id)}`);
     return PlaylistDetailSchema.parse({
       id: p.id,
@@ -500,6 +598,7 @@ export class HttpMuzaApi implements MuzaApi {
       inviteCode: p.invite_code ?? null,
       collaborators: p.collaborators ?? [],
       addedBy: p.added_by ?? {},
+      icon: p.icon ?? null,
     });
   }
 
@@ -910,6 +1009,62 @@ export class HttpMuzaApi implements MuzaApi {
 
   async reportMarketTheme(id: string): Promise<void> {
     await this.authedRequest(`/market/themes/${encodeURIComponent(id)}/report`, { method: "POST" });
+  }
+
+  // ---------- Маркетплейс плагинов (эпик W8, T45a) ----------
+
+  async getMarketPlugins(): Promise<MarketPlugin[]> {
+    const out = await this.authedRequest<{ plugins: MarketPluginWire[] }>("/market/plugins");
+    return out.plugins.map(marketPluginFromWire);
+  }
+
+  /** Публикация/обновление; payload — { manifest, code, css?, strings? }
+   *  (§6.2 дока). Повторная публикация того же manifest.id ЭТИМ ЖЕ юзером
+   *  обновляет запись; full-access снова уходит в pending (код изменился). */
+  async publishMarketPlugin(
+    manifest: Record<string, unknown>,
+    code: string,
+    css?: string,
+    strings?: Record<string, string>,
+  ): Promise<MarketPlugin> {
+    return marketPluginFromWire(
+      await this.authedRequest<MarketPluginWire>("/market/plugins", {
+        method: "POST",
+        body: JSON.stringify({ manifest, code, css, strings }),
+      }),
+    );
+  }
+
+  /** Установка: инкремент счётчика + полный payload плагина — рантайм
+   *  (apps/desktop/src/plugins/install.ts) сам прогоняет Zod+AST-скан ещё раз
+   *  перед записью на диск, сервер это клиенту бесплатно не гарантирует. */
+  async installMarketPlugin(id: string): Promise<MarketPlugin> {
+    return marketPluginFromWire(
+      await this.authedRequest<MarketPluginWire>(`/market/plugins/${encodeURIComponent(id)}/install`, {
+        method: "POST",
+      }),
+    );
+  }
+
+  async deleteMarketPlugin(id: string): Promise<void> {
+    await this.authedRequest(`/market/plugins/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async reportMarketPlugin(id: string): Promise<void> {
+    await this.authedRequest(`/market/plugins/${encodeURIComponent(id)}/report`, { method: "POST" });
+  }
+
+  /** Модерация (только админ): скрыть/вернуть плагин. */
+  async hideMarketPlugin(id: string, hidden: boolean): Promise<void> {
+    await this.authedRequest(`/market/plugins/${encodeURIComponent(id)}/hidden`, {
+      method: "POST",
+      body: JSON.stringify({ hidden }),
+    });
+  }
+
+  /** Премодерация full-access (§5.4 дока, только админ): снимает pending. */
+  async approveMarketPlugin(id: string): Promise<void> {
+    await this.authedRequest(`/market/plugins/${encodeURIComponent(id)}/approve`, { method: "POST" });
   }
 
   // ---------- Админ-панель (Stage 5) ----------

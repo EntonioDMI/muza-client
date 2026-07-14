@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, Icon, SearchInput, Tooltip, IconButton } from "@muza/ui";
 import type { JamUi } from "../player/useJam";
+import { useT } from "../i18n";
 
 /** Jam — «слушать вместе» (Stage 7). Вне jam: создать или войти по коду.
  *  В jam: код, участники, у гостя — подпись «управляет хост». */
@@ -18,12 +19,13 @@ export function JamDialog({
   onClose: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t, lang } = useT();
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const join = async () => {
     if (code.trim().length < 4) {
-      setError("Код короче 4 символов — проверь его");
+      setError(t("dialogs.codeTooShort"));
       return;
     }
     setError(null);
@@ -31,7 +33,7 @@ export function JamDialog({
       await jam.join(code);
       setCode("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось войти");
+      setError(e instanceof Error ? e.message : t("dialogs.jam.joinFailed"));
     }
   };
 
@@ -39,9 +41,9 @@ export function JamDialog({
     if (!jam.code) return;
     try {
       await navigator.clipboard.writeText(jam.code);
-      onNotify("Код скопирован — зови друзей", "copy");
+      onNotify(t("dialogs.jam.codeCopied"), "copy");
     } catch {
-      onNotify("Не удалось скопировать", "x");
+      onNotify(t("dialogs.copyFailed"), "x");
     }
   };
 
@@ -56,21 +58,21 @@ export function JamDialog({
   return (
     <Dialog
       open={open}
-      title="Jam — слушать вместе"
+      title={t("dialogs.jam.title")}
       onClose={onClose}
       actions={
         jam.active ? (
           <>
             <Button variant="ghost" onClick={onClose}>
-              Свернуть
+              {t("listeningMode.minimize")}
             </Button>
             <Button variant="secondary" icon={jam.isHost ? "square" : "log-out"} onClick={() => void jam.leave().then(onClose)}>
-              {jam.isHost ? "Завершить jam" : "Выйти из jam"}
+              {jam.isHost ? t("dialogs.jam.endJam") : t("dialogs.jam.leaveJam")}
             </Button>
           </>
         ) : (
           <Button variant="ghost" onClick={onClose}>
-            Закрыть
+            {t("dialogs.close")}
           </Button>
         )
       }
@@ -78,12 +80,12 @@ export function JamDialog({
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", minWidth: 340, maxWidth: 420 }}>
         {!canUse ? (
           <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
-            Jam живёт на сервере — нужен вход с аккаунтом (аноним слушает один).
+            {t("dialogs.jam.needsAccount")}
           </div>
         ) : jam.active ? (
           <>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
-              <span style={caps}>Код jam</span>
+              <span style={caps}>{t("dialogs.jam.codeLabel")}</span>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
                 <code
                   style={{
@@ -100,14 +102,14 @@ export function JamDialog({
                 >
                   {jam.code}
                 </code>
-                <Tooltip label="Скопировать код">
-                  <IconButton icon="copy" label="Скопировать код" onClick={() => void copyCode()} />
+                <Tooltip label={t("dialogs.copyCode")}>
+                  <IconButton icon="copy" label={t("dialogs.copyCode")} onClick={() => void copyCode()} />
                 </Tooltip>
               </div>
               <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
                 {jam.isHost
-                  ? "Ты управляешь воспроизведением. Друзья входят по коду и слушают то же самое — каждый со своего аккаунта."
-                  : `Управляет ${jam.hostName}. Ты можешь докидывать треки: «⋯ → В jam» у любого трека.`}
+                  ? t("dialogs.jam.hostDescription")
+                  : t("dialogs.jam.guestDescription", { host: jam.hostName })}
               </span>
               {jam.unavailable && !jam.isHost ? (
                 <div
@@ -123,13 +125,19 @@ export function JamDialog({
                   }}
                 >
                   <Icon name="cloud-off" size={14} color="var(--text-3)" />
-                  Хост слушает {jam.hostState ? `«${jam.hostState.title}»` : "трек"} — он недоступен для стриминга (демо/локальный файл). Ждём следующий.
+                  {t("dialogs.jam.hostUnavailable", {
+                    track: jam.hostState
+                      ? lang === "ru"
+                        ? `«${jam.hostState.title}»`
+                        : `"${jam.hostState.title}"`
+                      : t("dialogs.jam.genericTrack"),
+                  })}
                 </div>
               ) : null}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
-              <span style={caps}>Слушают · {jam.members.length}</span>
+              <span style={caps}>{t("dialogs.jam.listening", { count: jam.members.length })}</span>
               {jam.members.map((m) => (
                 <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minHeight: 32 }}>
                   <span
@@ -149,7 +157,7 @@ export function JamDialog({
                   </span>
                   <span style={{ fontSize: "var(--fs-body)", color: "var(--text-1)" }}>{m.username}</span>
                   {m.username === jam.hostName ? (
-                    <span style={{ marginLeft: "auto", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>хост</span>
+                    <span style={{ marginLeft: "auto", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("dialogs.jam.hostBadge")}</span>
                   ) : null}
                 </div>
               ))}
@@ -158,15 +166,14 @@ export function JamDialog({
         ) : (
           <>
             <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
-              Слушайте музыку синхронно: хост управляет, остальные слышат то же самое.
-              Каждый — со своего устройства и аккаунта.
+              {t("dialogs.jam.intro")}
             </div>
             <Button variant="primary" icon="radio-tower" disabled={jam.busy} onClick={() => void jam.create()}>
-              Создать jam
+              {t("dialogs.jam.create")}
             </Button>
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
               <div style={{ flex: 1, height: 1, background: "var(--surface-3)" }} />
-              <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>или войти по коду</span>
+              <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("dialogs.jam.orJoinByCode")}</span>
               <div style={{ flex: 1, height: 1, background: "var(--surface-3)" }} />
             </div>
             <div
@@ -183,12 +190,12 @@ export function JamDialog({
                       setCode(v.toUpperCase());
                       setError(null);
                     }}
-                    placeholder="Код, например M7QK2W"
+                    placeholder={t("dialogs.jam.codePlaceholder")}
                     icon="radio-tower"
                   />
                 </div>
                 <Button variant="secondary" icon="log-in" disabled={jam.busy} onClick={() => void join()}>
-                  Войти
+                  {t("dialogs.jam.join")}
                 </Button>
               </div>
               {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-caption)" }}>{error}</div> : null}

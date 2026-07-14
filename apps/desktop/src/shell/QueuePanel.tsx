@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon, IconButton } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
+import { useT } from "../i18n";
 
 function QueueRow({
   track,
@@ -28,6 +29,7 @@ function QueueRow({
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }) {
+  const { t } = useT();
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
   // кнопки видимы при наведении И при клавиатурном фокусе внутри ряда
@@ -54,7 +56,7 @@ function QueueRow({
       <button
         type="button"
         onClick={onPlay}
-        aria-label={`Играть: ${track.artist} — ${track.title}`}
+        aria-label={t("dialogs.queue.playAria", { artist: track.artist, title: track.title })}
         style={{
           display: "flex",
           alignItems: "center",
@@ -93,9 +95,9 @@ function QueueRow({
       </button>
       {showActions && (onMoveUp || onMoveDown || onRemove) ? (
         <span style={{ display: "flex", gap: 2, flex: "none" }}>
-          {onMoveUp ? <IconButton icon="chevron-up" size="sm" label="Выше в очереди" onClick={onMoveUp} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
-          {onMoveDown ? <IconButton icon="chevron-down" size="sm" label="Ниже в очереди" onClick={onMoveDown} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
-          {onRemove ? <IconButton icon="x" size="sm" label="Убрать из очереди" onClick={onRemove} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
+          {onMoveUp ? <IconButton icon="chevron-up" size="sm" label={t("dialogs.queue.moveUp")} onClick={onMoveUp} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
+          {onMoveDown ? <IconButton icon="chevron-down" size="sm" label={t("dialogs.queue.moveDown")} onClick={onMoveDown} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
+          {onRemove ? <IconButton icon="x" size="sm" label={t("dialogs.queue.remove")} onClick={onRemove} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
         </span>
       ) : (
         <span style={{ flex: "none", fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
@@ -152,6 +154,7 @@ export function QueuePanel({
   onClearUpNext: () => void;
   onSaveAsPlaylist: () => void;
 }) {
+  const { t } = useT();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -179,7 +182,7 @@ export function QueuePanel({
     <div
       ref={panelRef}
       role="dialog"
-      aria-label="Очередь"
+      aria-label={t("player.queue")}
       tabIndex={-1}
       style={{
         position: "absolute",
@@ -212,20 +215,20 @@ export function QueuePanel({
             color: "var(--text-3)",
           }}
         >
-          Очередь{tracks.length > 0 ? ` · ${tracks.length}` : ""}
+          {t("player.queue")}{tracks.length > 0 ? t("dialogs.queue.countSuffix", { count: tracks.length }) : ""}
         </span>
         {tracks.length > 0 ? (
-          <IconButton icon="locate" size="sm" label="К текущему треку" onClick={() => scrollToCurrent(true)} style={{ width: 28, height: 28 }} iconSize={15} />
+          <IconButton icon="locate" size="sm" label={t("dialogs.queue.toCurrent")} onClick={() => scrollToCurrent(true)} style={{ width: 28, height: 28 }} iconSize={15} />
         ) : null}
         {canSave && tracks.length > 0 ? (
-          <IconButton icon="save" size="sm" label="Сохранить очередь как плейлист" onClick={onSaveAsPlaylist} style={{ width: 28, height: 28 }} iconSize={15} />
+          <IconButton icon="save" size="sm" label={t("dialogs.queue.saveAsPlaylist")} onClick={onSaveAsPlaylist} style={{ width: 28, height: 28 }} iconSize={15} />
         ) : null}
-        <IconButton icon="x" size="sm" label="Закрыть очередь" onClick={onClose} style={{ width: 28, height: 28 }} iconSize={16} />
+        <IconButton icon="x" size="sm" label={t("dialogs.queue.closeQueue")} onClick={onClose} style={{ width: 28, height: 28 }} iconSize={16} />
       </div>
 
       {tracks.length === 0 ? (
         <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.5 }}>
-          Очередь пуста. Включи трек из поиска, плейлиста или ленты — очередью станет список, из которого он запущен.
+          {t("dialogs.queue.empty")}
         </div>
       ) : (
         <div ref={listRef} style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -238,11 +241,11 @@ export function QueuePanel({
                     onClick={() => setHistoryOpen((v) => !v)}
                     style={{ border: "none", background: "none", color: "var(--text-3)", fontSize: "var(--fs-caption)", cursor: "pointer", padding: 0 }}
                   >
-                    {historyOpen ? "Свернуть" : `Показать (${history.length})`}
+                    {historyOpen ? t("dialogs.queue.collapse") : t("dialogs.queue.showCount", { count: history.length })}
                   </button>
                 }
               >
-                История
+                {t("dialogs.queue.history")}
               </SectionLabel>
               {historyOpen
                 ? history.map((t, i) => (
@@ -262,7 +265,7 @@ export function QueuePanel({
 
           {current ? (
             <>
-              <SectionLabel>Сейчас</SectionLabel>
+              <SectionLabel>{t("dialogs.queue.nowSection")}</SectionLabel>
               <QueueRow
                 track={current}
                 position={currentIndex + 1}
@@ -283,11 +286,11 @@ export function QueuePanel({
                     onClick={onClearUpNext}
                     style={{ border: "none", background: "none", color: "var(--text-3)", fontSize: "var(--fs-caption)", cursor: "pointer", padding: 0 }}
                   >
-                    Очистить
+                    {t("dialogs.queue.clear")}
                   </button>
                 }
               >
-                Далее · {upNext.length}
+                {t("dialogs.queue.upNext", { count: upNext.length })}
               </SectionLabel>
               {upNext.map((t, i) => (
                 <QueueRow
@@ -305,7 +308,7 @@ export function QueuePanel({
             </>
           ) : (
             <div style={{ padding: "var(--sp-3) var(--sp-2)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
-              Дальше пусто{canSave ? " — включи радио по треку или добавь из поиска" : ""}.
+              {t("dialogs.queue.upNextEmpty")}{canSave ? t("dialogs.queue.upNextEmptyHint") : ""}.
             </div>
           )}
         </div>

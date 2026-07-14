@@ -5,6 +5,8 @@ import { TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
+import { useT } from "../i18n";
 
 /** «Любимое»: при серверной сессии — настоящее избранное с сервера
  *  (слайс 4, переживает переустановку); демо-лайки показываются отдельной
@@ -23,6 +25,7 @@ export function FavoritesView({
   onLike,
   onTrackMenu,
   onCatalogMenu,
+  onNotify,
 }: {
   api: MuzaApi;
   canSearch: boolean;
@@ -41,7 +44,10 @@ export function FavoritesView({
   onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
+  /** Тост (T18: «Трека нет в кэше…» при Alt+drag файла). */
+  onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t } = useT();
   const [server, setServer] = useState<Track[] | null>(null);
 
   useEffect(() => {
@@ -60,30 +66,38 @@ export function FavoritesView({
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <Icon name="heart" size={26} color="var(--accent-text)" filled />
-        <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>Любимое</h1>
+        <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>{t("views.favorites.title")}</h1>
         <span style={{ fontSize: "var(--fs-body)", color: "var(--text-3)", alignSelf: "flex-end", paddingBottom: 4 }}>
-          {total > 0 ? `${total} тр.` : ""}
+          {total > 0 ? t("views.favorites.trackCount", { count: total }) : ""}
         </span>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
-        {(server ?? []).map((t, i) => (
-          // draggable: любимое можно унести в плейлист сайдбара
-          <div key={t.id} draggable onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}>
+        {(server ?? []).map((tr, i) => (
+          // draggable: любимое можно унести в плейлист сайдбара; Alt+drag — файл (T18)
+          <div
+            key={tr.id}
+            draggable
+            onDragStart={(e) => {
+              if (maybeAltFileDrag(e, () => exportCachedTrack(tr.id, tr.artist, tr.title), (m) => onNotify(m, "x")))
+                return;
+              startTrackDrag(e, tr.id, tr.title, tr.artist);
+            }}
+          >
             <TrackRow
               index={i + 1}
-              cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
-              title={t.title}
-              artist={t.artist}
-              duration={fmtTime(t.durationSec)}
+              cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+              title={tr.title}
+              artist={tr.artist}
+              duration={fmtTime(tr.durationSec)}
               showDuration={rowShow?.duration !== false}
-              active={currentId === t.id}
-              playing={currentId === t.id && playing}
+              active={currentId === tr.id}
+              playing={currentId === tr.id && playing}
               liked
-              onPlay={() => onPlayCatalog(server ?? [], t.id)}
-              onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(t) : undefined}
-              onLike={() => onLike(t.id)}
-              onMore={(e: React.MouseEvent) => onCatalogMenu(t, e)}
+              onPlay={() => onPlayCatalog(server ?? [], tr.id)}
+              onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(tr) : undefined}
+              onLike={() => onLike(tr.id)}
+              onMore={(e: React.MouseEvent) => onCatalogMenu(tr, e)}
             />
           </div>
         ))}
@@ -101,26 +115,26 @@ export function FavoritesView({
                   color: "var(--text-3)",
                 }}
               >
-                Из демо-каталога (локальные)
+                {t("views.favorites.demoSectionTitle")}
               </h3>
             ) : null}
-            {demoLiked.map((t, i) => (
+            {demoLiked.map((tr, i) => (
               <TrackRow
-                key={t.id}
+                key={tr.id}
                 index={(server?.length ?? 0) + i + 1}
-                cover={rowShow?.cover === false ? undefined : t.cover}
-                title={t.title}
-                artist={t.artist}
-                duration={fmtTime(t.duration)}
+                cover={rowShow?.cover === false ? undefined : tr.cover}
+                title={tr.title}
+                artist={tr.artist}
+                duration={fmtTime(tr.duration)}
                 showDuration={rowShow?.duration !== false}
-                explicit={t.explicit}
-                active={currentId === t.id}
-                playing={currentId === t.id && playing}
+                explicit={tr.explicit}
+                active={currentId === tr.id}
+                playing={currentId === tr.id && playing}
                 liked
-                onPlay={() => onPlayTrack(t.id)}
-                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(t.id) : undefined}
-                onLike={() => onLike(t.id)}
-                onMore={(e: React.MouseEvent) => onTrackMenu(t, e)}
+                onPlay={() => onPlayTrack(tr.id)}
+                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(tr.id) : undefined}
+                onLike={() => onLike(tr.id)}
+                onMore={(e: React.MouseEvent) => onTrackMenu(tr, e)}
               />
             ))}
           </>
@@ -128,12 +142,12 @@ export function FavoritesView({
 
         {total === 0 && server !== null ? (
           <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-            Пока пусто. Жми сердечко у трека — он появится здесь.
+            {t("views.favorites.empty")}
           </div>
         ) : null}
         {!canSearch && total === 0 ? (
           <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-            Пока пусто. Жми сердечко у трека — он появится здесь.
+            {t("views.favorites.empty")}
           </div>
         ) : null}
       </div>

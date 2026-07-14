@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Badge, Icon } from "@muza/ui";
 import type { PlaylistMeta } from "@muza/api-client";
 import { getApi } from "../api";
 import { usePlayer } from "../player";
+import { usePlaylists } from "../playlists";
 import { usePrefs } from "../prefs";
 import { useSession } from "../session";
 import { useToast } from "../toast";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { NowPlayingPanel } from "./NowPlayingPanel";
 import { PlayerBar } from "./PlayerBar";
+import { PlaylistCover } from "./PlaylistCover";
 import { TRACK_DND_MIME } from "./TrackList";
 
 /** Каркас залогиненного веба. Живёт в layout группы (app) — плеер НЕ
@@ -26,6 +28,7 @@ const NAV = [
   { href: "/search", icon: "search", label: "Поиск" },
   { href: "/favorites", icon: "heart", label: "Любимое" },
   { href: "/library", icon: "library-big", label: "Библиотека" },
+  { href: "/stats", icon: "bar-chart-3", label: "Статистика" },
 ];
 
 function NavLink({ href, icon, label, active }: { href: string; icon: string; label: string; active: boolean }) {
@@ -61,10 +64,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { session, ready } = useSession();
   const { prefs, set } = usePrefs();
   const { current } = usePlayer();
+  const { playlists, refresh: reloadPlaylists } = usePlaylists();
   const notify = useToast();
   const router = useRouter();
   const pathname = usePathname();
-  const [playlists, setPlaylists] = useState<PlaylistMeta[]>([]);
   const [mobileNp, setMobileNp] = useState(false);
   /** плейлист под перетаскиваемым треком — подсветка drop-таргета */
   const [dropPl, setDropPl] = useState<string | null>(null);
@@ -72,17 +75,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (ready && !session) router.replace("/login");
   }, [ready, session, router]);
-
-  const reloadPlaylists = useCallback(() => {
-    getApi()
-      .getPlaylists()
-      .then(setPlaylists)
-      .catch(() => setPlaylists([]));
-  }, []);
-
-  useEffect(() => {
-    if (session) reloadPlaylists();
-  }, [session, reloadPlaylists]);
 
   /** Drop трека на плейлист сайдбара (DnD из любого списка). */
   const dropOnPlaylist = async (e: React.DragEvent, pl: PlaylistMeta) => {
@@ -94,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       const { id } = JSON.parse(raw) as { id: string };
       await getApi().addPlaylistTrack(pl.id, id);
       notify(`Добавлено в «${pl.name}»`, "list-music");
-      reloadPlaylists();
+      void reloadPlaylists();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Не удалось добавить", "x");
     }
@@ -183,25 +175,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     transition: "background var(--dur-fast) var(--ease-out)",
                   }}
                 >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: "var(--r-xs)",
-                      flex: "none",
-                      background: "var(--accent-soft)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Icon
-                      name={p.role === "collaborator" || p.collaboratorsCount > 0 ? "users" : "list-music"}
-                      size={18}
-                      color="var(--accent-text)"
-                    />
-                  </span>
+                  <PlaylistCover icon={p.icon} shared={p.role === "collaborator" || p.collaboratorsCount > 0} size={40} iconSize={18} />
                   <span style={{ minWidth: 0 }}>
                     <span
                       style={{

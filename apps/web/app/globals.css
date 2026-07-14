@@ -289,6 +289,33 @@ a {
   border-color: var(--text-1);
 }
 
+/* Сетка иконок плейлиста (T47) — квадратные тач-таргеты ≥44px, как .swatch */
+.icon-swatch {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--r-xs);
+  border: 2px solid transparent;
+  padding: 2px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.icon-swatch:hover {
+  background: var(--surface-3);
+}
+
+.icon-swatch.active {
+  border-color: var(--text-1);
+}
+
+.icon-swatch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 /* ── Брейкпоинты ── */
 
 @media (max-width: 1199px) {

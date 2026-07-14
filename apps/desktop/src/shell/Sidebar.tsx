@@ -2,10 +2,23 @@ import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { isTrackDrag, readTrackDrag } from "../lib/dnd";
-import { NAV_ITEM_META, normalizeNavItems, type NavItemPref } from "../lib/navItems";
+import { NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
+import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
+import { useT } from "../i18n";
 
-/** Пункт списка плейлистов: демо (с обложкой) или серверный (без — плейсхолдер). */
+/** T44: плагинная вкладка сайдбара (мета из contributes). */
+export interface PluginNavItemView {
+  key: string;
+  pluginId: string;
+  tabId: string;
+  title: string;
+  icon: string;
+}
+
+/** Пункт списка плейлистов: демо (с обложкой) или серверный — T47b: тоже с
+ *  cover, если у плейлиста есть валидная иконка манифеста @muza/core;
+ *  иначе (или нет иконки) — плейсхолдер (users/list-music по shared). */
 export interface SidebarPlaylist {
   id: string;
   name: string;
@@ -85,6 +98,7 @@ function PlaylistRow({
   meta,
   shared,
   onClick,
+  onMenu,
   onDropTrack,
 }: {
   cover?: string;
@@ -92,6 +106,8 @@ function PlaylistRow({
   meta: string;
   shared?: boolean;
   onClick?: () => void;
+  /** ПКМ по строке — контекст-меню плейлиста (Открыть/Переименовать/Удалить). */
+  onMenu?: (e: React.MouseEvent) => void;
   /** Дроп перетаскиваемого трека на этот плейлист (undefined = не таргет). */
   onDropTrack?: (trackId: string) => void;
 }) {
@@ -103,6 +119,14 @@ function PlaylistRow({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onContextMenu={
+        onMenu
+          ? (e) => {
+              e.preventDefault();
+              onMenu(e);
+            }
+          : undefined
+      }
       onDragOver={
         onDropTrack
           ? (e) => {
@@ -187,28 +211,56 @@ export function Sidebar({
   playlists,
   onCreatePlaylist,
   onOpenPlaylist,
+  onPlaylistMenu,
   onDropTrack,
   isAdmin = false,
   navItems,
+  pluginNav = [],
+  pluginKeys = [],
+  activePluginKey = null,
+  onSelectPluginTab,
+  onOpenHotkeys,
 }: {
   view: View;
   setView: (v: View) => void;
   playlists: SidebarPlaylist[];
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
+  /** T17: ПКМ по плейлисту — контекст-меню (App: Открыть/Переименовать/Удалить). */
+  onPlaylistMenu?: (p: SidebarPlaylist, e: React.MouseEvent) => void;
   /** DnD: трек уронили на плейлист (только серверные списки). */
   onDropTrack?: (playlistId: string, trackId: string) => void;
   /** Показывает пункт «Админка» (Stage 5); true только после adminPing. */
   isAdmin?: boolean;
   /** Компоновка (настройки → «Вкладки сайдбара»): состав/порядок/имена. */
   navItems?: NavItemPref[];
+  /** T44: плагинные вкладки (мета из contributes). */
+  pluginNav?: PluginNavItemView[];
+  /** T44: валидные плагинные ключи для нормализатора композиции. */
+  pluginKeys?: readonly string[];
+  /** T44: активна плагинная вкладка (ключ plugin:<id>:<tab>) — подсветка. */
+  activePluginKey?: string | null;
+  /** T44: клик по плагинной вкладке — открыть её фрейм (App). */
+  onSelectPluginTab?: (pluginId: string, tabId: string) => void;
+  /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
+  onOpenHotkeys: () => void;
 }) {
+  const { t, lang } = useT();
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
-  // индикатор гаснет, контент остаётся доступен), label — своё имя
-  const mainNav = normalizeNavItems(navItems ?? [])
+  // индикатор гаснет, контент остаётся доступен), label — своё имя.
+  // T44: плагинные вкладки живут в том же списке под ключами plugin:<id>:<tab>.
+  const mainNav = normalizeNavItems(navItems ?? [], pluginKeys)
     .filter((n) => n.on)
-    .map((n) => ({ key: n.key, icon: NAV_ITEM_META[n.key].icon, label: n.label || NAV_ITEM_META[n.key].label }));
-  const idx = mainNav.findIndex((n) => n.key === view);
+    .map((n) => {
+      if (isPluginKey(n.key)) {
+        const pn = pluginNav.find((p) => p.key === n.key);
+        return { key: n.key, icon: pn?.icon || "puzzle", label: n.label || pn?.title || t("settings.appearance.plugin.genericLabel"), plugin: pn };
+      }
+      const nativeKey = n.key as keyof typeof NAV_ITEM_META;
+      return { key: n.key, icon: NAV_ITEM_META[nativeKey].icon, label: n.label || navItemLabel(nativeKey, lang), plugin: undefined };
+    });
+  const currentKey = activePluginKey ?? view;
+  const idx = mainNav.findIndex((n) => n.key === currentKey);
   return (
     <aside
       style={{
@@ -255,7 +307,16 @@ export function Sidebar({
           }}
         ></div>
         {mainNav.map((n) => (
-          <NavItem key={n.key} icon={n.icon} label={n.label} quiet active={view === n.key} onClick={() => setView(n.key)} />
+          <NavItem
+            key={n.key}
+            icon={n.icon}
+            label={n.label}
+            quiet
+            active={currentKey === n.key}
+            onClick={() =>
+              n.plugin ? onSelectPluginTab?.(n.plugin.pluginId, n.plugin.tabId) : setView(n.key as View)
+            }
+          />
         ))}
       </nav>
       <div
@@ -275,13 +336,13 @@ export function Sidebar({
             color: "var(--text-3)",
           }}
         >
-          Плейлисты
+          {t("sidebar.playlistsHeading")}
         </span>
-        <Tooltip label="Новый плейлист">
+        <Tooltip label={t("sidebar.newPlaylistTooltip")}>
           <IconButton
             icon="plus"
             size="sm"
-            label="Создать плейлист"
+            label={t("sidebar.createPlaylistAria")}
             style={{ width: 28, height: 28 }}
             iconSize={16}
             onClick={onCreatePlaylist}
@@ -297,15 +358,30 @@ export function Sidebar({
             meta={p.meta}
             shared={p.shared}
             onClick={() => onOpenPlaylist(p.id)}
+            onMenu={onPlaylistMenu ? (e) => onPlaylistMenu(p, e) : undefined}
             onDropTrack={onDropTrack ? (trackId) => onDropTrack(p.id, trackId) : undefined}
           />
         ))}
       </div>
       <div style={{ marginTop: "auto" }}>
         {isAdmin ? (
-          <NavItem icon="shield" label="Админка" active={view === "admin"} onClick={() => setView("admin")} />
+          <NavItem icon="shield" label={t("sidebar.admin")} active={view === "admin"} onClick={() => setView("admin")} />
         ) : null}
-        <NavItem icon="settings" label="Настройки" active={view === "settings"} onClick={() => setView("settings")} />
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <NavItem icon="settings" label={t("settings.title")} active={view === "settings"} onClick={() => setView("settings")} />
+          </div>
+          <Tooltip label={t("sidebar.hotkeysTooltip")}>
+            <IconButton
+              icon="circle-help"
+              size="sm"
+              label={t("sidebar.hotkeysAria")}
+              style={{ width: 28, height: 28 }}
+              iconSize={16}
+              onClick={onOpenHotkeys}
+            />
+          </Tooltip>
+        </div>
       </div>
     </aside>
   );

@@ -96,6 +96,14 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <GroupTitle>Поиск</GroupTitle>
+      <Row
+        title="Группировать версии и ремиксы"
+        hint="Оригинал и его ремиксы/спидапы/каверы — под одной карточкой вместо отдельных строк"
+      >
+        <Switch checked={prefs.searchGrouping} onChange={(searchGrouping: boolean) => set({ searchGrouping })} label="Группировать версии и ремиксы" />
+      </Row>
+
       <GroupTitle>Внешний вид</GroupTitle>
       <Row title="Акцентный цвет" hint="Красит кнопки, активные строки и караоке">
         <div style={{ display: "flex", gap: "var(--sp-2)" }}>

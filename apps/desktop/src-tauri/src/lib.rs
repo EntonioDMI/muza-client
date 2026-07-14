@@ -4,6 +4,7 @@
 mod engine;
 mod local;
 mod miniplayer;
+mod plugins;
 mod rpc;
 mod share;
 mod tray;
@@ -22,10 +23,19 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         // drag-out: трек из бара утаскивается на рабочий стол файлом
         .plugin(tauri_plugin_drag::init())
+        // Плагины уровня 1 (T44): песочница на своём протоколе — bootstrap-
+        // документ отдаёт СВОЙ CSP (не наследует глобальный, полноценный
+        // origin), см. plugins.rs и tauri.conf.json (frame-src). Уровень 2
+        // (T44b, app:full-access) этот протокол НЕ использует — код льётся
+        // в главное окно напрямую через WebviewWindow::eval из команды
+        // plugins::run_full_access_plugin (ниже, invoke_handler); никакой
+        // правки CSP это не требует.
+        .register_uri_scheme_protocol("muza-plugin", plugins::handle_plugin_request)
         .manage(engine::EngineState::default())
         .manage(local::LocalState::default())
         .manage(rpc::RpcState::default())
         .manage(tray::TrayState::default())
+        .manage(plugins::PluginsState::default())
         .setup(|app| {
             // Последний доверенный рецепт из оффлайн-кэша (подпись перепроверяется)
             engine::init(app.handle());
@@ -78,6 +88,19 @@ pub fn run() {
             tray::tray_configure,
             miniplayer::miniplayer_show,
             miniplayer::miniplayer_hide,
+            plugins::list_installed,
+            plugins::set_plugin_enabled,
+            plugins::uninstall_plugin,
+            plugins::plugin_stage_from_file,
+            plugins::plugin_stage_from_data,
+            plugins::plugin_discard_staged,
+            plugins::plugin_finalize_install,
+            plugins::run_full_access_plugin,
+            plugins::plugin_storage_get,
+            plugins::plugin_storage_set,
+            plugins::plugin_storage_remove,
+            plugins::plugin_storage_keys,
+            plugins::plugin_net_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

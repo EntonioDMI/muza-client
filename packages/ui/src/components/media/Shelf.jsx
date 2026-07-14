@@ -2,7 +2,7 @@ import React from "react";
 import { Button } from "../core/Button.jsx";
 
 /** Home-feed shelf: section header + horizontally scrolling row of tiles. */
-export function Shelf({ title, action = "Показать всё", onAction, children, style }) {
+export function Shelf({ title, action = "Show all", onAction, children, style }) {
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", ...style }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 var(--sp-1)" }}>

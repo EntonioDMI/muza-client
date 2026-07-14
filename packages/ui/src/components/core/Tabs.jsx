@@ -55,7 +55,7 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
         flexWrap: wrap ? "wrap" : "nowrap",
         gap: 4,
         padding: 4,
-        borderRadius: wrap ? "var(--r-md)" : "var(--r-pill)",
+        borderRadius: wrap ? "var(--r-md)" : "var(--r-tabs, var(--r-pill))",
         background: "var(--surface-1)",
         ...style,
       }}
@@ -69,7 +69,7 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
             left: ind.left,
             width: ind.width,
             height: 36,
-            borderRadius: "var(--r-pill)",
+            borderRadius: "var(--r-tabs, var(--r-pill))",
             background: "var(--surface-4)",
             transition:
               "left var(--dur-base) var(--ease-out), top var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out)",
@@ -97,7 +97,7 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
               height: 36,
               padding: stretch ? "0 var(--sp-2)" : "0 var(--sp-4)",
               border: "none",
-              borderRadius: "var(--r-pill)",
+              borderRadius: "var(--r-tabs, var(--r-pill))",
               background: !selected && hoverKey === key ? "var(--surface-2)" : "transparent",
               color: selected ? "var(--text-1)" : "var(--text-2)",
               fontFamily: "var(--font-ui)",

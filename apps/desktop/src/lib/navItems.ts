@@ -1,21 +1,40 @@
 /** Компоновка сайдбара: нормализация prefs.navItems (состав/порядок/свои
- *  имена вкладок). Главная выключаться не умеет — приложению нужен дом. */
+ *  имена вкладок). Главная выключаться не умеет — приложению нужен дом.
+ *  T44: плагинные вкладки живут тут же под ключами `plugin:<id>:<tab>`.
+ *
+ *  i18n (эпик W5, T-media): `label` в NAV_ITEM_META — ДЕФОЛТНАЯ метка вкладки
+ *  (не путать с NavItemPref.label — это СВОЙ текст пользователя, override,
+ *  данные — не трогаем). Потребители (shell/Sidebar.tsx, views/SettingsView.tsx)
+ *  вне зоны этой правки и читают `.label` как плоское поле без вызова t(),
+ *  поэтому дефолт вычислен один раз через `translate(DEFAULT_LANG, key)` —
+ *  было захардкожено RU, стало EN константой; живое переключение языка для
+ *  этих меток потребует правки потребителя (см. navItemLabel ниже — уже
+ *  готовая функция для этой будущей правки). */
 
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { NAV_ITEM_KEYS, type NavItemKey } from "../types";
+import { isPluginKey } from "./pluginSlots";
+
+/** Ключ пункта — родной NavItemKey либо плагинный `plugin:<id>:<tab>`. */
+export type NavItemSlotKey = NavItemKey | string;
 
 export interface NavItemPref {
-  key: NavItemKey;
+  key: NavItemSlotKey;
   on: boolean;
   /** Своё имя вкладки; пусто/нет — дефолт из NAV_ITEM_META. */
   label?: string;
 }
 
-export function normalizeNavItems(saved: NavItemPref[]): NavItemPref[] {
-  const known = new Set<string>(NAV_ITEM_KEYS);
+/** T44: `pluginKeys` — валидные плагинные ключи (плагин установлен и включён);
+ *  плагинный ключ вне множества выбрасывается, отсутствующий — дописывается. */
+export function normalizeNavItems(saved: NavItemPref[], pluginKeys: readonly string[] = []): NavItemPref[] {
+  const knownNative = new Set<string>(NAV_ITEM_KEYS);
+  const validPlugin = new Set<string>(pluginKeys);
   const seen = new Set<string>();
   const out: NavItemPref[] = [];
   for (const n of saved ?? []) {
-    if (!known.has(n.key) || seen.has(n.key)) continue;
+    const ok = isPluginKey(n.key) ? validPlugin.has(n.key) : knownNative.has(n.key);
+    if (!ok || seen.has(n.key)) continue;
     seen.add(n.key);
     const label = typeof n.label === "string" ? n.label.trim().slice(0, 24) : undefined;
     out.push({ key: n.key, on: n.key === "home" ? true : n.on, ...(label ? { label } : {}) });
@@ -23,13 +42,23 @@ export function normalizeNavItems(saved: NavItemPref[]): NavItemPref[] {
   for (const key of NAV_ITEM_KEYS) {
     if (!seen.has(key)) out.push({ key, on: true });
   }
+  for (const key of validPlugin) {
+    if (!seen.has(key)) out.push({ key, on: true });
+  }
   return out;
 }
 
 export const NAV_ITEM_META: Record<NavItemKey, { label: string; icon: string }> = {
-  home: { label: "Главная", icon: "home" },
-  search: { label: "Поиск", icon: "search" },
-  favorites: { label: "Любимое", icon: "heart" },
-  library: { label: "Библиотека", icon: "library-big" },
-  stats: { label: "Статистика", icon: "chart-line" },
+  home: { label: translate(DEFAULT_LANG, "media.nav.home"), icon: "home" },
+  search: { label: translate(DEFAULT_LANG, "media.nav.search"), icon: "search" },
+  favorites: { label: translate(DEFAULT_LANG, "media.nav.favorites"), icon: "heart" },
+  library: { label: translate(DEFAULT_LANG, "media.nav.library"), icon: "library-big" },
+  stats: { label: translate(DEFAULT_LANG, "media.nav.stats"), icon: "chart-line" },
 };
+
+/** Локализованная метка вкладки — для будущей правки потребителя (Sidebar/
+ *  SettingsView, вне зоны этого набора файлов): вместо NAV_ITEM_META[key].label
+ *  (статичный EN) зовёт `navItemLabel(key, prefs.language)`. */
+export function navItemLabel(key: NavItemKey, lang: Lang): string {
+  return translate(lang, `media.nav.${key}`);
+}

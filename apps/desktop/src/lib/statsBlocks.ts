@@ -1,6 +1,11 @@
 /** Конфиг блоков страницы «Статистика»: нормализация сохранённого списка
- *  (prefs.statsBlocks) и подписи блоков для страницы и настроек. */
+ *  (prefs.statsBlocks) и подписи блоков для страницы и настроек.
+ *
+ *  i18n (эпик W5, T-media): та же схема, что у NAV_ITEM_META (см.
+ *  lib/navItems.ts) — потребители (views/StatsView.tsx, views/SettingsView.tsx)
+ *  вне зоны этой правки, дефолты вычислены через `translate(DEFAULT_LANG, key)`. */
 
+import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { STATS_BLOCK_KEYS, type StatsBlockKey } from "../types";
 
 export interface StatsBlockPref {
@@ -26,12 +31,21 @@ export function normalizeStatsBlocks(saved: StatsBlockPref[]): StatsBlockPref[] 
 }
 
 export const STATS_BLOCK_META: Record<StatsBlockKey, { label: string; hint: string }> = {
-  summary: { label: "Сводка", hint: "Минуты, прослушивания, треки и артисты за период" },
-  activity: { label: "Активность", hint: "График по дням или месяцам" },
-  rhythm: { label: "Ритм дня", hint: "Распределение по часам суток" },
-  top_tracks: { label: "Топ треков", hint: "До десяти самых прослушиваемых" },
-  top_artists: { label: "Топ артистов", hint: "По наигранным минутам" },
-  streaks: { label: "Серии", hint: "Дни с музыкой подряд" },
-  likes: { label: "Лайки", hint: "Добавлено в любимое за период" },
-  wrapped: { label: "Итоги года", hint: "Вход в story-итоги (Wrapped)" },
+  summary: { label: translate(DEFAULT_LANG, "media.statsBlocks.summary.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.summary.hint") },
+  activity: { label: translate(DEFAULT_LANG, "media.statsBlocks.activity.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.activity.hint") },
+  rhythm: { label: translate(DEFAULT_LANG, "media.statsBlocks.rhythm.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.rhythm.hint") },
+  top_tracks: { label: translate(DEFAULT_LANG, "media.statsBlocks.top_tracks.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.top_tracks.hint") },
+  top_artists: { label: translate(DEFAULT_LANG, "media.statsBlocks.top_artists.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.top_artists.hint") },
+  streaks: { label: translate(DEFAULT_LANG, "media.statsBlocks.streaks.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.streaks.hint") },
+  likes: { label: translate(DEFAULT_LANG, "media.statsBlocks.likes.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.likes.hint") },
+  wrapped: { label: translate(DEFAULT_LANG, "media.statsBlocks.wrapped.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.wrapped.hint") },
 };
+
+/** Локализованная метка/подсказка блока — для будущей правки потребителя
+ *  (views/StatsView.tsx, views/SettingsView.tsx — вне зоны этого набора файлов). */
+export function statsBlockLabel(key: StatsBlockKey, lang: Lang): { label: string; hint: string } {
+  return {
+    label: translate(lang, `media.statsBlocks.${key}.label`),
+    hint: translate(lang, `media.statsBlocks.${key}.hint`),
+  };
+}

@@ -1,4 +1,5 @@
 import { DEFAULT_HOTKEYS, type HotkeyAction } from "./lib/hotkeys";
+import type { Lang } from "./i18n";
 
 export type View = "home" | "search" | "favorites" | "library" | "stats" | "playlist" | "settings" | "admin";
 
@@ -57,17 +58,22 @@ export interface Prefs {
   accentActive: string;
   radius: "mild" | "soft" | "round";
   /** Скругление по типам поверх пресета radius: плитки/строки и панели —
-   *  ПРОЦЕНТ от пресета (50–160, 100 = как пресет); кнопки и поля — px
-   *  6–26 либо RADIUS_OVERRIDE_OFF (999) = «как в ДС» (пилюля/пресет,
-   *  токен --r-control/--r-field не ставится). Старые строковые пресеты
-   *  мигрируются в числа (lib/legacyPrefs). */
+   *  ПРОЦЕНТ от пресета (0–200, 100 = как пресет; 0 = острые углы, 200 =
+   *  супер-круглые); кнопки и поля — px 0–26 либо RADIUS_OVERRIDE_OFF (999) =
+   *  «как в ДС» (пилюля/пресет, токен --r-control/--r-field не ставится).
+   *  Старые строковые пресеты мигрируются в числа (lib/legacyPrefs). */
   radiusTiles: number;
   radiusPanels: number;
   radiusControls: number;
   radiusFields: number;
+  /** Скругление Tabs-«баблов» (переключатели/сегменты), px 0–26 либо
+   *  RADIUS_OVERRIDE_OFF (999) = «пилюля» (дефолт ДС, токен --r-tabs
+   *  не ставится). Та же схема, что у radiusControls/radiusFields. */
+  radiusTabs: number;
   /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
-   *  картинка по URL. Старое поле bgCover=true мигрирует в "cover". */
-  bgType: "none" | "cover" | "color" | "gradient" | "image";
+   *  картинка по URL / анимированный (T15: две обложки вращаются навстречу
+   *  друг другу к центру). Старое поле bgCover=true мигрирует в "cover". */
+  bgType: "none" | "cover" | "color" | "gradient" | "image" | "animated";
   bgColor: string;
   /** Второй цвет градиента (bgType=gradient). */
   bgColor2: string;
@@ -78,6 +84,9 @@ export interface Prefs {
   /** Реакция фона на обложку: --bg-0/1 подкрашиваются доминирующим цветом
    *  обложки текущего трека (lib/coverTint). */
   bgTint: boolean;
+  /** T15 (bgType=animated): направления вращения наоборот (левый диск —
+   *  против часовой, правый — по часовой; по умолчанию наоборот). */
+  bgAnimatedInvert: boolean;
   /** Прозрачность/фон по зонам: своя плотность стекла у плеера, меню,
    *  диалогов, сайдбара и «Сейчас играет» (--glass-<зона>, % плотности). */
   glassZonesOn: boolean;
@@ -109,6 +118,11 @@ export interface Prefs {
   customCss: string;
   /** Визуализатор в режиме прослушивания (встроенное расширение). */
   visualizer: "bars" | "wave" | "off";
+  /** «Качание при басах» (встроенное расширение, T14): в полноэкранном плеере
+   *  (ListeningMode) экран мягко пульсирует в такт низким частотам (первые
+   *  бины analyser'а движка). Уважает общий anims и OS prefers-reduced-motion
+   *  (выключается принудительно). Поведенческий преф — НЕ в THEME_KEYS. */
+  bassShake: boolean;
   /** «Режим смысла»: пунктирные строки с Genius-аннотациями (Stage 5).
    *  Выключен — текст без пунктира и карточек. */
   meaningMode: boolean;
@@ -122,6 +136,14 @@ export interface Prefs {
   closeToTray: boolean;
   normalize: boolean;
   crossfade: boolean;
+  /** Честный gapless-стык (T19, точный триггер — fast-follow ревью #2):
+   *  вместо длинного слышимого кроссфейда — короткий (~50мс) micro-fade на
+   *  границе треков, запланированный заранее по engine().position() (не по
+   *  timeupdate — см. player/usePlayback.pollGapless и player/gaplessPlan.ts).
+   *  Взаимоисключим с crossfade — если оба включены, работает crossfade (его
+   *  длинная кривая надёжнее прячет джиттер таймингов). Поведенческий преф —
+   *  НЕ в THEME_KEYS. */
+  gapless: boolean;
   blur: number;
   glassOpacity: number;
   anims: boolean;
@@ -156,11 +178,14 @@ export interface Prefs {
   discordLine1: string;
   discordLine2: string;
   /** Кнопки плеер-бара: состав и порядок (порядок массива = порядок в баре;
-   *  shuffle/repeat живут в центре вокруг транспорта, остальное — справа). */
-  barButtons: { key: BarButtonKey; on: boolean }[];
+   *  shuffle/repeat живут в центре вокруг транспорта, остальное — справа).
+   *  T44: ключ — родной BarButtonKey либо плагинный `plugin:<id>:<slot>`
+   *  (строка), потому тип ключа расширен до string. */
+  barButtons: { key: string; on: boolean }[];
   /** Вкладки сайдбара: состав, порядок и переименование (label = своё имя,
-   *  пусто/нет — дефолт). Главную выключить нельзя (normalizeNavItems). */
-  navItems: { key: NavItemKey; on: boolean; label?: string }[];
+   *  пусто/нет — дефолт). Главную выключить нельзя (normalizeNavItems).
+   *  T44: ключ — родной NavItemKey либо плагинный `plugin:<id>:<tab>`. */
+  navItems: { key: string; on: boolean; label?: string }[];
   /** Строка трека: что показывать (альбом/источник появятся с данными). */
   rowShow: { cover: boolean; duration: boolean };
   /** Страница «Статистика»: видимость и порядок блоков (порядок массива =
@@ -184,6 +209,11 @@ export interface Prefs {
   density: number;
 
   // ── Поведение ──
+  /** Язык интерфейса (T28, эпик W5 i18n). Поведенческий ключ — НЕ THEME
+   *  (чужая тема оформления не должна переключать язык). DEFAULT_PREFS="en"
+   *  (по требованию владельца — дефолт английский); миграция существующих
+   *  профилей без этого поля → "ru" (их привычный язык), см. App.loadPrefs. */
+  language: Lang;
   /** Продолжать трек с места остановки (позиция per-track в localStorage). */
   resumePosition: boolean;
   /** Двойной клик по строке трека: играть или добавить в очередь. */
@@ -195,6 +225,11 @@ export interface Prefs {
   /** Где искать: каталог + источники (yt-dlp) или только накопленный каталог.
    *  Локальные файлы в поиске не участвуют (живут в Библиотеке). */
   searchScope: "all" | "catalog";
+  /** T37 (эпик W6): группировка ремиксов/версий в поиске (сервер T36,
+   *  ?group=1) — оригинал/канон + версии одной карточкой, лайк карточки
+   *  бьёт по канону. Выкл — обычный плоский поиск (как раньше). Поведенческий
+   *  преф — НЕ THEME. */
+  searchGrouping: boolean;
   /** Синхронизированный текст (выкл = plain-список без подсветки/автоследования). */
   syncedLyrics: boolean;
   /** Автоследование за активной строкой текста (выкл = свободный скролл). */
@@ -226,12 +261,14 @@ export const DEFAULT_PREFS: Prefs = {
   radiusPanels: 100,
   radiusControls: RADIUS_OVERRIDE_OFF,
   radiusFields: RADIUS_OVERRIDE_OFF,
+  radiusTabs: RADIUS_OVERRIDE_OFF,
   bgType: "none",
   bgColor: "#1a1815",
   bgColor2: "#101418",
   bgImageUrl: "",
   bgDim: 40,
   bgTint: false,
+  bgAnimatedInvert: false,
   glassZonesOn: false,
   glassPlayer: 62,
   glassMenu: 62,
@@ -250,12 +287,14 @@ export const DEFAULT_PREFS: Prefs = {
   customCssOn: false,
   customCss: "",
   visualizer: "bars",
+  bassShake: false,
   autostart: true,
   miniPlayer: false,
   tray: true,
   closeToTray: true,
   normalize: true,
   crossfade: false,
+  gapless: false,
   blur: 28,
   glassOpacity: 62,
   anims: true,
@@ -283,11 +322,13 @@ export const DEFAULT_PREFS: Prefs = {
   fontScale: 100,
   lineSpacing: 140,
   density: 50,
+  language: "en",
   resumePosition: false,
   doubleClickAction: "play",
   mediaKeys: true,
   instantSearch: true,
   searchScope: "all",
+  searchGrouping: true,
   syncedLyrics: true,
   lyricsAutoScroll: true,
   streamQuality: "auto",

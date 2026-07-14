@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, Tooltip } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
-import { localList } from "../lib/localFiles";
+import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
+import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
+import { playlistIconSrc } from "../lib/playlistIcon";
 import { CollabDialog } from "../shell/CollabDialog";
+import { useT } from "../i18n";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
  *  переименование, удаление, убрать трек. Stage 3: клик — играет,
@@ -27,6 +30,7 @@ export function PlaylistView({
   onSaveOffline,
   onChanged,
   onDeleted,
+  onChangeIcon,
 }: {
   api: MuzaApi;
   playlistId: string;
@@ -52,7 +56,11 @@ export function PlaylistView({
   /** Состав/имя изменились — сайдбару пора перечитать список. */
   onChanged: () => void;
   onDeleted: () => void;
+  /** ПКМ на треке → «Сменить иконку плейлиста» (T47b): открывает пикер
+   *  App-уровня для ТЕКУЩЕГО плейлиста (не трека). */
+  onChangeIcon: () => void;
 }) {
+  const { t } = useT();
   const [detail, setDetail] = useState<PlaylistDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Stage 4: хэши локальных файлов, живых на ЭТОМ устройстве (смешанные
@@ -86,9 +94,9 @@ export function PlaylistView({
       setOffline(fromSnapshot);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось загрузить плейлист");
+      setError(e instanceof Error ? e.message : t("views.playlist.loadFailed"));
     }
-  }, [api, playlistId]);
+  }, [api, playlistId, t]);
 
   useEffect(() => {
     setDetail(null);
@@ -98,25 +106,31 @@ export function PlaylistView({
   const rename = async () => {
     const name = renameValue.trim();
     if (!name || !detail) return;
-    await api.renamePlaylist(playlistId, name).catch(() => onNotify("Не удалось переименовать", "x"));
+    await api.renamePlaylist(playlistId, name).catch(() => onNotify(t("views.playlist.renameFailed"), "x"));
     setRenameOpen(false);
     await load();
     onChanged();
   };
 
   const remove = async () => {
-    await api.deletePlaylist(playlistId).catch(() => onNotify("Не удалось удалить", "x"));
+    await api.deletePlaylist(playlistId).catch(() => onNotify(t("views.playlist.deleteFailed"), "x"));
     setDeleteOpen(false);
     onChanged();
     onDeleted();
   };
 
   const removeTrack = async (trackId: string) => {
-    await api.removePlaylistTrack(playlistId, trackId).catch(() => onNotify("Не удалось убрать трек", "x"));
-    onNotify("Убрано из плейлиста", "list-x");
+    await api.removePlaylistTrack(playlistId, trackId).catch(() => onNotify(t("views.playlist.removeTrackFailed"), "x"));
+    onNotify(t("views.playlist.removedFromPlaylist"), "list-x");
     await load();
     onChanged();
   };
+
+  // T47b: иконка-обложка плейлиста в шапке — валидный icon манифеста @muza/core,
+  // иначе прежний фолбэк "list-music". Смену иконки может запускать только
+  // владелец живого (не оффлайн-снапшот) плейлиста — как переименование/удаление выше.
+  const iconSrc = playlistIconSrc(detail?.icon);
+  const canChangeIcon = detail !== null && detail.isOwner && !offline;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -132,9 +146,14 @@ export function PlaylistView({
             alignItems: "center",
             justifyContent: "center",
             flex: "none",
+            overflow: "hidden",
           }}
         >
-          <Icon name="list-music" size={26} color="var(--accent-text)" />
+          {iconSrc ? (
+            <img src={iconSrc} alt="" width={56} height={56} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <Icon name="list-music" size={26} color="var(--accent-text)" />
+          )}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h1
@@ -153,27 +172,27 @@ export function PlaylistView({
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
             {detail
               ? [
-                  `${detail.tracks.length} тр.`,
+                  t("views.playlist.trackCount", { count: detail.tracks.length }),
                   detail.isOwner
                     ? detail.collaborators.length > 0
-                      ? `совместный · ${detail.collaborators.length + 1} уч.`
+                      ? t("views.playlist.sharedCount", { count: detail.collaborators.length + 1 })
                       : null
-                    : `совместный · от ${detail.ownerUsername}`,
-                  offline ? "оффлайн-копия" : "синхронизируется",
+                    : t("views.playlist.sharedFrom", { owner: detail.ownerUsername }),
+                  offline ? t("views.playlist.offlineCopy") : t("views.playlist.syncing"),
                 ]
                   .filter(Boolean)
                   .join(" · ")
-              : "загрузка"}
+              : t("views.playlist.loadingLabel")}
           </div>
         </div>
-        <Tooltip label="Совместный доступ">
-          <IconButton icon="users" size="sm" label="Совместный доступ" onClick={() => setCollabOpen(true)} />
+        <Tooltip label={t("views.playlist.collabAccess")}>
+          <IconButton icon="users" size="sm" label={t("views.playlist.collabAccess")} onClick={() => setCollabOpen(true)} />
         </Tooltip>
-        <Tooltip label="Поделиться">
+        <Tooltip label={t("views.playlist.share")}>
           <IconButton
             icon="share-2"
             size="sm"
-            label="Поделиться"
+            label={t("views.playlist.share")}
             onClick={() => {
               if (detail) onShare(detail);
             }}
@@ -182,23 +201,30 @@ export function PlaylistView({
         <IconButton
           icon="download"
           size="sm"
-          label="Сохранить оффлайн"
+          label={t("menu.catalog.saveOffline")}
           onClick={() => {
             if (detail) onSaveOffline(detail.tracks);
           }}
         />
-        {detail?.isOwner !== false ? (
+        {/* Райдер T16: при ошибке загрузки (detail=null, error) плейлиста может
+            уже не существовать — владельческие кнопки скрываем, иначе они бьют
+            по мёртвому id. Пока грузится (error=null) — ведём себя как раньше.
+            Хвост T17-18: тот же мёртвый id приходит и через снапшот — открытый
+            по истории удалённый плейлист рисуется из оффлайн-копии (detail есть,
+            offline=true), а мутации (переименовать/удалить) оффлайн всё равно не
+            буферизуются, — поэтому в оффлайне владельческие кнопки тоже прячем. */}
+        {(detail ? detail.isOwner && !offline : error === null) ? (
           <>
             <IconButton
               icon="pencil"
               size="sm"
-              label="Переименовать"
+              label={t("menu.playlist.rename")}
               onClick={() => {
                 setRenameValue(detail?.name ?? "");
                 setRenameOpen(true);
               }}
             />
-            <IconButton icon="trash-2" size="sm" label="Удалить плейлист" onClick={() => setDeleteOpen(true)} />
+            <IconButton icon="trash-2" size="sm" label={t("menu.playlist.delete")} onClick={() => setDeleteOpen(true)} />
           </>
         ) : null}
       </div>
@@ -206,53 +232,71 @@ export function PlaylistView({
       {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-body)" }}>{error}</div> : null}
 
       <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
-        {(detail?.tracks ?? []).map((t, i) => {
+        {(detail?.tracks ?? []).map((tr, i) => {
           // локальный трек с другого устройства: файла здесь нет — серый
-          const missingLocal = t.localHash !== null && !localHashes.has(t.localHash) && t.sources.every((s) => s === "local");
+          const missingLocal = tr.localHash !== null && !localHashes.has(tr.localHash) && tr.sources.every((s) => s === "local");
           // Stage 7: в совместных плейлистах видно, кто добавил трек
           const isShared = detail ? !detail.isOwner || detail.collaborators.length > 0 : false;
-          const adder = isShared ? detail?.addedBy[t.id] : undefined;
+          const adder = isShared ? detail?.addedBy[tr.id] : undefined;
           const artistLine = [
-            t.artist,
-            missingLocal ? "локальный, нет на этом устройстве" : null,
-            adder ? `добавил ${adder}` : null,
+            tr.artist,
+            missingLocal ? t("views.playlist.localMissingSuffix") : null,
+            adder ? t("views.playlist.addedBy", { name: adder }) : null,
           ]
             .filter(Boolean)
             .join(" · ");
+          // локальный трек: Alt+drag тащит сам файл с устройства, каталожный — экспорт из кэша
+          const localOnly = tr.localHash !== null && tr.sources.every((s) => s === "local");
           return (
-            // draggable: из плейлиста можно унести в другой плейлист сайдбара
+            // draggable: из плейлиста можно унести в другой плейлист сайдбара; Alt+drag — файл (T18)
             <div
-              key={t.id}
+              key={tr.id}
               draggable={!missingLocal}
-              onDragStart={(e) => startTrackDrag(e, t.id, t.title, t.artist)}
+              onDragStart={(e) => {
+                if (
+                  maybeAltFileDrag(
+                    e,
+                    localOnly
+                      ? async () => {
+                          const path = await localResolve(tr.localHash ?? "");
+                          if (!path) throw new Error(t("views.playlist.fileNotOnDevice"));
+                          return path;
+                        }
+                      : () => exportCachedTrack(tr.id, tr.artist, tr.title),
+                    (m) => onNotify(m, "x"),
+                  )
+                )
+                  return;
+                startTrackDrag(e, tr.id, tr.title, tr.artist);
+              }}
               style={missingLocal ? { opacity: 0.45 } : undefined}
             >
               <TrackRow
                 index={i + 1}
-                cover={rowShow?.cover === false ? undefined : (t.coverUrl ?? undefined)}
-                title={t.title}
+                cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+                title={tr.title}
                 artist={artistLine}
-                duration={fmtTime(t.durationSec)}
+                duration={fmtTime(tr.durationSec)}
                 showDuration={rowShow?.duration !== false}
-                liked={likes.includes(t.id)}
-                active={currentId === t.id}
-                playing={currentId === t.id && playing}
+                liked={likes.includes(tr.id)}
+                active={currentId === tr.id}
+                playing={currentId === tr.id && playing}
                 onPlay={() => {
                   if (missingLocal) {
-                    onNotify("Локальный трек: файла нет на этом устройстве", "x");
+                    onNotify(t("views.playlist.localTrackNotOnDevice"), "x");
                     return;
                   }
-                  onPlayCatalog(detail?.tracks ?? [], t.id);
+                  onPlayCatalog(detail?.tracks ?? [], tr.id);
                 }}
-                onRowDoubleClick={onQueueCatalog && !missingLocal ? () => onQueueCatalog(t) : undefined}
-                onLike={() => onLike(t.id)}
+                onRowDoubleClick={onQueueCatalog && !missingLocal ? () => onQueueCatalog(tr) : undefined}
+                onLike={() => onLike(tr.id)}
                 onMore={(e: React.MouseEvent) => {
                   e.stopPropagation();
                   setMenu({
                     open: true,
                     x: Math.min(e.clientX, window.innerWidth - 250),
                     y: Math.min(e.clientY, window.innerHeight - 160),
-                    track: t,
+                    track: tr,
                   });
                 }}
               />
@@ -261,7 +305,7 @@ export function PlaylistView({
         })}
         {detail && detail.tracks.length === 0 ? (
           <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-            Пусто. Добавляй треки из поиска: «⋯ → В плейлист».
+            {t("views.playlist.empty")}
           </div>
         ) : null}
       </div>
@@ -274,15 +318,21 @@ export function PlaylistView({
         items={[
           {
             icon: "git-branch",
-            label: "Версии и источники",
+            label: t("menu.catalog.versions"),
             onClick: () => {
               if (menu.track) onVersions(menu.track);
             },
           },
+          // T47b: ПКМ на треке ВНУТРИ плейлиста — тот же пикер, что и ПКМ на
+          // самом плейлисте в сайдбаре/медиатеке; меняет иконку плейлиста,
+          // не трека. Только владелец живого плейлиста (как выше в шапке).
+          ...(canChangeIcon
+            ? ([{ icon: "image", label: t("views.playlist.changePlaylistIcon"), onClick: () => onChangeIcon() }] as const)
+            : []),
           "-",
           {
             icon: "list-x",
-            label: "Убрать из плейлиста",
+            label: t("views.playlist.removeFromPlaylist"),
             onClick: () => {
               if (menu.track) void removeTrack(menu.track.id);
             },
@@ -311,39 +361,39 @@ export function PlaylistView({
 
       <Dialog
         open={renameOpen}
-        title="Переименовать плейлист"
+        title={t("app.renamePlaylistDialog.title")}
         onClose={() => setRenameOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setRenameOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="check" onClick={() => void rename()}>
-              Сохранить
+              {t("common.save")}
             </Button>
           </>
         }
       >
-        <SearchInput value={renameValue} onChange={setRenameValue} placeholder="Название" icon="list-music" autoFocus />
+        <SearchInput value={renameValue} onChange={setRenameValue} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
       </Dialog>
 
       <Dialog
         open={deleteOpen}
-        title="Удалить плейлист?"
+        title={t("app.deletePlaylistDialog.title")}
         onClose={() => setDeleteOpen(false)}
         actions={
           <>
             <Button variant="ghost" onClick={() => setDeleteOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="trash-2" onClick={() => void remove()}>
-              Удалить
+              {t("app.deletePlaylistDialog.confirm")}
             </Button>
           </>
         }
       >
         <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
-          «{detail?.name}» исчезнет со всех устройств. Треки останутся в каталоге.
+          {t("app.deletePlaylistDialog.bodyServer", { name: detail?.name ?? "" })}
         </div>
       </Dialog>
     </div>

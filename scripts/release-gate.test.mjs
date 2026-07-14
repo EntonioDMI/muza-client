@@ -133,7 +133,9 @@ describe("API environment and exact CSP contracts", () => {
   test("exports and accepts the exact production CSP scalar", () => {
     assert.equal(
       PRODUCTION_CSP,
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost",
+      // frame-src перед connect-src: песочница плагинов W8 (см. комментарий у
+      // PRODUCTION_CSP); connect-src остаётся последним ради DEVELOPMENT_CSP-конкатенации.
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost",
     );
     assert.equal(DEVELOPMENT_CSP, `${PRODUCTION_CSP} http://localhost:8000`);
     assert.doesNotThrow(() => validateTauriConfig({

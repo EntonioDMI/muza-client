@@ -1,0 +1,10 @@
+{
+  "id": "full-access-demo",
+  "name": "Full Access Demo",
+  "version": "1.0.0",
+  "api_version": 1,
+  "description": "Минимальный пример уровня 2 («Полный доступ»): скромный подписанный индикатор в углу окна — честно показывает, что код исполняется в хост-контексте. Образец сдержанности, не твиков.",
+  "author": "muza",
+  "entry": "index.js",
+  "permissions": ["app:full-access"]
+}
