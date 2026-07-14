@@ -10,11 +10,11 @@ use serde::Deserialize;
 use std::sync::Mutex;
 use tauri::State;
 
-/// Application ID из Discord Developer Portal. Пусто = RPC выключен
-/// (владелец ещё не создал приложение «Muza»). Когда ID появится — либо
-/// впиши его сюда значением константы, либо собери с
-/// `MUZA_DISCORD_CLIENT_ID=<id> cargo build` (компайл-тайм, не env рантайма).
-const DEFAULT_CLIENT_ID: &str = "";
+/// Application ID из Discord Developer Portal. Пусто = RPC выключен.
+/// Значение перенесено из старого проекта Muza (там RPC работал: приложение
+/// «Muza», `@xhayper/discord-rpc`). Переопределяется компайл-тайм-env
+/// `MUZA_DISCORD_CLIENT_ID=<id> cargo build`, если понадобится другой ID.
+const DEFAULT_CLIENT_ID: &str = "1515000829390749734";
 
 fn client_id() -> &'static str {
     option_env!("MUZA_DISCORD_CLIENT_ID").unwrap_or(DEFAULT_CLIENT_ID)
@@ -71,12 +71,11 @@ pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
         .activity_type(activity::ActivityType::Listening)
         .details(&payload.details)
         .state(&payload.state);
-    let assets = payload.cover_url.as_deref().map(|url| {
-        activity::Assets::new().large_image(url).large_text("Muza")
-    });
-    if let Some(assets) = assets {
-        act = act.assets(assets);
-    }
+    // Обложка трека (каталог/iTunes) как large_image; нет её — фолбэк на арт-ассет
+    // `logo`, залитый в приложение Discord (как в старом проекте Muza — там RPC
+    // всегда показывал логотип, когда обложка не находилась).
+    let large_image = payload.cover_url.as_deref().unwrap_or("logo");
+    act = act.assets(activity::Assets::new().large_image(large_image).large_text("Muza"));
     if let Some(ts) = payload.start_ts {
         act = act.timestamps(activity::Timestamps::new().start(ts));
     }
