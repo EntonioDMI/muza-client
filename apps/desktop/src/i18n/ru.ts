@@ -4,6 +4,8 @@
  *  с английским словарём 1:1 — лишний/отсутствующий ключ здесь = ошибка
  *  typecheck, а не молчаливый фолбэк в рантайме. */
 import { en } from "./en";
+import { viewsRu } from "./ru.views";
+import { mediaRu } from "./ru.media";
 
 export const ru: typeof en = {
   common: {
@@ -929,4 +931,8 @@ export const ru: typeof en = {
   listeningMode: {
     minimize: "Свернуть",
   },
+
+  // ── Зоны-фрагменты (параллельное извлечение) ──
+  views: viewsRu,
+  media: mediaRu,
 };

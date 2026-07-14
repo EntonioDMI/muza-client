@@ -14,7 +14,13 @@
  *    stats) — своя зона верхнего уровня, аналогично вкладкам.
  *  - T28 завёл механику + переключатель; T29/T30 (эта правка) перевели
  *    SettingsView.tsx целиком — основная масса ключей ниже.
+ *  - Зоны `views.*` (views/*) и `media.*` (player/* + lib/*) вынесены в
+ *    отдельные файлы en.views.ts / en.media.ts и подмешиваются ниже — это
+ *    позволяет извлекать их ПАРАЛЛЕЛЬНО, не конфликтуя на этом файле.
  */
+import { viewsEn } from "./en.views";
+import { mediaEn } from "./en.media";
+
 export const en = {
   common: {
     ok: "OK",
@@ -969,4 +975,8 @@ export const en = {
   listeningMode: {
     minimize: "Minimize",
   },
+
+  // ── Зоны-фрагменты (параллельное извлечение) ──
+  views: viewsEn,
+  media: mediaEn,
 };
