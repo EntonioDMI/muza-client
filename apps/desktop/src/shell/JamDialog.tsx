@@ -19,7 +19,7 @@ export function JamDialog({
   onClose: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -126,7 +126,11 @@ export function JamDialog({
                 >
                   <Icon name="cloud-off" size={14} color="var(--text-3)" />
                   {t("dialogs.jam.hostUnavailable", {
-                    track: jam.hostState ? `"${jam.hostState.title}"` : t("dialogs.jam.genericTrack"),
+                    track: jam.hostState
+                      ? lang === "ru"
+                        ? `«${jam.hostState.title}»`
+                        : `"${jam.hostState.title}"`
+                      : t("dialogs.jam.genericTrack"),
                   })}
                 </div>
               ) : null}
