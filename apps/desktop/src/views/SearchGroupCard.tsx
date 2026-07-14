@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge, Icon } from "@muza/ui";
 import type { GroupSearchResult, Track } from "@muza/api-client";
 import { pluralVersions, variantLabel } from "../lib/searchGrouping";
+import { useT } from "../i18n";
 
 /** T37: карточка-группа результата grouped-поиска (?group=1, T36 сервера) —
  *  канон + бейдж «N версий», разворот показывает варианты с человеческой
@@ -22,6 +23,7 @@ export function SearchGroupCard({
   index: number;
   renderRow: (track: Track, index?: number) => React.ReactNode;
 }) {
+  const { t } = useT();
   const [expanded, setExpanded] = useState(false);
   const versionCount = result.variants.length;
   // hasOriginal=false — оригинала в выдаче нет, канон — заглушка (лучший
@@ -36,7 +38,7 @@ export function SearchGroupCard({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          aria-label={`${versionCount} ${pluralVersions(versionCount)} — ${expanded ? "свернуть" : "развернуть"}`}
+          aria-label={`${versionCount} ${pluralVersions(versionCount)} — ${expanded ? t("views.search.groupCard.collapse") : t("views.search.groupCard.expand")}`}
           style={{
             display: "flex",
             alignItems: "center",
@@ -69,7 +71,7 @@ export function SearchGroupCard({
             color: "var(--text-3)",
           }}
         >
-          Оригинал не найден в выдаче — показан лучший вариант ({canonLabel})
+          {t("views.search.groupCard.noOriginal", { label: canonLabel ?? "" })}
         </div>
       ) : null}
       {expanded ? (
