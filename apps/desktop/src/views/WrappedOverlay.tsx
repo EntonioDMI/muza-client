@@ -8,12 +8,14 @@ import type { MuzaApi, Wrapped } from "@muza/api-client";
 import { hourLabel } from "../lib/hourLabel";
 import { wrappedSeason } from "../lib/wrappedSeason";
 import type { ShareData } from "../lib/shareCard";
+import { useT } from "../i18n";
 import "./WrappedOverlay.css";
 
 type SlideKind = "empty" | "intro" | "minutes" | "tracks" | "artists" | "rhythm" | "final";
 
 /** Плавный count-up числа при появлении слайда. */
 function CountUp({ value, duration = 1100 }: { value: number; duration?: number }) {
+  const { lang } = useT();
   const [shown, setShown] = useState(0);
 
   useEffect(() => {
@@ -25,15 +27,15 @@ function CountUp({ value, duration = 1100 }: { value: number; duration?: number 
     let raf = 0;
     const start = performance.now();
     const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1);
-      setShown(Math.round(value * (1 - (1 - t) ** 3)));
-      if (t < 1) raf = requestAnimationFrame(tick);
+      const progress = Math.min((now - start) / duration, 1);
+      setShown(Math.round(value * (1 - (1 - progress) ** 3)));
+      if (progress < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [value, duration]);
 
-  return <>{shown.toLocaleString("ru")}</>;
+  return <>{shown.toLocaleString(lang)}</>;
 }
 
 function rank(index: number) {
@@ -52,6 +54,7 @@ export function WrappedOverlay({
   /** Открыть шеринг-карточку с итогами (ShareDialog в App). */
   onShare: (data: ShareData) => void;
 }) {
+  const { t, lang } = useT();
   const [wrapped, setWrapped] = useState<Wrapped | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [slide, setSlide] = useState(0);
@@ -65,7 +68,8 @@ export function WrappedOverlay({
     api
       .getWrapped({ year: wrappedSeason().year })
       .then(setWrapped)
-      .catch((e) => setError(e instanceof Error ? e.message : "Не удалось получить итоги"));
+      .catch((e) => setError(e instanceof Error ? e.message : t("views.wrapped.errors.fetchFailed")));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, open]);
 
   const slides = useMemo<SlideKind[]>(() => {
@@ -133,7 +137,7 @@ export function WrappedOverlay({
       tabIndex={-1}
       role="dialog"
       aria-modal="true"
-      aria-label={`Итоги ${wrapped?.year ?? ""}`}
+      aria-label={t("views.wrapped.ariaLabel", { year: wrapped?.year ?? "" })}
       className="wrapped"
       data-slide={kind ?? "loading"}
       onClick={next}
@@ -148,14 +152,14 @@ export function WrappedOverlay({
       <header className="wrapped__chrome">
         <div className="wrapped__brand" aria-hidden="true">
           <b>MUZA</b>
-          <span>{wrapped?.year ?? "ИТОГИ"}</span>
+          <span>{wrapped?.year ?? t("views.wrapped.brandFallback")}</span>
         </div>
 
         {slides.length > 1 ? (
           <div
             className="wrapped__progress"
             role="progressbar"
-            aria-label={`Слайд ${position} из ${slides.length}`}
+            aria-label={t("views.wrapped.slideProgress", { position, total: slides.length })}
             aria-valuemin={1}
             aria-valuemax={slides.length}
             aria-valuenow={position}
@@ -170,7 +174,7 @@ export function WrappedOverlay({
         ) : <span />}
 
         <div className="wrapped__close" onClick={(event) => event.stopPropagation()}>
-          <IconButton icon="x" label="Закрыть итоги" size="sm" variant="surface" onClick={onClose} />
+          <IconButton icon="x" label={t("views.wrapped.close")} size="sm" variant="surface" onClick={onClose} />
         </div>
       </header>
 
@@ -178,38 +182,38 @@ export function WrappedOverlay({
         <div key={`${kind}-${slide}`} className={`wrapped__slide wrapped__slide--${kind ?? "loading"}`}>
           {!wrapped && !error ? (
             <section className="wrapped__state" aria-live="polite">
-              <span className="wrapped__kicker">Muza · {wrappedSeason().year}</span>
-              <h1>Собираем твой год</h1>
+              <span className="wrapped__kicker">{t("views.wrapped.loading.kicker", { year: wrappedSeason().year })}</span>
+              <h1>{t("views.wrapped.loading.title")}</h1>
               <div className="wrapped__loading-line" aria-hidden="true"><span /></div>
-              <p>Вспоминаем треки, минуты и моменты.</p>
+              <p>{t("views.wrapped.loading.hint")}</p>
             </section>
           ) : error ? (
             <section className="wrapped__state" role="alert">
-              <span className="wrapped__kicker">Что-то сбилось с ритма</span>
-              <h1>Итоги пока не загрузились</h1>
+              <span className="wrapped__kicker">{t("views.wrapped.error.kicker")}</span>
+              <h1>{t("views.wrapped.error.title")}</h1>
               <p>{error}</p>
             </section>
           ) : kind === "empty" ? (
             <section className="wrapped__state wrapped__state--empty">
-              <span className="wrapped__kicker">Итоги {recap.year}</span>
+              <span className="wrapped__kicker">{t("views.wrapped.empty.kicker", { year: recap.year })}</span>
               <div className="wrapped__empty-year" aria-hidden="true">{recap.year}</div>
-              <h1>Этот год ещё ждёт свой первый трек</h1>
-              <p>Послушай что-нибудь — и здесь начнёт собираться твоя музыкальная история.</p>
+              <h1>{t("views.wrapped.empty.title")}</h1>
+              <p>{t("views.wrapped.empty.hint")}</p>
             </section>
           ) : kind === "intro" ? (
             <section className="wrapped__intro">
               <div className="wrapped__intro-copy">
-                <span className="wrapped__kicker">Твой год в музыке</span>
+                <span className="wrapped__kicker">{t("views.wrapped.intro.kicker")}</span>
                 <h1 className="wrapped__year wrapped__primary">{recap.year}</h1>
-                <p className="wrapped__intro-line">Это был твой год.<br />Послушай, как он звучал.</p>
+                <p className="wrapped__intro-line">{t("views.wrapped.intro.line1")}<br />{t("views.wrapped.intro.line2")}</p>
                 <div className="wrapped__first-track">
-                  <span>Первый звук года</span>
+                  <span>{t("views.wrapped.intro.firstSoundLabel")}</span>
                   {recap.firstTrack ? (
                     <>
-                      <strong>«{recap.firstTrack.title}»</strong>
+                      <strong>{t("views.wrapped.intro.firstTrackTitle", { title: recap.firstTrack.title })}</strong>
                       <em>{recap.firstTrack.artist}</em>
                     </>
-                  ) : <strong>Твоя история начинается здесь</strong>}
+                  ) : <strong>{t("views.wrapped.intro.historyStarts")}</strong>}
                 </div>
               </div>
 
@@ -229,15 +233,15 @@ export function WrappedOverlay({
           ) : kind === "minutes" ? (
             <section className="wrapped__minutes">
               <div className="wrapped__minutes-copy">
-                <span className="wrapped__kicker">Время, которое было твоим</span>
+                <span className="wrapped__kicker">{t("views.wrapped.minutes.kicker")}</span>
                 <div className="wrapped__metric wrapped__primary">
                   <strong><CountUp value={minutes} /></strong>
-                  <span>минут</span>
+                  <span>{t("views.wrapped.minutes.unit")}</span>
                 </div>
-                <h1>Столько музыки поместилось в твоём году.</h1>
+                <h1>{t("views.wrapped.minutes.headline")}</h1>
                 <div className="wrapped__supporting-stats">
-                  <div><strong>{recap.totalPlays.toLocaleString("ru")}</strong><span>прослушиваний</span></div>
-                  <div><strong>{recap.uniqueTracks.toLocaleString("ru")}</strong><span>разных треков</span></div>
+                  <div><strong>{recap.totalPlays.toLocaleString(lang)}</strong><span>{t("views.wrapped.minutes.playsLabel")}</span></div>
+                  <div><strong>{recap.uniqueTracks.toLocaleString(lang)}</strong><span>{t("views.wrapped.minutes.uniqueTracksLabel")}</span></div>
                 </div>
               </div>
 
@@ -260,10 +264,10 @@ export function WrappedOverlay({
               </div>
 
               <div className="wrapped__track-story">
-                <span className="wrapped__kicker">Трек года</span>
+                <span className="wrapped__kicker">{t("views.wrapped.tracks.kicker")}</span>
                 <h1 className="wrapped__track-title wrapped__primary">{topTrack.track.title}</h1>
                 <p className="wrapped__track-artist">{topTrack.track.artist}</p>
-                <p className="wrapped__track-plays">Ты возвращался к нему <b>{topTrack.plays.toLocaleString("ru")}×</b></p>
+                <p className="wrapped__track-plays">{t("views.wrapped.tracks.playsPrefix")} <b>{topTrack.plays.toLocaleString(lang)}×</b></p>
 
                 {recap.topTracks.length > 1 ? (
                   <ol className="wrapped__track-list" onClick={(event) => event.stopPropagation()}>
@@ -285,10 +289,10 @@ export function WrappedOverlay({
           ) : kind === "artists" && topArtist ? (
             <section className="wrapped__artists">
               <div className="wrapped__artist-headline">
-                <span className="wrapped__kicker">В главной роли</span>
+                <span className="wrapped__kicker">{t("views.wrapped.artists.kicker")}</span>
                 <span className="wrapped__artist-rank">01</span>
                 <h1 className="wrapped__primary">{topArtist.artist}</h1>
-                <p><b>{Math.round(topArtist.playedMs / 60_000).toLocaleString("ru")}</b> минут рядом с тобой</p>
+                <p><b>{Math.round(topArtist.playedMs / 60_000).toLocaleString(lang)}</b> {t("views.wrapped.artists.minutesSuffix")}</p>
               </div>
 
               <ol className="wrapped__artist-list">
@@ -298,7 +302,7 @@ export function WrappedOverlay({
                     <li key={artist.artist}>
                       <span className="wrapped__list-rank">{rank(index + 1)}</span>
                       <span className="wrapped__artist-name">{artist.artist}</span>
-                      <span className="wrapped__artist-time">{Math.round(artist.playedMs / 60_000).toLocaleString("ru")} мин</span>
+                      <span className="wrapped__artist-time">{Math.round(artist.playedMs / 60_000).toLocaleString(lang)} {t("views.wrapped.artists.minAbbrev")}</span>
                       <span className="wrapped__artist-bar" aria-hidden="true"><i style={{ width: `${share}%` }} /></span>
                     </li>
                   );
@@ -308,11 +312,11 @@ export function WrappedOverlay({
           ) : kind === "rhythm" ? (
             <section className="wrapped__rhythm">
               <div className="wrapped__rhythm-lead">
-                <span className="wrapped__kicker">Когда звучал твой год</span>
+                <span className="wrapped__kicker">{t("views.wrapped.rhythm.kicker")}</span>
                 {recap.topHour !== null ? (
                   <>
                     <h1 className="wrapped__primary">{String(recap.topHour).padStart(2, "0")}:00</h1>
-                    <p>Твой любимый час · {hourLabel(recap.topHour)}</p>
+                    <p>{t("views.wrapped.rhythm.favoriteHour", { label: hourLabel(recap.topHour) })}</p>
                     {/* Ось суток 00→24 с отметкой пикового часа: осмысленный
                         график (не случайная линия) — заливка растёт до пика,
                         точка = любимый час. Данные — recap.topHour. */}
@@ -333,45 +337,45 @@ export function WrappedOverlay({
                 ) : (
                   <>
                     <h1 className="wrapped__primary">{recap.activeDays}</h1>
-                    <p>дней с музыкой</p>
+                    <p>{t("views.wrapped.rhythm.daysWithMusic")}</p>
                   </>
                 )}
               </div>
 
               <div className="wrapped__rhythm-facts">
                 {recap.topHour !== null ? (
-                  <div><strong>{recap.activeDays}</strong><span>дней с музыкой</span></div>
+                  <div><strong>{recap.activeDays}</strong><span>{t("views.wrapped.rhythm.daysWithMusic")}</span></div>
                 ) : null}
-                <div className="is-accent"><strong>{recap.longestStreakDays} дн.</strong><span>самая длинная серия</span></div>
+                <div className="is-accent"><strong>{recap.longestStreakDays} {t("views.wrapped.rhythm.daysSuffix")}</strong><span>{t("views.wrapped.rhythm.longestStreak")}</span></div>
                 {recap.peakDay ? (
                   <div>
-                    <strong>{new Date(`${recap.peakDay.date}T00:00:00`).toLocaleDateString("ru", { day: "numeric", month: "long" })}</strong>
-                    <span>самый музыкальный день</span>
+                    <strong>{new Date(`${recap.peakDay.date}T00:00:00`).toLocaleDateString(lang, { day: "numeric", month: "long" })}</strong>
+                    <span>{t("views.wrapped.rhythm.mostMusicalDay")}</span>
                   </div>
                 ) : null}
-                <div><strong>{recap.favoritesAdded}</strong><span>лайков за год</span></div>
+                <div><strong>{recap.favoritesAdded}</strong><span>{t("views.wrapped.rhythm.favoritesThisYear")}</span></div>
               </div>
             </section>
           ) : kind === "final" ? (
             <section className="wrapped__final">
               <div className="wrapped__final-copy">
-                <span className="wrapped__kicker">Финальный трек</span>
-                <h1 className="wrapped__primary">Это был<br />твой <b>{recap.year}</b></h1>
-                <p>Не просто цифры. Музыка, к которой ты возвращался.</p>
+                <span className="wrapped__kicker">{t("views.wrapped.final.kicker")}</span>
+                <h1 className="wrapped__primary">{t("views.wrapped.final.headlinePart1")}<br />{t("views.wrapped.final.headlinePart2")} <b>{recap.year}</b></h1>
+                <p>{t("views.wrapped.final.subtext")}</p>
 
                 <div className="wrapped__final-stats">
-                  <div><strong>{minutes.toLocaleString("ru")}</strong><span>минут музыки</span></div>
-                  <div><strong>{recap.uniqueArtists.toLocaleString("ru")}</strong><span>артистов</span></div>
-                  <div><strong>{recap.uniqueTracks.toLocaleString("ru")}</strong><span>треков</span></div>
+                  <div><strong>{minutes.toLocaleString(lang)}</strong><span>{t("views.wrapped.final.minutesOfMusic")}</span></div>
+                  <div><strong>{recap.uniqueArtists.toLocaleString(lang)}</strong><span>{t("views.wrapped.final.artistsLabel")}</span></div>
+                  <div><strong>{recap.uniqueTracks.toLocaleString(lang)}</strong><span>{t("views.wrapped.final.tracksLabel")}</span></div>
                 </div>
 
                 {topArtist ? (
-                  <div className="wrapped__final-artist"><span>Артист года</span><strong>{topArtist.artist}</strong></div>
+                  <div className="wrapped__final-artist"><span>{t("views.wrapped.final.artistOfYear")}</span><strong>{topArtist.artist}</strong></div>
                 ) : null}
 
                 <div className="wrapped__share" onClick={(event) => event.stopPropagation()}>
                   <Button variant="primary" size="lg" icon="share-2" onClick={openShare}>
-                    Поделиться итогами
+                    {t("views.wrapped.final.shareButton")}
                   </Button>
                 </div>
               </div>
@@ -396,7 +400,7 @@ export function WrappedOverlay({
 
       <footer className="wrapped__footer" aria-hidden="true">
         <span>{slides.length > 0 ? `${String(position).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}` : "— / —"}</span>
-        <span>{kind === "final" ? "Сохрани свой музыкальный постер" : "Клик в любом месте или →"}</span>
+        <span>{kind === "final" ? t("views.wrapped.footer.savePoster") : t("views.wrapped.footer.clickHint")}</span>
       </footer>
     </div>
   );

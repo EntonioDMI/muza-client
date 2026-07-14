@@ -248,6 +248,7 @@ export const viewsEn = {
 
   admin: {
     title: "Admin",
+    loadFailed: "Couldn't load",
     tabs: {
       overview: "Overview",
       content: "Content",

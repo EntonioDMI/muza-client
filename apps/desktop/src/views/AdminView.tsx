@@ -1,22 +1,19 @@
 import { useEffect, useState } from "react";
 import { Icon, Tabs } from "@muza/ui";
 import type { AdminContent, AdminHealth, AdminOverview, AdminUsers, MuzaApi } from "@muza/api-client";
+import { useT } from "../i18n";
+import type { Lang } from "../i18n";
 
 /** Админ-панель (Stage 5) — экраны из заметки «аналитика-и-админка»:
  *  Обзор / Контент / Здоровье добычи / Пользователи. Виден только админам
  *  (пункт сайдбара появляется после удачного adminPing). Все данные —
  *  агрегаты; в «Пользователях» PII-минимум (email не приходит вовсе). */
 
-const TABS = [
-  { key: "overview", label: "Обзор" },
-  { key: "content", label: "Контент" },
-  { key: "health", label: "Здоровье добычи" },
-  { key: "users", label: "Пользователи" },
-];
-
 const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
-const dt = (iso: string | null) =>
-  iso === null ? "—" : new Date(iso).toLocaleString("ru", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+/** T31 i18n: дата/время форматируются под текущий `lang`, не захардкожены
+ *  на "ru" (та же схема, что в SettingsView/StatsView). */
+const dt = (iso: string | null, lang: Lang) =>
+  iso === null ? "—" : new Date(iso).toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -84,6 +81,7 @@ function Row({ cells, header }: { cells: (string | number)[]; header?: boolean }
 
 /** Загрузка вкладки: единый паттерн «грузим → данные|ошибка». */
 function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null } {
+  const { t } = useT();
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -95,7 +93,7 @@ function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | n
         if (alive) setData(d);
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : "Не удалось загрузить");
+        if (alive) setError(e instanceof Error ? e.message : t("views.admin.loadFailed"));
       });
     return () => {
       alive = false;
@@ -106,44 +104,46 @@ function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | n
 }
 
 function Loading({ error }: { error: string | null }) {
+  const { t } = useT();
   return (
     <div style={{ padding: "var(--sp-6) 0", color: error ? "var(--danger)" : "var(--text-3)", fontSize: "var(--fs-body)" }}>
-      {error ?? "Загружаем…"}
+      {error ?? t("common.loading")}
     </div>
   );
 }
 
 function OverviewTab({ api }: { api: MuzaApi }) {
+  const { t } = useT();
   const { data, error } = useAdminData<AdminOverview>(() => api.getAdminOverview(), [api]);
   if (!data) return <Loading error={error} />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
-      <Section title="Слушатели">
+      <Section title={t("views.admin.sections.listeners")}>
         <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-          <StatCard label="DAU" value={data.listeners.dau} hint="слушали за сутки" />
-          <StatCard label="WAU" value={data.listeners.wau} hint="за неделю" />
-          <StatCard label="MAU" value={data.listeners.mau} hint="за месяц" />
+          <StatCard label="DAU" value={data.listeners.dau} hint={t("views.admin.stats.dauHint")} />
+          <StatCard label="WAU" value={data.listeners.wau} hint={t("views.admin.stats.wauHint")} />
+          <StatCard label="MAU" value={data.listeners.mau} hint={t("views.admin.stats.mauHint")} />
         </div>
       </Section>
-      <Section title="Прослушивания">
+      <Section title={t("views.admin.sections.plays")}>
         <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-          <StatCard label="За сутки" value={data.plays.today} />
-          <StatCard label="За неделю" value={data.plays.week} hint={`${data.plays.completedWeek} дослушано`} />
-          <StatCard label="Всего" value={data.plays.total} />
+          <StatCard label={t("views.admin.stats.today")} value={data.plays.today} />
+          <StatCard label={t("views.admin.stats.thisWeek")} value={data.plays.week} hint={t("views.admin.stats.completedSuffix", { count: data.plays.completedWeek })} />
+          <StatCard label={t("views.admin.stats.total")} value={data.plays.total} />
         </div>
       </Section>
-      <Section title="Пользователи">
+      <Section title={t("views.admin.sections.users")}>
         <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-          <StatCard label="Всего" value={data.users.total} hint={`${data.users.withEmail} с почтой`} />
-          <StatCard label="Новых за неделю" value={data.users.new7d} />
-          <StatCard label="Админов" value={data.users.admins} />
+          <StatCard label={t("views.admin.stats.total")} value={data.users.total} hint={t("views.admin.stats.withEmailSuffix", { count: data.users.withEmail })} />
+          <StatCard label={t("views.admin.stats.newThisWeek")} value={data.users.new7d} />
+          <StatCard label={t("views.admin.stats.admins")} value={data.users.admins} />
         </div>
       </Section>
-      <Section title="Каталог">
+      <Section title={t("views.admin.sections.catalog")}>
         <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-          <StatCard label="Треков" value={data.catalog.tracks} />
-          <StatCard label="Источников" value={data.catalog.sources} hint={`${data.catalog.deadSources} мёртвых`} />
-          <StatCard label="В серверном кэше" value={data.catalog.cached} />
+          <StatCard label={t("views.admin.stats.tracks")} value={data.catalog.tracks} />
+          <StatCard label={t("views.admin.stats.sourcesLabel")} value={data.catalog.sources} hint={t("views.admin.stats.deadSuffix", { count: data.catalog.deadSources })} />
+          <StatCard label={t("views.admin.stats.inServerCache")} value={data.catalog.cached} />
         </div>
       </Section>
     </div>
@@ -151,45 +151,46 @@ function OverviewTab({ api }: { api: MuzaApi }) {
 }
 
 function ContentTab({ api }: { api: MuzaApi }) {
+  const { t } = useT();
   const { data, error } = useAdminData<AdminContent>(() => api.getAdminContent(), [api]);
   if (!data) return <Loading error={error} />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
-      <Section title="Покрытие каталога">
+      <Section title={t("views.admin.sections.catalogCoverage")}>
         <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-          <StatCard label="Треков" value={data.coverage.tracks} />
-          <StatCard label="С текстом" value={data.coverage.withLyrics} hint={`${data.coverage.withSynced} синхронизировано`} />
-          <StatCard label="С аннотациями" value={data.coverage.withAnnotations} />
+          <StatCard label={t("views.admin.stats.tracks")} value={data.coverage.tracks} />
+          <StatCard label={t("views.admin.stats.withLyrics")} value={data.coverage.withLyrics} hint={t("views.admin.stats.syncedSuffix", { count: data.coverage.withSynced })} />
+          <StatCard label={t("views.admin.stats.withAnnotations")} value={data.coverage.withAnnotations} />
         </div>
       </Section>
-      <Section title="Источники">
+      <Section title={t("views.admin.sections.sources")}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <Row header cells={["Провайдер · вид", "Всего", "Мёртвых"]} />
+          <Row header cells={[t("views.admin.rows.providerKind"), t("views.admin.rows.total"), t("views.admin.rows.dead")]} />
           {data.sourcesByProvider.map((s) => (
             <Row key={`${s.provider}:${s.kind}`} cells={[`${s.provider} · ${s.kind}`, s.count, s.dead]} />
           ))}
         </div>
       </Section>
-      <Section title="Топ треков (14 дней)">
+      <Section title={t("views.admin.sections.topTracks")}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <Row header cells={["Трек", "Прослушиваний"]} />
+          <Row header cells={[t("views.admin.rows.track"), t("views.admin.rows.plays")]} />
           {data.topTracks.map((r) => (
             <Row key={r.track.id} cells={[`${r.track.artist} — ${r.track.title}`, r.plays]} />
           ))}
         </div>
       </Section>
-      <Section title="Топ артистов (14 дней)">
+      <Section title={t("views.admin.sections.topArtists")}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <Row header cells={["Артист", "Прослушиваний"]} />
+          <Row header cells={[t("views.admin.rows.artist"), t("views.admin.rows.plays")]} />
           {data.topArtists.map((r) => (
             <Row key={r.artist} cells={[r.artist, r.plays]} />
           ))}
         </div>
       </Section>
-      <Section title="Новое в каталоге">
+      <Section title={t("views.admin.sections.newInCatalog")}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {data.recentTracks.map((t) => (
-            <Row key={t.id} cells={[`${t.artist} — ${t.title}`, t.sources.join(", ") || "нет источников"]} />
+          {data.recentTracks.map((tr) => (
+            <Row key={tr.id} cells={[`${tr.artist} — ${tr.title}`, tr.sources.join(", ") || t("views.admin.rows.noSources")]} />
           ))}
         </div>
       </Section>
@@ -198,6 +199,7 @@ function ContentTab({ api }: { api: MuzaApi }) {
 }
 
 function HealthTab({ api }: { api: MuzaApi }) {
+  const { t } = useT();
   const [hours, setHours] = useState(24);
   const { data, error } = useAdminData<AdminHealth>(() => api.getAdminHealth(hours), [api, hours]);
   return (
@@ -205,9 +207,9 @@ function HealthTab({ api }: { api: MuzaApi }) {
       <div style={{ maxWidth: 360 }}>
         <Tabs
           items={[
-            { key: "24", label: "Сутки" },
-            { key: "168", label: "Неделя" },
-            { key: "720", label: "30 дней" },
+            { key: "24", label: t("views.admin.health.day") },
+            { key: "168", label: t("views.admin.health.week") },
+            { key: "720", label: t("views.admin.health.month30") },
           ]}
           value={String(hours)}
           onChange={(k: string) => setHours(Number(k))}
@@ -217,29 +219,29 @@ function HealthTab({ api }: { api: MuzaApi }) {
         <Loading error={error} />
       ) : (
         <>
-          <Section title="Добыча (анонимные агрегаты клиентов)">
+          <Section title={t("views.admin.sections.extraction")}>
             <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
               <StatCard label="Success-rate" value={pct(data.totals.successRate)} hint={`${data.totals.resolveOk} ok / ${data.totals.resolveFail} fail`} />
-              <StatCard label="Кэш-хиты" value={pct(data.totals.cacheHitRate)} hint={`${data.totals.cacheHits} хитов`} />
-              <StatCard label="Отчётов" value={data.totals.reports} hint={`${data.totals.attempts} попыток добычи`} />
+              <StatCard label={t("views.admin.health.cacheHits")} value={pct(data.totals.cacheHitRate)} hint={t("views.admin.health.hitsSuffix", { count: data.totals.cacheHits })} />
+              <StatCard label={t("views.admin.health.reports")} value={data.totals.reports} hint={t("views.admin.health.attemptsSuffix", { count: data.totals.attempts })} />
             </div>
           </Section>
-          <Section title="Ошибки по классам (KPI SABR/403)">
+          <Section title={t("views.admin.sections.errorsByClass")}>
             <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
               <StatCard label="403" value={data.totals.fail403} />
               <StatCard label="Bot-check" value={data.totals.failBot} />
-              <StatCard label="Форматы (SABR/DRM)" value={data.totals.failFormat} />
-              <StatCard label="Прочее" value={data.totals.failOther} />
+              <StatCard label={t("views.admin.health.formatsLabel")} value={data.totals.failFormat} />
+              <StatCard label={t("views.admin.health.other")} value={data.totals.failOther} />
             </div>
           </Section>
-          <Section title="По версии рецепта">
+          <Section title={t("views.admin.sections.byRecipeVersion")}>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <Row header cells={["Рецепт", "Отчётов", "OK", "Fail", "Success"]} />
+              <Row header cells={[t("views.admin.health.recipeCol"), t("views.admin.health.reports"), "OK", "Fail", "Success"]} />
               {data.byRecipe.map((r) => (
                 <Row
                   key={r.recipeVersion}
                   cells={[
-                    `v${r.recipeVersion}${r.recipeVersion === data.recipeVersion ? " (текущий)" : ""}`,
+                    `v${r.recipeVersion}${r.recipeVersion === data.recipeVersion ? t("views.admin.health.currentSuffix") : ""}`,
                     r.reports,
                     r.ok,
                     r.fail,
@@ -249,12 +251,12 @@ function HealthTab({ api }: { api: MuzaApi }) {
               ))}
             </div>
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              Рецепт на сервере: v{data.recipeVersion}. Раскатка рецепта = деплой сервера; канареи и фиче-флаги — беклог.
+              {t("views.admin.health.recipeNote", { version: data.recipeVersion })}
             </div>
           </Section>
-          <Section title="По версии приложения">
+          <Section title={t("views.admin.sections.byAppVersion")}>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <Row header cells={["Версия", "Отчётов", "OK", "Fail"]} />
+              <Row header cells={[t("views.admin.health.versionCol"), t("views.admin.health.reports"), "OK", "Fail"]} />
               {data.byApp.map((r) => (
                 <Row key={r.appVersion} cells={[r.appVersion, r.reports, r.ok, r.fail]} />
               ))}
@@ -267,24 +269,24 @@ function HealthTab({ api }: { api: MuzaApi }) {
 }
 
 function UsersTab({ api }: { api: MuzaApi }) {
+  const { t, lang } = useT();
   const { data, error } = useAdminData<AdminUsers>(() => api.getAdminUsers({ limit: 100 }), [api]);
   if (!data) return <Loading error={error} />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
       <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-        Всего {data.total}. PII-минимум: почта не показывается — только факт её наличия. Права админа выдаются
-        вручную на сервере.
+        {t("views.admin.users.piiNote", { count: data.total })}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <Row header cells={["Пользователь", "Создан", "Прослушиваний (30д)", "Последнее"]} />
+        <Row header cells={[t("views.admin.users.userCol"), t("views.admin.users.createdCol"), t("views.admin.users.plays30dCol"), t("views.admin.users.lastCol")]} />
         {data.users.map((u) => (
           <Row
             key={u.id}
             cells={[
-              `${u.username}${u.isAdmin ? " · админ" : ""}${u.hasEmail ? " · ✉" : ""}`,
-              dt(u.createdAt),
+              `${u.username}${u.isAdmin ? t("views.admin.users.adminSuffix") : ""}${u.hasEmail ? " · ✉" : ""}`,
+              dt(u.createdAt, lang),
               u.plays30d,
-              dt(u.lastPlayAt),
+              dt(u.lastPlayAt, lang),
             ]}
           />
         ))}
@@ -294,7 +296,14 @@ function UsersTab({ api }: { api: MuzaApi }) {
 }
 
 export function AdminView({ api }: { api: MuzaApi }) {
+  const { t } = useT();
   const [tab, setTab] = useState("overview");
+  const tabs = [
+    { key: "overview", label: t("views.admin.tabs.overview") },
+    { key: "content", label: t("views.admin.tabs.content") },
+    { key: "health", label: t("views.admin.tabs.health") },
+    { key: "users", label: t("views.admin.tabs.users") },
+  ];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6)", maxWidth: 860, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
@@ -309,10 +318,10 @@ export function AdminView({ api }: { api: MuzaApi }) {
             color: "var(--text-1)",
           }}
         >
-          Админка
+          {t("views.admin.title")}
         </h1>
       </div>
-      <Tabs items={TABS} value={tab} onChange={setTab} />
+      <Tabs items={tabs} value={tab} onChange={setTab} />
       <div key={tab} className="muza-view">
         {tab === "overview" ? (
           <OverviewTab api={api} />

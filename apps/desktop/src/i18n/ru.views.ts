@@ -237,6 +237,7 @@ export const viewsRu: typeof viewsEn = {
 
   admin: {
     title: "Админка",
+    loadFailed: "Не удалось загрузить",
     tabs: {
       overview: "Обзор",
       content: "Контент",
