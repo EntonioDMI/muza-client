@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
-import { ApiError, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
+import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
@@ -13,6 +13,7 @@ import {
   listInstalled,
   pickAndStagePlugin,
   setPluginEnabled,
+  stagePluginFromMarket,
   uninstallPlugin,
   type StagedPlugin,
 } from "../plugins/install";
@@ -447,57 +448,6 @@ function ColorDot({ color, label, onPick }: { color: string; label: string; onPi
   return <ColorPicker value={color} size={36} label={label} onChange={onPick} />;
 }
 
-/** Карточка витрины маркетплейса: тема (градиент-превью) или плагин (иконка). */
-function MarketCard({ item }: { item: (typeof MARKET_ITEMS)[number] }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--sp-3)",
-        padding: "var(--sp-4)",
-        borderRadius: "var(--r-md)",
-        background: "var(--surface-2)",
-      }}
-    >
-      {item.kind === "theme" ? (
-        <div
-          aria-hidden="true"
-          style={{
-            height: 64,
-            borderRadius: "var(--r-sm)",
-            background: `linear-gradient(120deg, ${item.colors![0]} 0%, ${item.colors![0]} 45%, ${item.colors![1]} 45%, ${item.colors![1]} 75%, ${item.colors![2]} 75%)`,
-          }}
-        ></div>
-      ) : (
-        <div
-          aria-hidden="true"
-          style={{
-            height: 64,
-            borderRadius: "var(--r-sm)",
-            background: "var(--accent-soft)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Icon name={item.icon!} size={28} color="var(--accent-text)" />
-        </div>
-      )}
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{item.name}</div>
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.5 }}>{item.desc}</div>
-        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
-          {item.author} · {item.meta}
-        </div>
-      </div>
-      <Button variant="secondary" icon="download" disabled style={{ alignSelf: "flex-start" }}>
-        Установить
-      </Button>
-    </div>
-  );
-}
-
 /** Карточка темы маркетплейса (Stage 6): превью из payload + живая установка. */
 function MarketThemeCard({
   theme,
@@ -555,6 +505,82 @@ function MarketThemeCard({
         </Button>
         {onRemove ? <IconButton icon="trash-2" label="Снять с публикации" onClick={onRemove} /> : null}
         {onReport ? <IconButton icon="flag" label="Пожаловаться" onClick={onReport} /> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Карточка плагина маркетплейса (T45b): бейджи «Полный доступ»/«На
+ *  модерации», установка через рантайм T44/T44b (стейджинг из данных →
+ *  тот же экран согласия, что и установка из файла), report + hide/approve
+ *  для админа. */
+function MarketPluginCard({
+  item,
+  isAdmin,
+  installing,
+  onInstall,
+  onRemove,
+  onReport,
+  onHideToggle,
+  onApprove,
+}: {
+  item: MarketPlugin;
+  isAdmin: boolean;
+  installing: boolean;
+  onInstall: () => void;
+  onRemove?: () => void;
+  onReport?: () => void;
+  onHideToggle?: () => void;
+  onApprove?: () => void;
+}) {
+  const manifest = (item.payload as { manifest?: { description?: string } }).manifest;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", padding: "var(--sp-4)", borderRadius: "var(--r-md)", background: "var(--surface-2)" }}>
+      <div
+        aria-hidden="true"
+        style={{
+          height: 64,
+          borderRadius: "var(--r-sm)",
+          background: "var(--accent-soft)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon name="puzzle" size={28} color="var(--accent-text)" />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{item.name}</span>
+          {item.fullAccess ? (
+            <Badge tone="accent" style={{ background: "color-mix(in srgb, var(--danger) 22%, transparent)", color: "var(--danger)" }}>
+              Полный доступ
+            </Badge>
+          ) : null}
+          {item.pending ? <Badge tone="neutral">На модерации</Badge> : null}
+        </div>
+        {manifest?.description ? (
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.5 }}>{manifest.description}</div>
+        ) : null}
+        <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
+          {item.author} · v{item.version} · {item.installs} устан.
+          {item.hidden ? <span style={{ color: "var(--danger)" }}> · скрыт модерацией</span> : null}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+        <Button variant="secondary" icon="download" disabled={installing} onClick={onInstall}>
+          {installing ? "Ставим…" : "Установить"}
+        </Button>
+        {onRemove ? <IconButton icon="trash-2" label="Снять с публикации" onClick={onRemove} /> : null}
+        {onReport ? <IconButton icon="flag" label="Пожаловаться" onClick={onReport} /> : null}
+        {isAdmin && onHideToggle ? (
+          <IconButton icon={item.hidden ? "eye" : "eye-off"} label={item.hidden ? "Вернуть в витрину" : "Скрыть (модерация)"} onClick={onHideToggle} />
+        ) : null}
+        {isAdmin && item.pending && onApprove ? (
+          <Button variant="primary" icon="check" onClick={onApprove}>
+            Одобрить
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -725,26 +751,6 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   privacy: "account",
 };
 
-/** Витрина маркетплейса (демо-каталог; установка — Stage 6). */
-const MARKET_ITEMS: {
-  kind: "theme" | "plugin";
-  name: string;
-  author: string;
-  desc: string;
-  meta: string;
-  colors?: [string, string, string];
-  icon?: string;
-}[] = [
-  { kind: "theme", name: "Nord", author: "arctic", desc: "Холодный сине-серый минимализм", meta: "12 400 установок", colors: ["#2e3440", "#5e81ac", "#88c0d0"] },
-  { kind: "theme", name: "AMOLED", author: "muza", desc: "Чистый чёрный для OLED-экранов", meta: "9 800 установок", colors: ["#000000", "#111111", "#3b82f6"] },
-  { kind: "theme", name: "Синтвейв", author: "neon_dreams", desc: "Розовый неон и фиолетовый закат", meta: "7 150 установок", colors: ["#241734", "#ff3caa", "#7c3aed"] },
-  { kind: "theme", name: "Крем", author: "daylight", desc: "Тёплая светлая тема (превью)", meta: "3 020 установок", colors: ["#f5efe6", "#d9a441", "#8a6d3b"] },
-  { kind: "plugin", name: "Синхро-переводчик", author: "polyglot", desc: "Перевод строк текста на лету, вторая строка под оригиналом", meta: "21 300 установок", icon: "languages" },
-  { kind: "plugin", name: "Каденс", author: "vjlab", desc: "Визуализатор в режиме прослушивания: волны и частицы в такт", meta: "15 700 установок", icon: "audio-waveform" },
-  { kind: "plugin", name: "Скробблер+", author: "fmtools", desc: "Расширенный скробблинг: оффлайн-очередь, правила пропуска", meta: "8 400 установок", icon: "radio-tower" },
-  { kind: "plugin", name: "Автотеги", author: "muza", desc: "Жанры и настроения для локальных файлов по акустике", meta: "5 900 установок", icon: "tags" },
-];
-
 /** Полосы эквалайзера (десятиполосник) и пресеты. Значения в дБ (−12..+12). */
 const EQ_BANDS = ["31", "62", "125", "250", "500", "1к", "2к", "4к", "8к", "16к"];
 const EQ_PRESETS: Record<string, number[]> = {
@@ -761,6 +767,7 @@ export function SettingsView({
   prefs,
   setPrefs,
   username,
+  isAdmin,
   onLogout,
   onNotify,
   onOpenHotkeys,
@@ -772,6 +779,8 @@ export function SettingsView({
   prefs: Prefs;
   setPrefs: (p: Prefs) => void;
   username: string;
+  /** T45b: показывает hide/approve на карточках маркетплейса плагинов. */
+  isAdmin?: boolean;
   onLogout: () => void;
   onNotify: (text: string, icon?: string) => void;
   /** T9: строка «Помощь / закрыть» кликабельна — открывает диалог горячих клавиш (App). */
@@ -1243,6 +1252,101 @@ export function SettingsView({
       setPublishErr(e instanceof ApiError ? e.message : "Не удалось опубликовать");
     } finally {
       setPublishBusy(false);
+    }
+  };
+
+  // ── Маркетплейс плагинов (T45b): серверный каталог, установка через
+  // тот же рантайм-пайплайн T44/T44b (staged → согласие → finalizeInstall) ─
+  const [marketPlugins, setMarketPlugins] = useState<MarketPlugin[] | null>(null);
+  const [marketPluginInstalling, setMarketPluginInstalling] = useState<string | null>(null);
+  useEffect(() => {
+    if (sub !== "market" || !serverSession) return;
+    let alive = true;
+    api
+      .getMarketPlugins()
+      .then((p) => {
+        if (alive) setMarketPlugins(p);
+      })
+      .catch(() => {
+        if (alive) setMarketPlugins([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sub, serverSession, api]);
+
+  /** Скачивает payload целиком (install = инкремент счётчика + payload) и
+   *  стейджит его тем же Rust-путём, что и .muzaplugin — дальше открывается
+   *  ОДНА И ТА ЖЕ модалка согласия (staged), full-access получает тот же
+   *  громкий экран T44b, без изменений в UI-коде согласия. */
+  const installFromMarket = async (m: MarketPlugin) => {
+    setMarketPluginInstalling(m.id);
+    try {
+      const installed = await api.installMarketPlugin(m.id);
+      const payload = installed.payload as {
+        manifest?: Record<string, unknown>;
+        code?: string;
+        css?: string;
+        strings?: Record<string, string>;
+      };
+      if (!payload.manifest || typeof payload.code !== "string") {
+        throw new Error("Битый payload плагина — переустанови позже");
+      }
+      const s = await stagePluginFromMarket({
+        manifest: payload.manifest,
+        code: payload.code,
+        css: payload.css,
+        strings: payload.strings,
+      });
+      setStaged(s); // модалка согласия T44/T44b — confirmInstall/declineInstall уже готовы
+      setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : "Не удалось установить плагин", "x");
+    } finally {
+      setMarketPluginInstalling(null);
+    }
+  };
+
+  const unpublishMarketPlugin = async (m: MarketPlugin) => {
+    try {
+      await api.deleteMarketPlugin(m.id);
+      setMarketPlugins((list) => list?.filter((x) => x.id !== m.id) ?? list);
+      onNotify("Плагин снят с публикации", "trash-2");
+    } catch {
+      onNotify("Не удалось снять плагин", "x");
+    }
+  };
+
+  const reportMarketPlugin = async (m: MarketPlugin) => {
+    try {
+      await api.reportMarketPlugin(m.id);
+      onNotify("Жалоба отправлена — спасибо", "flag");
+    } catch (e) {
+      onNotify(e instanceof ApiError ? e.message : "Не удалось отправить жалобу", "x");
+    }
+  };
+
+  /** Модерация (админ): скрыть/вернуть — гейтится на видимость в текущем
+   *  списке (§5.4 дока: pending/hidden видит только автор — если сервер
+   *  когда-нибудь добавит isAdmin-бypass в GET /market/plugins, кнопка
+   *  заработает и для чужих скрытых строк без изменений здесь). */
+  const toggleHideMarketPlugin = async (m: MarketPlugin) => {
+    try {
+      await api.hideMarketPlugin(m.id, !m.hidden);
+      setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, hidden: !x.hidden } : x)) ?? list);
+      onNotify(m.hidden ? "Плагин возвращён в витрину" : "Плагин скрыт", m.hidden ? "eye" : "eye-off");
+    } catch {
+      onNotify("Не удалось изменить видимость", "x");
+    }
+  };
+
+  const approveMarketPluginRow = async (m: MarketPlugin) => {
+    try {
+      await api.approveMarketPlugin(m.id);
+      setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, pending: false } : x)) ?? list);
+      onNotify(`Плагин «${m.name}» одобрен`, "check");
+    } catch {
+      onNotify("Не удалось одобрить", "x");
     }
   };
 
@@ -2075,14 +2179,37 @@ export function SettingsView({
       {marketFilter !== "Темы" ? (
         <>
           {marketFilter === "Всё" ? <GroupTitle>Плагины</GroupTitle> : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
-            {MARKET_ITEMS.filter((m) => m.kind === "plugin").map((m) => (
-              <MarketCard key={m.name} item={m} />
-            ))}
-          </div>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-            Плагины — витрина: внешняя плагин-система требует песочницу (в работе). Встроенные расширения — во вкладке «Расширения».
-          </div>
+          {!serverSession ? (
+            <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+              Маркетплейс плагинов доступен после входа с аккаунтом — анонимный аккаунт живёт только на устройстве.
+            </div>
+          ) : !engineAvailable() ? (
+            <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+              Установка плагинов работает только в приложении (не в браузере).
+            </div>
+          ) : marketPlugins === null ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>Загружаем каталог…</div>
+          ) : marketPlugins.length === 0 ? (
+            <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
+              Пока пусто. Собери плагин по PLUGINS.md и опубликуй первым.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--sp-3)" }}>
+              {marketPlugins.map((m) => (
+                <MarketPluginCard
+                  key={m.id}
+                  item={m}
+                  isAdmin={!!isAdmin}
+                  installing={marketPluginInstalling === m.id}
+                  onInstall={() => void installFromMarket(m)}
+                  onRemove={m.isMine ? () => void unpublishMarketPlugin(m) : undefined}
+                  onReport={!m.isMine ? () => void reportMarketPlugin(m) : undefined}
+                  onHideToggle={isAdmin ? () => void toggleHideMarketPlugin(m) : undefined}
+                  onApprove={isAdmin ? () => void approveMarketPluginRow(m) : undefined}
+                />
+              ))}
+            </div>
+          )}
         </>
       ) : null}
     </div>
@@ -2926,7 +3053,7 @@ export function SettingsView({
             </SettingRow>
           </>
         ) : null}
-        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — пока витрина" onClick={() => openMarket("Плагины")} chevron></SettingRow>
+        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — работает" onClick={() => openMarket("Плагины")} chevron></SettingRow>
         <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — работает" onClick={() => openMarket("Темы")} chevron></SettingRow>
       </div>
     ) : (

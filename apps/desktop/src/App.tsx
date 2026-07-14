@@ -1720,6 +1720,7 @@ function Player({
                 prefs={prefs}
                 setPrefs={setPrefs}
                 username={username}
+                isAdmin={isAdmin}
                 onLogout={onLogout}
                 onNotify={showToast}
                 onOpenHotkeys={openHotkeys}

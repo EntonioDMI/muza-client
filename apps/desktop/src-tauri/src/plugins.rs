@@ -294,6 +294,117 @@ pub fn plugin_stage_from_file(app: AppHandle, path: String) -> Result<StagedPlug
     })
 }
 
+/// Стейджинг плагина ИЗ ДАННЫХ (не из .muzaplugin-файла) — установка из
+/// маркетплейса (T45b, §6.2 дока): payload = { manifest, code, css?, strings? }
+/// приходит с сервера уже распакованным, zip-шаг не нужен, но на выходе тот
+/// же конверт `StagedPlugin`, что и `plugin_stage_from_file` — TS-сторона
+/// (install.ts::stagePluginFromData) переиспользует ВЕСЬ пайплайн валидации
+/// манифеста (Zod) / AST-скана entry / CSS-скана / согласия на права /
+/// `plugin_finalize_install` без изменений, установка из маркета неотличима
+/// от установки из файла с точки зрения консента и финализации.
+///
+/// `entry`/`contributes.css`/`contributes.strings` — пути ИЗ МАНИФЕСТА
+/// С СЕРВЕРА, т.е. недоверенный источник (сервер сканирует payload при
+/// publish, но клиент ему на слово не верит) — `safe_rel_path` проверяется
+/// ДО записи файла на диск.
+#[tauri::command]
+pub fn plugin_stage_from_data(
+    app: AppHandle,
+    manifest_json: String,
+    entry_code: String,
+    css_code: Option<String>,
+    strings_json: Option<String>,
+) -> Result<StagedPlugin, String> {
+    let total = manifest_json.len()
+        + entry_code.len()
+        + css_code.as_deref().map(str::len).unwrap_or(0)
+        + strings_json.as_deref().map(str::len).unwrap_or(0);
+    if total as u64 > MAX_UNPACKED_BYTES {
+        return Err("bad_args: плагин слишком большой (лимит 2 МБ суммарно)".into());
+    }
+
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_json).map_err(|e| format!("bad_args: manifest.json битый: {e}"))?;
+    let entry_rel = manifest
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "bad_args: manifest.entry отсутствует".to_string())?;
+    if !safe_rel_path(entry_rel) {
+        return Err("bad_args: entry: недопустимый путь".into());
+    }
+    let css_rel = manifest.get("contributes").and_then(|c| c.get("css")).and_then(|v| v.as_str());
+    if let Some(rel) = css_rel {
+        if !safe_rel_path(rel) {
+            return Err("bad_args: contributes.css: недопустимый путь".into());
+        }
+    }
+    let strings_rel = manifest.get("contributes").and_then(|c| c.get("strings")).and_then(|v| v.as_str());
+    if let Some(rel) = strings_rel {
+        if !safe_rel_path(rel) {
+            return Err("bad_args: contributes.strings: недопустимый путь".into());
+        }
+    }
+
+    let staging_root = plugins_dir(&app)?.join(".staging");
+    fs::create_dir_all(&staging_root).map_err(|e| format!("internal: {e}"))?;
+    let token = random_nonce();
+    let staged_dir = staging_root.join(&token);
+    fs::create_dir_all(&staged_dir).map_err(|e| format!("internal: {e}"))?;
+
+    fs::write(staged_dir.join("manifest.json"), &manifest_json).map_err(|e| format!("internal: {e}"))?;
+
+    let entry_dest = staged_dir.join(entry_rel);
+    if let Some(parent) = entry_dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("internal: {e}"))?;
+    }
+    fs::write(&entry_dest, &entry_code).map_err(|e| format!("internal: {e}"))?;
+    // Пост-проверка тем же canonicalize-инструментом, что и file-based
+    // стейджинг (defense in depth — предварительный safe_rel_path уже сделал
+    // запись безопасной, это подтверждение по тому же рубежу).
+    ensure_within(&staged_dir, &entry_dest)?;
+
+    if let (Some(css), Some(rel)) = (css_code.as_ref(), css_rel) {
+        let dest = staged_dir.join(rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("internal: {e}"))?;
+        }
+        fs::write(&dest, css).map_err(|e| format!("internal: {e}"))?;
+        ensure_within(&staged_dir, &dest)?;
+    }
+    if let (Some(s), Some(rel)) = (strings_json.as_ref(), strings_rel) {
+        let dest = staged_dir.join(rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("internal: {e}"))?;
+        }
+        fs::write(&dest, s).map_err(|e| format!("internal: {e}"))?;
+        ensure_within(&staged_dir, &dest)?;
+    }
+
+    Ok(StagedPlugin {
+        staged_dir: staged_dir.to_string_lossy().to_string(),
+        manifest_json,
+        entry_code,
+        css_code,
+        strings_json,
+    })
+}
+
+/// Путь внутри манифеста (entry/contributes.css/contributes.strings) обязан
+/// быть относительным и не выходить за пределы staged-папки — зеркало
+/// `isSafeRelPath` из packages/core/src/plugin/manifest.ts (та же форма
+/// атаки: `..`, ведущий `/`/`\` (в т.ч. UNC), Windows drive-letter `C:\...`).
+/// Zod уже отклоняет такие пути на TS-стороне ДО вызова
+/// `plugin_stage_from_data` (см. install.ts::stagePluginFromData), но Rust
+/// не полагается на фронт: это ПРЕДварительная проверка перед записью файла
+/// на диск — в отличие от `ensure_within` (canonicalize существующего файла),
+/// её обязательно делать ДО `fs::write`, иначе запись за пределы staged_dir
+/// уже произойдёт до того, как её можно будет обнаружить постфактум.
+fn safe_rel_path(p: &str) -> bool {
+    let is_drive_absolute =
+        p.len() >= 2 && p.as_bytes()[0].is_ascii_alphabetic() && p.as_bytes()[1] == b':';
+    !p.is_empty() && !p.contains("..") && !p.starts_with('/') && !p.starts_with('\\') && !is_drive_absolute
+}
+
 /// Путь обязан лежать внутри `.staging/` — защита от того, чтобы фронт
 /// (по ошибке или иначе) не подсунул произвольный путь на удаление/перенос.
 fn require_staging_path(p: &PathBuf) -> Result<(), String> {
@@ -856,6 +967,23 @@ mod tests {
         assert!(script.contains("catch (e)"));
         assert!(script.contains("__MUZA_FULL_ACCESS__"));
         assert!(script.contains("reportError"));
+    }
+
+    /// T45b — зеркало TS `isSafeRelPath` (packages/core/src/plugin/manifest.ts):
+    /// `entry`/`contributes.css`/`contributes.strings` из МАРКЕТ-манифеста
+    /// (сервер) обязаны проверяться той же формой ДО записи на диск.
+    #[test]
+    fn safe_rel_path_rejects_traversal_and_absolute() {
+        for bad in ["../../etc/passwd", "..\\..\\evil.js", "/etc/passwd", "\\\\server\\share\\x", "C:\\Windows\\x", "c:/x", ""] {
+            assert!(!safe_rel_path(bad), "{bad} обязан быть отклонён");
+        }
+    }
+
+    #[test]
+    fn safe_rel_path_accepts_legit_relative() {
+        for good in ["index.js", "dist/index.js", "theme.css", "a/b/c.json"] {
+            assert!(safe_rel_path(good), "{good} обязан быть принят");
+        }
     }
 
     #[test]

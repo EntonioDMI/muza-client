@@ -92,6 +92,7 @@ pub fn run() {
             plugins::set_plugin_enabled,
             plugins::uninstall_plugin,
             plugins::plugin_stage_from_file,
+            plugins::plugin_stage_from_data,
             plugins::plugin_discard_staged,
             plugins::plugin_finalize_install,
             plugins::run_full_access_plugin,

@@ -96,3 +96,44 @@ export async function finalizeInstall(staged: StagedPlugin, granted: string[]): 
 export async function cancelInstall(staged: StagedPlugin): Promise<void> {
   await discardStaged(staged.stagedDir);
 }
+
+/** Установка ИЗ ДАННЫХ (маркетплейс, T45b) — payload = { manifest, code, css?,
+ *  strings? } уже скачан целиком (api.installMarketPlugin), zip не нужен:
+ *  Rust plugin_stage_from_data пишет их в staged-папку тем же конвертом, что
+ *  и plugin_stage_from_file, дальше — ОДИН И ТОТ ЖЕ путь валидации/согласия/
+ *  финализации (see pickAndStagePlugin выше), никакого дублирования UI.
+ *  Бросает Error с человекочитаемой причиной (стейджинг подчищается). */
+export async function stagePluginFromMarket(payload: {
+  manifest: Record<string, unknown>;
+  code: string;
+  css?: string | null;
+  strings?: Record<string, string> | null;
+}): Promise<StagedPlugin> {
+  if (!isTauri()) throw new Error("Установка плагина доступна только в приложении");
+
+  const staged = await invoke<StagedRaw>("plugin_stage_from_data", {
+    manifestJson: JSON.stringify(payload.manifest),
+    entryCode: payload.code,
+    cssCode: payload.css ?? null,
+    stringsJson: payload.strings ? JSON.stringify(payload.strings) : null,
+  });
+
+  const parsed = parsePluginManifest(JSON.parse(staged.manifestJson));
+  if (!parsed.ok) {
+    await discardStaged(staged.stagedDir);
+    throw new Error(`Манифест плагина отклонён: ${parsed.error}`);
+  }
+  const scriptBad = scanPluginScript(staged.entryCode);
+  if (scriptBad) {
+    await discardStaged(staged.stagedDir);
+    throw new Error(`Код плагина отклонён: ${scriptBad}`);
+  }
+  if (staged.cssCode) {
+    const cssBad = scanPluginCss(staged.cssCode);
+    if (cssBad) {
+      await discardStaged(staged.stagedDir);
+      throw new Error(`CSS плагина отклонён: ${cssBad}`);
+    }
+  }
+  return { stagedDir: staged.stagedDir, manifest: parsed.manifest, css: staged.cssCode };
+}
