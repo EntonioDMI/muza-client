@@ -182,6 +182,15 @@
       openTab: function (tabId) {
         return call("ui.openTab", { tabId: tabId });
       },
+      openPanel: function () {
+        return call("ui.openPanel");
+      },
+      openOverlay: function () {
+        return call("ui.openOverlay");
+      },
+      closeSurface: function () {
+        return call("ui.closeSurface");
+      },
       applyCss: function (css) {
         return call("ui.applyCss", { css: css });
       },

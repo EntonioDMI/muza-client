@@ -41,3 +41,41 @@ describe("normalizeNavItems", () => {
     expect(out[0].label).toBeUndefined();
   });
 });
+
+describe("плагинные ключи композиции (T44)", () => {
+  const K = "plugin:sync-translator:tab1";
+  const KB = "plugin:sync-translator:btn1";
+
+  it("bar: валидный плагинный ключ сохраняется, невалидный выбрасывается", () => {
+    // ключ есть в pluginKeys → живёт; чужой plugin-ключ (плагин снят) → вон
+    const saved = [
+      { key: "queue", on: true },
+      { key: KB, on: false },
+      { key: "plugin:removed:x", on: true },
+    ] as BarButtonPref[];
+    const out = normalizeBarButtons(saved, [KB]);
+    expect(out.find((b) => b.key === KB)).toEqual({ key: KB, on: false });
+    expect(out.some((b) => b.key === "plugin:removed:x")).toBe(false);
+  });
+
+  it("bar: отсутствующий валидный плагинный ключ дописывается в конец включённым", () => {
+    const out = normalizeBarButtons([{ key: "queue", on: true }] as BarButtonPref[], [KB]);
+    expect(out[out.length - 1]).toEqual({ key: KB, on: true });
+  });
+
+  it("bar: без pluginKeys любой плагинный ключ выбрасывается", () => {
+    const out = normalizeBarButtons([{ key: KB, on: true }] as BarButtonPref[]);
+    expect(out.some((b) => b.key === KB)).toBe(false);
+  });
+
+  it("nav: валидный плагинный ключ живёт и сохраняет label", () => {
+    const out = normalizeNavItems([{ key: K, on: false, label: "Перевод" }] as NavItemPref[], [K]);
+    const item = out.find((n) => n.key === K);
+    expect(item).toEqual({ key: K, on: false, label: "Перевод" });
+  });
+
+  it("nav: плагинный ключ вне множества выбрасывается (плагин удалён/выключен)", () => {
+    const out = normalizeNavItems([{ key: K, on: true }] as NavItemPref[], []);
+    expect(out.some((n) => n.key === K)).toBe(false);
+  });
+});

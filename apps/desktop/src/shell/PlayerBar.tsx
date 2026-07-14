@@ -3,8 +3,21 @@ import { IconButton, Slider, Tooltip } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
 import type { BarButtonKey, RepeatMode } from "../types";
 import { normalizeBarButtons, type BarButtonPref } from "../lib/barButtons";
+import { isPluginKey } from "../lib/pluginSlots";
 import { fmtTime } from "../lib/format";
 import { startTrackFileDrag } from "../lib/dragOut";
+
+/** Плагинная кнопка бара (T44): иконка/подпись из contributes + рантайм-
+ *  состояние (UI.setBarButtonState/setBadge). Клик уведомляет плагин. */
+export interface PluginBarButtonView {
+  key: string;
+  pluginId: string;
+  slotId: string;
+  title: string;
+  icon: string;
+  active?: boolean;
+  badge?: string;
+}
 
 /** Кнопка скорости: текст «1×», клик циклит пресеты (как в голосовых Telegram).
  *  Частая настройка — живёт прямо в баре, а не в недрах настроек. */
@@ -75,6 +88,9 @@ export function PlayerBar({
   onJam,
   onCoverDragOut,
   buttons,
+  pluginButtons = [],
+  pluginKeys = [],
+  onPluginButton,
 }: {
   track: PlayerTrack;
   playing: boolean;
@@ -115,13 +131,20 @@ export function PlayerBar({
   /** Компоновка (настройки → «Кнопки плеер-бара»): состав и порядок.
    *  Несъёмное — обложка/инфо/лайк, prev/play/next, прогресс. */
   buttons?: BarButtonPref[];
+  /** T44: плагинные кнопки бара (мета + рантайм-состояние). */
+  pluginButtons?: PluginBarButtonView[];
+  /** T44: валидные плагинные ключи для нормализатора композиции. */
+  pluginKeys?: readonly string[];
+  /** T44: клик по плагинной кнопке — уведомить плагин. */
+  onPluginButton?: (pluginId: string, slotId: string) => void;
 }) {
   const repeatLabel = repeat === "one" ? "Повтор трека" : repeat === "all" ? "Повтор очереди" : "Повтор выключен";
   // Компоновка: shuffle/repeat живут в центре вокруг транспорта, остальные —
   // справа в порядке массива; выключенное не рендерится
-  const layout = normalizeBarButtons(buttons ?? []);
+  const layout = normalizeBarButtons(buttons ?? [], pluginKeys);
   const barOn = (key: BarButtonKey) => layout.find((b) => b.key === key)?.on !== false;
   const rightOrder = layout.filter((b) => b.on && b.key !== "shuffle" && b.key !== "repeat");
+  const pluginBtn = (key: string) => pluginButtons.find((b) => b.key === key);
   // Жест drag-out с обложки: pointerdown взводит экспорт, движение >12px
   // запускает нативный драг, клик без движения — обычный «Режим прослушивания»
   const dragRef = useRef<{ x: number; y: number; file: Promise<string | null>; started: boolean } | null>(null);
@@ -340,8 +363,23 @@ export function PlayerBar({
                   <IconButton icon="maximize-2" size="sm" label="Режим прослушивания" onClick={onExpand} />
                 </Tooltip>
               );
-            default:
-              return null;
+            default: {
+              // T44: плагинная кнопка бара (ключ plugin:<id>:<slot>)
+              if (!isPluginKey(key)) return null;
+              const pb = pluginBtn(key);
+              if (!pb) return null;
+              return (
+                <Tooltip key={key} label={pb.badge ? `${pb.title} · ${pb.badge}` : pb.title}>
+                  <IconButton
+                    icon={pb.icon}
+                    size="sm"
+                    active={pb.active}
+                    label={pb.title}
+                    onClick={() => onPluginButton?.(pb.pluginId, pb.slotId)}
+                  />
+                </Tooltip>
+              );
+            }
           }
         })}
       </div>

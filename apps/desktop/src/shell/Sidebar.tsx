@@ -3,7 +3,17 @@ import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { isTrackDrag, readTrackDrag } from "../lib/dnd";
 import { NAV_ITEM_META, normalizeNavItems, type NavItemPref } from "../lib/navItems";
+import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
+
+/** T44: плагинная вкладка сайдбара (мета из contributes). */
+export interface PluginNavItemView {
+  key: string;
+  pluginId: string;
+  tabId: string;
+  title: string;
+  icon: string;
+}
 
 /** Пункт списка плейлистов: демо (с обложкой) или серверный — T47b: тоже с
  *  cover, если у плейлиста есть валидная иконка манифеста @muza/core;
@@ -204,6 +214,10 @@ export function Sidebar({
   onDropTrack,
   isAdmin = false,
   navItems,
+  pluginNav = [],
+  pluginKeys = [],
+  activePluginKey = null,
+  onSelectPluginTab,
   onOpenHotkeys,
 }: {
   view: View;
@@ -219,15 +233,32 @@ export function Sidebar({
   isAdmin?: boolean;
   /** Компоновка (настройки → «Вкладки сайдбара»): состав/порядок/имена. */
   navItems?: NavItemPref[];
+  /** T44: плагинные вкладки (мета из contributes). */
+  pluginNav?: PluginNavItemView[];
+  /** T44: валидные плагинные ключи для нормализатора композиции. */
+  pluginKeys?: readonly string[];
+  /** T44: активна плагинная вкладка (ключ plugin:<id>:<tab>) — подсветка. */
+  activePluginKey?: string | null;
+  /** T44: клик по плагинной вкладке — открыть её фрейм (App). */
+  onSelectPluginTab?: (pluginId: string, tabId: string) => void;
   /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
   onOpenHotkeys: () => void;
 }) {
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
-  // индикатор гаснет, контент остаётся доступен), label — своё имя
-  const mainNav = normalizeNavItems(navItems ?? [])
+  // индикатор гаснет, контент остаётся доступен), label — своё имя.
+  // T44: плагинные вкладки живут в том же списке под ключами plugin:<id>:<tab>.
+  const mainNav = normalizeNavItems(navItems ?? [], pluginKeys)
     .filter((n) => n.on)
-    .map((n) => ({ key: n.key, icon: NAV_ITEM_META[n.key].icon, label: n.label || NAV_ITEM_META[n.key].label }));
-  const idx = mainNav.findIndex((n) => n.key === view);
+    .map((n) => {
+      if (isPluginKey(n.key)) {
+        const pn = pluginNav.find((p) => p.key === n.key);
+        return { key: n.key, icon: pn?.icon || "puzzle", label: n.label || pn?.title || "Плагин", plugin: pn };
+      }
+      const nativeKey = n.key as keyof typeof NAV_ITEM_META;
+      return { key: n.key, icon: NAV_ITEM_META[nativeKey].icon, label: n.label || NAV_ITEM_META[nativeKey].label, plugin: undefined };
+    });
+  const currentKey = activePluginKey ?? view;
+  const idx = mainNav.findIndex((n) => n.key === currentKey);
   return (
     <aside
       style={{
@@ -274,7 +305,16 @@ export function Sidebar({
           }}
         ></div>
         {mainNav.map((n) => (
-          <NavItem key={n.key} icon={n.icon} label={n.label} quiet active={view === n.key} onClick={() => setView(n.key)} />
+          <NavItem
+            key={n.key}
+            icon={n.icon}
+            label={n.label}
+            quiet
+            active={currentKey === n.key}
+            onClick={() =>
+              n.plugin ? onSelectPluginTab?.(n.plugin.pluginId, n.plugin.tabId) : setView(n.key as View)
+            }
+          />
         ))}
       </nav>
       <div

@@ -37,6 +37,12 @@ pub struct InstalledPlugin {
     pub granted: Vec<String>,
     #[serde(default)]
     pub granted_at: String,
+    /// Денормализованное содержимое contributes.css (если объявлен) — хранится
+    /// прямо в installed.json, чтобы host.ts (apps/desktop/src/plugins/host.ts)
+    /// мог применить CSS плагина при каждом старте без лишнего round-trip
+    /// в Rust за чтением файла с диска.
+    #[serde(default)]
+    pub css: Option<String>,
 }
 
 #[derive(Default)]
@@ -273,6 +279,7 @@ pub fn plugin_finalize_install(
     version: String,
     manifest_json: String,
     granted: Vec<String>,
+    css: Option<String>,
 ) -> Result<(), String> {
     let id = sanitize_id(&id)?;
     let src = PathBuf::from(&staged_dir);
@@ -299,6 +306,7 @@ pub fn plugin_finalize_install(
         manifest,
         granted,
         granted_at,
+        css,
     });
     write_installed(&app, &list)
 }

@@ -65,6 +65,10 @@ import { AdminView } from "./views/AdminView";
 import { SettingsView, type SettingsIntent } from "./views/SettingsView";
 import { StatsView } from "./views/StatsView";
 import { WrappedOverlay } from "./views/WrappedOverlay";
+import { usePlugins } from "./plugins/usePlugins";
+import { PluginFrames } from "./plugins/PluginFrames";
+import { pluginHost } from "./plugins/host";
+import { createPluginBridge, type PluginBridgeLive } from "./plugins/appBridge";
 
 export function App() {
   const api = useMemo(
@@ -375,6 +379,51 @@ function Player({
     [pbRaw, cleanCover],
   );
   const { track, playing, pos, vol } = pb;
+
+  // ── Плагины уровня 1 (T44) ────────────────────────────────────────
+  // Бридж строится один раз и читает живое состояние Player через ref
+  // (обновляется ниже, перед рендером) — замыкания не устаревают.
+  const pluginLiveRef = useRef<PluginBridgeLive | null>(null);
+  const pluginBridge = useMemo(
+    () =>
+      createPluginBridge(() => {
+        const live = pluginLiveRef.current;
+        if (!live) throw new Error("internal: бридж плагинов ещё не готов");
+        return live;
+      }),
+    [],
+  );
+  const plugins = usePlugins(pluginBridge);
+  const pluginTabActive = plugins.activeTab;
+
+  // Трансляция событий приложения плагинам (host фильтрует по правам плагина).
+  // Метаданные трека — без URL/токенов источников (§3.1 дока).
+  const safeTrack = (t: PlayerTrack | undefined) =>
+    t ? { id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration } : null;
+  useEffect(() => {
+    pluginHost.emit("track:change", safeTrack(track));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track.id]);
+  useEffect(() => {
+    pluginHost.emit("playback:state", { state: pb.buffering ? "loading" : playing ? "playing" : "paused" });
+  }, [playing, pb.buffering]);
+  useEffect(() => {
+    pluginHost.emit("position", { position: Math.floor(pos) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Math.floor(pos)]);
+  useEffect(() => {
+    pluginHost.emit("queue:change", pb.queue.map(safeTrack));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pb.queue]);
+  useEffect(() => {
+    pluginHost.emit("like:change", { likes });
+  }, [likes]);
+  useEffect(() => {
+    pluginHost.emit("view:change", { view });
+  }, [view]);
+  useEffect(() => {
+    pluginHost.emit("theme:change", { theme: prefs.theme });
+  }, [prefs.theme]);
 
   // Горячий рецепт добычи — при серверной сессии (эндпоинт под AuthGuard)
   useEffect(() => {
@@ -1420,10 +1469,65 @@ function Player({
       />
     ) : null;
 
+  // Живое состояние для бриджа плагинов — обновляем перед каждым рендером
+  // (мутация ref в рендере допустима; замыкания бриджа читают .current).
+  pluginLiveRef.current = {
+    api,
+    canSearch,
+    pb: {
+      track,
+      queue: pb.queue,
+      playing,
+      buffering: pb.buffering,
+      pos,
+      vol,
+      toggle: pb.toggle,
+      pause: pb.pause,
+      next: pb.next,
+      prev: pb.prev,
+      seek: pb.seek,
+      setVol: pb.setVol,
+      setRate: pb.setRate,
+      enqueue: pb.enqueue,
+      removeFromQueue: pb.removeFromQueue,
+      reorderQueue: pb.reorderQueue,
+      clearQueue: pb.clearQueue,
+      insertInQueue: pb.insertInQueue,
+      index: pb.index,
+    },
+    likes,
+    setLike: (trackId, on) =>
+      setLikes((ls) => (on ? (ls.includes(trackId) ? ls : [...ls, trackId]) : ls.filter((x) => x !== trackId))),
+    reloadPlaylists: reloadServerPlaylists,
+    demoPlaylists: playlists,
+    toast: (text, kind) => showToast(text, (kind as never) ?? ("puzzle" as never)),
+    openTab: plugins.openTab,
+    openPanel: plugins.openPanel,
+    openOverlay: plugins.openOverlay,
+    closeSurface: () => {
+      plugins.closeTab();
+      plugins.closePanel();
+      plugins.closeOverlay();
+    },
+  };
+
+  // Плагинные кнопки бара с наложенным рантайм-состоянием (иконка/активность/бейдж)
+  const pluginBarButtons = plugins.barButtons.map((b) => {
+    const rt = plugins.barButtonRuntime(b.pluginId, b.slotId);
+    return { ...b, icon: rt.state?.icon || b.icon, active: rt.state?.active ?? false, badge: rt.badge };
+  });
+
   return (
     <div data-theme={prefs.theme} data-accent={accentAttr} data-radius={prefs.radius} style={rootStyle}>
       {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
+      {/* CSS плагинов (T44): статический contributes.css + динамический
+          UI.applyCss, каждый в своём <style data-plugin>, ПОСЛЕ customCss */}
+      {plugins.injectedCss.map((c) => (
+        <style key={c.pluginId} data-plugin={c.pluginId}>
+          {c.css}
+        </style>
+      ))}
       {backdrop}
       {backdrop && prefs.bgDim > 0 ? (
         <div style={{ position: "absolute", inset: 0, background: `rgba(${scrimRgb}, ${prefs.bgDim / 100})` }} />
@@ -1442,8 +1546,19 @@ function Player({
       >
         <Sidebar
           view={view}
-          setView={navigate}
+          setView={(v) => {
+            plugins.closeTab();
+            navigate(v);
+          }}
           navItems={prefs.navItems}
+          pluginNav={plugins.navTabs}
+          pluginKeys={plugins.pluginNavKeys}
+          activePluginKey={
+            pluginTabActive
+              ? plugins.navTabs.find((n) => n.pluginId === pluginTabActive.pluginId && n.tabId === pluginTabActive.tabId)?.key ?? null
+              : null
+          }
+          onSelectPluginTab={(pid, tab) => plugins.openTab(pid, tab)}
           playlists={sidebarPlaylists}
           onCreatePlaylist={() => setDialogOpen(true)}
           onOpenPlaylist={openPlaylist}
@@ -1647,6 +1762,9 @@ function Player({
         track={track}
         playing={playing}
         buttons={prefs.barButtons}
+        pluginButtons={pluginBarButtons}
+        pluginKeys={plugins.pluginBarKeys}
+        onPluginButton={(pid, slot) => plugins.notifySlot(pid, slot, "click")}
         buffering={pb.buffering}
         onTogglePlay={pb.toggle}
         onPrev={pb.prev}
@@ -1766,6 +1884,20 @@ function Player({
           },
           "-",
           { icon: "link", label: "Скопировать ссылку", onClick: () => showToast("Ссылка скопирована", "link") },
+          // T44: пункты плагинов (contributes.menus.track) — дописываются в конец
+          ...(plugins.menuItems("track").length ? (["-"] as const) : []),
+          ...plugins.menuItems("track").map((mi) => ({
+            icon: mi.icon || "puzzle",
+            label: mi.title,
+            onClick: () => {
+              if (menu.track)
+                plugins.notifySlot(mi.pluginId, mi.slotId, "click", {
+                  id: menu.track.id,
+                  title: menu.track.title,
+                  artist: menu.track.artist,
+                });
+            },
+          })),
         ]}
       />
 
@@ -1824,6 +1956,20 @@ function Player({
               if (catMenu.track) void toggleOffline(catMenu.track);
             },
           },
+          // T44: пункты плагинов (contributes.menus.catalogTrack)
+          ...(plugins.menuItems("catalogTrack").length ? (["-"] as const) : []),
+          ...plugins.menuItems("catalogTrack").map((mi) => ({
+            icon: mi.icon || "puzzle",
+            label: mi.title,
+            onClick: () => {
+              if (catMenu.track)
+                plugins.notifySlot(mi.pluginId, mi.slotId, "click", {
+                  id: catMenu.track.id,
+                  title: catMenu.track.title,
+                  artist: catMenu.track.artist,
+                });
+            },
+          })),
         ]}
       />
 
@@ -1872,8 +2018,21 @@ function Player({
                 },
               ] as const)
             : []),
+          // T44: пункты плагинов (contributes.menus.playlist)
+          ...(plugins.menuItems("playlist").length ? (["-"] as const) : []),
+          ...plugins.menuItems("playlist").map((mi) => ({
+            icon: mi.icon || "puzzle",
+            label: mi.title,
+            onClick: () => {
+              if (plMenu.pl) plugins.notifySlot(mi.pluginId, mi.slotId, "click", { id: plMenu.pl.id, name: plMenu.pl.name });
+            },
+          })),
         ]}
       />
+
+      {/* Фреймы плагинов (T44): по одному на включённый плагин; поверхности
+          вкладка/панель/оверлей позиционируются CSS без смены родителя */}
+      <PluginFrames plugins={plugins} />
 
       {/* Диалоги контекст-меню плейлиста — как в PlaylistView */}
       <Dialog

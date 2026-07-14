@@ -585,6 +585,45 @@ export function usePlayback({
     patchQueue(s.queue.slice(0, s.index + 1), s.index);
   };
 
+  // ── Управление для плагинов (T44): произвольная скорость + операции над
+  //    очередью, которых не было в UX-наборе (реордер from→to, полный сброс). ──
+
+  /** Точная скорость (плагин Muza.Player.setRate) — в отличие от cycleSpeed. */
+  const setRate = (r: number) => {
+    const clamped = Math.max(0.25, Math.min(4, r));
+    setSpeed(clamped);
+    engineRef.current?.setSpeed(clamped);
+  };
+
+  /** Добавить треки в очередь на позицию pos (по умолчанию — в конец). */
+  const enqueue = (tracks: PlayerTrack[], pos?: number) => {
+    if (tracks.length === 0) return;
+    const s = stateRef.current;
+    const at = pos === undefined ? s.queue.length : Math.max(0, Math.min(pos, s.queue.length));
+    const nextQueue = [...s.queue.slice(0, at), ...tracks, ...s.queue.slice(at)];
+    patchQueue(nextQueue, at <= s.index ? s.index + tracks.length : s.index);
+  };
+
+  /** Переставить трек с позиции from на позицию to (плагин reorderQueue). */
+  const reorderQueue = (from: number, to: number) => {
+    const s = stateRef.current;
+    if (from < 0 || from >= s.queue.length || to < 0 || to >= s.queue.length || from === to) return;
+    const nextQueue = [...s.queue];
+    const [moved] = nextQueue.splice(from, 1);
+    nextQueue.splice(to, 0, moved);
+    const idx =
+      s.index === from ? to : from < s.index && to >= s.index ? s.index - 1 : from > s.index && to <= s.index ? s.index + 1 : s.index;
+    patchQueue(nextQueue, idx);
+  };
+
+  /** Полная очистка очереди — оставляем только текущий трек (иначе нечего
+   *  играть); плагин Muza.Player.clearQueue. */
+  const clearQueue = () => {
+    const s = stateRef.current;
+    if (s.queue.length <= 1) return;
+    patchQueue([s.track], 0);
+  };
+
   // EQ и нормализация из Prefs — на движок
   useEffect(() => {
     engineRef.current?.setEq(prefs.eqOn, prefs.eqBands);
@@ -627,6 +666,11 @@ export function usePlayback({
       insertInQueue,
       moveInQueue,
       clearUpNext,
+      // Плагины (T44)
+      setRate,
+      enqueue,
+      reorderQueue,
+      clearQueue,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [queue, track, index, playing, buffering, pos, vol, speed, repeat, shuffle],

@@ -5,6 +5,18 @@ import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey,
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
 import { NAV_ITEM_META, normalizeNavItems } from "../lib/navItems";
+import { isPluginKey, parsePluginKey, pluginSlotKey } from "../lib/pluginSlots";
+import { isFullAccessManifest, PERMISSION_INFO, type PluginPermission } from "@muza/core";
+import {
+  cancelInstall,
+  finalizeInstall,
+  listInstalled,
+  pickAndStagePlugin,
+  setPluginEnabled,
+  uninstallPlugin,
+  type StagedPlugin,
+} from "../plugins/install";
+import type { InstalledPluginInfo } from "../plugins/types";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { formatTemplate, rpcAvailable } from "../lib/discord";
 import { openExternal } from "../lib/system";
@@ -760,6 +772,85 @@ export function SettingsView({
 }) {
   const [tab, setTab] = useState("appearance");
   const [sub, setSub] = useState<Sub>(null);
+
+  // Плагины уровня 1 (T44): установленные + мастер установки из файла
+  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginInfo[]>([]);
+  const refreshPlugins = () => void listInstalled().then(setInstalledPlugins).catch(() => setInstalledPlugins([]));
+  useEffect(() => {
+    refreshPlugins();
+  }, []);
+  const [staged, setStaged] = useState<StagedPlugin | null>(null);
+  const [installBusy, setInstallBusy] = useState(false);
+  const startInstall = async () => {
+    setInstallBusy(true);
+    try {
+      const s = await pickAndStagePlugin();
+      if (s) setStaged(s); // откроется модалка согласия
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : "Не удалось прочитать плагин", "x");
+    } finally {
+      setInstallBusy(false);
+    }
+  };
+  const confirmInstall = async () => {
+    if (!staged) return;
+    try {
+      await finalizeInstall(staged, staged.manifest.permissions);
+      onNotify(`Плагин «${staged.manifest.name}» установлен`, "puzzle");
+      setStaged(null);
+      refreshPlugins();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : "Не удалось установить", "x");
+    }
+  };
+  const declineInstall = () => {
+    if (staged) void cancelInstall(staged);
+    setStaged(null);
+  };
+  const togglePlugin = async (id: string, on: boolean) => {
+    try {
+      await setPluginEnabled(id, on);
+      refreshPlugins();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : "Не удалось изменить", "x");
+    }
+  };
+  const removePlugin = async (id: string, name: string) => {
+    try {
+      await uninstallPlugin(id);
+      onNotify(`Плагин «${name}» удалён`, "trash-2");
+      refreshPlugins();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : "Не удалось удалить", "x");
+    }
+  };
+  // Валидные плагинные ключи композиции (только включённые уровень-1 плагины)
+  const enabledLevel1 = installedPlugins.filter((p) => p.enabled && !isFullAccessManifest(p.manifest));
+  const pluginBarKeys = enabledLevel1.flatMap((p) =>
+    (p.manifest.contributes?.barButtons ?? []).map((b) => pluginSlotKey(p.id, b.id)),
+  );
+  const pluginNavKeys = enabledLevel1.flatMap((p) =>
+    (p.manifest.contributes?.navItems ?? []).map((n) => pluginSlotKey(p.id, n.id)),
+  );
+  // Мета для строк композиции: родной ключ → *_META, плагинный → contributes
+  const barMeta = (key: string): { label: string; hint: string } => {
+    if (isPluginKey(key)) {
+      const pk = parsePluginKey(key);
+      const pl = installedPlugins.find((p) => p.id === pk?.pluginId);
+      const item = pl?.manifest.contributes?.barButtons?.find((b) => b.id === pk?.slotId);
+      return { label: item?.title ?? "Плагин", hint: pl ? `Плагин: ${pl.manifest.name}` : "Плагин" };
+    }
+    return BAR_BUTTON_META[key as BarButtonKey];
+  };
+  const navMeta = (key: string): { label: string; icon: string } => {
+    if (isPluginKey(key)) {
+      const pk = parsePluginKey(key);
+      const pl = installedPlugins.find((p) => p.id === pk?.pluginId);
+      const item = pl?.manifest.contributes?.navItems?.find((n) => n.id === pk?.slotId);
+      return { label: item?.title ?? "Плагин", icon: item?.icon ?? "puzzle" };
+    }
+    return NAV_ITEM_META[key as NavItemKey];
+  };
 
   // Смена пароля (слайс «Аккаунт»): диалог старый → новый → повтор
   const [pwdOpen, setPwdOpen] = useState(false);
@@ -2080,8 +2171,8 @@ export function SettingsView({
 
   // Под-экраны компоновки (волна 3): кнопки бара и вкладки сайдбара —
   // тот же паттерн, что statsBlocks (Switch + ↑/↓, порядок массива = порядок в UI)
-  const barButtons = normalizeBarButtons(prefs.barButtons);
-  const barToggle = (key: BarButtonKey, on: boolean) =>
+  const barButtons = normalizeBarButtons(prefs.barButtons, pluginBarKeys);
+  const barToggle = (key: string, on: boolean) =>
     set({ barButtons: barButtons.map((b) => (b.key === key ? { ...b, on } : b)) });
   const barMove = (i: number, delta: -1 | 1) => {
     const j = i + delta;
@@ -2098,15 +2189,15 @@ export function SettingsView({
         prev/play/next и прогресс несъёмные.
       </div>
       {barButtons.map((b, i) => (
-        <SettingRow key={b.key} title={BAR_BUTTON_META[b.key].label} hint={BAR_BUTTON_META[b.key].hint}>
+        <SettingRow key={b.key} title={barMeta(b.key).label} hint={barMeta(b.key).hint}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
             <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-up" size="sm" label={`Выше: ${BAR_BUTTON_META[b.key].label}`} onClick={() => barMove(i, -1)} />
+              <IconButton icon="chevron-up" size="sm" label={`Выше: ${barMeta(b.key).label}`} onClick={() => barMove(i, -1)} />
             </span>
             <span style={{ opacity: i === barButtons.length - 1 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${BAR_BUTTON_META[b.key].label}`} onClick={() => barMove(i, 1)} />
+              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${barMeta(b.key).label}`} onClick={() => barMove(i, 1)} />
             </span>
-            <Switch checked={b.on} onChange={(on: boolean) => barToggle(b.key, on)} label={BAR_BUTTON_META[b.key].label} />
+            <Switch checked={b.on} onChange={(on: boolean) => barToggle(b.key, on)} label={barMeta(b.key).label} />
           </div>
         </SettingRow>
       ))}
@@ -2118,10 +2209,10 @@ export function SettingsView({
     </div>
   );
 
-  const navItems = normalizeNavItems(prefs.navItems);
-  const navToggle = (key: NavItemKey, on: boolean) =>
+  const navItems = normalizeNavItems(prefs.navItems, pluginNavKeys);
+  const navToggle = (key: string, on: boolean) =>
     set({ navItems: navItems.map((n) => (n.key === key ? { ...n, on } : n)) });
-  const navRename = (key: NavItemKey, label: string) =>
+  const navRename = (key: string, label: string) =>
     set({ navItems: navItems.map((n) => (n.key === key ? { ...n, label: label || undefined } : n)) });
   const navMove = (i: number, delta: -1 | 1) => {
     const j = i + delta;
@@ -2138,25 +2229,25 @@ export function SettingsView({
         возвращает стандартное. «Настройки» и «Админка» живут отдельно, внизу.
       </div>
       {navItems.map((n, i) => (
-        <SettingRow key={n.key} title={NAV_ITEM_META[n.key].label} hint={n.key === "home" ? "Дом выключить нельзя" : undefined}>
+        <SettingRow key={n.key} title={navMeta(n.key).label} hint={n.key === "home" ? "Дом выключить нельзя" : undefined}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
             <SettingInput
               value={n.label ?? ""}
-              placeholder={NAV_ITEM_META[n.key].label}
+              placeholder={navMeta(n.key).label}
               width={140}
               onChange={(v) => navRename(n.key, v.trim().slice(0, 24))}
             />
             <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-up" size="sm" label={`Выше: ${NAV_ITEM_META[n.key].label}`} onClick={() => navMove(i, -1)} />
+              <IconButton icon="chevron-up" size="sm" label={`Выше: ${navMeta(n.key).label}`} onClick={() => navMove(i, -1)} />
             </span>
             <span style={{ opacity: i === navItems.length - 1 ? 0.3 : 1 }}>
-              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${NAV_ITEM_META[n.key].label}`} onClick={() => navMove(i, 1)} />
+              <IconButton icon="chevron-down" size="sm" label={`Ниже: ${navMeta(n.key).label}`} onClick={() => navMove(i, 1)} />
             </span>
             <Switch
               checked={n.on}
               disabled={n.key === "home"}
               onChange={(on: boolean) => navToggle(n.key, on)}
-              label={NAV_ITEM_META[n.key].label}
+              label={navMeta(n.key).label}
             />
           </div>
         </SettingRow>
@@ -2726,16 +2817,45 @@ export function SettingsView({
           />
         </SettingRow>
         <GroupTitle>Внешние плагины</GroupTitle>
-        <SettingRow title="Плагины" hint="Внешняя плагин-система требует песочницу и capability-права — в работе">
-          <RowValue>0 установлено</RowValue>
-        </SettingRow>
-        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — пока витрина" onClick={() => openMarket("Плагины")} chevron></SettingRow>
-        <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — работает" onClick={() => openMarket("Темы")} chevron></SettingRow>
-        <SettingRow title="Установить из файла" hint="Для разработчиков (с плагин-системой)">
-          <Button variant="ghost" icon="folder-open" disabled>
+        <SettingRow
+          title="Установить из файла"
+          hint={engineAvailable() ? "Пакет .muzaplugin — согласие на права при установке" : "Только в приложении (не в браузере)"}
+        >
+          <Button variant="ghost" icon="folder-open" disabled={!engineAvailable() || installBusy} onClick={() => void startInstall()}>
             Выбрать файл
           </Button>
         </SettingRow>
+        {installedPlugins.length === 0 ? (
+          <SettingRow title="Установленные" hint="Пока ничего не установлено">
+            <RowValue>0 установлено</RowValue>
+          </SettingRow>
+        ) : (
+          installedPlugins.map((p) => (
+            <SettingRow
+              key={p.id}
+              title={p.manifest.name}
+              hint={`v${p.version} · ${p.manifest.author} · права: ${p.granted.length}${
+                isFullAccessManifest(p.manifest) ? " · ПОЛНЫЙ ДОСТУП" : ""
+              }`}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                <Switch
+                  checked={p.enabled}
+                  onChange={(on: boolean) => void togglePlugin(p.id, on)}
+                  label={`Включить ${p.manifest.name}`}
+                />
+                <IconButton
+                  icon="trash-2"
+                  size="sm"
+                  label={`Удалить ${p.manifest.name}`}
+                  onClick={() => void removePlugin(p.id, p.manifest.name)}
+                />
+              </div>
+            </SettingRow>
+          ))
+        )}
+        <SettingRow title="Маркетплейс плагинов" hint="Каталог расширений — пока витрина" onClick={() => openMarket("Плагины")} chevron></SettingRow>
+        <SettingRow title="Маркетплейс тем" hint="Ставить и делиться темами — работает" onClick={() => openMarket("Темы")} chevron></SettingRow>
       </div>
     ) : (
       <div key="system" className={paneClass} style={paneStyle}>
@@ -2856,6 +2976,64 @@ export function SettingsView({
         }}
       />
       {pane}
+
+      {/* T44: согласие на права при установке плагина из файла */}
+      <Dialog
+        open={staged !== null}
+        title={staged ? `Установить «${staged.manifest.name}»?` : "Установка плагина"}
+        onClose={declineInstall}
+        actions={
+          <>
+            <Button variant="ghost" onClick={declineInstall}>
+              Отмена
+            </Button>
+            <Button variant="primary" icon="download" onClick={() => void confirmInstall()}>
+              Установить
+            </Button>
+          </>
+        }
+      >
+        {staged ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320, maxWidth: 420 }}>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+              {staged.manifest.description} · v{staged.manifest.version} · {staged.manifest.author}
+            </div>
+            {isFullAccessManifest(staged.manifest) ? (
+              <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 600 }}>
+                Плагин запрашивает ПОЛНЫЙ ДОСТУП — уровень 2 пока не поддержан этим рантаймом.
+              </div>
+            ) : staged.manifest.permissions.length === 0 ? (
+              <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>Плагин не запрашивает особых прав.</div>
+            ) : (
+              <>
+                <div style={{ fontSize: "var(--fs-body)", color: "var(--text-1)", fontWeight: 600 }}>Плагин просит права:</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+                  {staged.manifest.permissions.map((perm) => {
+                    const info = PERMISSION_INFO[perm as PluginPermission];
+                    return (
+                      <div key={perm} style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                        <Icon
+                          name={info?.dangerous ? "shield-alert" : "check"}
+                          size={16}
+                          color={info?.dangerous ? "var(--danger)" : "var(--accent-text)"}
+                        />
+                        <span style={{ fontSize: "var(--fs-body)", color: info?.dangerous ? "var(--danger)" : "var(--text-2)" }}>
+                          {info?.label ?? perm}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {staged.manifest.net_allow?.length ? (
+                  <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+                    Сеть: {staged.manifest.net_allow.join(", ")}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+      </Dialog>
 
       {/* Смена пароля: старый → новый (сервер разлогинит остальные устройства) */}
       <Dialog

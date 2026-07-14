@@ -177,11 +177,14 @@ export interface Prefs {
   discordLine1: string;
   discordLine2: string;
   /** Кнопки плеер-бара: состав и порядок (порядок массива = порядок в баре;
-   *  shuffle/repeat живут в центре вокруг транспорта, остальное — справа). */
-  barButtons: { key: BarButtonKey; on: boolean }[];
+   *  shuffle/repeat живут в центре вокруг транспорта, остальное — справа).
+   *  T44: ключ — родной BarButtonKey либо плагинный `plugin:<id>:<slot>`
+   *  (строка), потому тип ключа расширен до string. */
+  barButtons: { key: string; on: boolean }[];
   /** Вкладки сайдбара: состав, порядок и переименование (label = своё имя,
-   *  пусто/нет — дефолт). Главную выключить нельзя (normalizeNavItems). */
-  navItems: { key: NavItemKey; on: boolean; label?: string }[];
+   *  пусто/нет — дефолт). Главную выключить нельзя (normalizeNavItems).
+   *  T44: ключ — родной NavItemKey либо плагинный `plugin:<id>:<tab>`. */
+  navItems: { key: string; on: boolean; label?: string }[];
   /** Строка трека: что показывать (альбом/источник появятся с данными). */
   rowShow: { cover: boolean; duration: boolean };
   /** Страница «Статистика»: видимость и порядок блоков (порядок массива =
