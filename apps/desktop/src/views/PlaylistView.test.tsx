@@ -50,8 +50,11 @@ function renderView(api: MuzaApi) {
   );
 }
 
+// T31 (i18n): PlaylistView зовёт useT() — рендер здесь БЕЗ LanguageProvider,
+// поэтому useT() фолбэкает на DEFAULT_LANG="en" (см. i18n/index.tsx и
+// прецедент в shell/MeaningDialog.test.tsx). Ассерты — на английский текст.
 describe("PlaylistView — владельческие кнопки", () => {
-  it("прячет «Переименовать»/«Удалить» на оффлайн-снапшоте удалённого плейлиста", async () => {
+  it("прячет «Rename»/«Delete playlist» на оффлайн-снапшоте удалённого плейлиста", async () => {
     // Сервер отдаёт удалённый плейлист (404), но локально есть снапшот, где
     // пользователь был владельцем → withSnapshot вернёт offline:true с isOwner.
     localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(ownerDetail));
@@ -61,15 +64,15 @@ describe("PlaylistView — владельческие кнопки", () => {
 
     renderView(api);
 
-    // Дожидаемся, пока страница осядет в состоянии «оффлайн-копия».
-    await waitFor(() => expect(screen.getByText(/оффлайн-копия/)).toBeTruthy());
+    // Дожидаемся, пока страница осядет в состоянии «offline copy».
+    await waitFor(() => expect(screen.getByText(/offline copy/)).toBeTruthy());
 
     // Кнопки владельца, бьющие по мёртвому id, не должны быть отрисованы.
-    expect(screen.queryByRole("button", { name: "Переименовать" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Удалить плейлист" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete playlist" })).toBeNull();
   });
 
-  it("показывает «Переименовать»/«Удалить» для живого плейлиста владельца", async () => {
+  it("показывает «Rename»/«Delete playlist» для живого плейлиста владельца", async () => {
     // Онлайн-ответ сервера: offline:false, isOwner:true → кнопки на месте.
     const api = {
       getPlaylist: vi.fn().mockResolvedValue(ownerDetail),
@@ -78,10 +81,10 @@ describe("PlaylistView — владельческие кнопки", () => {
     renderView(api);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Переименовать" })).toBeTruthy(),
+      expect(screen.getByRole("button", { name: "Rename" })).toBeTruthy(),
     );
-    expect(screen.getByRole("button", { name: "Удалить плейлист" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete playlist" })).toBeTruthy();
     // Контроль: это не оффлайн-состояние.
-    expect(screen.getByText(/синхронизируется/)).toBeTruthy();
+    expect(screen.getByText(/syncing/)).toBeTruthy();
   });
 });

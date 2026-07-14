@@ -16,6 +16,7 @@ import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "../lib/playlistIcon";
+import { useT } from "../i18n";
 
 /** «Твоя медиатека» (Stage 4): настоящие серверные плейлисты, локальные файлы
  *  (device-bound), добавление по ссылке и импорт; демо-контент остаётся
@@ -58,10 +59,20 @@ export function LibraryView({
   onJoinCode: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t } = useT();
   const chips = localAvailable()
-    ? ["Плейлисты", "Локальные", "Альбомы", "Артисты"]
-    : ["Плейлисты", "Альбомы", "Артисты"];
-  const [chip, setChip] = useState("Плейлисты");
+    ? [
+        { key: "playlists", label: t("views.library.chips.playlists") },
+        { key: "local", label: t("views.library.chips.local") },
+        { key: "albums", label: t("views.library.chips.albums") },
+        { key: "artists", label: t("views.library.chips.artists") },
+      ]
+    : [
+        { key: "playlists", label: t("views.library.chips.playlists") },
+        { key: "albums", label: t("views.library.chips.albums") },
+        { key: "artists", label: t("views.library.chips.artists") },
+      ];
+  const [chip, setChip] = useState("playlists");
   const [locals, setLocals] = useState<LocalEntry[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; entry: LocalEntry | null }>({
@@ -73,7 +84,7 @@ export function LibraryView({
 
   const reloadLocals = () => localList().then(setLocals).catch(() => setLocals([]));
   useEffect(() => {
-    if (chip === "Локальные") void reloadLocals();
+    if (chip === "local") void reloadLocals();
   }, [chip]);
 
   const addLocal = async (kind: "files" | "folder") => {
@@ -83,16 +94,16 @@ export function LibraryView({
       const scanned = await localPickAndScan(kind);
       if (scanned === null) return; // передумал
       if (scanned.length === 0) {
-        onNotify("Аудиофайлов не нашлось", "x");
+        onNotify(t("views.library.noAudioFilesFound"), "x");
         return;
       }
       // серверная сессия: регистрируем теги+хэш — треки попадают в общую
       // библиотеку (плейлисты/лайки); файл никуда не загружается
       if (canSearch) await registerLocalTracks(api, scanned);
-      onNotify(`Добавлено: ${scanned.length} файл(ов)`, "hard-drive");
+      onNotify(t("views.library.filesAdded", { count: scanned.length }), "hard-drive");
       await reloadLocals();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось добавить файлы", "x");
+      onNotify(e instanceof Error ? e.message : t("views.library.addFilesFailed"), "x");
     } finally {
       setScanning(false);
     }
@@ -110,18 +121,18 @@ export function LibraryView({
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
         <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)", flex: 1 }}>
-          Твоя медиатека
+          {t("views.library.title")}
         </h1>
         {canSearch ? (
           <>
             <Button variant="secondary" icon="link" onClick={onAddLink}>
-              По ссылке
+              {t("views.library.addLink")}
             </Button>
             <Button variant="secondary" icon="import" onClick={onImport}>
-              Импорт плейлиста
+              {t("views.library.importPlaylist")}
             </Button>
             <Button variant="secondary" icon="users" onClick={onJoinCode}>
-              По коду
+              {t("views.library.byCode")}
             </Button>
           </>
         ) : null}
@@ -130,23 +141,22 @@ export function LibraryView({
         <ChipGroup items={chips} value={chip} onChange={setChip} />
       </div>
 
-      {chip === "Артисты" ? (
+      {chip === "artists" ? (
         <div style={{ padding: "var(--sp-6) 0", color: "var(--text-2)" }}>
-          Здесь появятся артисты, на которых ты подпишешься.
+          {t("views.library.artistsPlaceholder")}
         </div>
-      ) : chip === "Локальные" ? (
+      ) : chip === "local" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", paddingBottom: "var(--sp-6)" }}>
           <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
             <Button variant="secondary" icon="file-music" disabled={scanning} onClick={() => void addLocal("files")}>
-              {scanning ? "Сканируем…" : "Добавить файлы"}
+              {scanning ? t("views.library.scanning") : t("views.library.addFiles")}
             </Button>
             <Button variant="secondary" icon="folder-open" disabled={scanning} onClick={() => void addLocal("folder")}>
-              Добавить папку
+              {t("views.library.addFolder")}
             </Button>
           </div>
           <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}>
-            Файлы остаются на этом устройстве — на сервер уходят только название и отпечаток
-            {canSearch ? " (в плейлистах на других устройствах такие треки будут серыми)" : ""}.
+            {canSearch ? t("views.library.localFilesHintSynced") : t("views.library.localFilesHintLocal")}
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
             {(locals ?? []).map((e, i) => (
@@ -161,7 +171,7 @@ export function LibraryView({
                       ev,
                       async () => {
                         const path = await localResolve(e.hash);
-                        if (!path) throw new Error("Файла нет на этом устройстве");
+                        if (!path) throw new Error(t("views.library.fileNotOnDevice"));
                         return path;
                       },
                       (m) => onNotify(m, "x"),
@@ -180,13 +190,13 @@ export function LibraryView({
                 <TrackRow
                   index={i + 1}
                   title={e.title}
-                  artist={e.available ? e.artist : `${e.artist} · файла нет на этом устройстве`}
+                  artist={e.available ? e.artist : t("views.library.artistFileMissing", { artist: e.artist })}
                   duration={fmtTime(e.duration_sec)}
                   active={currentId === (serverIds[e.hash] ?? `local:${e.hash}`)}
                   playing={currentId === (serverIds[e.hash] ?? `local:${e.hash}`) && playing}
                   onPlay={() => {
                     if (!e.available) {
-                      onNotify("Файла нет на этом устройстве", "x");
+                      onNotify(t("views.library.fileNotOnDevice"), "x");
                       return;
                     }
                     onPlayLocal(locals ?? [], e.hash);
@@ -205,13 +215,12 @@ export function LibraryView({
             ))}
             {locals !== null && locals.length === 0 ? (
               <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-                Пока пусто. Добавь файлы или папку с музыкой — они заиграют вместе с каталожными
-                треками, в том числе в одном плейлисте.
+                {t("views.library.localFilesEmpty")}
               </div>
             ) : null}
           </div>
         </div>
-      ) : chip === "Плейлисты" && canSearch ? (
+      ) : chip === "playlists" && canSearch ? (
         <div style={grid}>
           {srvPlaylists.map((p) => (
             <Tile
@@ -219,7 +228,7 @@ export function LibraryView({
               // T47b: иконка-обложка плейлиста (манифест @muza/core), фолбэк — прежняя демо-обложка
               cover={playlistIconSrc(p.icon) ?? NEW_PLAYLIST_COVER}
               title={p.name}
-              subtitle={`${p.trackCount} тр. · синхронизируется`}
+              subtitle={t("views.library.playlistSubtitle", { count: p.trackCount })}
               width="auto"
               onClick={() => onOpenPlaylist(p.id)}
               onPlay={() => onOpenPlaylist(p.id)}
@@ -228,14 +237,13 @@ export function LibraryView({
           ))}
           {srvPlaylists.length === 0 ? (
             <div style={{ gridColumn: "1 / -1", padding: "var(--sp-6) 0", color: "var(--text-2)", lineHeight: 1.6 }}>
-              Плейлистов пока нет. Создай первый кнопкой «+» в сайдбаре, импортируй из
-              Spotify/YouTube/Apple Music или добавь треки по ссылке.
+              {t("views.library.playlistsEmpty")}
             </div>
           ) : null}
         </div>
       ) : (
         <div style={grid}>
-          {(chip === "Альбомы" ? RELEASES : PLAYLISTS).map((p) => (
+          {(chip === "albums" ? RELEASES : PLAYLISTS).map((p) => (
             <Tile key={p.id} cover={p.cover} title={p.name} subtitle={p.meta} width="auto" onPlay={() => onPlayTrack(TRACKS[0].id)} />
           ))}
         </div>
@@ -252,7 +260,7 @@ export function LibraryView({
             ? [
                 {
                   icon: "plus",
-                  label: "В плейлист",
+                  label: t("menu.addToPlaylist"),
                   onClick: () => {
                     const e = menu.entry;
                     if (!e) return;
@@ -273,12 +281,12 @@ export function LibraryView({
             : []),
           {
             icon: "trash-2",
-            label: "Убрать из Muza (файл останется)",
+            label: t("views.library.removeFromMuza"),
             onClick: () => {
               const e = menu.entry;
               if (!e) return;
               void localForget(e.hash).then(() => {
-                onNotify("Убрано из локальных", "trash-2");
+                onNotify(t("views.library.removedFromLocal"), "trash-2");
                 void reloadLocals();
               });
             },

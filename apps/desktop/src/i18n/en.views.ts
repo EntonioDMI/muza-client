@@ -79,6 +79,9 @@ export const viewsEn = {
     scanning: "Scanning…",
     addFiles: "Add files",
     addFolder: "Add folder",
+    noAudioFilesFound: "No audio files found",
+    filesAdded: "Added: {count} file(s)",
+    addFilesFailed: "Couldn't add the files",
     localFilesHintLocal: "Files stay on this device — only the title and a fingerprint are sent to the server.",
     localFilesHintSynced:
       "Files stay on this device — only the title and a fingerprint are sent to the server (in playlists on other devices, these tracks will appear greyed out).",
