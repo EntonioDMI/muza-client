@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { Button, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muza/ui";
 import type { MuzaApi, StatsOverview, StatsPeriod, Track } from "@muza/api-client";
-import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
+import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
 import { hourLabel } from "../lib/hourLabel";
 import { wrappedSeason } from "../lib/wrappedSeason";
 import { withSnapshot } from "../lib/offlineSnapshot";
@@ -306,7 +306,7 @@ export function StatsView({
     switch (key) {
       case "summary":
         return (
-          <Panel key={key} title={STATS_BLOCK_META.summary.label}>
+          <Panel key={key} title={statsBlockLabel("summary", lang).label}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-4)" }}>
               <BigStat value={fmtMinutes(d.totalMs, lang)} label={t("views.stats.summary.minutesLabel")} accent />
               <BigStat value={d.totalPlays.toLocaleString(lang)} label={t("views.stats.summary.playsLabel")} />
@@ -318,7 +318,7 @@ export function StatsView({
       case "activity": {
         const daily = d.series.length > 0 && d.series[0].bucket.length === 10;
         return (
-          <Panel key={key} title={STATS_BLOCK_META.activity.label}>
+          <Panel key={key} title={statsBlockLabel("activity", lang).label}>
             <Bars
               values={d.series.map((s) => s.plays)}
               titles={d.series.map((s) => `${bucketLabel(s.bucket, lang)}: ${s.plays} · ${fmtMinutes(s.ms, lang)} ${t("views.stats.topArtists.minSuffix")}`)}
@@ -342,7 +342,7 @@ export function StatsView({
       }
       case "rhythm":
         return (
-          <Panel key={key} title={STATS_BLOCK_META.rhythm.label}>
+          <Panel key={key} title={statsBlockLabel("rhythm", lang).label}>
             <Bars
               values={d.hours}
               titles={d.hours.map((v, h) => `${h}:00 — ${v}`)}
@@ -351,14 +351,14 @@ export function StatsView({
             />
             <div style={{ marginTop: 6, fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
               {d.topHour !== null
-                ? t("views.stats.rhythm.topHour", { hour: d.topHour, label: hourLabel(d.topHour) })
+                ? t("views.stats.rhythm.topHour", { hour: d.topHour, label: hourLabel(d.topHour, lang) })
                 : t("views.stats.rhythm.noTopHour")}
             </div>
           </Panel>
         );
       case "top_tracks":
         return d.topTracks.length > 0 ? (
-          <Panel key={key} title={STATS_BLOCK_META.top_tracks.label} flush>
+          <Panel key={key} title={statsBlockLabel("top_tracks", lang).label} flush>
             <div style={{ display: "flex", flexDirection: "column" }}>
               {d.topTracks.map((entry, i) => (
                 <TrackRow
@@ -385,7 +385,7 @@ export function StatsView({
         if (d.topArtists.length === 0) return null;
         const maxMs = Math.max(...d.topArtists.map((a) => a.playedMs), 1);
         return (
-          <Panel key={key} title={STATS_BLOCK_META.top_artists.label}>
+          <Panel key={key} title={statsBlockLabel("top_artists", lang).label}>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
               {d.topArtists.map((a, i) => (
                 <div key={a.artist} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
@@ -443,7 +443,7 @@ export function StatsView({
       }
       case "streaks":
         return (
-          <Panel key={key} title={STATS_BLOCK_META.streaks.label}>
+          <Panel key={key} title={statsBlockLabel("streaks", lang).label}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-4)" }}>
               <BigStat
                 value={`${d.currentStreakDays} ${t("views.stats.streaks.daysSuffix")}`}
@@ -457,7 +457,7 @@ export function StatsView({
         );
       case "likes":
         return (
-          <Panel key={key} title={STATS_BLOCK_META.likes.label}>
+          <Panel key={key} title={statsBlockLabel("likes", lang).label}>
             <BigStat value={`+${d.favoritesAdded}`} label={t("views.stats.likes.addedThisPeriod")} />
           </Panel>
         );

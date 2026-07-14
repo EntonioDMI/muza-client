@@ -316,7 +316,7 @@ export function WrappedOverlay({
                 {recap.topHour !== null ? (
                   <>
                     <h1 className="wrapped__primary">{String(recap.topHour).padStart(2, "0")}:00</h1>
-                    <p>{t("views.wrapped.rhythm.favoriteHour", { label: hourLabel(recap.topHour) })}</p>
+                    <p>{t("views.wrapped.rhythm.favoriteHour", { label: hourLabel(recap.topHour, lang) })}</p>
                     {/* Ось суток 00→24 с отметкой пикового часа: осмысленный
                         график (не случайная линия) — заливка растёт до пика,
                         точка = любимый час. Данные — recap.topHour. */}

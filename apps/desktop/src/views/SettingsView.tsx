@@ -3,9 +3,9 @@ import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton,
 import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { useT, type TParams, type TranslationKey } from "../i18n";
-import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
-import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
-import { NAV_ITEM_META, normalizeNavItems } from "../lib/navItems";
+import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
+import { barButtonLabel, normalizeBarButtons } from "../lib/barButtons";
+import { NAV_ITEM_META, navItemLabel, normalizeNavItems } from "../lib/navItems";
 import { isPluginKey, parsePluginKey, pluginSlotKey } from "../lib/pluginSlots";
 import { isFullAccessManifest, PERMISSION_INFO, type PluginPermission } from "@muza/core";
 import {
@@ -30,6 +30,7 @@ import {
   DEFAULT_HOTKEYS,
   formatCombo,
   HOTKEY_ACTIONS,
+  hotkeyActionLabel,
   type HotkeyAction,
 } from "../lib/hotkeys";
 import {
@@ -964,7 +965,7 @@ export function SettingsView({
         hint: pl ? t("settings.appearance.plugin.hint", { name: pl.manifest.name }) : t("settings.appearance.plugin.genericLabel"),
       };
     }
-    return BAR_BUTTON_META[key as BarButtonKey];
+    return barButtonLabel(key as BarButtonKey, lang);
   };
   const navMeta = (key: string): { label: string; icon: string } => {
     if (isPluginKey(key)) {
@@ -973,7 +974,7 @@ export function SettingsView({
       const item = pl?.manifest.contributes?.navItems?.find((n) => n.id === pk?.slotId);
       return { label: item?.title ?? t("settings.appearance.plugin.genericLabel"), icon: item?.icon ?? "puzzle" };
     }
-    return NAV_ITEM_META[key as NavItemKey];
+    return { label: navItemLabel(key as NavItemKey, lang), icon: NAV_ITEM_META[key as NavItemKey].icon };
   };
 
   // Смена пароля (слайс «Аккаунт»): диалог старый → новый → повтор
@@ -2545,13 +2546,13 @@ export function SettingsView({
 
       <GroupTitle>{t("settings.stats.blocksGroup")}</GroupTitle>
       {statsBlocks.map((b, i) => (
-        <SettingRow key={b.key} title={STATS_BLOCK_META[b.key].label} hint={STATS_BLOCK_META[b.key].hint}>
+        <SettingRow key={b.key} title={statsBlockLabel(b.key, lang).label} hint={statsBlockLabel(b.key, lang).hint}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
             <span style={{ opacity: i === 0 ? 0.3 : 1 }}>
               <IconButton
                 icon="chevron-up"
                 size="sm"
-                label={t("settings.bar.moveUp", { name: STATS_BLOCK_META[b.key].label })}
+                label={t("settings.bar.moveUp", { name: statsBlockLabel(b.key, lang).label })}
                 onClick={() => statsMove(i, -1)}
               />
             </span>
@@ -2559,11 +2560,11 @@ export function SettingsView({
               <IconButton
                 icon="chevron-down"
                 size="sm"
-                label={t("settings.bar.moveDown", { name: STATS_BLOCK_META[b.key].label })}
+                label={t("settings.bar.moveDown", { name: statsBlockLabel(b.key, lang).label })}
                 onClick={() => statsMove(i, 1)}
               />
             </span>
-            <Switch checked={b.on} onChange={(on: boolean) => statsToggle(b.key, on)} label={STATS_BLOCK_META[b.key].label} />
+            <Switch checked={b.on} onChange={(on: boolean) => statsToggle(b.key, on)} label={statsBlockLabel(b.key, lang).label} />
           </div>
         </SettingRow>
       ))}
@@ -3028,7 +3029,7 @@ export function SettingsView({
             {HOTKEY_ACTIONS.map((a) => (
               <HotkeyRow
                 key={a.id}
-                label={a.label}
+                label={hotkeyActionLabel(a.id, lang)}
                 combo={prefs.hotkeys[a.id]}
                 conflict={(counts.get(prefs.hotkeys[a.id]) ?? 0) > 1}
                 onCapture={(combo) => setKey(a.id, combo)}

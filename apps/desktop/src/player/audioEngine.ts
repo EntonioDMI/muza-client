@@ -16,7 +16,7 @@
  *  (usePlayback.ts) передаёт вторым параметром конструктора — там же и живёт
  *  prefs.language, см. `translate(prefs.language, key, params)`, как решал
  *  T31 для App.tsx (не-React вызов чистой translate() вместо хука useT()). */
-import type { TParams, TranslationKey } from "../i18n";
+import { DEFAULT_LANG, translate, type TParams, type TranslationKey } from "../i18n";
 
 const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 /** Целевая integrated loudness для нормализации (стриминговый стандарт). */
@@ -78,7 +78,8 @@ export class AudioEngine {
     private readonly cb: EngineCallbacks,
     /** Перевод ошибок движка (см. шапку файла); опционален для тестов/старых
      *  вызовов — без него ошибки остаются на английском (DEFAULT_LANG). */
-    private readonly t: (key: TranslationKey, params?: TParams) => string = (key) => key,
+    private readonly t: (key: TranslationKey, params?: TParams) => string = (key, params) =>
+      translate(DEFAULT_LANG, key, params),
   ) {}
 
   private makeSlot(): Slot {

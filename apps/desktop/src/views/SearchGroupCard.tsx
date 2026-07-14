@@ -23,12 +23,12 @@ export function SearchGroupCard({
   index: number;
   renderRow: (track: Track, index?: number) => React.ReactNode;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const [expanded, setExpanded] = useState(false);
   const versionCount = result.variants.length;
   // hasOriginal=false — оригинала в выдаче нет, канон — заглушка (лучший
   // вариант); показываем это явно, чтобы «лайк карточке» не путал с оригиналом.
-  const canonLabel = !result.hasOriginal ? variantLabel(result.canonicalVariantType) : null;
+  const canonLabel = !result.hasOriginal ? variantLabel(result.canonicalVariantType, lang) : null;
 
   return (
     <div>
@@ -38,7 +38,7 @@ export function SearchGroupCard({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          aria-label={`${versionCount} ${pluralVersions(versionCount)} — ${expanded ? t("views.search.groupCard.collapse") : t("views.search.groupCard.expand")}`}
+          aria-label={`${versionCount} ${pluralVersions(versionCount, lang)} — ${expanded ? t("views.search.groupCard.collapse") : t("views.search.groupCard.expand")}`}
           style={{
             display: "flex",
             alignItems: "center",
@@ -52,7 +52,7 @@ export function SearchGroupCard({
           }}
         >
           <Badge tone={result.hasOriginal ? "accent" : "neutral"}>
-            {versionCount} {pluralVersions(versionCount)}
+            {versionCount} {pluralVersions(versionCount, lang)}
           </Badge>
           <Icon
             name="chevron-down"
@@ -87,7 +87,7 @@ export function SearchGroupCard({
                   padding: "var(--sp-1) 0 0 var(--sp-2)",
                 }}
               >
-                {variantLabel(v.variantType)}
+                {variantLabel(v.variantType, lang)}
               </span>
               {renderRow(v.track)}
             </div>

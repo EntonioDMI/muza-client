@@ -20,7 +20,7 @@ import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, formatTemplate, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useCoverArt } from "./lib/coverArt";
-import { comboFromEvent, matchAction, formatCombo, withDefaults, HOTKEY_ACTIONS } from "./lib/hotkeys";
+import { comboFromEvent, matchAction, formatCombo, withDefaults, HOTKEY_ACTIONS, hotkeyActionLabel } from "./lib/hotkeys";
 import {
   canGoBack,
   canGoForward,
@@ -353,6 +353,7 @@ function Player({
   const jam = useJam({
     api,
     enabled: canSearch,
+    lang: prefs.language,
     pb: {
       track: pbRaw.track,
       pos: pbRaw.pos,
@@ -510,7 +511,7 @@ function Player({
     try {
       const sources = await api.getTrackSources(t.id);
       // оффлайн-копия — всегда в полном качестве и по политике источников
-      await resolvePlayable(t.id, applySourcePolicy(sources, prefs));
+      await resolvePlayable(t.id, applySourcePolicy(sources, prefs), "auto", prefs.language);
       return true;
     } catch {
       return false; // пин остался — докачается при первом прослушивании
@@ -2208,7 +2209,7 @@ function Player({
       <Dialog open={hotkeysOpen} title={t("app.hotkeysDialog.title")} onClose={() => setHotkeysOpen(false)}>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 320 }}>
           {[
-            ...HOTKEY_ACTIONS.map((a) => ({ action: a.label, combo: formatCombo(prefs.hotkeys[a.id]) })),
+            ...HOTKEY_ACTIONS.map((a) => ({ action: hotkeyActionLabel(a.id, prefs.language), combo: formatCombo(prefs.hotkeys[a.id]) })),
             { action: t("app.hotkeysDialog.rows.searchOrClose"), combo: "Esc" },
             { action: t("app.hotkeysDialog.rows.thisHelp"), combo: "?" },
             // T18: жесты перетаскивания (единый UX списков)

@@ -22,9 +22,18 @@
  *  NAV_ITEM_META/BAR_BUTTON_META/STATS_BLOCK_META/HOTKEY_ACTIONS остаются
  *  статичными Record (потребители читают `.label` как плоское поле, не
  *  вызывают функцию) — их дефолтные значения вычислены через
- *  `translate(DEFAULT_LANG, key)` при импорте модуля, что даёт тот же
- *  эффект (не RU), но БЕЗ живого переключения языка для этих меток —
- *  живое переключение потребует правки потребителя (вне зоны). */
+ *  `translate(DEFAULT_LANG, key)` при импорте модуля.
+ *
+ *  UPD (T32b, живое переключение доведено): потребители переведены на
+ *  хелперы с lang — navItemLabel/barButtonLabel/statsBlockLabel/
+ *  hotkeyActionLabel(key, lang) и hourLabel/variantLabel/pluralVersions(n,
+ *  lang). Прошито: shell/Sidebar (nav), views/SettingsView (bar/nav/stats/
+ *  hotkeys-панели), views/StatsView (stats-панели+hourLabel), views/
+ *  SearchGroupCard (variant/plural), views/WrappedOverlay (hourLabel),
+ *  App.tsx (hotkeysDialog + useJam lang + resolvePlayable lang), usePlayback
+ *  (читает prefs напрямую). Статичные *_META по-прежнему держат EN-дефолт как
+ *  фолбэк для не-локализованных вызовов. shell/ShareDialog доводится в T34
+ *  (там ещё и захардкоженные тосты — пропуск T31). */
 export const mediaEn = {
   player: {
     errors: {

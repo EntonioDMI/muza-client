@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { isTrackDrag, readTrackDrag } from "../lib/dnd";
-import { NAV_ITEM_META, normalizeNavItems, type NavItemPref } from "../lib/navItems";
+import { NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
 import { useT } from "../i18n";
@@ -245,7 +245,7 @@ export function Sidebar({
   /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
   onOpenHotkeys: () => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
   // индикатор гаснет, контент остаётся доступен), label — своё имя.
   // T44: плагинные вкладки живут в том же списке под ключами plugin:<id>:<tab>.
@@ -257,7 +257,7 @@ export function Sidebar({
         return { key: n.key, icon: pn?.icon || "puzzle", label: n.label || pn?.title || t("settings.appearance.plugin.genericLabel"), plugin: pn };
       }
       const nativeKey = n.key as keyof typeof NAV_ITEM_META;
-      return { key: n.key, icon: NAV_ITEM_META[nativeKey].icon, label: n.label || NAV_ITEM_META[nativeKey].label, plugin: undefined };
+      return { key: n.key, icon: NAV_ITEM_META[nativeKey].icon, label: n.label || navItemLabel(nativeKey, lang), plugin: undefined };
     });
   const currentKey = activePluginKey ?? view;
   const idx = mainNav.findIndex((n) => n.key === currentKey);
