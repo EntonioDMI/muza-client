@@ -44,7 +44,8 @@ describe("MeaningDialog", () => {
     const dialog = screen.getByRole("dialog");
 
     fireEvent.click(dialog.parentElement!);
-    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
+    // T34a (i18n): вне LanguageProvider useT() фолбэкает на DEFAULT_LANG="en".
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.keyDown(window, { key: "Escape" });
 
     expect(onClose).toHaveBeenCalledTimes(3);

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, Icon, SearchInput } from "@muza/ui";
 import type { ImportReport, MuzaApi } from "@muza/api-client";
+import { useT } from "../i18n";
 
 /** «Импорт плейлиста» (Stage 4): ссылка на YT/YTM/Spotify/Apple → сервер
  *  матчит позиции в каталог и создаёт плейлист. Показываем честный отчёт:
@@ -19,6 +20,7 @@ export function ImportDialog({
   onImported: (report: ImportReport) => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t } = useT();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -33,7 +35,7 @@ export function ImportDialog({
       setReport(out);
       onImported(out);
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Импорт не удался", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.importPlaylist.failed"), "x");
     } finally {
       setBusy(false);
     }
@@ -48,20 +50,20 @@ export function ImportDialog({
   return (
     <Dialog
       open={open}
-      title={report ? "Импорт готов" : "Импорт плейлиста"}
+      title={report ? t("dialogs.importPlaylist.titleDone") : t("dialogs.importPlaylist.title")}
       onClose={close}
       actions={
         report ? (
           <Button variant="primary" icon="check" onClick={close}>
-            Отлично
+            {t("dialogs.importPlaylist.great")}
           </Button>
         ) : (
           <>
             <Button variant="ghost" onClick={close} disabled={busy}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" icon="import" disabled={busy || !url.trim()} onClick={() => void submit()}>
-              {busy ? "Импортируем…" : "Импортировать"}
+              {busy ? t("dialogs.importPlaylist.importing") : t("dialogs.importPlaylist.import")}
             </Button>
           </>
         )
@@ -76,14 +78,14 @@ export function ImportDialog({
                 «{report.playlist.name}»
               </div>
               <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-                нашлось {report.matched} из {report.total}
+                {t("dialogs.importPlaylist.foundCount", { matched: report.matched, total: report.total })}
               </div>
             </div>
           </div>
           {report.unmatched.length > 0 ? (
             <div>
               <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-2)", marginBottom: "var(--sp-2)" }}>
-                Не нашлись (можно добавить по ссылке вручную):
+                {t("dialogs.importPlaylist.notFoundLabel")}
               </div>
               <div style={{ maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
                 {report.unmatched.map((u, i) => (
@@ -95,7 +97,7 @@ export function ImportDialog({
             </div>
           ) : (
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-              Все позиции на месте.
+              {t("dialogs.importPlaylist.allFound")}
             </div>
           )}
         </div>
@@ -106,14 +108,13 @@ export function ImportDialog({
             if (e.key === "Enter") void submit();
           }}
         >
-          <SearchInput value={url} onChange={setUrl} placeholder="Ссылка на плейлист или альбом" icon="import" autoFocus />
+          <SearchInput value={url} onChange={setUrl} placeholder={t("dialogs.importPlaylist.urlPlaceholder")} icon="import" autoFocus />
           <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}>
-            YouTube / YouTube Music, Spotify, Apple Music. Плейлист должен быть публичным.
-            Треки сопоставляются с каталогом — чего нет, поищем в источниках.
+            {t("dialogs.importPlaylist.hint")}
           </div>
           {busy ? (
             <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
-              Матчим треки — большие плейлисты занимают до пары минут…
+              {t("dialogs.importPlaylist.matching")}
             </div>
           ) : null}
         </div>

@@ -3,6 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Button, Dialog } from "@muza/ui";
 import { renderShareCard, shareText, type ShareData } from "../lib/shareCard";
+import { useT } from "../i18n";
 
 /** Шеринг-карточка (Stage 7): предпросмотр canvas-PNG + скопировать
  *  картинку/текст, сохранить файл. Всё на клиенте. */
@@ -16,6 +17,7 @@ export function ShareDialog({
   onClose: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t, lang } = useT();
   const [blob, setBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +35,7 @@ export function ShareDialog({
     // акцент читаем из живой темы (свой акцент/темы Stage 6 учитываются)
     const accent =
       (rootRef.current ? getComputedStyle(rootRef.current).getPropertyValue("--accent").trim() : "") || "#3b82f6";
-    renderShareCard(data, accent)
+    renderShareCard(data, accent, lang)
       .then((b) => {
         if (!alive) return;
         url = URL.createObjectURL(b);
@@ -41,28 +43,28 @@ export function ShareDialog({
         setPreviewUrl(url);
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : "Не удалось нарисовать карточку");
+        if (alive) setError(e instanceof Error ? e.message : t("dialogs.share.renderFailed"));
       });
     return () => {
       alive = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [data]);
+  }, [data, lang]);
 
   const copyImage = async () => {
     if (!blob) return;
     try {
       await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      onNotify("Картинка в буфере — вставляй в чат", "copy");
+      onNotify(t("dialogs.share.imageCopied"), "copy");
     } catch {
-      onNotify("Буфер не принял картинку — сохрани файлом", "x");
+      onNotify(t("dialogs.share.imageCopyFailed"), "x");
     }
   };
 
   const savePng = async () => {
     if (!blob || !data) return;
     if (!isTauri()) {
-      onNotify("Сохранение файлов — в приложении Muza", "x");
+      onNotify(t("dialogs.share.filesAppOnly"), "x");
       return;
     }
     const name =
@@ -84,30 +86,30 @@ export function ShareDialog({
         binary += String.fromCharCode(...buf.subarray(i, i + CHUNK));
       }
       await invoke("share_save_file", { path, dataBase64: btoa(binary) });
-      onNotify("Карточка сохранена", "check");
+      onNotify(t("dialogs.share.saved"), "check");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось сохранить", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.share.saveFailed"), "x");
     }
   };
 
   const copyText = async () => {
     if (!data) return;
     try {
-      await navigator.clipboard.writeText(shareText(data));
-      onNotify("Текст скопирован", "copy");
+      await navigator.clipboard.writeText(shareText(data, lang));
+      onNotify(t("dialogs.share.textCopied"), "copy");
     } catch {
-      onNotify("Не удалось скопировать", "x");
+      onNotify(t("dialogs.copyFailed"), "x");
     }
   };
 
   return (
     <Dialog
       open={data !== null}
-      title="Поделиться"
+      title={t("menu.catalog.share")}
       onClose={onClose}
       actions={
         <Button variant="ghost" onClick={onClose}>
-          Закрыть
+          {t("dialogs.close")}
         </Button>
       }
     >
@@ -125,24 +127,24 @@ export function ShareDialog({
           }}
         >
           {previewUrl ? (
-            <img src={previewUrl} alt="Карточка для шеринга" style={{ width: "100%", height: "100%", display: "block" }} />
+            <img src={previewUrl} alt={t("dialogs.share.previewAlt")} style={{ width: "100%", height: "100%", display: "block" }} />
           ) : error ? (
             <span style={{ color: "var(--danger)", fontSize: "var(--fs-caption)", padding: "var(--sp-4)", textAlign: "center" }}>
               {error}
             </span>
           ) : (
-            <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>Рисуем карточку…</span>
+            <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>{t("dialogs.share.rendering")}</span>
           )}
         </div>
         <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
           <Button variant="primary" icon="copy" disabled={!blob} onClick={() => void copyImage()} style={{ flex: 1 }}>
-            Скопировать
+            {t("dialogs.share.copyImage")}
           </Button>
           <Button variant="secondary" icon="download" disabled={!blob} onClick={() => void savePng()} style={{ flex: 1 }}>
-            Сохранить PNG
+            {t("dialogs.share.savePng")}
           </Button>
           <Button variant="secondary" icon="type" onClick={() => void copyText()} style={{ flex: 1 }}>
-            Текст
+            {t("dialogs.share.textButton")}
           </Button>
         </div>
       </div>

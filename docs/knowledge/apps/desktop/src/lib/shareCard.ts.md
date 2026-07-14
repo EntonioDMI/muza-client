@@ -10,11 +10,16 @@
 
 **i18n (2026-07-14, эпик W5, T-media):** `renderShareCard(data, accent,
 lang?)` и `shareText(data, lang?)` получили опциональный `lang: Lang =
-DEFAULT_LANG` (единственный потребитель — `shell/ShareDialog.tsx`, вне зоны
-этой правки, зовёт без lang → EN по умолчанию, было RU). Переведены: «минут
-музыки»/«артист года»/«трек года»/«Мои итоги {year}»/счётчик
-прослушиваний+артистов (canvas-текст, `media.shareCard.*`), и три шаблона
-`shareText` (`media.share.{track,playlist,wrapped,wrappedTopArtist}`).
+DEFAULT_LANG`. Переведены: «минут музыки»/«артист года»/«трек года»/«Мои
+итоги {year}»/счётчик прослушиваний+артистов (canvas-текст,
+`media.shareCard.*`), и три шаблона `shareText`
+(`media.share.{track,playlist,wrapped,wrappedTopArtist}`).
+
+**T34a (2026-07-14):** единственный потребитель — `shell/ShareDialog.tsx` —
+теперь ДЕЙСТВИТЕЛЬНО прокидывает свой `lang` (из `useT()`) в оба вызова
+(раньше звал без параметра → карточка/копируемый текст всегда рисовались на
+EN, даже при включённом RU). `lang` добавлен в deps `useEffect`,
+перестраивающего превью карточки.
 
 Заодно `.toLocaleString("ru")` (хардкод русской локали для группировки
 разрядов чисел) стал `.toLocaleString(lang === "ru" ? "ru" : "en")` — иначе

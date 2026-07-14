@@ -147,8 +147,8 @@ function makeCanvas(): CanvasRenderingContext2D {
 }
 
 /** Отрисовать карточку по данным. accent — живой цвет темы пользователя.
- *  `lang` — язык подписей на карточке (потребитель, shell/ShareDialog.tsx,
- *  вне зоны этой правки — без lang дефолт EN, было RU). */
+ *  `lang` — язык подписей на карточке; потребитель shell/ShareDialog.tsx
+ *  (T34a) уже прокидывает свой lang из useT() — без явного lang дефолт EN. */
 export async function renderShareCard(data: ShareData, accent: string, lang: Lang = DEFAULT_LANG): Promise<Blob> {
   await document.fonts.ready; // Unbounded/Golos уже подключены приложением
   const ctx = makeCanvas();
@@ -259,8 +259,8 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
 }
 
 /** Текст для «Скопировать текст» — вставляется в любой мессенджер.
- *  `lang` — потребитель (shell/ShareDialog.tsx) вне зоны этой правки —
- *  без lang дефолт EN, было RU. */
+ *  `lang` — потребитель shell/ShareDialog.tsx (T34a) уже прокидывает свой
+ *  lang из useT(); без явного lang дефолт EN. */
 export function shareText(data: ShareData, lang: Lang = DEFAULT_LANG): string {
   const locale = lang === "ru" ? "ru" : "en";
   if (data.kind === "track") return translate(lang, "media.share.track", { title: data.title, artist: data.artist });

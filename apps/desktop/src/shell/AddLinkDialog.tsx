@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, SearchInput } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
+import { useT } from "../i18n";
 
 /** «Добавить по ссылке» (Stage 4): YT/YTM/SoundCloud/Bandcamp — как есть,
  *  Spotify/Apple Music — сервер сопоставит через Odesli. Добавленная ссылка
@@ -19,6 +20,7 @@ export function AddLinkDialog({
   onAdded: (t: Track) => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
+  const { t } = useT();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -32,7 +34,7 @@ export function AddLinkDialog({
       onClose();
       onAdded(track);
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : "Не удалось добавить по ссылке", "x");
+      onNotify(e instanceof Error ? e.message : t("dialogs.addLink.failed"), "x");
     } finally {
       setBusy(false);
     }
@@ -41,17 +43,17 @@ export function AddLinkDialog({
   return (
     <Dialog
       open={open}
-      title="Добавить по ссылке"
+      title={t("dialogs.addLink.title")}
       onClose={() => {
         if (!busy) onClose();
       }}
       actions={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Отмена
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" icon="link" disabled={busy || !url.trim()} onClick={() => void submit()}>
-            {busy ? "Добавляем…" : "Добавить"}
+            {busy ? t("dialogs.addLink.adding") : t("dialogs.addLink.add")}
           </Button>
         </>
       }
@@ -64,12 +66,11 @@ export function AddLinkDialog({
       >
         <SearchInput value={url} onChange={setUrl} placeholder="https://…" icon="link" autoFocus />
         <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}>
-          YouTube, YouTube Music, SoundCloud, Bandcamp — добавятся как есть.
-          Spotify и Apple Music — подберём играбельный источник автоматически.
+          {t("dialogs.addLink.hint")}
         </div>
         {busy ? (
           <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
-            Читаем метаданные — до полуминуты…
+            {t("dialogs.addLink.reading")}
           </div>
         ) : null}
       </div>
