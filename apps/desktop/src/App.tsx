@@ -4,6 +4,7 @@ import { pickRandomPlaylistIcon } from "@muza/core";
 import { HttpMuzaApi, type MuzaApi, type PlaylistMeta, type Session, type Track as CatalogTrack } from "@muza/api-client";
 import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
+import { LanguageProvider, resolveMigratedLanguage } from "./i18n";
 import { accentRoleVars, customAccentVars } from "./lib/accent";
 import { dominantColor, mixHex } from "./lib/coverTint";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
@@ -123,6 +124,10 @@ function loadPrefs(): Prefs {
     // хоткеи — так же: новое действие (напр. T16 navBack/navForward) не теряется
     // в старых сохранениях, где его ещё не было (иначе бинд молча пуст, "—" в хелпе)
     prefs.hotkeys = withDefaults(stored.hotkeys);
+    // T28 (i18n): raw уже существовал (не первый запуск, ветка "raw пуст"
+    // выше вернула бы DEFAULT_PREFS.language="en" раньше) — см.
+    // i18n/index.tsx::resolveMigratedLanguage для полного обоснования.
+    prefs.language = resolveMigratedLanguage(stored.language);
     // миграция «пресеты → ползунки»: строковые значения старых сохранений
     // («sharper», «compact»…) конвертируются в числа, мусор — к дефолту
     for (const key of MIGRATED_PREF_KEYS) {
@@ -1518,6 +1523,7 @@ function Player({
   });
 
   return (
+    <LanguageProvider lang={prefs.language}>
     <div data-theme={prefs.theme} data-accent={accentAttr} data-radius={prefs.radius} style={rootStyle}>
       {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
@@ -2246,6 +2252,7 @@ function Player({
         onClose={() => setMeaningLine(null)}
       />
     </div>
+    </LanguageProvider>
   );
 }
 

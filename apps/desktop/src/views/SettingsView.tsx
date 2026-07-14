@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
 import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
+import { useT } from "../i18n";
 import { normalizeStatsBlocks, STATS_BLOCK_META } from "../lib/statsBlocks";
 import { BAR_BUTTON_META, normalizeBarButtons } from "../lib/barButtons";
 import { NAV_ITEM_META, normalizeNavItems } from "../lib/navItems";
@@ -683,18 +684,23 @@ const paneStyle: React.CSSProperties = {
   paddingBottom: "var(--sp-6)",
 };
 
-const TABS = [
-  { key: "account", label: "Аккаунт" },
-  { key: "appearance", label: "Внешний вид" },
-  { key: "playback", label: "Воспроизведение" },
-  { key: "sources", label: "Источники" },
-  { key: "lyrics", label: "Тексты" },
-  { key: "library", label: "Библиотека" },
-  { key: "integrations", label: "Интеграции" },
-  { key: "hotkeys", label: "Клавиши" },
-  { key: "extensions", label: "Расширения" },
-  { key: "system", label: "Система" }, // «О приложении» — секция внутри Системы
-];
+/** Ключи вкладок настроек — порядок массива = порядок сегментов Tabs.
+ *  Подписи НЕ хранятся здесь (модуль верхнего уровня не имеет доступа к
+ *  useT()) — берутся в компоненте из словаря по `settings.tabs.<key>`
+ *  (T28, i18n): ключи этого массива буквально совпадают с ключами словаря,
+ *  см. i18n/en.ts. «О приложении» — секция внутри Системы, не своя вкладка. */
+const SETTINGS_TAB_KEYS = [
+  "account",
+  "appearance",
+  "playback",
+  "sources",
+  "lyrics",
+  "library",
+  "integrations",
+  "hotkeys",
+  "extensions",
+  "system",
+] as const;
 
 // Хоткеи переназначаемы — определения/дефолты в lib/hotkeys, биндинги в prefs.hotkeys
 
@@ -792,6 +798,7 @@ export function SettingsView({
   onPluginsChanged?: () => void;
   intent?: SettingsIntent | null;
 }) {
+  const { t } = useT();
   const [tab, setTab] = useState("appearance");
   const [sub, setSub] = useState<Sub>(null);
 
@@ -2588,6 +2595,20 @@ export function SettingsView({
       </div>
     ) : tab === "appearance" ? (
       <div key="appearance" className={paneClass} style={paneStyle}>
+        {/* T28 (i18n): переключатель — первый элемент вкладки по требованию
+            владельца («Внешний вид» вверху). Живой, без перезагрузки —
+            меняет prefs.language, LanguageProvider (App) перерендерит все
+            места, использующие useT(). */}
+        <SettingRow title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
+          <Tabs
+            items={[
+              { key: "en", label: t("settings.appearance.language.optionEn") },
+              { key: "ru", label: t("settings.appearance.language.optionRu") },
+            ]}
+            value={prefs.language}
+            onChange={(k: string) => set({ language: k as Prefs["language"] })}
+          />
+        </SettingRow>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--sp-3)" }}>
           {presets.map((p) => (
             <PresetTile
@@ -3159,9 +3180,8 @@ export function SettingsView({
             label="Мини-плеер"
           />
         </SettingRow>
-        <SettingRow title="Язык интерфейса" hint="Пока только русский">
-          <RowValue>Русский</RowValue>
-        </SettingRow>
+        {/* T28: переключатель языка переехал в «Внешний вид» (первый элемент
+            вкладки, по требованию владельца) — здесь была заглушка-стаб. */}
         <GroupTitle>О приложении</GroupTitle>
         <SettingRow title="Версия" hint="Muza · сборка разработки">
           <RowValue>0.1.0</RowValue>
@@ -3174,16 +3194,18 @@ export function SettingsView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 720, margin: "0 auto" }}>
-      <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>Настройки</h1>
+      <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>{t("settings.title")}</h1>
       {/* wrap: разделов много — все вкладки видны при любой ширине,
           скрытый горизонтальный скролл был антипаттерном */}
       <Tabs
         wrap
-        items={TABS}
+        items={SETTINGS_TAB_KEYS.map((key) => ({ key, label: t(`settings.tabs.${key}`) }))}
         value={tab}
-        onChange={(t: string) => {
+        onChange={(nextTab: string) => {
+          // T28: параметр переименован из "t" в "nextTab" — совпадало по имени
+          // с useT().t (переводчик) в замыкающей области видимости, затеняло его
           setSub(null); // под-экран живёт внутри вкладки — смена вкладки закрывает его
-          setTab(t);
+          setTab(nextTab);
         }}
       />
       {pane}

@@ -1,4 +1,5 @@
 import { DEFAULT_HOTKEYS, type HotkeyAction } from "./lib/hotkeys";
+import type { Lang } from "./i18n";
 
 export type View = "home" | "search" | "favorites" | "library" | "stats" | "playlist" | "settings" | "admin";
 
@@ -208,6 +209,11 @@ export interface Prefs {
   density: number;
 
   // ── Поведение ──
+  /** Язык интерфейса (T28, эпик W5 i18n). Поведенческий ключ — НЕ THEME
+   *  (чужая тема оформления не должна переключать язык). DEFAULT_PREFS="en"
+   *  (по требованию владельца — дефолт английский); миграция существующих
+   *  профилей без этого поля → "ru" (их привычный язык), см. App.loadPrefs. */
+  language: Lang;
   /** Продолжать трек с места остановки (позиция per-track в localStorage). */
   resumePosition: boolean;
   /** Двойной клик по строке трека: играть или добавить в очередь. */
@@ -316,6 +322,7 @@ export const DEFAULT_PREFS: Prefs = {
   fontScale: 100,
   lineSpacing: 140,
   density: 50,
+  language: "en",
   resumePosition: false,
   doubleClickAction: "play",
   mediaKeys: true,
