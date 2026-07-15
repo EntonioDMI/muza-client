@@ -1,0 +1,79 @@
+# packages/app/src/i18n/en.ts
+
+Английский словарь (эпик W5 i18n) — ДЕФОЛТНЫЙ язык интерфейса. Корневой объект `en`, структура которого типизирует `ru.ts` (`ru: typeof en` — расхождение ключей ловит tsc). Подмешивает `en.views` (`en.views.ts`) и `en.media` (`en.media.ts`). С Э0 веб-паритета (2026-07-15) живёт в `@muza/app` — словарь общий для десктопа и веба. Обновлено: 2026-07-15 (переезд).
+
+---
+
+Зоны верхнего уровня (не все перечислены — см. сам файл, он большой):
+`common`, `settings.*` (все вкладки настроек, T28-T30), `app`, `menu`,
+`toast`, `player`, `sidebar`, `nowPlaying`, `listeningMode`, `auth`,
+`dialogs`, `mini`, `plugins`, `views` (из en.views.ts), `media` (из
+en.media.ts).
+
+**T34a (2026-07-14, эпик W5):** добавлены три новые зоны — shell-диалоги и
+мини-плеер остались с захардкоженной русской строкой после T31 (T31 покрыл
+только App.tsx + shell-хром: Sidebar/PlayerBar/NowPlayingPanel).
+
+- `dialogs.*` — строки 10 shell-диалогов: `collab`
+  (`apps/desktop/src/shell/CollabDialog.tsx`), `jam` (`.../JamDialog.tsx`),
+  `versions` (`.../VersionsDialog.tsx`), `queue` (`.../QueuePanel.tsx`),
+  `share` (`.../ShareDialog.tsx`), `meaning` (`.../MeaningDialog.tsx`),
+  `importPlaylist` (`.../ImportDialog.tsx`), `addLink`
+  (`.../AddLinkDialog.tsx`), `joinPlaylist` (`.../JoinPlaylistDialog.tsx`),
+  `iconPicker` — **единственный, чей потребитель уехал из десктопа**:
+  `packages/app/src/shell/PlaylistIconPicker.tsx`, общий компонент обоих
+  клиентов (Э0, см. его знание). Плюс общие для нескольких диалогов ключи
+  прямо в `dialogs.*`: `close` («Закрыть» — Collab/Jam/Share/Versions/
+  Meaning), `copyFailed` («Не удалось скопировать» — Collab/Jam/Share),
+  `copyCode` («Скопировать код» — Collab/Jam), `codeTooShort` (Jam/
+  JoinPlaylist). Где строка уже была в словаре дословно — переиспользована:
+  `dialogs.versions.titleWithTrack` строит хвост из `menu.catalog.versions`,
+  заголовок `ShareDialog` = `menu.catalog.share`, кнопка «Свернуть» в
+  `JamDialog` = `listeningMode.minimize`, aria-label очереди = `player.queue`.
+- `mini.*` — `apps/desktop/src/mini/MiniPlayer.tsx` (отдельный webview, ВНЕ
+  `LanguageProvider` — потребитель зовёт `translate(lang, key)`, не
+  `useT()`). `waitingForMusic`/`closeMiniPlayer` — свои; play/pause/prev/
+  next/like переиспользуют `player.play`/`player.pause`/`player.previous`/
+  `player.next`/`common.like`.
+- `plugins.*` — попутно найдены при общем свипе
+  (`apps/desktop/src/plugins/PluginFrames.tsx` — 3 кнопки закрытия
+  поверхностей плагина; `apps/desktop/src/plugins/install.ts` — non-React
+  модуль, получил `lang: Lang = DEFAULT_LANG` параметром в
+  `pickAndStagePlugin`/`stagePluginFromMarket`, потребитель —
+  `views/SettingsView.tsx` передаёт свой `lang` из `useT()`).
+
+Осознанно НЕ тронуто (документированный трейд-офф, не относится к T34a):
+`settings.customize.equalizer` `EQ_PRESETS` (`SettingsView.tsx`) и
+`types.ts::DEFAULT_PREFS.discordBtnLabel` — это персистентные значения
+преференсов (общая схема с `apps/web`, редактируются пользователем), а не
+статичный UI-текст; перевод сломал бы совместимость сохранённых профилей.
+
+## Э0 веб-паритета (2026-07-15): переезд в `@muza/app`
+
+Файл переехал `apps/desktop/src/i18n/en.ts` → `packages/app/src/i18n/en.ts`
+**без единой правки содержимого** — git видит переезд как `R100` (чистое
+переименование, 0 строк диффа), одним махом со всем модулем i18n (все 8 файлов:
+`index.tsx`, `index.test.tsx`, `en/ru.ts`, `en/ru.views.ts`, `en/ru.media.ts`).
+Ключи, зоны и конвенции T28–T34a не менялись — всё, что выше, в силе как есть.
+
+Зачем: веб-клиенту нужен ТОТ ЖЕ переводчик и те же словари, а вторая копия
+повторила бы историю `playlistIcon.ts` и `PlaylistIconPicker.tsx` — обе
+успели разъехаться между клиентами. На старом пути остался **пенёк**
+`export * from "@muza/app/i18n"` → у 45 потребителей `from "../i18n"` дифф
+нулевой (см. `docs/knowledge/apps/desktop/src/i18n/index.tsx.md`).
+
+**Первый неродной потребитель словаря — веб**: `apps/web/src/providers.tsx`
+монтирует `LanguageProvider lang="ru"`, и `dialogs.iconPicker.*` читается уже из
+ОБОИХ приложений. До Э0 словарь обслуживал только десктоп.
+
+⚠️ **Ловушка коротких путей.** До переезда потребители в этом документе
+писались от корня десктопа (`shell/CollabDialog.tsx`) — теперь документ лежит
+под `packages/app/`, и такой путь читался бы как
+`packages/app/src/shell/CollabDialog.tsx`, где кода НЕТ. Пути выше разведены
+явно; при дописывании держать ту же дисциплину.
+
+## Связанные файлы
+- `docs/knowledge/packages/app/src/i18n/ru.ts.md` — русская пара (`typeof en`).
+- `docs/knowledge/packages/app/src/i18n/en.media.ts.md` — фрагмент зоны `media`.
+- `docs/knowledge/apps/desktop/src/i18n/index.tsx.md` — пенёк на старом пути.
+- `docs/knowledge/packages/app/src/shell/PlaylistIconPicker.tsx.md` — потребитель `dialogs.iconPicker.*`.

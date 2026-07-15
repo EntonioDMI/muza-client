@@ -6,7 +6,7 @@ import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
-import { playlistIconSrc } from "../lib/playlistIcon";
+import { playlistIconSrc } from "@muza/core";
 import { CollabDialog } from "../shell/CollabDialog";
 import { useT } from "../i18n";
 

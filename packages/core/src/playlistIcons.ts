@@ -22,6 +22,24 @@ export function playlistIconUrl(id: string): string {
   return `/playlist-icons/${id}.png`;
 }
 
+const VALID_ICON_IDS = new Set<string>(PLAYLIST_ICON_IDS);
+
+/** Src для обложки плейлиста по id иконки — `null`, если иконки нет или id не
+ *  входит в манифест; вызывающий код рисует в этом случае свой фолбэк
+ *  (Icon "list-music"/"users"), а не битую картинку. Валидация нужна на
+ *  рендере: `playlist.icon` приходит с сервера и может быть битым или из
+ *  будущего манифеста (сервер обновили, клиент — ещё нет), а playlistIconUrl()
+ *  сама её не делает — просто строит путь по шаблону.
+ *
+ *  Э0 веб-паритета: до этого функция жила ДВУМЯ копиями —
+ *  apps/desktop/src/lib/playlistIcon.ts и apps/web/src/playlistIcon.ts
+ *  (различались только комментарием). Здесь ей и место: чистая проверка против
+ *  манифеста, без React/DOM/Prefs — ровно граница @muza/core. */
+export function playlistIconSrc(icon: string | null | undefined): string | null {
+  if (!icon || !VALID_ICON_IDS.has(icon)) return null;
+  return playlistIconUrl(icon);
+}
+
 /** Случайная иконка, по возможности не повторяющая уже занятые (usedIds) —
  *  чтобы новосозданные плейлисты пользователя визуально не сливались.
  *  Если все 38 заняты (или usedIds покрывает весь манифест) — случайная

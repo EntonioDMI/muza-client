@@ -3,12 +3,26 @@ import { Dialog } from "@muza/ui";
 import { PLAYLIST_ICON_IDS, playlistIconUrl } from "@muza/core";
 import { useT } from "../i18n";
 
-/** Пикер иконки плейлиста (T47b): диалог с сеткой всех 38 иконок манифеста
- *  @muza/core. Клик — сразу применяет (без отдельного «Сохранить»); вызывающий
- *  код (App.tsx) зовёт api.setPlaylistIcon и закрывает диалог сам. Текущая
- *  иконка подсвечена рамкой (как AccentSwatch в SettingsView). Своя копия в
- *  apps/desktop — не импортирует apps/web/src/components/PlaylistIconPicker.tsx
- *  (десктоп и веб держат независимые UI-компоненты поверх общего манифеста). */
+/** Пикер иконки плейлиста (T47): диалог с сеткой всех 38 иконок манифеста
+ *  @muza/core. Клик применяет сразу, без отдельного «Сохранить» (как пресеты
+ *  ColorPicker); вызывающий код сам зовёт api.setPlaylistIcon и закрывает
+ *  диалог. Текущая иконка подсвечена рамкой.
+ *
+ *  Э0 веб-паритета: сведён из ДВУХ копий, которые успели разъехаться —
+ *  apps/desktop/src/shell/PlaylistIconPicker.tsx (инлайн-стили + useT, 90
+ *  строк) и apps/web/src/components/PlaylistIconPicker.tsx (CSS-класс
+ *  .icon-swatch + захардкоженный русский, 51 строка). Взято лучшее из обеих:
+ *  - i18n через useT() (у веба перевода не было вообще — строка «Сменить
+ *    иконку» стояла в JSX; теперь словарь общий);
+ *  - инлайн-стили, а не className: пакет не должен зависеть от того, что в
+ *    приложении-потребителе объявлен класс .icon-swatch (у десктопа его нет);
+ *  - тач-таргеты ≥44px и auto-fill-сетка из веб-копии: на 375px диалог
+ *    ужимается до 100%-48px и колонки подбираются без горизонтального скролла.
+ *
+ *  Директивы "use client" тут НЕТ намеренно (была в веб-копии): пакет их не
+ *  содержит вообще, клиентскую границу держат приложения — веб входит сюда из
+ *  уже клиентских page.tsx. Директива внутри пакета ломала бы сборку Vite
+ *  («Module level directives cause errors when bundled»). */
 interface PlaylistIconPickerProps {
   open: boolean;
   /** текущая иконка плейлиста — подсвечивается в сетке */
@@ -19,17 +33,7 @@ interface PlaylistIconPickerProps {
   busy?: boolean;
 }
 
-function IconSwatch({
-  id,
-  active,
-  busy,
-  onClick,
-}: {
-  id: string;
-  active: boolean;
-  busy: boolean;
-  onClick: () => void;
-}) {
+function IconSwatch({ id, active, busy, onClick }: { id: string; active: boolean; busy: boolean; onClick: () => void }) {
   const { t } = useT();
   const [hover, setHover] = useState(false);
   return (
@@ -44,6 +48,7 @@ function IconSwatch({
       style={{
         width: "100%",
         aspectRatio: "1",
+        // ≥44px — минимальный тач-таргет: диалог живёт и на телефоне (веб)
         minWidth: 44,
         minHeight: 44,
         padding: 2,

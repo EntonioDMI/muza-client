@@ -1,0 +1,13 @@
+{
+  // ⚠️ НАМЕРЕННО без "types": ["vite/client"] (в отличие от apps/desktop).
+  // Пакет едят ОБА бандлера, а Vite-only идиомы в Next ломаются молча:
+  //   import glyph from "@muza/ui/assets/logo/glyph.svg"  → в Next это объект
+  //     StaticImageData, а не строка → <img src="[object Object]">
+  //   import.meta.env.VITE_*                              → в Next undefined
+  // Без vite/client такой код — ошибка КОМПИЛЯЦИИ (`pnpm typecheck`), а не
+  // сломанная картинка в проде. Ассеты в общем коде адресуются путём из
+  // public/ обоих клиентов (конвенция @muza/core/playlistIcons.ts),
+  // env — через PlatformAdapter.apiBaseUrl (Э2).
+  "extends": "../../tsconfig.base.json",
+  "include": ["src"]
+}

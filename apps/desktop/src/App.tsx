@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, Menu, SearchInput, Toast } from "@muza/ui";
-import { pickRandomPlaylistIcon } from "@muza/core";
+import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
 import {
   HttpMuzaApi,
   resolveApiBaseUrl,
@@ -40,7 +40,6 @@ import {
   type HistoryState,
 } from "./lib/historyStack";
 import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
-import { playlistIconSrc } from "./lib/playlistIcon";
 import { usePlayback } from "./player/usePlayback";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
@@ -61,7 +60,7 @@ import { AddLinkDialog } from "./shell/AddLinkDialog";
 import { ImportDialog } from "./shell/ImportDialog";
 import { JamDialog } from "./shell/JamDialog";
 import { JoinPlaylistDialog } from "./shell/JoinPlaylistDialog";
-import { PlaylistIconPicker } from "./shell/PlaylistIconPicker";
+import { PlaylistIconPicker } from "@muza/app";
 import { ShareDialog } from "./shell/ShareDialog";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";

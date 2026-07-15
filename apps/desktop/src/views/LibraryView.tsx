@@ -14,7 +14,7 @@ import {
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { maybeAltFileDrag } from "../lib/dragOut";
-import { playlistIconSrc } from "../lib/playlistIcon";
+import { playlistIconSrc } from "@muza/core";
 import { useT } from "../i18n";
 
 /** «Твоя медиатека» (Stage 4): настоящие серверные плейлисты, локальные файлы

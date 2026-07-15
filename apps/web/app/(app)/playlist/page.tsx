@@ -9,7 +9,7 @@ import { usePlayer } from "../../../src/player";
 import { usePlaylists } from "../../../src/playlists";
 import { useSession } from "../../../src/session";
 import { PlaylistCover } from "../../../src/components/PlaylistCover";
-import { PlaylistIconPicker } from "../../../src/components/PlaylistIconPicker";
+import { PlaylistIconPicker } from "@muza/app";
 import { TrackList } from "../../../src/components/TrackList";
 import { useToast } from "../../../src/toast";
 

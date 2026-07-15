@@ -10,7 +10,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "export",
   // Монорепо-пакеты поставляются исходниками (jsx/ts) — Next должен их собирать
-  transpilePackages: ["@muza/ui", "@muza/api-client", "@muza/core"],
+  transpilePackages: ["@muza/ui", "@muza/api-client", "@muza/core", "@muza/app"],
   // У пользователя в $HOME лежит чужой package-lock.json — без явного корня
   // Next принимает его за корень воркспейса
   outputFileTracingRoot: path.join(__dirname, "../.."),

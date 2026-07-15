@@ -1,7 +1,7 @@
 "use client";
 
 import { Icon } from "@muza/ui";
-import { playlistIconSrc } from "../playlistIcon";
+import { playlistIconSrc } from "@muza/core";
 
 /** Обложка плейлиста (T47): картинка выбранной иконки из манифеста
  *  @muza/core, фолбэк — прежний значок по типу плейлиста (совместный/свой),
