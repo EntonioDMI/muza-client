@@ -64,6 +64,14 @@ jobs:
           node scripts/release-gate.mjs env VITE_API_URL
           node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL
 
+      # Vitest в CI не гонялся ВООБЩЕ — Rust-тесты были, а фронтовые 200+ жили
+      # только на машине разработчика. Шаг именно `run:`, без `uses:`:
+      # release-gate.mjs::validateWorkflow сверяет список `uses:` побайтово и
+      # упал бы на любом новом действии (лишние run-шаги он допускает).
+      - name: Vitest (пакеты и приложения)
+        shell: pwsh
+        run: pnpm turbo run test
+
       - name: Rust tests и schema check
         shell: pwsh
         run: |
