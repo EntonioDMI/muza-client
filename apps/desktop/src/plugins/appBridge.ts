@@ -4,6 +4,7 @@
  *  App.tsx, чтобы не раздувать его ещё на сотню строк. */
 
 import type { MuzaApi, Track as CatalogTrack, PlaylistMeta } from "@muza/api-client";
+import { pickRandomPlaylistIcon } from "@muza/core";
 import { fromCatalog, type PlayerTrack } from "../player/types";
 import type { PluginBridge } from "./types";
 
@@ -36,6 +37,11 @@ export interface PluginBridgeLive {
   likes: string[];
   setLike: (trackId: string, on: boolean) => void;
   reloadPlaylists: () => Promise<void>;
+  /** Иконки, уже занятые плейлистами пользователя — чтобы плейлист, созданный
+   *  плагином, получал иконку по тем же правилам, что и созданный руками
+   *  (App.usedPlaylistIcons). Сервер своей иконки не подставляет: не передали —
+   *  будет icon=null и вечная заготовка. */
+  usedPlaylistIcons: () => string[];
   toast: (text: string, kind?: string) => void;
   openTab: (pluginId: string, tabId: string) => void;
   openPanel: (pluginId: string) => void;
@@ -103,7 +109,7 @@ export function createPluginBridge(getLive: () => PluginBridgeLive): PluginBridg
       createPlaylist: async (name) => {
         const live = getLive();
         if (!live.canSearch) throw new Error("internal: создание плейлиста требует серверной сессии");
-        const pl = await live.api.createPlaylist(name);
+        const pl = await live.api.createPlaylist(name, pickRandomPlaylistIcon(live.usedPlaylistIcons()));
         await live.reloadPlaylists();
         return meta(pl);
       },

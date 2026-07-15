@@ -1533,6 +1533,7 @@ function Player({
     setLike: (trackId, on) =>
       setLikes((ls) => (on ? (ls.includes(trackId) ? ls : [...ls, trackId]) : ls.filter((x) => x !== trackId))),
     reloadPlaylists: reloadServerPlaylists,
+    usedPlaylistIcons,
     toast: (text, kind) => showToast(text, (kind as never) ?? ("puzzle" as never)),
     openTab: plugins.openTab,
     openPanel: plugins.openPanel,
