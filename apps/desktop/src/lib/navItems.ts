@@ -56,6 +56,26 @@ export const NAV_ITEM_META: Record<NavItemKey, { label: string; icon: string }> 
   stats: { label: translate(DEFAULT_LANG, "media.nav.stats"), icon: "chart-line" },
 };
 
+/** Глифы, которые ОСМЫСЛЕННО заливаются в активной вкладке (Icon.filled →
+ *  `fill=color`). lucide рисует штрихом и солид-вариантов не поставляет, а
+ *  заливка идёт по ВСЕМ подпутям глифа — годится только замкнутым силуэтам:
+ *
+ *  - `heart`, `home`, `library-big` — замкнутые фигуры, заливка даёт ровно тот
+ *    солид-силуэт, что рисуют Spotify/Apple Music;
+ *  - `search` (окружность + ручка) — заливка превращает линзу в глухой диск,
+ *    лупа перестаёт читаться;
+ *  - `chart-line` (оси + ломаная) — заливка ломаной даёт кляксу под линией.
+ *
+ *  Незалитый глиф активной вкладки не «ломается»: он просто остаётся штриховым
+ *  и всё равно подсвечен акцентным цветом, фоном surface-4 и полужирным весом.
+ *  Плагинные вкладки (`plugin:<id>:<tab>`) сюда не попадают: иконку выбирает
+ *  автор плагина, заранее судить о её форме нельзя. */
+const NAV_FILLABLE: ReadonlySet<string> = new Set(["heart", "home", "house", "library-big", "library"]);
+
+export function isFillableNavIcon(icon: string): boolean {
+  return NAV_FILLABLE.has(icon);
+}
+
 /** Локализованная метка вкладки — для будущей правки потребителя (Sidebar/
  *  SettingsView, вне зоны этого набора файлов): вместо NAV_ITEM_META[key].label
  *  (статичный EN) зовёт `navItemLabel(key, prefs.language)`. */

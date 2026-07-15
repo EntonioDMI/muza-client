@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { isTrackDrag, readTrackDrag } from "../lib/dnd";
-import { NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
+import { isFillableNavIcon, NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
 import { useT } from "../i18n";
@@ -81,10 +81,16 @@ function NavItem({
         transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
       }}
     >
+      {/* Активная вкладка — ЗАЛИТАЯ иконка (как в Spotify/Apple Music): цвета
+          мало, силуэт читается с периферии. lucide рисует штрихом, солид-
+          вариантов не поставляет, поэтому заливка — fill тем же цветом
+          (Icon.filled). Годится не всякому глифу: см. NAV_FILLABLE в
+          lib/navItems.ts — там список тех, кто заливается осмысленно. */}
       <Icon
         name={icon}
         size={20}
         color={active ? "var(--accent-text)" : "currentColor"}
+        filled={Boolean(active) && isFillableNavIcon(icon)}
         style={{ transition: "color var(--dur-base) var(--ease-out)" }}
       />
       {label}
