@@ -3,13 +3,44 @@
  *  UI честно говорит «только в приложении». */
 
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
-import type { MuzaApi, TrackSource } from "@muza/api-client";
+import { resolveApiBaseUrl, type MuzaApi, type TrackSource } from "@muza/api-client";
 import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { localResolve } from "./localFiles";
 
 export function engineAvailable(): boolean {
   return isTauri();
 }
+
+/** fnv1a-32 → 8 hex-символов. Не криптография — просто стабильный слаг. */
+export function fnv1a32(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/** Неймспейс кэша добычи: хэш origin'а API-сервера. Баг «чужая песня»
+ *  (2026-07-14): track_id уникален только внутри БД конкретного окружения;
+ *  общий каталог по голому id отравлялся при смене dev localhost ↔ prod —
+ *  клик по треку играл аудио одноимённого id из другой базы. Rust кладёт
+ *  кэш и пины в audio-cache/<ns>/ (см. engine.rs::namespaced_cache_dir). */
+export function cacheNamespace(): string {
+  const base = resolveApiBaseUrl(
+    import.meta.env.VITE_API_URL,
+    import.meta.env.PROD ? "production" : "development",
+    import.meta.env.DEV ? "http://localhost:8000/api" : undefined,
+  );
+  let origin: string;
+  try {
+    origin = new URL(base).origin;
+  } catch {
+    origin = base;
+  }
+  return fnv1a32(origin);
+}
+const CACHE_NS = cacheNamespace();
 
 /** Подтянуть горячий рецепт с сервера и применить (Rust проверяет Ed25519).
  *  Любой сбой не фатален: движок живёт на оффлайн-кэше или bundled-дефолте. */
@@ -84,6 +115,7 @@ export async function resolveTrack(
       trackId,
       sources: toNativeSourceRefs(sources),
       quality,
+      cacheNs: CACHE_NS,
     },
   );
   return { url: convertFileSrc(out.path), fromCache: out.from_cache, provider: out.provider };
@@ -130,7 +162,7 @@ export async function cacheStats(): Promise<CacheStats> {
     limit_bytes: number;
     pinned_bytes: number;
     pinned_files: number;
-  }>("engine_cache_stats");
+  }>("engine_cache_stats", { cacheNs: CACHE_NS });
   return {
     bytes: out.bytes,
     files: out.files,
@@ -145,7 +177,7 @@ export async function cacheStats(): Promise<CacheStats> {
 /** Закрепить/открепить трек оффлайн (файл кэша перестаёт эвиктиться). */
 export async function enginePin(trackId: string, pinned: boolean): Promise<void> {
   if (!isTauri()) return;
-  await invoke("engine_pin", { trackId, pinned });
+  await invoke("engine_pin", { trackId, pinned, cacheNs: CACHE_NS });
 }
 
 export interface PinInfo {
@@ -156,18 +188,18 @@ export interface PinInfo {
 /** Все оффлайн-пины со статусом «уже скачан». */
 export async function enginePins(): Promise<PinInfo[]> {
   if (!isTauri()) return [];
-  return invoke<PinInfo[]>("engine_pins");
+  return invoke<PinInfo[]>("engine_pins", { cacheNs: CACHE_NS });
 }
 
 export async function cacheClear(): Promise<void> {
-  await invoke("engine_cache_clear");
+  await invoke("engine_cache_clear", { cacheNs: CACHE_NS });
 }
 
 /** Выбить один трек из кэша: пользователь выбрал другую версию —
  *  следующий play обязан добыть заново, а не отдать старый файл. */
 export async function cacheRemove(trackId: string): Promise<void> {
   if (!isTauri()) return;
-  await invoke("engine_cache_remove", { trackId });
+  await invoke("engine_cache_remove", { trackId, cacheNs: CACHE_NS });
 }
 
 /** Лимит кэша из Prefs (звать на старте и при движении слайдера). */

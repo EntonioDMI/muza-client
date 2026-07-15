@@ -1,7 +1,7 @@
 {
   "name": "muza-client",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Muza — открытый десктоп-клиент музыкального плеера (Tauri + React). Тексты-герой, без цензуры, тотальная кастомизация.",
   "scripts": {
     "dev": "turbo run dev",

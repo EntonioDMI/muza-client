@@ -65,8 +65,12 @@ pub struct EngineState {
     /// Single-flight: один yt-dlp на трек, параллельный резолв того же трека ждёт.
     inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Оффлайн-пины (Stage 4): id треков, чьи файлы кэша не эвиктятся LRU
-    /// и переживают «Очистить кэш». Персист — app_data/offline-pins.json.
+    /// и переживают «Очистить кэш». Персист — audio-cache/<ns>/offline-pins.json
+    /// (per-namespace: id уникален только внутри БД конкретного окружения, см.
+    /// validate_cache_ns). Грузятся лениво первым же командным вызовом с ns.
     pins: Mutex<HashSet<String>>,
+    /// Неймспейс, которому принадлежит текущее содержимое `pins`.
+    pins_ns: Mutex<Option<String>>,
 }
 
 impl Default for EngineState {
@@ -79,22 +83,20 @@ impl Default for EngineState {
             stats: Mutex::new(EngineStats::default()),
             inflight: Mutex::new(HashMap::new()),
             pins: Mutex::new(HashSet::new()),
+            pins_ns: Mutex::new(None),
         }
     }
 }
 
 /// При старте поднимаем последний доверенный рецепт из оффлайн-кэша
-/// (подпись перепроверяется — файл мог подменить кто угодно) и оффлайн-пины.
+/// (подпись перепроверяется — файл мог подменить кто угодно). Оффлайн-пины
+/// сюда НЕ грузятся: они per-namespace (см. EngineState.pins) и поднимаются
+/// лениво первой командой, знающей cache_ns; корневой offline-pins.json —
+/// легаси до неймспейсов, игнорируется.
 pub fn init(app: &AppHandle) {
     let Ok(dir) = app.path().app_data_dir() else {
         return;
     };
-    // Оффлайн-пины (Stage 4)
-    if let Ok(raw) = fs::read_to_string(dir.join("offline-pins.json")) {
-        if let Ok(pins) = serde_json::from_str::<HashSet<String>>(&raw) {
-            *app.state::<EngineState>().pins.lock().unwrap() = pins;
-        }
-    }
     let path = dir.join("recipe-cache.json");
     let Ok(raw) = fs::read_to_string(&path) else {
         return;
@@ -110,13 +112,33 @@ pub fn init(app: &AppHandle) {
     }
 }
 
-fn persist_pins(app: &AppHandle, pins: &HashSet<String>) {
-    if let Ok(dir) = app.path().app_data_dir() {
-        let _ = fs::create_dir_all(&dir);
-        if let Ok(raw) = serde_json::to_string(pins) {
-            let _ = fs::write(dir.join("offline-pins.json"), raw);
+fn persist_pins(app: &AppHandle, ns: &str, pins: &HashSet<String>) {
+    if let Ok(base) = cache_base(app) {
+        if let Ok(path) = pins_file(&base, ns) {
+            if let Ok(raw) = serde_json::to_string(pins) {
+                let _ = fs::write(path, raw);
+            }
         }
     }
+}
+
+/// Ленивая подгрузка пинов нужного неймспейса: содержимое `state.pins`
+/// принадлежит ровно одному ns; смена ns (теоретическая) перечитывает файл.
+fn ensure_pins_loaded(app: &AppHandle, state: &State<'_, EngineState>, ns: &str) {
+    {
+        let current = state.pins_ns.lock().unwrap();
+        if current.as_deref() == Some(ns) {
+            return;
+        }
+    }
+    let loaded: HashSet<String> = cache_base(app)
+        .and_then(|base| pins_file(&base, ns))
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    *state.pins.lock().unwrap() = loaded;
+    *state.pins_ns.lock().unwrap() = Some(ns.to_string());
 }
 
 #[derive(Serialize, Deserialize)]
@@ -456,7 +478,66 @@ pub struct ResolveOut {
     pub provider: Option<String>,
 }
 
-fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// Неймспейс кэша: короткий слаг окружения API (фронт передаёт хэш origin'а).
+/// Причина (баг «чужая песня», 2026-07-14): track_id уникален только ВНУТРИ
+/// конкретной БД; один общий каталог по голому id отравлялся при смене
+/// окружения (dev localhost ↔ prod) — клик по треку играл аудио одноимённого
+/// id из другой базы. Кэш и пины живут в audio-cache/<ns>/.
+fn validate_cache_ns(ns: &str) -> Result<(), String> {
+    let ok = !ns.is_empty()
+        && ns.len() <= 32
+        && ns.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && ns
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("некорректный cache_ns: {ns:?}"))
+    }
+}
+
+/// Легаси-файл до неймспейсов: аудио с числовым stem (`<track_id>.<ext>`)
+/// или обломок yt-dlp. Такие файлы в КОРНЕ audio-cache ядовиты (окружение
+/// неизвестно) — выметаются при каждом старте.
+fn is_legacy_root_cache_file(name: &str) -> bool {
+    if name.ends_with(".part") || name.ends_with(".ytdl") {
+        return true;
+    }
+    let Some((stem, ext)) = name.rsplit_once('.') else {
+        return false;
+    };
+    const AUDIO_EXTS: [&str; 6] = ["webm", "m4a", "mp3", "opus", "ogg", "aac"];
+    !stem.is_empty()
+        && stem.chars().all(|c| c.is_ascii_digit())
+        && AUDIO_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+fn namespaced_cache_dir(base: &Path, ns: &str) -> Result<PathBuf, String> {
+    validate_cache_ns(ns)?;
+    // одноразовая (идемпотентная) зачистка ядовитого легаси в корне
+    if let Ok(entries) = fs::read_dir(base) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            if is_legacy_root_cache_file(&name.to_string_lossy()) {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    let dir = base.join(ns);
+    fs::create_dir_all(&dir).map_err(|e| format!("не создался кэш-каталог: {e}"))?;
+    Ok(dir)
+}
+
+fn pins_file(base: &Path, ns: &str) -> Result<PathBuf, String> {
+    Ok(namespaced_cache_dir(base, ns)?.join("offline-pins.json"))
+}
+
+fn cache_base(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -464,6 +545,10 @@ fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .join("audio-cache");
     fs::create_dir_all(&dir).map_err(|e| format!("не создался кэш-каталог: {e}"))?;
     Ok(dir)
+}
+
+fn cache_dir(app: &AppHandle, ns: &str) -> Result<PathBuf, String> {
+    namespaced_cache_dir(&cache_base(app)?, ns)
 }
 
 /// Файл кэша трека: `<track_id>.<ext>` (ext заранее неизвестен — webm/m4a/…).
@@ -917,6 +1002,7 @@ pub async fn engine_resolve(
     track_id: String,
     sources: Vec<SourceRef>,
     quality: Option<String>,
+    cache_ns: String,
 ) -> Result<ResolveOut, String> {
     // id каталога числовой; заодно это защита имени файла кэша
     if track_id.is_empty()
@@ -926,7 +1012,7 @@ pub async fn engine_resolve(
     {
         return Err("некорректный id трека".into());
     }
-    let dir = cache_dir(&app)?;
+    let dir = cache_dir(&app, &cache_ns)?;
 
     // Single-flight: параллельный резолв того же трека (play + преднагрузка)
     // ждёт первый, а не запускает второй yt-dlp
@@ -1018,6 +1104,7 @@ pub async fn engine_resolve(
         match result {
             Ok(path) => {
                 let limit = *state.cache_limit_bytes.lock().unwrap();
+                ensure_pins_loaded(&app, &state, &cache_ns);
                 let pins = state.pins.lock().unwrap().clone();
                 evict_lru(&dir, limit, &path, &pins);
                 state.stats.lock().unwrap().resolve_ok += 1;
@@ -1053,8 +1140,10 @@ pub struct CacheStats {
 pub fn engine_cache_stats(
     app: AppHandle,
     state: State<'_, EngineState>,
+    cache_ns: String,
 ) -> Result<CacheStats, String> {
-    let dir = cache_dir(&app)?;
+    let dir = cache_dir(&app, &cache_ns)?;
+    ensure_pins_loaded(&app, &state, &cache_ns);
     let pins = state.pins.lock().unwrap().clone();
     let mut bytes = 0u64;
     let mut files = 0u32;
@@ -1091,8 +1180,9 @@ pub fn engine_export_cached(
     app: AppHandle,
     track_id: String,
     file_name: String,
+    cache_ns: String,
 ) -> Result<String, String> {
-    let dir = cache_dir(&app)?;
+    let dir = cache_dir(&app, &cache_ns)?;
     let src = find_cached(&dir, &track_id).ok_or("Трека нет в кэше — сначала сыграй его")?;
     let ext = src
         .extension()
@@ -1124,8 +1214,12 @@ pub fn engine_export_cached(
 /// Выбить один трек из кэша (Stage 4): пользователь выбрал другую
 /// версию/источник — старый файл не должен отдаваться кэш-хитом.
 #[tauri::command]
-pub fn engine_cache_remove(app: AppHandle, track_id: String) -> Result<(), String> {
-    let dir = cache_dir(&app)?;
+pub fn engine_cache_remove(
+    app: AppHandle,
+    track_id: String,
+    cache_ns: String,
+) -> Result<(), String> {
+    let dir = cache_dir(&app, &cache_ns)?;
     if let Some(path) = find_cached(&dir, &track_id) {
         // Файл может играть прямо сейчас — не смертельно: удалится позже
         let _ = fs::remove_file(path);
@@ -1134,8 +1228,13 @@ pub fn engine_cache_remove(app: AppHandle, track_id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn engine_cache_clear(app: AppHandle, state: State<'_, EngineState>) -> Result<(), String> {
-    let dir = cache_dir(&app)?;
+pub fn engine_cache_clear(
+    app: AppHandle,
+    state: State<'_, EngineState>,
+    cache_ns: String,
+) -> Result<(), String> {
+    let dir = cache_dir(&app, &cache_ns)?;
+    ensure_pins_loaded(&app, &state, &cache_ns);
     let pins = state.pins.lock().unwrap().clone();
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -1166,21 +1265,29 @@ pub fn engine_pin(
     state: State<'_, EngineState>,
     track_id: String,
     pinned: bool,
+    cache_ns: String,
 ) -> Result<(), String> {
+    validate_cache_ns(&cache_ns)?;
+    ensure_pins_loaded(&app, &state, &cache_ns);
     let mut pins = state.pins.lock().unwrap();
     if pinned {
         pins.insert(track_id);
     } else {
         pins.remove(&track_id);
     }
-    persist_pins(&app, &pins);
+    persist_pins(&app, &cache_ns, &pins);
     Ok(())
 }
 
 /// Все пины с их статусом в кэше (для настроек/индикаторов).
 #[tauri::command]
-pub fn engine_pins(app: AppHandle, state: State<'_, EngineState>) -> Result<Vec<PinInfo>, String> {
-    let dir = cache_dir(&app)?;
+pub fn engine_pins(
+    app: AppHandle,
+    state: State<'_, EngineState>,
+    cache_ns: String,
+) -> Result<Vec<PinInfo>, String> {
+    let dir = cache_dir(&app, &cache_ns)?;
+    ensure_pins_loaded(&app, &state, &cache_ns);
     let pins = state.pins.lock().unwrap().clone();
     Ok(pins
         .into_iter()
@@ -2216,5 +2323,97 @@ mod sidecar_policy_tests {
                 error.kind(),
                 io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
             )
+    }
+
+    // ── Неймспейс кэша добычи (баг «чужая песня»: track_id из РАЗНЫХ БД
+    //    коллидировали в одном каталоге; кэш обязан жить в подкаталоге
+    //    окружения API) ─────────────────────────────────────────────────
+    fn ns_test_base(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "muza-ns-test-{tag}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn namespaced_cache_dir_builds_subdir() {
+        let base = ns_test_base("subdir");
+        let dir = namespaced_cache_dir(&base, "a1b2c3d4").unwrap();
+        assert_eq!(dir, base.join("a1b2c3d4"));
+        assert!(dir.is_dir());
+    }
+
+    #[test]
+    fn namespaced_cache_dir_rejects_bad_namespace() {
+        let base = ns_test_base("badns");
+        for bad in [
+            "",
+            "../evil",
+            "a/b",
+            "A B",
+            "имя",
+            &"x".repeat(40),
+            ".hidden",
+        ] {
+            assert!(
+                namespaced_cache_dir(&base, bad).is_err(),
+                "должен отвергать ns={bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn namespaced_cache_dir_sweeps_legacy_root_audio() {
+        let base = ns_test_base("sweep");
+        // ядовитое легаси: аудио по голому track_id в корне + обломки yt-dlp
+        for name in [
+            "7.webm",
+            "123.m4a",
+            "5.mp3",
+            "9.opus",
+            "44.webm.part",
+            "44.webm.ytdl",
+        ] {
+            fs::write(base.join(name), b"x").unwrap();
+        }
+        // НЕ трогаем: не-аудио, нечисловые имена, файлы в ns-подкаталогах
+        fs::write(base.join("keep.txt"), b"x").unwrap();
+        fs::write(base.join("intro.webm"), b"x").unwrap();
+        let dir = namespaced_cache_dir(&base, "deadbeef").unwrap();
+        fs::write(dir.join("7.webm"), b"fresh").unwrap();
+        // повторный вызов (каждый старт) не должен трогать ns-файлы
+        namespaced_cache_dir(&base, "deadbeef").unwrap();
+        for gone in [
+            "7.webm",
+            "123.m4a",
+            "5.mp3",
+            "9.opus",
+            "44.webm.part",
+            "44.webm.ytdl",
+        ] {
+            assert!(
+                !base.join(gone).exists(),
+                "легаси {gone} должен быть удалён"
+            );
+        }
+        assert!(base.join("keep.txt").exists());
+        assert!(base.join("intro.webm").exists());
+        assert!(
+            dir.join("7.webm").exists(),
+            "файл внутри ns должен пережить sweep"
+        );
+    }
+
+    #[test]
+    fn pins_file_lives_inside_namespace() {
+        let base = ns_test_base("pins");
+        let p = pins_file(&base, "a1b2c3d4").unwrap();
+        assert_eq!(p, base.join("a1b2c3d4").join("offline-pins.json"));
+        assert!(pins_file(&base, "../evil").is_err());
     }
 }

@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
 }));
 
-import { resolveTrack, toNativeSourceRefs } from "./engine";
+import { cacheNamespace, fnv1a32, resolveTrack, toNativeSourceRefs } from "./engine";
 
 const sources: TrackSource[] = [
   {
@@ -101,6 +101,17 @@ describe("toNativeSourceRefs", () => {
       trackId: "42",
       sources: toNativeSourceRefs(sources),
       quality: "auto",
+      // Неймспейс кэша: без него track_id из разных БД (dev/prod)
+      // коллидируют в одном каталоге — баг «чужая песня» 2026-07-14.
+      cacheNs: cacheNamespace(),
     });
+  });
+
+  it("cacheNamespace стабилен и валиден для Rust-гейта (8 hex)", () => {
+    const ns = cacheNamespace();
+    expect(ns).toMatch(/^[0-9a-f]{8}$/);
+    expect(cacheNamespace()).toBe(ns);
+    // разные origin — разные неймспейсы (сама суть фикса)
+    expect(fnv1a32("http://localhost:8000")).not.toBe(fnv1a32("https://api.muza.lol"));
   });
 });

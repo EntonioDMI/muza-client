@@ -1,6 +1,6 @@
 [package]
 name = "muza-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Muza — музыкальный плеер"
 edition = "2021"
 

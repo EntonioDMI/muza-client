@@ -6,6 +6,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { DEFAULT_LANG, translate, type Lang } from "../i18n";
+import { cacheNamespace } from "./engine";
 
 export function dragOutAvailable(): boolean {
   return isTauri();
@@ -17,6 +18,7 @@ export async function exportCachedTrack(trackId: string, artist: string, title: 
   return invoke<string>("engine_export_cached", {
     trackId,
     fileName: `${artist} - ${title}`,
+    cacheNs: cacheNamespace(),
   });
 }
 
