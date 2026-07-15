@@ -642,7 +642,11 @@ export const en = {
       builtInGroup: "Built-in",
       visualizer: { title: "Visualizer", hint: "Spectrum or waveform in time with the music, in listening mode (catalog tracks)" },
       visualizerKind: { title: "Visualizer style", hint: "Bars — frequency spectrum, wave — signal shape", bars: "Bars", wave: "Wave" },
+      visualizerBars: { title: "Bar density", hint: "Fewer bars — chunkier and calmer, more — finer detail" },
+      visualizerMirror: { title: "Mirrored spectrum", hint: "Bass in the centre, highs at the edges — symmetric both ways" },
+      visualizerWaveSmooth: { title: "Wave softness", hint: "Smooths the line: 0% — a hard sample-by-sample saw, higher — softer" },
       bassShake: { title: "Bass shake", hint: "The screen gently pulses to the bass in fullscreen player" },
+      bassShakeStrength: { title: "Shake strength", hint: "100% — a gentle pulse, higher — a real shake, 0% — no shake" },
       externalGroup: "External plugins",
       appOnly: "Only in the app (not in the browser)",
       installFromFile: {
@@ -1028,6 +1032,9 @@ export const en = {
     copyFailed: "Couldn't copy",
     copyCode: "Copy code",
     codeTooShort: "The code is shorter than 4 characters — check it",
+    // Dev build only: codes live in one server's database and don't cross
+    // between localhost and prod (docs/notes/2026-07-15-кросс-бэкенд-ловушка-коды.md)
+    devBackend: "Dev build: only codes from {host} will work",
     collab: {
       title: "Shared access",
       done: "Done",

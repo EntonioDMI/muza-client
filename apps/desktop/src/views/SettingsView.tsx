@@ -698,6 +698,14 @@ function PresetTile({
 /** Диапазон плотности стекла: ниже 30% интерфейс нечитаем. */
 const GLASS_MIN = 30;
 
+/** Диапазон плотности баров визуализатора (T48). Ниже 24 спектр перестаёт
+ *  читаться как спектр, выше 96 бары тоньше зазора между ними — каша. */
+const VIS_BARS_MIN = 24;
+const VIS_BARS_MAX = 96;
+/** Потолок силы качания (T48), % от базовой амплитуды T14: 300% — заметная
+ *  тряска, дальше начинается морская болезнь, а не музыка. */
+const BASS_STRENGTH_MAX = 300;
+
 const paneStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -3167,9 +3175,54 @@ export function SettingsView({
             />
           </SettingRow>
         ) : null}
+        {/* Ручки показываются только для того вида, на который влияют: у баров
+            и волны общего нечего, а вываливать всё сразу — ровно та беда, за
+            которую настройки уже критиковали (равновесная простыня опций). */}
+        {prefs.visualizer === "bars" ? (
+          <>
+            <SettingRow title={t("settings.extensions.visualizerBars.title")} hint={t("settings.extensions.visualizerBars.hint")}>
+              <LiveSlider
+                value={prefs.visualizerBars - VIS_BARS_MIN}
+                max={VIS_BARS_MAX - VIS_BARS_MIN}
+                label={t("settings.extensions.visualizerBars.title")}
+                suffix={String(prefs.visualizerBars)}
+                onChange={(v) => set({ visualizerBars: VIS_BARS_MIN + Math.round(v) })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.extensions.visualizerMirror.title")} hint={t("settings.extensions.visualizerMirror.hint")}>
+              <Switch
+                checked={prefs.visualizerMirror}
+                onChange={(on: boolean) => set({ visualizerMirror: on })}
+                label={t("settings.extensions.visualizerMirror.title")}
+              />
+            </SettingRow>
+          </>
+        ) : null}
+        {prefs.visualizer === "wave" ? (
+          <SettingRow title={t("settings.extensions.visualizerWaveSmooth.title")} hint={t("settings.extensions.visualizerWaveSmooth.hint")}>
+            <LiveSlider
+              value={prefs.visualizerWaveSmooth}
+              max={100}
+              label={t("settings.extensions.visualizerWaveSmooth.title")}
+              suffix={`${prefs.visualizerWaveSmooth} %`}
+              onChange={(v) => set({ visualizerWaveSmooth: Math.round(v) })}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow title={t("settings.extensions.bassShake.title")} hint={t("settings.extensions.bassShake.hint")}>
           <Switch checked={prefs.bassShake} onChange={(on: boolean) => set({ bassShake: on })} label={t("settings.extensions.bassShake.title")} />
         </SettingRow>
+        {prefs.bassShake ? (
+          <SettingRow title={t("settings.extensions.bassShakeStrength.title")} hint={t("settings.extensions.bassShakeStrength.hint")}>
+            <LiveSlider
+              value={prefs.bassShakeStrength}
+              max={BASS_STRENGTH_MAX}
+              label={t("settings.extensions.bassShakeStrength.title")}
+              suffix={`${prefs.bassShakeStrength} %`}
+              onChange={(v) => set({ bassShakeStrength: Math.round(v) })}
+            />
+          </SettingRow>
+        ) : null}
         <GroupTitle>{t("settings.extensions.externalGroup")}</GroupTitle>
         <SettingRow
           title={t("settings.extensions.installFromFile.title")}

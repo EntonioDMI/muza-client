@@ -21,13 +21,19 @@ function prefersReducedMotion(): boolean {
 
 /** Качание при басах (T14): первые бины analyser'а (~до 250Гц при fftSize
  *  2048) → сглаженная энергия (быстрая атака на удар, плавный спад) →
- *  scale/translate контейнера всего оверлея. Амплитуда мала намеренно —
- *  не морская болезнь, лёгкий пульс. */
+ *  scale/translate контейнера всего оверлея.
+ *
+ *  T48: базовая амплитуда (100%) осталась прежней, но теперь умножается на
+ *  преф `bassShakeStrength` (0–300%) — «сколько трясти» это чистая вкусовщина,
+ *  единственного правильного значения нет. Подъём растёт медленнее масштаба и
+ *  всегда меньше запаса, который даёт scale (h·(s−1)/2), поэтому даже на 300%
+ *  из-под краёв оверлея не выглядывает фон. Жёсткие выключатели (общий anims и
+ *  OS prefers-reduced-motion) сильнее любого значения префа. */
 const BASS_BINS = 10;
 const BASS_ATTACK_SEC = 0.05;
 const BASS_RELEASE_SEC = 0.35;
-const BASS_SCALE_MAX = 0.02; // 1.0 → 1.02
-const BASS_LIFT_PX = 1.5; // лёгкий подъём на ударе
+const BASS_SCALE_MAX = 0.02; // 1.0 → 1.02 при 100%
+const BASS_LIFT_PX = 1.5; // лёгкий подъём на ударе при 100%
 
 /** Полноэкранный «режим прослушивания» — караоке-оверлей («ночной вайб»). */
 export function ListeningMode({
@@ -48,7 +54,11 @@ export function ListeningMode({
   onClose,
   visualizer = "off",
   getAnalyser,
+  visualizerBars = 56,
+  visualizerMirror = false,
+  visualizerWaveSmooth = 60,
   bassShake = false,
+  bassShakeStrength = 150,
   anims = true,
 }: {
   open: boolean;
@@ -73,8 +83,16 @@ export function ListeningMode({
   /** Визуализатор (Stage 6): бары/волна поверх сцены, за контентом. */
   visualizer?: "bars" | "wave" | "off";
   getAnalyser?: () => AnalyserNode | null;
+  /** Настройка визуализатора: плотность баров, штук (T48). */
+  visualizerBars?: number;
+  /** Настройка визуализатора: зеркальный спектр (T48). */
+  visualizerMirror?: boolean;
+  /** Настройка визуализатора: сглаживание волны, % (T48). */
+  visualizerWaveSmooth?: number;
   /** Преф «Качание при басах» (T14, Настройки → Расширения → Встроенные). */
   bassShake?: boolean;
+  /** Сила качания, % (T48): 100 = амплитуда T14, 0 — качания нет. */
+  bassShakeStrength?: number;
   /** Общий переключатель анимаций — выключен, значит качание тоже выключено. */
   anims?: boolean;
 }) {
@@ -89,6 +107,16 @@ export function ListeningMode({
   useEffect(() => {
     getAnalyserRef.current = getAnalyser;
   }, [getAnalyser]);
+  // Сила качания живёт в ref, а не в зависимостях rAF-эффекта ниже: иначе
+  // каждое изменение префа пересоздавало бы цикл и роняло огибающую (level) в
+  // ноль. Сегодня это никто бы не увидел — оверлей перекрывает собой настройки,
+  // и при закрытом оверлее цикл вообще не крутится, — но менять силу может и
+  // плагин (`prefs` пишутся не только ползунком), а тогда качание спотыкалось
+  // бы на ровном месте. Приём тот же, что у getAnalyserRef выше.
+  const strengthRef = useRef(bassShakeStrength);
+  useEffect(() => {
+    strengthRef.current = bassShakeStrength;
+  }, [bassShakeStrength]);
 
   useEffect(() => {
     const node = shakeRef.current;
@@ -117,7 +145,8 @@ export function ListeningMode({
       const s = Math.max(0, Math.min(1, level));
       const target = shakeRef.current;
       if (target) {
-        target.style.transform = `scale(${(1 + s * BASS_SCALE_MAX).toFixed(4)}) translateY(${(-s * BASS_LIFT_PX).toFixed(2)}px)`;
+        const k = Math.max(0, strengthRef.current) / 100;
+        target.style.transform = `scale(${(1 + s * BASS_SCALE_MAX * k).toFixed(4)}) translateY(${(-s * BASS_LIFT_PX * k).toFixed(2)}px)`;
       }
     };
     tick();
@@ -215,7 +244,14 @@ export function ListeningMode({
             opacity: 0.5,
           }}
         >
-          <Visualizer mode={visualizer} active={open} getAnalyser={getAnalyser} />
+          <Visualizer
+            mode={visualizer}
+            active={open}
+            getAnalyser={getAnalyser}
+            barCount={visualizerBars}
+            mirror={visualizerMirror}
+            waveSmooth={visualizerWaveSmooth / 100}
+          />
         </div>
       ) : null}
 
