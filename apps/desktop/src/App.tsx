@@ -582,7 +582,13 @@ function Player({
   // < 1200px — прячем «Сейчас играет» (вторична), < 950px — ужимаем сайдбар.
   const wideEnoughForPanel = useMediaQuery("(min-width: 1200px)");
   const wideEnoughForSidebar = useMediaQuery("(min-width: 950px)");
-  const showNowPlaying = lyricsOn && wideEnoughForPanel;
+  // Настройки — единственное вью, которое само по себе двухколоночное
+  // (навигация + панель) и меряет себя container query по своей ширине.
+  // «Сейчас играет» отбирала у него 340px, из-за чего панель настроек
+  // схлопывалась в узкую колонку, а навигация — в иконочный рельс уже на
+  // нормальном окне. Слушать музыку и крутить настройки одновременно —
+  // не сценарий: что играет, видно в плеер-баре снизу, он никуда не делся.
+  const showNowPlaying = lyricsOn && wideEnoughForPanel && view !== "settings";
   // T15 (bgType=animated): OS-уровень reduced-motion — реактивно, как остальной адаптив.
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 

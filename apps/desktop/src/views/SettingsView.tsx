@@ -769,6 +769,10 @@ function SettingsNav({ value, onChange }: { value: string; onChange: (key: Setti
       aria-orientation="vertical"
       aria-label={t("settings.title")}
     >
+      {/* Заголовок экрана — шапка этой же плашки (не сосед сетки снаружи):
+          так он выровнен по левому краю с подписями пунктов. В рельсе
+          прячется по @container, aria-label выше его дублирует. */}
+      <h1 className="muza-settings-nav__title">{t("settings.title")}</h1>
       {SETTINGS_TAB_KEYS.map((key) => {
         const label = t(`settings.tabs.${key}`);
         return (
@@ -3333,10 +3337,10 @@ export function SettingsView({
       className="muza-settings"
       style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 920, margin: "0 auto" }}
     >
-      <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>{t("settings.title")}</h1>
       {/* Навигация слева вместо горизонтальных вкладок: список не зависит от
           длины подписей, поэтому раскладка не перестраивается при смене языка
-          (у <Tabs wrap> точка переноса ехала: RU 5+5, EN 7+3). */}
+          (у <Tabs wrap> точка переноса ехала: RU 5+5, EN 7+3).
+          Заголовок «Настройки» — внутри SettingsNav, шапкой плашки. */}
       <div className="muza-settings__cols">
         <SettingsNav
           value={tab}

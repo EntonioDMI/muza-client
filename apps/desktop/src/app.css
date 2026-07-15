@@ -96,22 +96,54 @@ body,
   max-width: 680px;
 }
 
+/* Та же зона-поверхность, что у сайдбара и «сейчас играет», а НЕ плоский
+   surface-1: плашка была единственной поверхностью приложения вне системы
+   стекла — при включённом glassZonesOn боковые зоны становились
+   полупрозрачными, а она оставалась глухой и выпадала из стилистики.
+
+   Переиспользуем --glass-sidebar, а не заводим свой ключ prefs: это тоже
+   навигационный рельс, и он лежит на том же --bg-0 (зона <main> прозрачная),
+   поэтому та же альфа даёт тот же результат. Один ползунок «прозрачность
+   сайдбара» честно управляет обоими рельсами. Фолбэк surface-1 совпадает с
+   сайдбаровским → при выключенном стекле вид не изменился. */
 .muza-settings-nav {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
   padding: var(--sp-1);
   border-radius: var(--r-md);
-  background: var(--surface-1);
+  background: var(--glass-sidebar, var(--surface-1));
+  backdrop-filter: var(--bf-zone, none);
+  -webkit-backdrop-filter: var(--bf-zone, none);
   box-sizing: border-box;
+}
+
+/* Заголовок экрана живёт ВНУТРИ плашки, шапкой над пунктами: снаружи он висел
+   над обеими колонками и не совпадал по левому краю ни с чем (текст 24px,
+   иконка пункта 40px, подпись 72px — три разных края). Тот же горизонтальный
+   паддинг, что у пункта → один левый край с подписями. */
+.muza-settings-nav__title {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .muza-settings-nav__item {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  height: 40px;
-  padding: 0 var(--sp-3);
+  /* Метрики — как у NavItem сайдбара (Sidebar.tsx: NAV_H = 48, padding
+     var(--sp-4)). Были 40/sp-3: тот же по смыслу рельс выглядел теснее
+     соседнего и жался к краям. */
+  height: 48px;
+  padding: 0 var(--sp-4);
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
@@ -180,6 +212,15 @@ body,
   }
 
   .muza-settings-nav__label {
+    display: none;
+  }
+
+  /* Заголовок в рельс не влезает (48px против ~140px текста) и распёр бы
+     колонку. Прячем вместе с подписями: рельс — режим нехватки места, а
+     раздел «Настройки» и так подсвечен в сайдбаре приложения. Скринридер
+     заголовок не теряет — role="tablist" держит aria-label с тем же текстом
+     (SettingsView.tsx), он от ширины не зависит. */
+  .muza-settings-nav__title {
     display: none;
   }
 }
