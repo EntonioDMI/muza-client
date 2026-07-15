@@ -304,7 +304,18 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
                 setNotice(null);
               }}
             />
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+            {/* Enter = главная кнопка, как в вебе и как в любой нативной форме.
+                <form> тут не годится: Button из ДС хардкодит type="button" и не
+                может стать submit-кнопкой. Обёртка ловит Enter из ЛЮБОГО поля
+                (native-семантика формы), а не только из последнего. */}
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || busy) return;
+                e.preventDefault();
+                void submit();
+              }}
+            >
               {mode !== "recover" ? (
                 <Field value={username} onChange={setUsername} placeholder={t("auth.fields.username")} autoFocus />
               ) : null}

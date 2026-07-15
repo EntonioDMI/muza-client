@@ -2050,7 +2050,10 @@ function Player({
           </>
         }
       >
-        <SearchInput value={plRenameValue} onChange={setPlRenameValue} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
+        {/* Enter = главная кнопка диалога (Button из ДС submit-кнопкой стать не может) */}
+        <div onKeyDown={(e) => e.key === "Enter" && void renameFromMenu()}>
+          <SearchInput value={plRenameValue} onChange={setPlRenameValue} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
+        </div>
       </Dialog>
 
       <Dialog
@@ -2153,7 +2156,10 @@ function Player({
           </>
         }
       >
-        <SearchInput value={plName} onChange={setPlName} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
+        {/* Enter = главная кнопка диалога (Button из ДС submit-кнопкой стать не может) */}
+        <div onKeyDown={(e) => e.key === "Enter" && void createPlaylist()}>
+          <SearchInput value={plName} onChange={setPlName} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
+        </div>
       </Dialog>
 
       {/* Выбор плейлиста для найденного трека («⋯ → В плейлист») */}
