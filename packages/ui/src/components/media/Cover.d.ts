@@ -14,4 +14,10 @@ export interface CoverProps {
   /** Класс на контейнер (например muza-view — анимация появления при смене трека). */
   className?: string;
   style?: React.CSSProperties;
+  /** Как вписывать источник в квадрат. Default "auto" — трогать не нужно.
+   *  - "auto": object-fit: cover, плюс 4:3-тумбы ytimg зумятся на 4/3, чтобы
+   *    убрать полосы, которые YouTube кладёт ВНУТРЬ картинки.
+   *  - "cover": только object-fit: cover (источник уже квадратный).
+   *  - "pillarbox": принудительный зум 4/3. */
+  fit?: "auto" | "cover" | "pillarbox";
 }
