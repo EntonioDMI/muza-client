@@ -109,6 +109,11 @@ export async function resolveTrack(
   sources: TrackSource[],
   quality: StreamQuality = "auto",
 ): Promise<ResolveResult> {
+  // Rust-команда объявлена как Result<_, String>, а Tauri реджектит Err(String)
+  // ГОЛОЙ строкой, не Error. Без обёртки `e instanceof Error` у вызывающих
+  // всегда false, и настоящая причина («у трека нет живых источников (youtube:
+  // DNS lookup failed…)») молча заменяется на generic-тост — из-за этого баг
+  // 2026-07-15 пришлось расследовать вслепую. Оборачиваем на границе IPC.
   const out = await invoke<{ path: string; from_cache: boolean; provider: string | null }>(
     "engine_resolve",
     {
@@ -117,7 +122,9 @@ export async function resolveTrack(
       quality,
       cacheNs: CACHE_NS,
     },
-  );
+  ).catch((e: unknown) => {
+    throw e instanceof Error ? e : new Error(typeof e === "string" ? e : String(e));
+  });
   return { url: convertFileSrc(out.path), fromCache: out.from_cache, provider: out.provider };
 }
 

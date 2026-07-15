@@ -444,12 +444,19 @@ fn canonical_target_with_lookup(
     let host = target
         .host_str()
         .ok_or_else(|| "provider target has no host".to_string())?;
-    let answers = lookup(host, 443)?;
-    if answers.is_empty() {
-        return Err("provider DNS returned no addresses".into());
-    }
-    if answers.iter().copied().any(|answer| !is_public_ip(answer)) {
-        return Err("provider DNS returned a non-public address".into());
+    // Best-effort, а не гейт. Хост здесь — уже константа грамматики выше
+    // (youtube.com / soundcloud.com / <slug>.bandcamp.com), подставить чужой
+    // адрес неоткуда, а пин ответов всё равно невозможен — yt-dlp резолвит
+    // заново (см. док к canonical_target). Зато ЭТОТ резолвер не видит
+    // системный/env-прокси: за DPI-обходом, VPN или корпоративным прокси
+    // getaddrinfo отдаёт NXDOMAIN, тогда как yt-dlp тем же хостом ходит через
+    // прокси и добывает трек. Поэтому «не смогли узнать адрес» = молчим и
+    // пускаем попытку; режем только когда DNS реально ответил приватным
+    // адресом. Регрессия «Couldn't fetch the track» 2026-07-15.
+    if let Ok(answers) = lookup(host, 443) {
+        if !answers.is_empty() && answers.iter().copied().any(|answer| !is_public_ip(answer)) {
+            return Err("provider DNS returned a non-public address".into());
+        }
     }
     Ok(target)
 }
@@ -748,15 +755,29 @@ struct Attempt {
     client: Option<String>,
 }
 
+/// Лестница попыток + причины, по которым источники были отброшены. Причины
+/// нужны, когда попыток не осталось вовсе: без них наружу уходит безликое «у
+/// трека нет живых источников», и отладка идёт вслепую (регрессия 2026-07-15 —
+/// целая сессия расследования на молчаливый `continue`).
+struct Attempts {
+    attempts: Vec<Attempt>,
+    drops: Vec<String>,
+}
+
 fn build_attempts_from_targets(
     sources: &[SourceRef],
     clients: &[String],
     mut target_for: impl FnMut(&SourceRef) -> Result<Url, String>,
-) -> Vec<Attempt> {
+) -> Attempts {
     let mut attempts = Vec::new();
+    let mut drops = Vec::new();
     for source in sources {
-        let Ok(url) = target_for(source) else {
-            continue;
+        let url = match target_for(source) {
+            Ok(url) => url,
+            Err(reason) => {
+                drops.push(format!("{}: {reason}", source.provider()));
+                continue;
+            }
         };
         let provider = source.provider().to_string();
         match source {
@@ -778,7 +799,7 @@ fn build_attempts_from_targets(
             }
         }
     }
-    attempts
+    Attempts { attempts, drops }
 }
 
 #[cfg(test)]
@@ -790,9 +811,10 @@ fn build_attempts_with_lookup(
     build_attempts_from_targets(sources, clients, |source| {
         canonical_target_with_lookup(source, lookup)
     })
+    .attempts
 }
 
-fn build_attempts(sources: &[SourceRef], clients: &[String]) -> Vec<Attempt> {
+fn build_attempts(sources: &[SourceRef], clients: &[String]) -> Attempts {
     build_attempts_from_targets(sources, clients, canonical_target)
 }
 
@@ -894,6 +916,23 @@ fn validate_ytdlp_output(cache_dir: &Path, candidate: &Path) -> Result<PathBuf, 
     validate_ytdlp_output_with_canonicalizer(cache_dir, candidate, &mut canonicalize)
 }
 
+/// yt-dlp упирается в `--max-downloads` РОВНО ПОСЛЕ успешного скачивания
+/// единственного видео и выходит кодом 101 (MaxDownloadsReached). Это не
+/// ошибка: файл уже на диске, путь напечатан в stdout. Считать 101 провалом =
+/// выбрасывать КАЖДУЮ удачную добычу.
+///
+/// Регрессия `48b845b` (security-хардening добавил `--max-downloads 1`).
+/// Маскировалась кэш-хитами — `engine_resolve` отдаёт кэш ДО лестницы, поэтому
+/// уже скачанное играло. Смена неймспейса кэша в v0.1.1 обнулила кэш → пошла
+/// свежая добыча → «Couldn't fetch the track» на ВСЕХ источниках сразу
+/// (флаг общий для youtube/soundcloud/bandcamp). Радио = 100% cache-miss,
+/// поэтому вскрыло мгновенно.
+const YTDLP_MAX_DOWNLOADS_REACHED: i32 = 101;
+
+fn ytdlp_exit_ok(code: Option<i32>) -> bool {
+    matches!(code, Some(0) | Some(YTDLP_MAX_DOWNLOADS_REACHED))
+}
+
 /// Одна попытка yt-dlp: скачать лучший аудио-формат по рецепту в кэш-каталог.
 /// Успех — абсолютный путь скачанного файла (--print after_move:filepath).
 fn run_ytdlp_once(
@@ -924,7 +963,7 @@ fn run_ytdlp_once(
         let _ = err.read_to_string(&mut stderr);
     }
 
-    if !status.success() {
+    if !ytdlp_exit_ok(status.code()) {
         // Последняя строка stderr — обычно самое осмысленное сообщение yt-dlp
         let last = stderr
             .lines()
@@ -1070,11 +1109,18 @@ pub async fn engine_resolve(
     // URL parsing + DNS are blocking work. Move owned renderer input and the
     // recipe client list off the async Tauri thread before any child process
     // can be created; only validated owned attempts return.
-    let attempts = tauri::async_runtime::spawn_blocking(move || build_attempts(&sources, &clients))
-        .await
-        .map_err(|error| format!("source policy spawn_blocking: {error}"))?;
+    let Attempts { attempts, drops } =
+        tauri::async_runtime::spawn_blocking(move || build_attempts(&sources, &clients))
+            .await
+            .map_err(|error| format!("source policy spawn_blocking: {error}"))?;
     if attempts.is_empty() {
-        return Err("у трека нет живых источников".into());
+        // Причины отбраковки — наружу: «нет живых источников» без них не
+        // отличить от сломанного DNS, битого url'а или пустого списка.
+        return Err(if drops.is_empty() {
+            "у трека нет живых источников".to_string()
+        } else {
+            format!("у трека нет живых источников ({})", drops.join("; "))
+        });
     }
 
     let sidecars = sidecar_paths()?;
@@ -1398,7 +1444,7 @@ mod tests {
         let source = SourceRef::Youtube {
             source_id: "4D7u5KF7SP8".into(),
         };
-        let attempts = build_attempts(&[source], &clients);
+        let attempts = build_attempts(&[source], &clients).attempts;
         let sidecars = sidecar_paths().expect("sidecar-файлы доступны");
         let mut result = None;
         for attempt in attempts {
@@ -1900,11 +1946,10 @@ mod source_policy_tests {
     }
 
     #[test]
-    fn source_policy_dns_rejects_empty_private_and_mixed_answers() {
+    fn source_policy_dns_rejects_private_and_mixed_answers() {
         let source = youtube("dQw4w9WgXcQ");
 
         for answers in [
-            vec![],
             vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
             vec![PUBLIC_V4, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
         ] {
@@ -1919,6 +1964,50 @@ mod source_policy_tests {
         ] {
             assert!(target_with_answers(&source, &[answer]).is_ok());
         }
+    }
+
+    /// Регрессия «Couldn't fetch the track» (2026-07-15). У пользователя за
+    /// DPI-обходом провайдер перехватывает DNS и отдаёт NXDOMAIN на
+    /// youtube.com, а yt-dlp ходит через системный прокси и резолвит хост САМ,
+    /// удалённо. Преflight не пинит ответы (yt-dlp резолвит заново), т.е. это
+    /// не egress-контроль — и он НЕ имеет права убивать источник только потому,
+    /// что локальный резолвер не смог узнать адрес.
+    #[test]
+    fn source_policy_dns_failure_keeps_source() {
+        let source = youtube("dQw4w9WgXcQ");
+        let mut lookup = |_host: &str, _port: u16| Err("DNS lookup failed: NXDOMAIN".to_string());
+
+        assert_eq!(
+            canonical_target_with_lookup(&source, &mut lookup).map(|url| url.to_string()),
+            Ok("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string())
+        );
+    }
+
+    /// Пустой ответ = «адресов не узнали», а не «адресов нет»: та же логика.
+    #[test]
+    fn source_policy_dns_empty_answer_keeps_source() {
+        let source = youtube("dQw4w9WgXcQ");
+        assert!(target_with_answers(&source, &[]).is_ok());
+    }
+
+    /// Сквозной срез того же: сломанный локальный DNS не должен обнулять
+    /// лестницу попыток — иначе engine_resolve вернёт «у трека нет живых
+    /// источников», ни разу не запустив yt-dlp.
+    #[test]
+    fn source_policy_dns_failure_still_builds_attempts() {
+        let sources = vec![
+            youtube("dQw4w9WgXcQ"),
+            soundcloud("123", "https://soundcloud.com/artist/song"),
+        ];
+        let clients = vec!["tv".to_string()];
+        let mut lookup = |_host: &str, _port: u16| Err("DNS lookup failed: NXDOMAIN".to_string());
+
+        let attempts = build_attempts_with_lookup(&sources, &clients, &mut lookup);
+        assert_eq!(
+            attempts.len(),
+            2,
+            "источники не должны исчезать из-за отказа локального резолвера"
+        );
     }
 
     #[test]
@@ -1996,6 +2085,23 @@ mod source_policy_tests {
             "canonicalUrl": "https://soundcloud.com/artist/song"
         });
         assert!(serde_json::from_value::<SourceRef>(value).is_ok());
+    }
+
+    /// Регрессия `48b845b` → «Couldn't fetch the track» на всех источниках.
+    /// `--max-downloads 1` заставляет yt-dlp выйти кодом 101 РОВНО ПОСЛЕ
+    /// успешного скачивания. Трактовать 101 как провал = выбрасывать каждую
+    /// удачную добычу; настоящие ошибки (1/2) обязаны остаться ошибками.
+    #[test]
+    fn ytdlp_exit_101_max_downloads_is_success() {
+        assert!(ytdlp_exit_ok(Some(0)), "0 — обычный успех");
+        assert!(
+            ytdlp_exit_ok(Some(101)),
+            "101 = MaxDownloadsReached, файл скачан"
+        );
+
+        assert!(!ytdlp_exit_ok(Some(1)), "1 — настоящая ошибка yt-dlp");
+        assert!(!ytdlp_exit_ok(Some(2)), "2 — настоящая ошибка yt-dlp");
+        assert!(!ytdlp_exit_ok(None), "убит сигналом/таймаутом — не успех");
     }
 }
 
