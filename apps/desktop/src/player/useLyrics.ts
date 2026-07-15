@@ -1,11 +1,10 @@
-/** Тексты текущего трека (Stage 3, слайс 4): демо — локальные строки,
- *  каталог — LRCLIB с сервера (synced → караоке-строки, plain — без
- *  таймкодов, актив не подсвечивается). Кэш на сессию по id трека. */
+/** Тексты текущего трека (Stage 3, слайс 4): LRCLIB с сервера (synced →
+ *  караоке-строки, plain — без таймкодов, актив не подсвечивается).
+ *  Кэш на сессию по id трека. */
 
 import { useEffect, useRef, useState } from "react";
 import type { MuzaApi } from "@muza/api-client";
-import { TRACKS, type LyricLine } from "../data/demo";
-import type { PlayerTrack } from "./types";
+import type { LyricLine, PlayerTrack } from "./types";
 
 export interface TrackLyrics {
   lines: LyricLine[];
@@ -18,22 +17,21 @@ export interface TrackLyrics {
 
 const EMPTY: TrackLyrics = { lines: [], trackId: null, synced: false, loading: false };
 
-export function useLyrics(api: MuzaApi, track: PlayerTrack, canFetch: boolean): TrackLyrics {
+export function useLyrics(api: MuzaApi, track: PlayerTrack | null, canFetch: boolean): TrackLyrics {
   const [state, setState] = useState<TrackLyrics>(EMPTY);
   // Кэш на сессию: переключение треков туда-сюда не дёргает сервер
   const cacheRef = useRef(new Map<string, TrackLyrics>());
 
   useEffect(() => {
-    if (track.kind === "demo") {
-      const lines = TRACKS.find((t) => t.id === track.id)?.lyrics ?? [];
-      setState({ lines, trackId: track.id, synced: true, loading: false });
-      return;
-    }
-    if (!canFetch) {
+    // Ничего не играет (пустая очередь) или нет серверной сессии — текстов нет
+    if (!track || !canFetch) {
       setState(EMPTY);
       return;
     }
-    const cached = cacheRef.current.get(track.id);
+    // id в локальную константу: замыкания .then() ниже переживают смену трека,
+    // а сужение типа параметра внутрь них не протекает
+    const trackId = track.id;
+    const cached = cacheRef.current.get(trackId);
     if (cached) {
       setState(cached);
       return;
@@ -41,22 +39,22 @@ export function useLyrics(api: MuzaApi, track: PlayerTrack, canFetch: boolean): 
     let alive = true;
     setState({ lines: [], trackId: null, synced: false, loading: true });
     api
-      .getLyrics(track.id)
+      .getLyrics(trackId)
       .then((lyrics) => {
         let out: TrackLyrics;
         if (lyrics.synced && lyrics.synced.length > 0) {
-          out = { lines: lyrics.synced.map((l) => ({ t: l.t, text: l.line })), trackId: track.id, synced: true, loading: false };
+          out = { lines: lyrics.synced.map((l) => ({ t: l.t, text: l.line })), trackId, synced: true, loading: false };
         } else if (lyrics.plain) {
           out = {
             lines: lyrics.plain.split("\n").map((text) => ({ t: 0, text })),
-            trackId: track.id,
+            trackId,
             synced: false,
             loading: false,
           };
         } else {
           out = EMPTY;
         }
-        cacheRef.current.set(track.id, out);
+        cacheRef.current.set(trackId, out);
         if (alive) setState(out);
       })
       .catch(() => {
@@ -66,7 +64,7 @@ export function useLyrics(api: MuzaApi, track: PlayerTrack, canFetch: boolean): 
     return () => {
       alive = false;
     };
-  }, [api, track.id, track.kind, canFetch]);
+  }, [api, track?.id, canFetch]);
 
   return state;
 }

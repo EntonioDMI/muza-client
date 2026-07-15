@@ -1,43 +1,37 @@
-/** Единый трек очереди воспроизведения (Stage 3): демо-каталог и серверный
- *  каталог играют в одной очереди. Демо — симуляция таймером (аудио-файлов
- *  нет), каталог — реальный движок добычи. */
+/** Единый трек очереди воспроизведения (Stage 3): серверный каталог (движок
+ *  добычи) и локальные файлы устройства играют в одной очереди. */
 
 import type { Track as CatalogTrack } from "@muza/api-client";
-import { COVERS, type DemoTrack } from "../data/demo";
+
+/** Строка текста песни. Живёт здесь, а не в отдельном модуле: тексты — часть
+ *  доменной модели плеера, и её тянут и хуки (useLyrics/annotations), и шелл
+ *  (NowPlayingPanel/ListeningMode/MeaningDialog). */
+export interface LyricLine {
+  t: number;
+  text: string;
+  /** Объяснение смысла строки («режим смысла», Genius-аннотации Stage 5):
+   *  строки с note подчёркнуты пунктиром, клик открывает карточку. */
+  note?: string;
+}
 
 export interface PlayerTrack {
   id: string;
-  /** demo — симуляция; catalog — серверный трек (движок добычи);
+  /** catalog — серверный трек (движок добычи);
    *  local — файл устройства без серверного трека (аноним, Stage 4). */
-  kind: "demo" | "catalog" | "local";
+  kind: "catalog" | "local";
   title: string;
   artist: string;
   album: string;
   /** Секунды (для каталога — durationSec сервера). */
   duration: number;
-  cover: string;
+  /** URL обложки; null — обложки нет. Плейсхолдер рисует ДС (Cover), а не
+   *  подставная картинка: фейковый арт на реальном треке — это ложь. */
+  cover: string | null;
   explicit: boolean;
   /** Integrated loudness (LUFS) для нормализации; null — не измерена. */
   loudness: number | null;
   /** sha256 локального файла (Stage 4); null — стриминговый трек. */
   localHash?: string | null;
-}
-
-/** Обложка-заглушка каталожного трека без coverUrl. */
-const FALLBACK_COVER = COVERS[7];
-
-export function fromDemo(t: DemoTrack): PlayerTrack {
-  return {
-    id: t.id,
-    kind: "demo",
-    title: t.title,
-    artist: t.artist,
-    album: t.album,
-    duration: t.duration,
-    cover: t.cover,
-    explicit: t.explicit,
-    loudness: null,
-  };
 }
 
 export function fromCatalog(t: CatalogTrack): PlayerTrack {
@@ -48,7 +42,7 @@ export function fromCatalog(t: CatalogTrack): PlayerTrack {
     artist: t.artist,
     album: "",
     duration: t.durationSec,
-    cover: t.coverUrl ?? FALLBACK_COVER,
+    cover: t.coverUrl ?? null,
     explicit: false,
     loudness: t.loudness,
     localHash: t.localHash,
@@ -68,7 +62,7 @@ export function fromLocalEntry(
     artist: e.artist,
     album: "",
     duration: e.duration_sec,
-    cover: FALLBACK_COVER,
+    cover: null,
     explicit: false,
     loudness: null,
     localHash: e.hash,

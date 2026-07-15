@@ -8,7 +8,7 @@ afterEach(cleanup);
 
 const track: PlayerTrack = {
   id: "t1",
-  kind: "demo",
+  kind: "catalog",
   title: "Тестовый трек",
   artist: "Автор",
   album: "",

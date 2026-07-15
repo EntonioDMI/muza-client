@@ -2,8 +2,12 @@
 export interface TrackRowProps {
   /** Position number shown at rest. */
   index?: number;
-  /** Optional 42px cover URL. */
-  cover?: string;
+  /** URL обложки 42px. null/нет — рисуется плейсхолдер: слот остаётся, и строка
+   *  трека без арта не разъезжается относительно соседних. */
+  cover?: string | null;
+  /** false — скрыть слот обложки целиком (настройка «Строка трека»). Это НЕ то
+   *  же, что cover=null: там обложки нет у трека, здесь её прячет пользователь. */
+  showCover?: boolean;
   title: string;
   artist: string;
   /** "3:47" */

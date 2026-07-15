@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { IconButton, Lyrics, Slider } from "@muza/ui";
-import type { LyricLine } from "../data/demo";
+import { Cover, IconButton, Lyrics, Slider } from "@muza/ui";
+import type { LyricLine } from "../player/types";
 import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 import { Visualizer } from "./Visualizer";
@@ -174,19 +174,23 @@ export function ListeningMode({
           : "opacity var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow)",
       }}
     >
-      <img
-        src={track.cover}
-        alt=""
-        style={{
-          position: "absolute",
-          inset: "-10%",
-          width: "120%",
-          height: "120%",
-          objectFit: "cover",
-          filter: "blur(var(--blur-scenery))",
-          transform: "scale(1.1)",
-        }}
-      />
+      {/* Декоративный размытый задник, не обложка — потому не Cover.
+          Нет обложки → задника просто нет (остаётся фон зоны). */}
+      {track.cover ? (
+        <img
+          src={track.cover}
+          alt=""
+          style={{
+            position: "absolute",
+            inset: "-10%",
+            width: "120%",
+            height: "120%",
+            objectFit: "cover",
+            filter: "blur(var(--blur-scenery))",
+            transform: "scale(1.1)",
+          }}
+        />
+      ) : null}
       <div
         style={{
           position: "absolute",
@@ -229,7 +233,7 @@ export function ListeningMode({
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
-          <img src={track.cover} alt="" style={{ width: "100%", aspectRatio: "1", borderRadius: "var(--r-xl)", objectFit: "cover" }} />
+          <Cover src={track.cover} radius="var(--r-xl)" />
           <div>
             <div
               style={{

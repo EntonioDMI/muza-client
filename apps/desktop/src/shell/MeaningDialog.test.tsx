@@ -69,7 +69,7 @@ describe("MeaningDialog", () => {
       return <>
         <ListeningMode
           open={listeningOpen}
-          track={{ id: "t3", kind: "demo", title: "Стеклянный дом", artist: "Мира", album: "Тише", duration: 234, cover: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", explicit: false, loudness: null }}
+          track={{ id: "t3", kind: "catalog", title: "Стеклянный дом", artist: "Мира", album: "Тише", duration: 234, cover: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", explicit: false, loudness: null }}
           lyrics={[]}
           playing={false}
           pos={0}

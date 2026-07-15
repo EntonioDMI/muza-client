@@ -1,12 +1,13 @@
 import type { Annotation } from "@muza/api-client";
-import type { LyricLine } from "../data/demo";
+import type { LyricLine } from "./types";
 
 export function shouldFetchAnnotations(
   serverSession: boolean,
   meaningMode: boolean,
   lyricsLoading: boolean,
   loadedTrackId: string | null,
-  currentTrackId: string,
+  /** null — ничего не играет; тогда и строк нет, и lineCount отрежет ниже. */
+  currentTrackId: string | null,
   lineCount: number,
 ): boolean {
   return serverSession

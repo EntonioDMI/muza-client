@@ -1,6 +1,6 @@
-import { IconButton, Lyrics } from "@muza/ui";
-import type { LyricLine } from "../data/demo";
-import type { PlayerTrack } from "../player/types";
+import type React from "react";
+import { Cover, EmptyState, IconButton, Lyrics } from "@muza/ui";
+import type { LyricLine, PlayerTrack } from "../player/types";
 import { useT } from "../i18n";
 
 export function NowPlayingPanel({
@@ -14,8 +14,10 @@ export function NowPlayingPanel({
   onSeekLine,
   onExplain,
 }: {
-  track: PlayerTrack;
-  /** Строки текста: демо — локальные, каталог — LRCLIB с сервера (слайс 4). */
+  /** null — ничего не играет: панель не исчезает (иначе схлопывалась бы
+   *  колонка сетки окна), а показывает честное пустое состояние. */
+  track: PlayerTrack | null;
+  /** Строки текста — LRCLIB с сервера (слайс 4). */
   lyrics: LyricLine[];
   /** Текст ещё грузится — «Ищем текст…» вместо «Текст не найден». */
   lyricsLoading?: boolean;
@@ -29,39 +31,50 @@ export function NowPlayingPanel({
   onExplain: (index: number) => void;
 }) {
   const { t } = useT();
-  return (
-    <aside
+  const zoneStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--sp-4)",
+    padding: "var(--pad-zone)",
+    borderRadius: "var(--r-lg)",
+    // зональная прозрачность: своя плотность поверхности + blur (вкл. зонами)
+    background: "var(--glass-nowplaying, var(--surface-1))",
+    backdropFilter: "var(--bf-zone, none)",
+    WebkitBackdropFilter: "var(--bf-zone, none)",
+    overflow: "hidden",
+  };
+  const heading = (
+    <span
       style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--sp-4)",
-        padding: "var(--pad-zone)",
-        borderRadius: "var(--r-lg)",
-        // зональная прозрачность: своя плотность поверхности + blur (вкл. зонами)
-        background: "var(--glass-nowplaying, var(--surface-1))",
-        backdropFilter: "var(--bf-zone, none)",
-        WebkitBackdropFilter: "var(--bf-zone, none)",
-        overflow: "hidden",
+        fontSize: "var(--fs-caption)",
+        fontWeight: 600,
+        letterSpacing: "var(--ls-caps)",
+        textTransform: "uppercase",
+        color: "var(--text-3)",
       }}
     >
-      <span
-        style={{
-          fontSize: "var(--fs-caption)",
-          fontWeight: 600,
-          letterSpacing: "var(--ls-caps)",
-          textTransform: "uppercase",
-          color: "var(--text-3)",
-        }}
-      >
-        {t("nowPlaying.heading")}
-      </span>
-      <img
-        key={track.id}
-        src={track.cover}
-        alt=""
-        className="muza-view"
-        style={{ width: "100%", aspectRatio: "1", borderRadius: "var(--r-md)", objectFit: "cover" }}
-      />
+      {t("nowPlaying.heading")}
+    </span>
+  );
+
+  if (!track) {
+    return (
+      <aside style={zoneStyle}>
+        {heading}
+        <EmptyState
+          icon="music-2"
+          title={t("nowPlaying.empty.title")}
+          hint={t("nowPlaying.empty.hint")}
+          style={{ margin: "auto" }}
+        />
+      </aside>
+    );
+  }
+
+  return (
+    <aside style={zoneStyle}>
+      {heading}
+      <Cover key={track.id} src={track.cover} radius="var(--r-md)" className="muza-view" />
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div

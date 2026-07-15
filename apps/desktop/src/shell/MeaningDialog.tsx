@@ -1,6 +1,6 @@
 import { Dialog, Icon, IconButton } from "@muza/ui";
 import type { Annotation } from "@muza/api-client";
-import type { LyricLine } from "../data/demo";
+import type { LyricLine } from "../player/types";
 import { openExternal } from "../lib/system";
 import { useT } from "../i18n";
 
@@ -63,9 +63,7 @@ export function MeaningDialog({
                 </button>
               ) : null}
             </div>
-          ) : (
-            <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>{t("dialogs.meaning.demoLabel")}</div>
-          )}
+          ) : null}
         </div>
       ) : null}
     </Dialog>

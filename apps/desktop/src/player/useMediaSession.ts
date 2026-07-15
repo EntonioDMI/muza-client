@@ -14,7 +14,7 @@ interface MediaSessionControls {
 }
 
 export function useMediaSession(
-  track: PlayerTrack,
+  track: PlayerTrack | null,
   playing: boolean,
   pos: number,
   controls: MediaSessionControls,
@@ -23,7 +23,9 @@ export function useMediaSession(
   // Метаданные трека (название/артист/обложка в оверлее)
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
-    if (!enabled) {
+    // Ничего не играет — снимаем метаданные, иначе системный оверлей Windows
+    // держал бы последний трек как «текущий»
+    if (!enabled || !track) {
       navigator.mediaSession.metadata = null;
       return;
     }
@@ -44,7 +46,7 @@ export function useMediaSession(
   const wholePos = Math.floor(pos);
   useEffect(() => {
     if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState) return;
-    if (!enabled || track.duration <= 0) return;
+    if (!enabled || !track || track.duration <= 0) return;
     try {
       navigator.mediaSession.setPositionState({
         duration: track.duration,
@@ -55,7 +57,7 @@ export function useMediaSession(
       /* некорректные значения на границах треков — не критично */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wholePos, track.duration, enabled]);
+  }, [wholePos, track?.duration, enabled]);
 
   // Обработчики: медиаклавиши и кнопки оверлея (выключено — сняты)
   useEffect(() => {

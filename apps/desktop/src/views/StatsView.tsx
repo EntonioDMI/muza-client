@@ -250,7 +250,8 @@ export function StatsView({
   /** false у анонима: истории на сервере нет — честная заглушка. */
   canSearch: boolean;
   prefs: Prefs;
-  currentId: string;
+  /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
+  currentId: string | null;
   playing: boolean;
   likes: string[];
   onPlayCatalog: (tracks: Track[], id: string) => void;

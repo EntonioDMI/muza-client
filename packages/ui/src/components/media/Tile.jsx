@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { IconButton } from "../core/IconButton.jsx";
+import { Cover } from "./Cover.jsx";
 
 /** Media tile — soft rounded card with square cover; play pill appears on
  *  hover AND keyboard focus. The tile itself is a keyboard target
- *  (role=button, Enter/Space = onClick). */
+ *  (role=button, Enter/Space = onClick).
+ *  Обложка — через Cover: нет картинки → плейсхолдер, а не дыра в плитке. */
 export function Tile({ cover, title, subtitle, width = 176, playing = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -46,18 +48,7 @@ export function Tile({ cover, title, subtitle, width = 176, playing = false, onP
       }}
     >
       <div style={{ position: "relative", marginBottom: "var(--sp-3)" }}>
-        <img
-          src={cover}
-          alt=""
-          loading="lazy"
-          style={{
-            display: "block",
-            width: "100%",
-            aspectRatio: "1",
-            objectFit: "cover",
-            borderRadius: "var(--r-xs)",
-          }}
-        />
+        <Cover src={cover} />
         <div
           style={{
             position: "absolute",

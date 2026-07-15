@@ -21,7 +21,7 @@ const SEEK_JUMP_SEC = 2.5;
 const HEARTBEAT_MS = 10_000;
 
 export interface JamPlayback {
-  track: PlayerTrack;
+  track: PlayerTrack | null;
   pos: number;
   playing: boolean;
   speed: number;
@@ -103,14 +103,14 @@ export function useJam({
     const p = pbRef.current;
     setHostState(state);
     if (!state.trackId) {
-      // хост слушает то, чего у гостя нет (демо/локальный файл)
+      // хост слушает то, чего у гостя нет (локальный файл) либо не слушает ничего
       setUnavailable(true);
       if (p.playing) p.pause();
       return;
     }
     setUnavailable(false);
     const expectedPos = state.posSec + (state.playing ? (Date.now() - state.updatedAt) / 1000 : 0);
-    if (p.track.id !== state.trackId) {
+    if (p.track?.id !== state.trackId) {
       if (applyingTrackRef.current === state.trackId) return; // уже добываем его
       applyingTrackRef.current = state.trackId;
       void api
@@ -224,13 +224,18 @@ export function useJam({
     const s = sessionRef.current;
     const p = pbRef.current;
     if (!s?.isHost) return;
+    // У хоста пустая очередь — синхронизировать нечего. Пустой title слать
+    // нельзя: гость подставляет его в «хост слушает „…“, у тебя этого нет» и
+    // увидел бы пустые кавычки. Как только хост что-то включит, пуш и
+    // heartbeat догонят гостя сами.
+    if (!p.track) return;
     const isCatalog = p.track.kind === "catalog" && /^\d+$/.test(p.track.id);
     void api
       .pushJamState(s.code, {
         trackId: isCatalog ? p.track.id : null,
         title: p.track.title,
         artist: p.track.artist,
-        coverUrl: p.track.cover.startsWith("http") ? p.track.cover : null,
+        coverUrl: p.track.cover?.startsWith("http") ? p.track.cover : null,
         durationSec: Math.round(p.track.duration),
         posSec: Math.round(p.pos * 10) / 10,
         playing: p.playing,
@@ -247,7 +252,7 @@ export function useJam({
     if (!isHostActive) return;
     pushStateRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHostActive, pb.track.id, pb.playing]);
+  }, [isHostActive, pb.track?.id, pb.playing]);
 
   // детект сика: фактическая позиция разорвалась с ожидаемой
   const lastPosRef = useRef<{ pos: number; at: number } | null>(null);

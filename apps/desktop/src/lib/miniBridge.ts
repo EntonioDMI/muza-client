@@ -6,10 +6,12 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+/** Снапшот для мини-окна. `title === null` — в main ничего не играет (очередь
+ *  пуста): мини рисует честное «нет трека», а не последний застрявший. */
 export interface MiniState {
-  title: string;
-  artist: string;
-  cover: string;
+  title: string | null;
+  artist: string | null;
+  cover: string | null;
   playing: boolean;
   pos: number;
   duration: number;

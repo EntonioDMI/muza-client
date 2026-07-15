@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, ChipGroup, Menu, Tile, TrackRow } from "@muza/ui";
+import { Button, ChipGroup, EmptyState, Menu, Tile, TrackRow } from "@muza/ui";
 import type { MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
-import { NEW_PLAYLIST_COVER, PLAYLISTS, RELEASES, TRACKS } from "../data/demo";
 import {
   loadServerIds,
   localAvailable,
@@ -19,8 +18,10 @@ import { playlistIconSrc } from "../lib/playlistIcon";
 import { useT } from "../i18n";
 
 /** «Твоя медиатека» (Stage 4): настоящие серверные плейлисты, локальные файлы
- *  (device-bound), добавление по ссылке и импорт; демо-контент остаётся
- *  у анонима и на вкладке «Альбомы». */
+ *  (device-bound), добавление по ссылке и импорт. Плейлисты живут на сервере,
+ *  поэтому у анонима их нет; «Альбомы» и «Артисты» — честные плейсхолдеры,
+ *  пока для них нет серверных данных (раньше «Альбомы» показывали пять
+ *  выдуманных релизов из макета Stage 1 ЛЮБОМУ пользователю). */
 export function LibraryView({
   api,
   canSearch,
@@ -29,7 +30,6 @@ export function LibraryView({
   playing,
   onOpenPlaylist,
   onPlaylistMenu,
-  onPlayTrack,
   onPlayLocal,
   onAddToPlaylist,
   onAddLink,
@@ -41,12 +41,12 @@ export function LibraryView({
   /** false у анонима: серверная библиотека недоступна (локальные — работают). */
   canSearch: boolean;
   srvPlaylists: PlaylistMeta[];
-  currentId: string;
+  /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
+  currentId: string | null;
   playing: boolean;
   onOpenPlaylist: (id: string) => void;
   /** T17: ПКМ по плитке серверного плейлиста — то же меню, что в сайдбаре. */
   onPlaylistMenu?: (p: { id: string; name: string }, e: React.MouseEvent) => void;
-  onPlayTrack: (id: string) => void;
   /** Играть локальные файлы (очередь = вкладка «Локальные»). */
   onPlayLocal: (entries: LocalEntry[], hash: string) => void;
   /** «В плейлист» для локального трека с серверным id. */
@@ -225,8 +225,9 @@ export function LibraryView({
           {srvPlaylists.map((p) => (
             <Tile
               key={p.id}
-              // T47b: иконка-обложка плейлиста (манифест @muza/core), фолбэк — прежняя демо-обложка
-              cover={playlistIconSrc(p.icon) ?? NEW_PLAYLIST_COVER}
+              // T47b: иконка-обложка плейлиста (манифест @muza/core); битая/чужая
+              // — null, и Tile рисует плейсхолдер (раньше фолбэком была демо-обложка)
+              cover={playlistIconSrc(p.icon)}
               title={p.name}
               subtitle={t("views.library.playlistSubtitle", { count: p.trackCount })}
               width="auto"
@@ -241,11 +242,17 @@ export function LibraryView({
             </div>
           ) : null}
         </div>
+      ) : chip === "playlists" ? (
+        // Аноним: плейлисты живут на сервере. Раньше здесь показывались три
+        // выдуманных плейлиста из макета, которые вдобавок не переживали
+        // перезапуск и не умели держать треки.
+        <EmptyState icon="user" title={t("views.library.anon.title")} hint={t("views.library.anon.hint")} />
       ) : (
-        <div style={grid}>
-          {(chip === "albums" ? RELEASES : PLAYLISTS).map((p) => (
-            <Tile key={p.id} cover={p.cover} title={p.name} subtitle={p.meta} width="auto" onPlay={() => onPlayTrack(TRACKS[0].id)} />
-          ))}
+        // «Альбомы»: серверных данных под них пока нет — честный плейсхолдер,
+        // как у «Артистов» выше. Раньше здесь лежали пять выдуманных релизов
+        // из макета Stage 1, и видел их ЛЮБОЙ пользователь.
+        <div style={{ padding: "var(--sp-6) 0", color: "var(--text-2)" }}>
+          {t("views.library.albumsPlaceholder")}
         </div>
       )}
 

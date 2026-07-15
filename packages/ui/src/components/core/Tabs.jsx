@@ -9,6 +9,15 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
   const [hoverKey, setHoverKey] = useState(null);
   const [ind, setInd] = useState(null); // { left, top, width }
 
+  // Подписи набора (склейка через NUL: такого символа в подписи быть не может, а
+  // через пробел ["Rock Pop"] и ["Rock", "Pop"] дали бы одну подпись). keysKey —
+  // какие сегменты есть в DOM (React пересоздаёт кнопки только при смене key) → по
+  // нему пересобираем подписку RO. labelsKey — что в них написано: смена языка UI
+  // или размера текста переразмечает сегменты при том же value и том же числе
+  // вкладок, а без этой зависимости эффект бы промолчал.
+  const keysKey = items.map((it) => (typeof it === "string" ? it : it.key)).join("\u0000");
+  const labelsKey = items.map((it) => (typeof it === "string" ? it : it.label)).join("\u0000");
+
   const measure = () => {
     const el0 = wrapRef.current;
     if (!el0) return;
@@ -17,9 +26,10 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
     setInd({ left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth });
   };
 
-  // RO живёт один на весь маунт → зовёт свежую measure через ref; замыкание
-  // первого рендера возвращало бы пилюлю на старый таб (смена веса шрифта
-  // при выборе меняет ширину таблиста и триггерит RO после каждого клика)
+  // RO переживает много рендеров (пересоздаётся только при смене набора сегментов)
+  // → зовёт свежую measure через ref; замыкание рендера подписки возвращало бы
+  // пилюлю на старый таб (смена веса шрифта при выборе меняет ширину сегментов
+  // и триггерит RO после каждого клика)
   const measureRef = useRef(measure);
   measureRef.current = measure;
 
@@ -37,13 +47,38 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
       if (er.left < sr.left) scroller.scrollLeft += er.left - sr.left - 8;
       else if (er.right > sr.right) scroller.scrollLeft += er.right - sr.right + 8;
     }
-  }, [value, items.length]);
+  }, [value, keysKey, labelsKey]);
+  // Шрифт мог ещё не догрузиться к моменту замера. @fontsource тянет сабсеты
+  // лениво, по unicode-range: первый же показ кириллицы (переключение языка на
+  // RU) рендерится ФОЛБЭК-шрифтом, и measure() выше снимает его метрики; потом
+  // приезжает Golos Text, текст переразмечается, а пилюля остаётся по старым
+  // числам. Живой репро: первый EN→RU давал пилюлю 124/150 против сегмента
+  // 123/153, любое следующее переключение (сабсет уже в кэше) — точь-в-точь.
+  // fonts.ready резолвится ПОСЛЕ загрузки шрифтов и связанной с ними разметки —
+  // ровно тот момент, когда надо перемерить.
+  useLayoutEffect(() => {
+    if (typeof document === "undefined" || !document.fonts?.ready) return;
+    let alive = true;
+    void document.fonts.ready.then(() => {
+      if (alive) measureRef.current();
+    });
+    return () => { alive = false; };
+  }, [labelsKey]);
+
   useLayoutEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
+    const wrapEl = wrapRef.current;
+    if (!wrapEl) return;
     const ro = new ResizeObserver(() => measureRef.current());
-    if (wrapRef.current) ro.observe(wrapRef.current);
+    // Наблюдаем КАЖДЫЙ сегмент, а не только таблист: сегменты переразмечаются
+    // внутри контейнера, бокс которого не меняется (wrap: ширину задаёт родитель,
+    // высота — те же два ряда), — RO на одном контейнере такое проспит. Таблист
+    // тоже наблюдаем: перенос строк двигает сегменты, не меняя их размера.
+    // Пилюля absolute → layout не трогает → петли RO → resize → RO не будет.
+    ro.observe(wrapEl);
+    wrapEl.querySelectorAll("[data-tabkey]").forEach((el) => ro.observe(el));
     return () => ro.disconnect();
-  }, []);
+  }, [keysKey]);
 
   return (
     <div

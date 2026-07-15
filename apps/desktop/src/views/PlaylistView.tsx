@@ -37,7 +37,8 @@ export function PlaylistView({
   /** id текущего пользователя (Stage 7: «(ты)» и выход из совместного). */
   userId: string;
   likes: string[];
-  currentId: string;
+  /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
+  currentId: string | null;
   playing: boolean;
   /** Играть трек в контексте плейлиста (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
@@ -273,7 +274,8 @@ export function PlaylistView({
             >
               <TrackRow
                 index={i + 1}
-                cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+                cover={tr.coverUrl}
+                showCover={rowShow?.cover !== false}
                 title={tr.title}
                 artist={artistLine}
                 duration={fmtTime(tr.durationSec)}

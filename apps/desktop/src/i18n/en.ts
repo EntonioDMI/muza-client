@@ -782,10 +782,8 @@ export const en = {
   app: {
     anonymousUsername: "Anonymous (no sync)",
     newPlaylistName: "New Playlist",
-    zeroTracksMeta: "0 tracks",
     unknownPlaylistName: "playlist",
     queuePlaylistName: "Queue {date}",
-    demoPlaylistName: "Night Vibe",
     dropOverlay: {
       title: "Drop it — we'll add it to Muza",
       hint: "Audio files and folders become local tracks",
@@ -827,11 +825,6 @@ export const en = {
   // ── Контекстные меню (App.tsx: трек/каталожный трек/плейлист) ───────
   menu: {
     addToPlaylist: "Add to playlist",
-    track: {
-      addToQueue: "Add to queue",
-      showLyrics: "Show lyrics",
-      copyLink: "Copy link",
-    },
     catalog: {
       radio: "Radio from this track",
       addToJam: "Add to Jam",
@@ -872,7 +865,6 @@ export const en = {
     },
     queue: {
       added: "To queue: {title}",
-      addedGeneric: "Added to queue",
       trackRemoved: "\"{title}\" removed from the queue",
       nothingToSave: "No catalog tracks in the queue — nothing to save",
       savedAsPlaylist: "Saved: \"{name}\" · {count} tr.",
@@ -902,6 +894,7 @@ export const en = {
       deleted: "Playlist deleted",
       created: "Playlist created",
       createFailed: "Couldn't create the playlist",
+      needsAccount: "Playlists are stored in your account — sign in to create one.",
       iconChanged: "Icon changed",
       iconChangeFailed: "Couldn't change the icon",
       addedTrack: "Added to \"{name}\"",
@@ -909,7 +902,6 @@ export const en = {
       joined: "You're in the playlist \"{name}\" (from {owner})",
     },
     link: {
-      copied: "Link copied",
       trackAdded: "\"{title}\" added",
     },
   },
@@ -917,6 +909,11 @@ export const en = {
   // ── Плеер-бар/транспорт (T31): PlayerBar.tsx + ListeningMode.tsx +
   //    NowPlayingPanel.tsx + вычисления App.tsx, использующие тот же текст ─
   player: {
+    /** Пустой плеер-бар: очередь пуста, играть нечего. */
+    empty: {
+      title: "Nothing playing",
+      hint: "Find a track and press play",
+    },
     speedTooltip: "Playback speed",
     speedAria: "Speed: {speed}",
     speedToast: "Speed: {speed}×",
@@ -970,6 +967,10 @@ export const en = {
   // ── NowPlayingPanel.tsx (T31) ─────────────────────────────────────
   nowPlaying: {
     heading: "Now Playing",
+    empty: {
+      title: "Nothing playing",
+      hint: "Pick a track — the cover, lyrics and meaning will show up here.",
+    },
   },
 
   // ── ListeningMode.tsx (T31, строки помимо переиспользованных player.*) ─
@@ -1067,7 +1068,7 @@ export const en = {
         "You control playback. Friends join with the code and hear the same thing — each from their own account.",
       guestDescription: "{host} is in control. You can add tracks: \"⋯ → Add to Jam\" on any track.",
       hostUnavailable:
-        "Host is listening to {track} — not available for streaming (demo/local file). Waiting for the next one.",
+        "Host is listening to {track} — not available for streaming (a local file). Waiting for the next one.",
       genericTrack: "a track",
       listening: "Listening · {count}",
       hostBadge: "host",
@@ -1136,7 +1137,6 @@ export const en = {
       verifiedSuffix: " · from the author",
       votesSuffix: " · ▲ {votes}",
       openOnGenius: "Open on Genius",
-      demoLabel: "Meaning mode · demo",
     },
     importPlaylist: {
       failed: "Import failed",

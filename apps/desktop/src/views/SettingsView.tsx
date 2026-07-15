@@ -21,6 +21,8 @@ import {
 import { fullAccessHost } from "../plugins/fullAccessHost";
 import type { InstalledPluginInfo } from "../plugins/types";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
+import { isTauri } from "@tauri-apps/api/core";
 import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
 import { formatTemplate, rpcAvailable } from "../lib/discord";
 import { openExternal } from "../lib/system";
@@ -1177,6 +1179,18 @@ export function SettingsView({
       onNotify(t("settings.system.update.errors.installFailed"), "x");
     }
   };
+
+  // Версия в «О приложении»: раньше была хардкодом «0.1.0» и протухла (в бандле
+  // уже 0.1.1) — настройки врали. Единственный источник истины — version из
+  // tauri.conf.json, его и отдаёт getVersion(). Вне Tauri (vite-превью в
+  // браузере) версии бандла не существует: показываем тот же честный appOnly,
+  // что и строка автообновления выше, а не выдуманное число. Ошибку глотаем —
+  // версия не повод ронять всю панель настроек.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isTauri()) return;
+    getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
 
   // ── Темы как объекты + CSS-тир (Stage 6) ─────────────────────────
   const [themes, setThemes] = useState<SavedTheme[]>(listThemes);
@@ -3222,7 +3236,7 @@ export function SettingsView({
             вкладки, по требованию владельца) — здесь была заглушка-стаб. */}
         <GroupTitle>{t("settings.system.aboutGroup")}</GroupTitle>
         <SettingRow title={t("settings.system.version.title")} hint={t("settings.system.version.hint")}>
-          <RowValue>0.1.0</RowValue>
+          <RowValue>{appVersion ?? (isTauri() ? "…" : t("settings.system.appOnly"))}</RowValue>
         </SettingRow>
         <SettingRow title={t("settings.system.licenses.rowTitle")} hint={t("settings.system.licenses.rowHint")} onClick={() => setSub("licenses")} chevron></SettingRow>
         <SettingRow title={t("settings.system.website.title")} hint={t("settings.system.website.hint")} onClick={() => void openExternal("https://muza.lol")} chevron></SettingRow>

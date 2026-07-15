@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, SearchInput, TrackRow } from "@muza/ui";
+import { Button, EmptyState, SearchInput, TrackRow } from "@muza/ui";
 import type { GroupedSearchResult, MuzaApi, Track } from "@muza/api-client";
-import { TRACKS, type DemoTrack } from "../data/demo";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
@@ -31,20 +30,18 @@ export function SearchView({
   instantSearch = true,
   searchScope = "all",
   searchGrouping = true,
-  onPlayTrack,
   onPlayCatalog,
   onQueueCatalog,
-  onQueueDemo,
   rowShow,
   onLike,
-  onTrackMenu,
   onNotify,
   onCatalogMenu,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, каталог недоступен. */
   canSearch: boolean;
-  currentId: string;
+  /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
+  currentId: string | null;
   playing: boolean;
   likes: string[];
   /** Живой каталожный поиск при вводе (выкл = только по Enter/кнопке). */
@@ -53,16 +50,13 @@ export function SearchView({
   searchScope?: "all" | "catalog";
   /** T37: группировка ремиксов/версий (настройки → Поиск). */
   searchGrouping?: boolean;
-  onPlayTrack: (id: string) => void;
   /** Играть каталожный трек в контексте списка (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
-  onQueueDemo?: (id: string) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
   rowShow?: { cover: boolean; duration: boolean };
   onLike: (id: string) => void;
-  onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   onNotify: (text: string, icon?: string) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
@@ -190,9 +184,6 @@ export function SearchView({
   };
 
   const showServerResults = canSearch && query.length >= 2;
-  const demoFound = TRACKS.filter(
-    (tr) => !query || `${tr.title} ${tr.artist}`.toLowerCase().includes(query.toLowerCase()),
-  );
 
   /** Строка трека: тач-таргет/драг-источник (Alt+drag — файл, T18) — общая
    *  для плоского и grouped-режима, чтобы не дублировать DnD/очередь/
@@ -209,7 +200,8 @@ export function SearchView({
     >
       <TrackRow
         index={index}
-        cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+        cover={tr.coverUrl}
+        showCover={rowShow?.cover !== false}
         title={tr.title}
         artist={tr.artist}
         duration={fmtTime(tr.durationSec)}
@@ -252,12 +244,6 @@ export function SearchView({
         ) : null}
       </div>
 
-      {!canSearch && query.length >= 2 ? (
-        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-          {t("views.search.needsAccount")}
-        </div>
-      ) : null}
-
       {showServerResults ? (
         <div>
           <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
@@ -295,38 +281,14 @@ export function SearchView({
             ) : null}
           </div>
         </div>
+      ) : !canSearch ? (
+        // Аноним каталог не ищет: сервер его не знает
+        <EmptyState icon="user" title={t("views.search.anon.title")} hint={t("views.search.needsAccount")} />
       ) : (
-        <div>
-          <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
-            {query ? t("views.search.results") : t("views.search.trending")}
-          </h2>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {demoFound.map((tr, i) => (
-              <TrackRow
-                key={tr.id}
-                index={i + 1}
-                cover={rowShow?.cover === false ? undefined : tr.cover}
-                title={tr.title}
-                artist={tr.artist}
-                duration={fmtTime(tr.duration)}
-                showDuration={rowShow?.duration !== false}
-                explicit={tr.explicit}
-                active={currentId === tr.id}
-                playing={currentId === tr.id && playing}
-                liked={likes.includes(tr.id)}
-                onPlay={() => onPlayTrack(tr.id)}
-                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(tr.id) : undefined}
-                onLike={() => onLike(tr.id)}
-                onMore={(e: React.MouseEvent) => onTrackMenu(tr, e)}
-              />
-            ))}
-            {demoFound.length === 0 ? (
-              <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-                {t("views.search.nothingFound")}
-              </div>
-            ) : null}
-          </div>
-        </div>
+        // Запрос пустой/короткий. Раньше здесь рисовались 4 выдуманных трека
+        // из макета Stage 1 под заголовком «Часто ищут» — их видел КАЖДЫЙ,
+        // включая только что зарегистрировавшегося.
+        <EmptyState icon="search" title={t("views.search.start.title")} hint={t("views.search.start.hint")} />
       )}
     </div>
   );

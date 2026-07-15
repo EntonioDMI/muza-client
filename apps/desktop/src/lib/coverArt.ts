@@ -78,11 +78,17 @@ function cropLetterbox(img: HTMLImageElement): string | null {
 }
 
 /** Обложка с вырезанными letterbox-полосами (только для i.ytimg.com;
- *  остальные URL и локальные ассеты возвращаются как есть). */
-export function useCoverArt(src: string): string {
-  const [out, setOut] = useState(() => cache.get(src) ?? src);
+ *  остальные URL возвращаются как есть). null на входе — обложки нет
+ *  (ничего не играет / у трека её нет), null и на выходе: плейсхолдер рисует
+ *  ДС, а не подставная картинка. */
+export function useCoverArt(src: string | null): string | null {
+  const [out, setOut] = useState<string | null>(() => (src === null ? null : (cache.get(src) ?? src)));
 
   useEffect(() => {
+    if (src === null) {
+      setOut(null);
+      return;
+    }
     const cached = cache.get(src);
     if (cached) {
       setOut(cached);

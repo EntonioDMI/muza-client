@@ -4,13 +4,14 @@
  *  числу треков, чтобы карта не росла бесконечно.
  *
  *  Плюс — отдельный указатель «последний активный трек» (saveLast/getLast):
- *  без него после релонча (краш/dev-watcher/обновление) usePlayback всегда
- *  стартовал с DEMO_QUEUE, а playing по умолчанию было true — из-за этого
- *  при каждом релонче плеер-бар, Discord RPC, mediaSession/SMTC и мини-плеер
+ *  без него после релонча (краш/dev-watcher/обновление) usePlayback стартовал
+ *  с очереди-заглушки, а playing по умолчанию было true — из-за этого при
+ *  каждом релонче плеер-бар, Discord RPC, mediaSession/SMTC и мини-плеер
  *  выглядели так, будто трек «сам заиграл» (T2: расследование crash-репорта
  *  владельца). Указатель пишется при каждом реальном старте трека
  *  (usePlayback.startAt) и НИКОГДА не запускает воспроизведение сам по себе —
- *  только материал для «трек готов, но на паузе» при следующем запуске. */
+ *  только материал для «трек готов, но на паузе» при следующем запуске.
+ *  getLast валидирует запись по нынешней модели — см. комментарий там. */
 
 const KEY = "muza.resume.v1";
 const LAST_KEY = "muza.resume.last.v1";
@@ -89,10 +90,26 @@ export const resumeStore = {
       const raw = localStorage.getItem(LAST_KEY);
       if (!raw) return null;
       const t = JSON.parse(raw) as Partial<PlayerTrack>;
-      if (!t || typeof t.id !== "string" || typeof t.kind !== "string") return null;
-      return t as PlayerTrack;
+      if (!t || typeof t.id !== "string") return null;
+      // Сохранение пишет СТАРЫЙ клиент, читает НОВЫЙ — запись обязана пройти
+      // проверку по нынешней модели, а не приниматься на веру (раньше kind
+      // принимался любой строкой). Установки v0.1.1 держат тут демо-треки
+      // Stage 1: без этой отбраковки макет пережил бы собственное удаление и
+      // всплыл бы в баре после обновления.
+      if (t.kind !== "catalog" && t.kind !== "local") return null;
+      if (typeof t.title !== "string" || typeof t.artist !== "string" || typeof t.duration !== "number") return null;
+      return { ...t, cover: sanitizeCover(t.cover) } as PlayerTrack;
     } catch {
       return null;
     }
   },
 };
+
+/** Обложке из старой записи верим только если это абсолютный URL. Прежний
+ *  fromCatalog подставлял треку без coverUrl демо-ассет, а его путь у Vite
+ *  хэширован — после удаления демо такая ссылка мертва и дала бы битую
+ *  картинку. Не узнали схему — честный null, ДС нарисует плейсхолдер. */
+function sanitizeCover(cover: unknown): string | null {
+  if (typeof cover !== "string") return null;
+  return /^(https?|data|blob|asset|tauri):/.test(cover) ? cover : null;
+}

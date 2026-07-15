@@ -164,7 +164,14 @@ function PlaylistRow({
       }}
     >
       {cover ? (
-        <img src={cover} alt="" style={{ width: 40, height: 40, borderRadius: "var(--r-xs)", flex: "none" }} />
+        // objectFit обязателен: без него дефолтный fill плющил неквадратную
+        // обложку. Не Cover — у пустой ветки ниже свой осмысленный плейсхолдер
+        // (совместный плейлист vs обычный), а не общий значок ноты.
+        <img
+          src={cover}
+          alt=""
+          style={{ width: 40, height: 40, borderRadius: "var(--r-xs)", flex: "none", objectFit: "cover" }}
+        />
       ) : (
         <span
           aria-hidden="true"

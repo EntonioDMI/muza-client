@@ -3,8 +3,8 @@
  * @startingPoint section="Media" subtitle="Плитка альбома/плейлиста с play-пилюлей" viewport="700x280"
  */
 export interface TileProps {
-  /** Cover image URL (square). */
-  cover: string;
+  /** Cover image URL. Нет/null — Cover нарисует плейсхолдер. */
+  cover?: string | null;
   title: string;
   /** Artist / meta line. */
   subtitle?: string;

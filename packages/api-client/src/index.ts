@@ -252,5 +252,9 @@ export interface MuzaApi {
   getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers>;
 }
 
-export { MockMuzaApi } from "./mock";
+// Мока api-клиента здесь СОЗНАТЕЛЬНО нет: MockMuzaApi реализовывал весь
+// интерфейс MuzaApi и подключался одной строкой — при этом отдавал выдуманные
+// «Mock Artist»/«Mock Song». В проде он не инстанцировался ни разу (мёртвый
+// код), но оставался миной на релизной кодовой базе. Тесты мокают api точечно,
+// каждый под свой сценарий (см. views/PlaylistView.test.tsx).
 export { HttpMuzaApi, ApiError } from "./http";

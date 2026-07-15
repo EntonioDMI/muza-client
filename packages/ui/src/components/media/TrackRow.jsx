@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
+import { Cover } from "./Cover.jsx";
 
 /** Track list row — no dividers; hover is a surface layer, active is accent title.
  *  Keyboard-reachable: the index cell is a real play button (number → play icon
@@ -10,6 +11,7 @@ import { IconButton } from "../core/IconButton.jsx";
 export function TrackRow({
   index,
   cover,
+  showCover = true,
   title,
   artist,
   duration,
@@ -94,9 +96,7 @@ export function TrackRow({
           )}
         </button>
       </div>
-      {cover ? (
-        <img src={cover} alt="" loading="lazy" style={{ width: 42, height: 42, borderRadius: "var(--r-xs)", objectFit: "cover", flex: "none" }} />
-      ) : null}
+      {showCover ? <Cover src={cover} size={42} /> : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           <span

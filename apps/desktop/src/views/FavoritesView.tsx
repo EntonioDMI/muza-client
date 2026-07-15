@@ -1,47 +1,43 @@
 import { useEffect, useState } from "react";
-import { Icon, TrackRow } from "@muza/ui";
+import { EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
-import { TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { useT } from "../i18n";
 
-/** «Любимое»: при серверной сессии — настоящее избранное с сервера
- *  (слайс 4, переживает переустановку); демо-лайки показываются отдельной
- *  группой ниже, у анонима — только они. */
+/** «Любимое» — настоящее избранное с сервера (слайс 4, переживает
+ *  переустановку). Лайки живут в аккаунте, поэтому у анонима их нет.
+ *  Раньше ниже была секция «Из демо-каталога», а App стартовал с
+ *  захардкоженным лайком демо-трека — из-за чего честное пустое состояние
+ *  не показывалось никогда. */
 export function FavoritesView({
   api,
   canSearch,
   likes,
   currentId,
   playing,
-  onPlayTrack,
   onPlayCatalog,
   onQueueCatalog,
-  onQueueDemo,
   rowShow,
   onLike,
-  onTrackMenu,
   onCatalogMenu,
   onNotify,
 }: {
   api: MuzaApi;
   canSearch: boolean;
   likes: string[];
-  currentId: string;
+  /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
+  currentId: string | null;
   playing: boolean;
-  onPlayTrack: (id: string) => void;
   /** Играть серверный трек в контексте избранного (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
-  onQueueDemo?: (id: string) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
   rowShow?: { cover: boolean; duration: boolean };
   onLike: (id: string) => void;
-  onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Тост (T18: «Трека нет в кэше…» при Alt+drag файла). */
@@ -59,8 +55,7 @@ export function FavoritesView({
     // likes меняются лайками в интерфейсе — перечитываем список
   }, [api, canSearch, likes]);
 
-  const demoLiked = TRACKS.filter((t) => likes.includes(t.id));
-  const total = (server?.length ?? 0) + demoLiked.length;
+  const total = server?.length ?? 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -86,7 +81,8 @@ export function FavoritesView({
           >
             <TrackRow
               index={i + 1}
-              cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+              cover={tr.coverUrl}
+              showCover={rowShow?.cover !== false}
               title={tr.title}
               artist={tr.artist}
               duration={fmtTime(tr.durationSec)}
@@ -102,53 +98,12 @@ export function FavoritesView({
           </div>
         ))}
 
-        {demoLiked.length > 0 ? (
-          <>
-            {canSearch ? (
-              <h3
-                style={{
-                  margin: "var(--sp-5) 0 var(--sp-2)",
-                  fontSize: "var(--fs-caption)",
-                  fontWeight: 600,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  color: "var(--text-3)",
-                }}
-              >
-                {t("views.favorites.demoSectionTitle")}
-              </h3>
-            ) : null}
-            {demoLiked.map((tr, i) => (
-              <TrackRow
-                key={tr.id}
-                index={(server?.length ?? 0) + i + 1}
-                cover={rowShow?.cover === false ? undefined : tr.cover}
-                title={tr.title}
-                artist={tr.artist}
-                duration={fmtTime(tr.duration)}
-                showDuration={rowShow?.duration !== false}
-                explicit={tr.explicit}
-                active={currentId === tr.id}
-                playing={currentId === tr.id && playing}
-                liked
-                onPlay={() => onPlayTrack(tr.id)}
-                onRowDoubleClick={onQueueDemo ? () => onQueueDemo(tr.id) : undefined}
-                onLike={() => onLike(tr.id)}
-                onMore={(e: React.MouseEvent) => onTrackMenu(tr, e)}
-              />
-            ))}
-          </>
-        ) : null}
-
-        {total === 0 && server !== null ? (
-          <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-            {t("views.favorites.empty")}
-          </div>
-        ) : null}
-        {!canSearch && total === 0 ? (
-          <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-            {t("views.favorites.empty")}
-          </div>
+        {/* Аноним: лайки живут в аккаунте, сервера у него нет — говорим прямо.
+            Залогиненный с пустым избранным — честное «пока пусто». */}
+        {!canSearch ? (
+          <EmptyState icon="user" title={t("views.favorites.anon.title")} hint={t("views.favorites.anon.hint")} />
+        ) : total === 0 && server !== null ? (
+          <EmptyState icon="heart" title={t("views.favorites.emptyTitle")} hint={t("views.favorites.empty")} />
         ) : null}
       </div>
     </div>

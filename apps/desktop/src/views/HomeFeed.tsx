@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
+import { Button, EmptyState, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
-import { PLAYLISTS, RELEASES, TRACKS, type DemoTrack } from "../data/demo";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { WRAPPED_BANNER_PREVIEW, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
@@ -46,10 +45,11 @@ const sectionH2: React.CSSProperties = {
 
 /** Главная (Stage 5, T25): при серверной сессии — живая лента рекомендаций
  *  (/home: «Для тебя», «Потому что вы любите X», «В тренде», «Новое»),
- *  «Для тебя» — списком с действиями, остальные — карусели. Демо-полки
- *  Stage 1 показываются ТОЛЬКО анониму (сервер его не знает) и явно
- *  помечены как демо. У залогиненного пустая лента и ошибка загрузки —
- *  честный текст без подмены демо-каталогом (T25: раньше подмена была). */
+ *  «Для тебя» — списком с действиями, остальные — карусели. Пустая лента и
+ *  ошибка загрузки — честный текст, без подмены выдуманным контентом.
+ *  Анониму лента недоступна (сервер его не знает) — раньше вместо неё
+ *  показывались четыре полки выдуманных треков и плейлистов из макета
+ *  Stage 1, теперь честное объяснение, что ему доступно. */
 export function HomeFeed({
   api,
   canSearch,
@@ -57,13 +57,10 @@ export function HomeFeed({
   currentId,
   playing,
   likes,
-  onPlayTrack,
   onPlayCatalog,
   onQueueCatalog,
-  onQueueDemo,
   rowShow,
   onLike,
-  onTrackMenu,
   onCatalogMenu,
   onNotify,
   onOpen,
@@ -74,19 +71,17 @@ export function HomeFeed({
   canSearch: boolean;
   /** Ник для приветствия; null у анонима — просто «Доброе утро». */
   greetName: string | null;
-  currentId: string;
+  /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
+  currentId: string | null;
   playing: boolean;
   likes: string[];
-  onPlayTrack: (id: string) => void;
   /** Играть каталожный трек в контексте секции (очередь = секция). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
-  onQueueDemo?: (id: string) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
   rowShow?: { cover: boolean; duration: boolean };
   onLike: (id: string) => void;
-  onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
   /** «⋯» на каталожном треке (плейлист/версии/оффлайн/радио). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Тост (T18: «Трека нет в кэше…» при Alt+drag файла). */
@@ -97,17 +92,17 @@ export function HomeFeed({
 }) {
   const { t } = useT();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
-  // сервер недоступен / пустая лента нового аккаунта / демо (аноним)
+  // сервер недоступен / пустая лента нового аккаунта / аноним (ленты нет)
   const [feed, setFeed] = useState<{
-    status: "loading" | "live" | "error" | "demo";
+    status: "loading" | "live" | "error" | "anon";
     sections: HomeSection[];
     /** Данные из оффлайн-снапшота — сверху честная плашка. */
     offline: boolean;
-  }>(() => (canSearch ? { status: "loading", sections: [], offline: false } : { status: "demo", sections: [], offline: false }));
+  }>(() => (canSearch ? { status: "loading", sections: [], offline: false } : { status: "anon", sections: [], offline: false }));
 
   const load = () => {
     if (!canSearch) {
-      setFeed({ status: "demo", sections: [], offline: false });
+      setFeed({ status: "anon", sections: [], offline: false });
       return () => undefined;
     }
     let alive = true;
@@ -242,7 +237,8 @@ export function HomeFeed({
                     >
                       <TrackRow
                         index={i + 1}
-                        cover={rowShow?.cover === false ? undefined : (tr.coverUrl ?? undefined)}
+                        cover={tr.coverUrl}
+                        showCover={rowShow?.cover !== false}
                         title={tr.title}
                         artist={tr.artist}
                         duration={fmtTime(tr.durationSec)}
@@ -290,19 +286,19 @@ export function HomeFeed({
           )}
           <div style={{ paddingBottom: "var(--sp-6)" }} />
         </>
-      ) : feed.status === "demo" ? (
-        // T25: демо-каталог показываем только анониму — DemoShelves сама
-        // всегда рисует подпись «демо», выдавать его за реальную ленту нельзя.
-        <DemoShelves
-          currentId={currentId}
-          playing={playing}
-          likes={likes}
-          onPlayTrack={onPlayTrack}
-          onQueueDemo={onQueueDemo}
-          rowShow={rowShow}
-          onLike={onLike}
-          onTrackMenu={onTrackMenu}
-          onOpen={onOpen}
+      ) : feed.status === "anon" ? (
+        // Аноним: ленты нет и быть не может — сервер его не знает. Раньше сюда
+        // подставлялись четыре полки выдуманных треков/плейлистов из макета
+        // Stage 1 (пусть и с подписью «демо»). Честнее сказать, что доступно.
+        <EmptyState
+          icon="user"
+          title={t("views.home.anon.title")}
+          hint={t("views.home.anon.hint")}
+          action={
+            <Button variant="secondary" icon="folder-open" onClick={() => onOpen("library")}>
+              {t("views.home.anon.action")}
+            </Button>
+          }
         />
       ) : null}
     </div>
@@ -367,90 +363,5 @@ function FeedSkeleton() {
         </div>
       ))}
     </div>
-  );
-}
-
-/** Демо-полки Stage 1 (T25: только для анонима — сервер его не знает,
- *  живой ленты быть не может). Подпись рисуется всегда: демо не должно
- *  выглядеть как реальные тренды/рекомендации. */
-function DemoShelves({
-  currentId,
-  playing,
-  likes,
-  onPlayTrack,
-  onQueueDemo,
-  rowShow,
-  onLike,
-  onTrackMenu,
-  onOpen,
-}: {
-  currentId: string;
-  playing: boolean;
-  likes: string[];
-  onPlayTrack: (id: string) => void;
-  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
-  onQueueDemo?: (id: string) => void;
-  /** Строка трека (настройка «Строка трека»): что показывать. */
-  rowShow?: { cover: boolean; duration: boolean };
-  onLike: (id: string) => void;
-  onTrackMenu: (t: DemoTrack, e: React.MouseEvent) => void;
-  onOpen: (v: View) => void;
-}) {
-  const { t } = useT();
-  return (
-    <>
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-        {t("views.home.demo.banner")}
-      </div>
-      <Shelf title={t("views.home.demo.continueListening")}>
-        {TRACKS.map((tr) => (
-          <Tile
-            key={tr.id}
-            cover={tr.cover}
-            title={tr.title}
-            subtitle={tr.artist}
-            playing={currentId === tr.id && playing}
-            onPlay={() => onPlayTrack(tr.id)}
-            onClick={() => onPlayTrack(tr.id)}
-            onMenu={(e: React.MouseEvent) => onTrackMenu(tr, e)}
-          />
-        ))}
-      </Shelf>
-      <Shelf title={t("views.home.demo.pickedForYou")} action={t("common.showAll")} onAction={() => onOpen("library")}>
-        {PLAYLISTS.map((p) => (
-          <Tile key={p.id} cover={p.cover} title={p.name} subtitle={p.meta} onPlay={() => onPlayTrack(TRACKS[0].id)} />
-        ))}
-      </Shelf>
-      <Shelf title={t("views.home.demo.newReleases")} action={t("common.showAll")} onAction={() => onOpen("library")}>
-        {RELEASES.map((r) => (
-          <Tile key={r.id} cover={r.cover} title={r.name} subtitle={r.meta} onPlay={() => onPlayTrack(TRACKS[1].id)} />
-        ))}
-      </Shelf>
-      {/* Простой список под полками — «как библиотека», без тяжёлых плиток */}
-      <div style={{ paddingBottom: "var(--sp-6)" }}>
-        <h2 style={sectionH2}>{t("views.home.demo.selection")}</h2>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {TRACKS.map((tr, i) => (
-            <TrackRow
-              key={tr.id}
-              index={i + 1}
-              cover={rowShow?.cover === false ? undefined : tr.cover}
-              title={tr.title}
-              artist={tr.artist}
-              duration={fmtTime(tr.duration)}
-              showDuration={rowShow?.duration !== false}
-              explicit={tr.explicit}
-              active={currentId === tr.id}
-              playing={currentId === tr.id && playing}
-              liked={likes.includes(tr.id)}
-              onPlay={() => onPlayTrack(tr.id)}
-              onRowDoubleClick={onQueueDemo ? () => onQueueDemo(tr.id) : undefined}
-              onLike={() => onLike(tr.id)}
-              onMore={(e: React.MouseEvent) => onTrackMenu(tr, e)}
-            />
-          ))}
-        </div>
-      </div>
-    </>
   );
 }

@@ -9,7 +9,6 @@ import {
   type Session,
   type Track as CatalogTrack,
 } from "@muza/api-client";
-import { NEW_PLAYLIST_COVER, PLAYLISTS, TRACKS, type DemoCollection, type DemoTrack } from "./data/demo";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
 import { LanguageProvider, resolveMigratedLanguage, translate, type TParams, type TranslationKey } from "./i18n";
 import { accentRoleVars, customAccentVars } from "./lib/accent";
@@ -22,7 +21,7 @@ import { useMediaQuery } from "./lib/useMediaQuery";
 import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
 import { exportCachedTrack } from "./lib/dragOut";
 import { syncAutostart, trayConfigure } from "./lib/system";
-import { autoCheckForUpdate } from "./lib/updater";
+import { autoCheckForUpdate, UPDATE_CHECK_INTERVAL_MS } from "./lib/updater";
 import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, formatTemplate, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
@@ -48,7 +47,7 @@ import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
 import { useMediaSession } from "./player/useMediaSession";
 import { useJam } from "./player/useJam";
-import { fromCatalog, fromDemo, fromLocalEntry, type PlayerTrack } from "./player/types";
+import { fromCatalog, fromLocalEntry, type PlayerTrack } from "./player/types";
 import type { ShareData } from "./lib/shareCard";
 import { LoginScreen } from "./auth/LoginScreen";
 import { Sidebar } from "./shell/Sidebar";
@@ -187,14 +186,13 @@ const BG_DEFAULTS = {
 const densityPad = (d: number) => 14 + Math.round((12 * d) / 100);
 const densityRow = (d: number) => 52 + Math.round((16 * d) / 100);
 
-/** Демо-очередь по умолчанию: главная/библиотека живут на демо-каталоге. */
-const DEMO_QUEUE = TRACKS.map(fromDemo);
-
 /** Восстановление плеера при старте (T2: защита от «песни сами играют»).
  *  Плеер НИКОГДА не стартует играющим сам (usePlayback.playing начинается с
  *  false) — здесь решаем только ЧТО показать «готовым»: если владелец включил
  *  «Запоминать позицию трека» и есть последний активный трек — очередь из
- *  него на сохранённой позиции; иначе — прежний демо-заглушечный бар. */
+ *  него на сохранённой позиции; иначе — пусто.
+ *  Раньше «иначе» подставляло демо-очередь Stage 1 на 0:24, и КАЖДЫЙ новый
+ *  пользователь видел в баре чужую выдуманную песню как якобы свою. */
 function initialPlaybackState(): { queue: PlayerTrack[]; pos: number } {
   const prefs = loadPrefs();
   if (prefs.resumePosition) {
@@ -204,7 +202,7 @@ function initialPlaybackState(): { queue: PlayerTrack[]; pos: number } {
       return { queue: [last], pos: saved > 0 ? saved : 0 };
     }
   }
-  return { queue: DEMO_QUEUE, pos: 24 }; // 24 — как в демо Stage 1, «уже населённый» бар
+  return { queue: [], pos: 0 };
 }
 
 /** Каркас плеера. Stage 3: реальное воспроизведение каталожных треков
@@ -234,14 +232,16 @@ function Player({
   setSnapshotScope(userId);
   // Стартовый экран — из prefs (Stage 6, «Поведение»)
   const [view, setView] = useState<View>(() => loadPrefs().startView);
-  const [likes, setLikes] = useState<string[]>(["t3"]);
+  // Пусто, пока не приедут серверные фавориты (эффект ниже). Раньше тут был
+  // захардкоженный лайк демо-трека "t3", и, поскольку серверные фавориты
+  // только МЕРЖАТСЯ в этот список, убрать его из «Любимого» было нельзя.
+  const [likes, setLikes] = useState<string[]>([]);
   // Запрос открыть конкретный под-экран настроек (кнопка эквалайзера в баре)
   const [settingsIntent, setSettingsIntent] = useState<SettingsIntent | null>(null);
   const [lyricsOn, setLyricsOn] = useState(true);
   const [queueOn, setQueueOn] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [meaningLine, setMeaningLine] = useState<number | null>(null);
-  const [playlists, setPlaylists] = useState<DemoCollection[]>(PLAYLISTS);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [plName, setPlName] = useState("");
   // Слайс 4: серверные плейлисты и открытая страница плейлиста
@@ -277,12 +277,6 @@ function Player({
     actionLabel?: string;
     onAction?: () => void;
   }>({ open: false, text: "", icon: "check" });
-  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: DemoTrack | null }>({
-    open: false,
-    x: 0,
-    y: 0,
-    track: null,
-  });
   // T17: контекст-меню плейлиста (ПКМ в сайдбаре/медиатеке) + диалоги
   // переименования/удаления на уровне App (страница плейлиста может быть
   // не открыта — её диалоги не переиспользовать)
@@ -386,7 +380,7 @@ function Player({
 
   // Обложка без letterbox-полос YouTube-тумбов (canvas-кроп, кэш на сессию);
   // панели/бар/фон получают уже чистую
-  const cleanCover = useCoverArt(pbRaw.track.cover);
+  const cleanCover = useCoverArt(pbRaw.track?.cover ?? null);
 
   // Реакция фона на обложку: доминирующий цвет чищенной обложки → тонировка
   // --bg-0/1 в rootStyle. Обложка чищенная (letterbox уже срезан) — чёрные
@@ -406,7 +400,7 @@ function Player({
     };
   }, [prefs.bgTint, cleanCover]);
   const pb = useMemo(
-    () => ({ ...pbRaw, track: { ...pbRaw.track, cover: cleanCover } }),
+    () => ({ ...pbRaw, track: pbRaw.track ? { ...pbRaw.track, cover: cleanCover } : null }),
     [pbRaw, cleanCover],
   );
   const { track, playing, pos, vol } = pb;
@@ -429,12 +423,13 @@ function Player({
 
   // Трансляция событий приложения плагинам (host фильтрует по правам плагина).
   // Метаданные трека — без URL/токенов источников (§3.1 дока).
-  const safeTrack = (t: PlayerTrack | undefined) =>
+  const safeTrack = (t: PlayerTrack | null | undefined) =>
     t ? { id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration } : null;
   useEffect(() => {
+    // null долетает и до плагинов — «ничего не играет» это тоже событие
     pluginHost.emit("track:change", safeTrack(track));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track.id]);
+  }, [track?.id]);
   useEffect(() => {
     pluginHost.emit("playback:state", { state: pb.buffering ? "loading" : playing ? "playing" : "paused" });
   }, [playing, pb.buffering]);
@@ -611,13 +606,13 @@ function Player({
   // (1 Гц по целым секундам позиции), команды приходят обратно (ref-паттерн —
   // подписка одна, замыкания свежие)
   const miniStateNow = (): MiniState => ({
-    title: track.title,
-    artist: track.artist,
-    cover: track.cover,
+    title: track?.title ?? null,
+    artist: track?.artist ?? null,
+    cover: track?.cover ?? null,
     playing,
     pos,
-    duration: track.duration,
-    liked: likes.includes(track.id),
+    duration: track?.duration ?? 0,
+    liked: track ? likes.includes(track.id) : false,
   });
   const miniRef = useRef({ send: () => {}, cmd: (_c: MiniCommand) => {} });
   miniRef.current = {
@@ -626,7 +621,9 @@ function Player({
       if (c === "toggle") pb.toggle();
       else if (c === "next") pb.next();
       else if (c === "prev") pb.prev();
-      else if (c === "like") toggleLike(track.id);
+      else if (c === "like") {
+        if (track) toggleLike(track.id);
+      }
       else if (c === "close") {
         // замыкание свежее (miniRef переприсваивается каждый рендер) — prefs актуальны
         setPrefs({ ...prefs, miniPlayer: false });
@@ -662,14 +659,18 @@ function Player({
   useEffect(() => {
     if (!prefs.miniPlayer || !engineAvailable()) return;
     miniRef.current.send();
+    // track.cover В ДЕПСАХ ОБЯЗАТЕЛЬНА: useCoverArt чистит обложку асинхронно,
+    // и на смену трека снапшот уходит ещё с сырой. Без этой зависимости эффект
+    // не перезапускался, и мини освежался только со следующим тиком miniPos —
+    // то есть на паузе не освежался никогда и держал недокропленную картинку.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.miniPlayer, track.id, playing, likes, miniPos]);
+  }, [prefs.miniPlayer, track?.id, track?.cover, playing, likes, miniPos]);
 
   // Discord Rich Presence: активность на смену трека/паузу (RPC живёт в Rust;
   // Discord не запущен или client_id не настроен — no-op). Строки — из
   // шаблонов настроек ({track}/{artist}/{album}; альбома у каталожных нет).
   useEffect(() => {
-    if (!prefs.discordRpcOn || !playing) {
+    if (!prefs.discordRpcOn || !playing || !track) {
       void clearDiscordActivity();
       return;
     }
@@ -677,7 +678,7 @@ function Player({
     void updateDiscordActivity({
       details: formatTemplate(prefs.discordLine1, vars) || track.title,
       state: formatTemplate(prefs.discordLine2, vars) || track.artist,
-      coverUrl: prefs.discordShowCover && track.cover.startsWith("https") ? track.cover : null,
+      coverUrl: prefs.discordShowCover && track.cover?.startsWith("https") ? track.cover : null,
       startTs: Math.floor(Date.now() / 1000 - pos),
       buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
       buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
@@ -685,7 +686,7 @@ function Player({
     // pos нарочно не в deps: активность шлём на смену трека/состояния, не каждый тик
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    track.id,
+    track?.id,
     playing,
     prefs.discordRpcOn,
     prefs.discordBtnOn,
@@ -738,6 +739,7 @@ function Player({
       sleepTrackArmedRef.current = null;
       return;
     }
+    if (!track) return; // нечего «доигрывать до конца»
     if (sleepTrackArmedRef.current === null) {
       sleepTrackArmedRef.current = track.id; // взводим на текущем треке
       return;
@@ -748,21 +750,21 @@ function Player({
       showToast(t("toast.sleep.paused"), "moon");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sleep.mode, track.id]);
+  }, [sleep.mode, track?.id]);
 
-  // Тексты: демо — локальные строки, каталог — LRCLIB с сервера
+  // Тексты — LRCLIB с сервера
   const { lines: rawLyrics, trackId: lyricsTrackId, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(api, track, canSearch);
 
   // «Режим смысла» (Stage 5): настоящие Genius-аннотации каталожного трека —
   // строкам с аннотацией ставится note (пунктир в Lyrics, карточка в панели);
   // индексы аннотаций привязаны к synced-строкам, plain не размечаем.
-  // Тумблер prefs.meaningMode (Тексты) выключает и Genius, и демо-note.
+  // Тумблер prefs.meaningMode (Тексты) выключает Genius-аннотации.
   const canFetchAnnotations = shouldFetchAnnotations(
     canSearch,
     prefs.meaningMode,
     lyricsLoading,
     lyricsTrackId,
-    track.id,
+    track?.id ?? null,
     rawLyrics.length,
   );
   const { notes: annotationNotes, geniusUrl } = useAnnotations(api, track, canFetchAnnotations);
@@ -770,7 +772,7 @@ function Player({
     () => decorateLyrics(rawLyrics, annotationNotes, prefs.meaningMode),
     [rawLyrics, annotationNotes, prefs.meaningMode],
   );
-  useEffect(() => setMeaningLine(null), [track.id, prefs.meaningMode]);
+  useEffect(() => setMeaningLine(null), [track?.id, prefs.meaningMode]);
 
   // Активная строка — только у синхронизированного текста (plain не подсвечиваем);
   // выключенный prefs.syncedLyrics превращает synced в plain-список (-1)
@@ -795,14 +797,7 @@ function Player({
     pbRaw.insertInQueue(fromCatalog(track), pbRaw.queue.length);
     showToast(t("toast.queue.added", { title: track.title }), "list-music");
   };
-  const queueDemo = (id: string) => {
-    const track = TRACKS.find((x) => x.id === id);
-    if (!track) return;
-    pbRaw.insertInQueue(fromDemo(track), pbRaw.queue.length);
-    showToast(t("toast.queue.added", { title: track.title }), "list-music");
-  };
   const onQueueCatalog = prefs.doubleClickAction === "queue" ? queueCatalog : undefined;
-  const onQueueDemo = prefs.doubleClickAction === "queue" ? queueDemo : undefined;
 
   /** Тост с кнопкой «Вернуть» (живёт дольше — юзер должен успеть). */
   const showUndoToast = (text: string, icon: string, onUndo: () => void) => {
@@ -863,10 +858,14 @@ function Player({
     };
   }, []);
 
-  // Автопроверка обновлений (Stage 8): через 30с после старта, не чаще раза в
-  // сутки; нашлось — тост с «Установить» (скачивание → перезапуск сам)
+  // Автопроверка обновлений (Stage 8): первая через 30с после старта, дальше
+  // КАЖДЫЕ UPDATE_CHECK_INTERVAL_MS. Интервал тут принципиален: раньше стоял
+  // одинокий setTimeout, то есть проверка случалась ровно один раз за запуск —
+  // а плеер живёт открытым сутками, и такая сессия не узнавала об обновлении
+  // никогда. Троттл внутри autoCheckForUpdate страхует от лишних проверок при
+  // частых перезапусках. Нашлось — тост с «Установить» (скачивание → перезапуск сам).
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const check = () =>
       void autoCheckForUpdate().then((found) => {
         if (!found) return;
         if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -882,13 +881,15 @@ function Player({
         });
         toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 12000);
       });
-    }, 30_000);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(check, 30_000);
+    const iv = setInterval(check, UPDATE_CHECK_INTERVAL_MS);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(iv);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Клик по демо-треку (главная/библиотека/демо-поиск): очередь = демо-каталог. */
-  const playTrack = (id: string) => pb.playContext(DEMO_QUEUE, id);
   /** Клик по каталожному треку: очередь = список, из которого кликнули. */
   const playCatalog = (tracks: CatalogTrack[], id: string) =>
     pb.playContext(tracks.map(fromCatalog), id);
@@ -1002,7 +1003,7 @@ function Player({
         pb.prev();
         break;
       case "seekFwd":
-        pb.seek(Math.min(pos + 5, track.duration));
+        if (track) pb.seek(Math.min(pos + 5, track.duration));
         break;
       case "seekBack":
         pb.seek(Math.max(pos - 5, 0));
@@ -1011,7 +1012,7 @@ function Player({
         toggleMute();
         break;
       case "like":
-        toggleLike(track.id);
+        if (track) toggleLike(track.id);
         break;
       case "search":
         e.preventDefault();
@@ -1051,16 +1052,6 @@ function Player({
     }
   };
 
-  const openTrackMenu = (t: DemoTrack, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenu({
-      open: true,
-      x: Math.min(e.clientX, window.innerWidth - 250),
-      y: Math.min(e.clientY, window.innerHeight - 220),
-      track: t,
-    });
-  };
-
   /** «⋯» на каталожном (серверном) треке — меню Stage 4. */
   const openCatalogMenu = (t: CatalogTrack, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1093,19 +1084,16 @@ function Player({
     const name = plRenameValue.trim();
     if (!target || !name) return;
     setPlRename(null);
-    if (canSearch) {
-      try {
-        await api.renamePlaylist(target.id, name);
-        await reloadServerPlaylists();
-        if (openPlaylistId === target.id) setPlBump((v) => v + 1); // открытая страница перечитает имя
-        showToast(t("toast.playlist.renamed"), "pencil");
-      } catch (e) {
-        showToast(e instanceof Error ? e.message : t("toast.playlist.renameFailed"), "x");
-      }
-      return;
+    // Плейлисты есть только у серверной сессии — анониму переименовывать нечего
+    if (!canSearch) return;
+    try {
+      await api.renamePlaylist(target.id, name);
+      await reloadServerPlaylists();
+      if (openPlaylistId === target.id) setPlBump((v) => v + 1); // открытая страница перечитает имя
+      showToast(t("toast.playlist.renamed"), "pencil");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : t("toast.playlist.renameFailed"), "x");
     }
-    setPlaylists((ps) => ps.map((p) => (p.id === target.id ? { ...p, name } : p)));
-    showToast(t("toast.playlist.renamed"), "pencil");
   };
 
   /** Удаление из контекст-меню (после подтверждения); открытая страница
@@ -1114,16 +1102,13 @@ function Player({
     const target = plDelete;
     if (!target) return;
     setPlDelete(null);
-    if (canSearch) {
-      try {
-        await api.deletePlaylist(target.id);
-        await reloadServerPlaylists();
-      } catch (e) {
-        showToast(e instanceof Error ? e.message : t("toast.playlist.deleteFailed"), "x");
-        return;
-      }
-    } else {
-      setPlaylists((ps) => ps.filter((p) => p.id !== target.id));
+    if (!canSearch) return; // у анонима плейлистов нет
+    try {
+      await api.deletePlaylist(target.id);
+      await reloadServerPlaylists();
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : t("toast.playlist.deleteFailed"), "x");
+      return;
     }
     showToast(t("toast.playlist.deleted"), "trash-2");
     if (openPlaylistId === target.id) {
@@ -1134,25 +1119,26 @@ function Player({
 
   const createPlaylist = async () => {
     const name = plName.trim() || t("app.newPlaylistName");
-    if (canSearch) {
-      try {
-        const icon = pickRandomPlaylistIcon(usedPlaylistIcons());
-        const created = await api.createPlaylist(name, icon);
-        await reloadServerPlaylists();
-        setDialogOpen(false);
-        setPlName("");
-        showToast(t("toast.playlist.created"), "list-music");
-        navigate("playlist", { playlistId: created.id });
-        return;
-      } catch (e) {
-        showToast(e instanceof Error ? e.message : t("toast.playlist.createFailed"), "x");
-        return;
-      }
+    // Плейлист живёт на сервере. Аноним раньше «создавал» его в useState: до
+    // первого перезапуска, без возможности положить трек — а тост при этом
+    // радостно сообщал «Плейлист создан». Теперь честно объясняем, почему нет.
+    if (!canSearch) {
+      setDialogOpen(false);
+      setPlName("");
+      showToast(t("toast.playlist.needsAccount"), "user");
+      return;
     }
-    setPlaylists((ps) => [...ps, { id: `p${ps.length + 1}${Date.now()}`, name, meta: t("app.zeroTracksMeta"), cover: NEW_PLAYLIST_COVER }]);
-    setDialogOpen(false);
-    setPlName("");
-    showToast(t("toast.playlist.created"), "list-music");
+    try {
+      const icon = pickRandomPlaylistIcon(usedPlaylistIcons());
+      const created = await api.createPlaylist(name, icon);
+      await reloadServerPlaylists();
+      setDialogOpen(false);
+      setPlName("");
+      showToast(t("toast.playlist.created"), "list-music");
+      navigate("playlist", { playlistId: created.id });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : t("toast.playlist.createFailed"), "x");
+    }
   };
 
   /** T47b: ПКМ на плейлисте (сайдбар/медиатека) ИЛИ ПКМ на треке внутри
@@ -1183,8 +1169,14 @@ function Player({
     }
   };
 
-  // Сайдбар: серверная сессия видит настоящие плейлисты (Stage 7: + совместные),
-  // аноним — демо
+  // Пункты плагинов для меню трека: слоты track и catalogTrack схлопнуты в один
+  // список — см. комментарий у самого меню ниже.
+  const trackMenuPlugins = [...plugins.menuItems("catalogTrack"), ...plugins.menuItems("track")];
+
+  // Сайдбар: плейлисты бывают только у серверной сессии. У анонима их нет
+  // совсем — прежние «его» плейлисты были демо-заглушкой в useState: не
+  // переживали перезапуск и не умели держать треки, а тост врал «Плейлист
+  // создан». Пустой список → сайдбар честно показывает, что плейлистов нет.
   const sidebarPlaylists = canSearch
     ? srvPlaylists.map((p) => ({
         id: p.id,
@@ -1197,10 +1189,10 @@ function Player({
               : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
         // T47b: иконка-обложка из манифеста @muza/core; нет/невалидна — PlaylistRow
-        // сама рисует прежний фолбэк (users/list-music), как для демо-плейлистов без cover
+        // сама рисует прежний фолбэк (users/list-music)
         cover: playlistIconSrc(p.icon) ?? undefined,
       }))
-    : playlists;
+    : [];
 
   // T16: обычный переход (НЕ назад/вперёд) — пушит в историю и опционально
   // синкает payload параметрических вью (сейчас только id открытого плейлиста).
@@ -1254,8 +1246,10 @@ function Player({
   }, []);
 
   const openPlaylist = (id: string) => {
+    // Страница плейлиста читает его с сервера — анониму открывать нечего
+    // (плейлистов у него нет вовсе, см. sidebarPlaylists)
     if (!canSearch) {
-      navigate("library"); // демо-плейлисты без страниц
+      navigate("library");
       return;
     }
     navigate("playlist", { playlistId: id });
@@ -1383,12 +1377,15 @@ function Player({
   // Выключено → диски остаются на месте (статичная версия), не пропадают.
   const orbitActive = prefs.anims && !reducedMotion;
 
-  // Фон за интерфейсом (Stage 6): тип + затемнение поверх (читаемость)
+  // Фон за интерфейсом (Stage 6): тип + затемнение поверх (читаемость).
+  // Фоны из обложки требуют самой обложки — нет её (ничего не играет / у трека
+  // её нет), значит фона нет; та же идиома, что у bgType==="image" ниже.
+  const coverBg = track?.cover ?? null;
   const backdrop =
-    prefs.bgType === "cover" ? (
+    prefs.bgType === "cover" && coverBg ? (
       <img
-        key={track.cover}
-        src={track.cover}
+        key={coverBg}
+        src={coverBg}
         alt=""
         className="muza-fade"
         style={{
@@ -1401,7 +1398,7 @@ function Player({
           opacity: 0.22,
         }}
       />
-    ) : prefs.bgType === "animated" ? (
+    ) : prefs.bgType === "animated" && coverBg ? (
       // Два диска-обложки вращаются навстречу друг другу к центру (левый —
       // по умолчанию по часовой, правый — против; invert меняет пары).
       // ПЕРФ: blur/opacity — ОДИН раз на общем контейнере (не по слою на
@@ -1445,8 +1442,8 @@ function Player({
             style={{ width: "100%", height: "100%" }}
           >
             <img
-              key={track.cover}
-              src={track.cover}
+              key={coverBg}
+              src={coverBg}
               alt=""
               className="muza-fade"
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
@@ -1472,8 +1469,8 @@ function Player({
             style={{ width: "100%", height: "100%" }}
           >
             <img
-              key={track.cover}
-              src={track.cover}
+              key={coverBg}
+              src={coverBg}
               alt=""
               className="muza-fade"
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
@@ -1530,7 +1527,6 @@ function Player({
     setLike: (trackId, on) =>
       setLikes((ls) => (on ? (ls.includes(trackId) ? ls : [...ls, trackId]) : ls.filter((x) => x !== trackId))),
     reloadPlaylists: reloadServerPlaylists,
-    demoPlaylists: playlists,
     toast: (text, kind) => showToast(text, (kind as never) ?? ("puzzle" as never)),
     openTab: plugins.openTab,
     openPanel: plugins.openPanel,
@@ -1625,16 +1621,13 @@ function Player({
                 api={api}
                 canSearch={canSearch}
                 greetName={greetName}
-                currentId={track.id}
+                currentId={track?.id ?? null}
                 playing={playing}
                 likes={likes}
-                onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
                 onQueueCatalog={onQueueCatalog}
-                onQueueDemo={onQueueDemo}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
-                onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
                 onNotify={showToast}
                 onOpen={navigate}
@@ -1644,19 +1637,16 @@ function Player({
               <SearchView
                 api={api}
                 canSearch={canSearch}
-                currentId={track.id}
+                currentId={track?.id ?? null}
                 playing={playing}
                 likes={likes}
                 instantSearch={prefs.instantSearch}
                 searchScope={prefs.searchScope}
                 searchGrouping={prefs.searchGrouping}
-                onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
                 onQueueCatalog={onQueueCatalog}
-                onQueueDemo={onQueueDemo}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
-                onTrackMenu={openTrackMenu}
                 onNotify={showToast}
                 onCatalogMenu={openCatalogMenu}
               />
@@ -1665,15 +1655,12 @@ function Player({
                 api={api}
                 canSearch={canSearch}
                 likes={likes}
-                currentId={track.id}
+                currentId={track?.id ?? null}
                 playing={playing}
-                onPlayTrack={playTrack}
                 onPlayCatalog={playCatalog}
                 onQueueCatalog={onQueueCatalog}
-                onQueueDemo={onQueueDemo}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
-                onTrackMenu={openTrackMenu}
                 onCatalogMenu={openCatalogMenu}
                 onNotify={showToast}
               />
@@ -1684,7 +1671,7 @@ function Player({
                 playlistId={openPlaylistId}
                 userId={userId}
                 likes={likes}
-                currentId={track.id}
+                currentId={track?.id ?? null}
                 playing={playing}
                 onPlayCatalog={playCatalog}
                 onQueueCatalog={onQueueCatalog}
@@ -1714,11 +1701,10 @@ function Player({
                 api={api}
                 canSearch={canSearch}
                 srvPlaylists={srvPlaylists}
-                currentId={track.id}
+                currentId={track?.id ?? null}
                 playing={playing}
                 onOpenPlaylist={openPlaylist}
                 onPlaylistMenu={openPlaylistMenu}
-                onPlayTrack={playTrack}
                 onPlayLocal={playLocal}
                 onAddToPlaylist={(t) => setPlPick(t)}
                 onAddLink={() => setAddLinkOpen(true)}
@@ -1731,7 +1717,7 @@ function Player({
                 api={api}
                 canSearch={canSearch}
                 prefs={prefs}
-                currentId={track.id}
+                currentId={track?.id ?? null}
                 playing={playing}
                 likes={likes}
                 onPlayCatalog={playCatalog}
@@ -1767,8 +1753,8 @@ function Player({
             track={track}
             lyrics={lyrics}
             lyricsLoading={lyricsLoading}
-            liked={likes.includes(track.id)}
-            onLike={() => toggleLike(track.id)}
+            liked={track ? likes.includes(track.id) : false}
+            onLike={() => track && toggleLike(track.id)}
             activeLine={activeLine}
             lyricsAutoScroll={prefs.lyricsAutoScroll}
             onSeekLine={seekLine}
@@ -1809,8 +1795,8 @@ function Player({
         onSeek={pb.seek}
         vol={vol}
         onVol={pb.setVol}
-        liked={likes.includes(track.id)}
-        onLike={() => toggleLike(track.id)}
+        liked={track ? likes.includes(track.id) : false}
+        onLike={() => track && toggleLike(track.id)}
         shuffle={pb.shuffle}
         onShuffle={pb.toggleShuffle}
         repeat={pb.repeat}
@@ -1831,7 +1817,7 @@ function Player({
         onJam={() => setJamOpen(true)}
         // drag-out: обложка утаскивается на рабочий стол файлом из кэша
         onCoverDragOut={
-          engineAvailable()
+          engineAvailable() && track
             ? async () => {
                 try {
                   return await exportCachedTrack(track.id, track.artist, track.title);
@@ -1902,47 +1888,11 @@ function Player({
         }}
       />
 
-      <Menu
-        open={menu.open}
-        x={menu.x}
-        y={menu.y}
-        onClose={() => setMenu((m) => ({ ...m, open: false }))}
-        items={[
-          { icon: "list-plus", label: t("menu.track.addToQueue"), onClick: () => showToast(t("toast.queue.addedGeneric"), "list-plus") },
-          {
-            icon: "plus",
-            label: t("menu.addToPlaylist"),
-            onClick: () => showToast(t("toast.playlist.addedTrack", { name: t("app.demoPlaylistName") }), "list-music"),
-          },
-          {
-            icon: "mic-vocal",
-            label: t("menu.track.showLyrics"),
-            onClick: () => {
-              if (menu.track) playTrack(menu.track.id);
-              setExpanded(true);
-            },
-          },
-          "-",
-          { icon: "link", label: t("menu.track.copyLink"), onClick: () => showToast(t("toast.link.copied"), "link") },
-          // T44: пункты плагинов (contributes.menus.track) — дописываются в конец
-          ...(plugins.menuItems("track").length ? (["-"] as const) : []),
-          ...plugins.menuItems("track").map((mi) => ({
-            icon: mi.icon || "puzzle",
-            label: mi.title,
-            onClick: () => {
-              if (menu.track)
-                plugins.notifySlot(mi.pluginId, mi.slotId, "click", {
-                  id: menu.track.id,
-                  title: menu.track.title,
-                  artist: menu.track.artist,
-                });
-            },
-          })),
-        ]}
-      />
-
-      {/* Меню каталожного трека (Stage 4): плейлист + версии/источники;
-          Stage 7: поделиться, гостю jam — докинуть трек хосту */}
+      {/* Меню трека (Stage 4): плейлист + версии/источники;
+          Stage 7: поделиться, гостю jam — докинуть трек хосту.
+          Оно теперь ЕДИНСТВЕННОЕ: рядом жило фиктивное меню демо-трека, где
+          каждый пункт лишь показывал тост («добавлено в очередь», «ссылка
+          скопирована») и ничего не делал. */}
       <Menu
         open={catMenu.open}
         x={catMenu.x}
@@ -1996,9 +1946,12 @@ function Player({
               if (catMenu.track) void toggleOffline(catMenu.track);
             },
           },
-          // T44: пункты плагинов (contributes.menus.catalogTrack)
-          ...(plugins.menuItems("catalogTrack").length ? (["-"] as const) : []),
-          ...plugins.menuItems("catalogTrack").map((mi) => ({
+          // T44: пункты плагинов. Слотов два (contributes.menus.catalogTrack и
+          // .track) — оба публичные по PLUGINS.md, и оба висят ЗДЕСЬ: с уходом
+          // демо-каталога «трек» и «каталожный трек» стали одним и тем же, а
+          // menus.track используют уже написанные плагины (examples/hello-plugin).
+          ...(trackMenuPlugins.length ? (["-"] as const) : []),
+          ...trackMenuPlugins.map((mi) => ({
             icon: mi.icon || "puzzle",
             label: mi.title,
             onClick: () => {
@@ -2252,6 +2205,9 @@ function Player({
         </div>
       </Dialog>
 
+      {/* Режим прослушивания — про КОНКРЕТНЫЙ трек: нет трека, нет и режима
+          (оба входа в него, обложка и кнопка бара, тоже недоступны). */}
+      {track ? (
       <ListeningMode
         open={expanded}
         track={track}
@@ -2273,6 +2229,7 @@ function Player({
         bassShake={prefs.bassShake}
         anims={prefs.anims}
       />
+      ) : null}
       <MeaningDialog
         open={meaningLine !== null}
         line={meaningLine !== null ? lyrics[meaningLine] ?? null : null}

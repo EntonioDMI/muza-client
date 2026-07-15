@@ -34,12 +34,11 @@ export const viewsEn = {
       openSearch: "Open search",
     },
     skeletonAria: "Loading the feed",
-    demo: {
-      banner: "Demo: sample content to get familiar with the interface, not real trends or recommendations.",
-      continueListening: "Continue listening",
-      pickedForYou: "Picked for you",
-      newReleases: "New releases",
-      selection: "Selection",
+    /** Аноним: ленты нет — сервер его не знает. */
+    anon: {
+      title: "Recommendations need an account",
+      hint: "An anonymous account lives only on this device, so there's no catalog and no feed. Local files from your disk play as usual — sign in to search and get recommendations.",
+      action: "Local files",
     },
   },
 
@@ -48,8 +47,13 @@ export const viewsEn = {
     searching: "Searching…",
     searchSources: "Search in sources",
     needsAccount: "Catalog search is available after signing in — an anonymous account only lives on this device.",
+    anon: { title: "Search needs an account" },
+    /** Пустой/короткий запрос — приглашение искать. */
+    start: {
+      title: "What are we listening to?",
+      hint: "Type a track, an artist or an album — we'll look in the catalog, and on YouTube Music and SoundCloud on demand.",
+    },
     results: "Results",
-    trending: "Trending searches",
     catalogEmpty: 'The catalog is empty for now. Press "Search in sources" — we\'ll look on YouTube Music and SoundCloud.',
     searchingSources: "Searching in sources — this takes a few seconds…",
     loadingMore: "Loading…",
@@ -76,6 +80,11 @@ export const viewsEn = {
     importPlaylist: "Import playlist",
     byCode: "By code",
     artistsPlaceholder: "Artists you follow will show up here.",
+    albumsPlaceholder: "Albums of the tracks you save will show up here.",
+    anon: {
+      title: "Playlists live in your account",
+      hint: "An anonymous account lives only on this device and has no server side — there's nowhere to keep playlists. Local files work as usual.",
+    },
     scanning: "Scanning…",
     addFiles: "Add files",
     addFolder: "Add folder",
@@ -122,8 +131,12 @@ export const viewsEn = {
   favorites: {
     title: "Favorites",
     trackCount: "{count} tr.",
-    demoSectionTitle: "From the demo catalog (local)",
-    empty: "Nothing here yet. Tap the heart on a track and it'll show up here.",
+    emptyTitle: "No favorites yet",
+    empty: "Tap the heart on a track and it'll show up here.",
+    anon: {
+      title: "Favorites live in your account",
+      hint: "An anonymous account has no server side, so there's nowhere to keep likes. Sign in — and they'll survive a reinstall.",
+    },
   },
 
   stats: {

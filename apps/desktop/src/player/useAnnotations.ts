@@ -1,7 +1,7 @@
 /** Genius-аннотации текущего трека (Stage 5, «режим смысла»): карта
  *  «индекс synced-строки → аннотация». Сервер уже привязал фрагменты к
  *  LRC-строкам (line_idxs, Stage 2 слайс 5) — здесь только доставка и кэш
- *  на сессию. Демо-треки не трогаем: их note живут в demo-каталоге. */
+ *  на сессию. */
 
 import { useEffect, useRef, useState } from "react";
 import type { Annotation, MuzaApi } from "@muza/api-client";
@@ -16,16 +16,18 @@ export interface TrackNotes {
 
 const EMPTY: TrackNotes = { notes: new Map(), geniusUrl: null };
 
-export function useAnnotations(api: MuzaApi, track: PlayerTrack, canFetch: boolean): TrackNotes {
+export function useAnnotations(api: MuzaApi, track: PlayerTrack | null, canFetch: boolean): TrackNotes {
   const [state, setState] = useState<TrackNotes>(EMPTY);
   const cacheRef = useRef(new Map<string, TrackNotes>());
 
   useEffect(() => {
-    if (track.kind !== "catalog" || !canFetch) {
+    if (track?.kind !== "catalog" || !canFetch) {
       setState(EMPTY);
       return;
     }
-    const cached = cacheRef.current.get(track.id);
+    // id в константу: замыкания .then() ниже переживают смену трека
+    const trackId = track.id;
+    const cached = cacheRef.current.get(trackId);
     if (cached) {
       setState(cached);
       return;
@@ -33,11 +35,11 @@ export function useAnnotations(api: MuzaApi, track: PlayerTrack, canFetch: boole
     let alive = true;
     setState(EMPTY);
     api
-      .getAnnotations(track.id)
+      .getAnnotations(trackId)
       .then(({ geniusUrl, annotations }) => {
         const notes = buildAnnotationNotes(annotations);
         const out: TrackNotes = { notes, geniusUrl };
-        cacheRef.current.set(track.id, out);
+        cacheRef.current.set(trackId, out);
         if (alive) setState(out);
       })
       .catch(() => {
@@ -47,7 +49,7 @@ export function useAnnotations(api: MuzaApi, track: PlayerTrack, canFetch: boole
     return () => {
       alive = false;
     };
-  }, [api, track.id, track.kind, canFetch]);
+  }, [api, track?.id, track?.kind, canFetch]);
 
   return state;
 }

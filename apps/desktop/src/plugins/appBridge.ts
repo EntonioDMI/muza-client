@@ -4,8 +4,7 @@
  *  App.tsx, чтобы не раздувать его ещё на сотню строк. */
 
 import type { MuzaApi, Track as CatalogTrack, PlaylistMeta } from "@muza/api-client";
-import { fromCatalog, fromDemo, type PlayerTrack } from "../player/types";
-import { TRACKS, type DemoCollection } from "../data/demo";
+import { fromCatalog, type PlayerTrack } from "../player/types";
 import type { PluginBridge } from "./types";
 
 /** Живые зависимости бриджа — App держит это в ref и обновляет каждый рендер. */
@@ -13,7 +12,8 @@ export interface PluginBridgeLive {
   api: MuzaApi;
   canSearch: boolean;
   pb: {
-    track: PlayerTrack;
+    /** null — ничего не играет. */
+    track: PlayerTrack | null;
     queue: PlayerTrack[];
     playing: boolean;
     buffering: boolean;
@@ -36,7 +36,6 @@ export interface PluginBridgeLive {
   likes: string[];
   setLike: (trackId: string, on: boolean) => void;
   reloadPlaylists: () => Promise<void>;
-  demoPlaylists: DemoCollection[];
   toast: (text: string, kind?: string) => void;
   openTab: (pluginId: string, tabId: string) => void;
   openPanel: (pluginId: string) => void;
@@ -44,7 +43,7 @@ export interface PluginBridgeLive {
   closeSurface: () => void;
 }
 
-function meta(p: PlaylistMeta | DemoCollection): { id: string; name: string } {
+function meta(p: PlaylistMeta): { id: string; name: string } {
   return { id: p.id, name: p.name };
 }
 
@@ -85,8 +84,9 @@ export function createPluginBridge(getLive: () => PluginBridgeLive): PluginBridg
     library: {
       getPlaylists: async () => {
         const live = getLive();
-        if (live.canSearch) return (await live.api.getPlaylists()).map(meta);
-        return live.demoPlaylists.map(meta);
+        // Плейлисты живут на сервере — у анонима их просто нет
+        if (!live.canSearch) return [];
+        return (await live.api.getPlaylists()).map(meta);
       },
       getPlaylistTracks: async (id) => {
         const live = getLive();
@@ -96,8 +96,9 @@ export function createPluginBridge(getLive: () => PluginBridgeLive): PluginBridg
       },
       getFavorites: async () => {
         const live = getLive();
-        if (live.canSearch) return (await live.api.getFavorites()).map(fromCatalog);
-        return TRACKS.filter((t) => live.likes.includes(t.id)).map(fromDemo);
+        // Лайки хранит сервер — анониму отдавать нечего
+        if (!live.canSearch) return [];
+        return (await live.api.getFavorites()).map(fromCatalog);
       },
       createPlaylist: async (name) => {
         const live = getLive();
@@ -138,8 +139,6 @@ export function createPluginBridge(getLive: () => PluginBridgeLive): PluginBridg
     },
     resolveTrack: async (id) => {
       const live = getLive();
-      const demo = TRACKS.find((t) => t.id === id);
-      if (demo) return fromDemo(demo);
       if (!live.canSearch) return null;
       try {
         return fromCatalog(await live.api.getTrack(id) as CatalogTrack);

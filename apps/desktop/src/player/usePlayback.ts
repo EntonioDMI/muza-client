@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { MuzaApi } from "@muza/api-client";
+import type { MuzaApi, TrackSource } from "@muza/api-client";
 import type { Prefs, RepeatMode } from "../types";
 import { translate, type TParams, type TranslationKey } from "../i18n";
 import { engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
@@ -38,6 +38,9 @@ export interface PlayEndInfo {
   playedMs: number;
   completed: boolean;
 }
+
+/** Что играет сейчас; null — очередь пуста, «ничего не играет». */
+export type CurrentTrack = PlayerTrack | null;
 
 export function usePlayback({
   api,
@@ -82,7 +85,10 @@ export function usePlayback({
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [shuffle, setShuffle] = useState(false);
 
-  const track = queue[index] ?? queue[0] ?? initialQueue[0];
+  // null — очередь пуста, «ничего не играет». Это НАСТОЯЩЕЕ состояние плеера, а
+  // не край: раньше инвариант «трек есть всегда» держала демо-очередь-заглушка
+  // (initialQueue[0]), из-за чего новый пользователь видел в баре чужую песню.
+  const track: PlayerTrack | null = queue[index] ?? queue[0] ?? null;
 
   // refs для колбэков движка/таймеров (без пересоздания и стейл-замыканий)
   const stateRef = useRef({ queue, index, playing, repeat, shuffle, speed, track, pos });
@@ -142,7 +148,7 @@ export function usePlayback({
       engineRef.current = new AudioEngine({
         onTime: (sec) => {
           const s = stateRef.current;
-          if (s.track.kind === "demo") return;
+          if (!s.track) return;
           setPos(sec);
           tickPlayed(sec);
           // «Продолжить с места»: троттленная запись позиции текущего трека
@@ -221,7 +227,16 @@ export function usePlayback({
       if (!path) throw new Error(translate(prefsRef.current.language, "media.player.errors.localFileNotFound"));
       return { url: convertFileSrc(path), fromCache: true, provider: "local" };
     }
-    const sources = await api.getTrackSources(t.id).catch(() => null);
+    // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
+    // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
+    // движок с пустой лестницей отвечал безликим «нет живых источников».
+    let sources: TrackSource[] | null = null;
+    let sourcesError: unknown = null;
+    try {
+      sources = await api.getTrackSources(t.id);
+    } catch (e) {
+      sourcesError = e;
+    }
     const quality = prefsRef.current.streamQuality;
     if (sources === null) {
       if (t.localHash) {
@@ -229,7 +244,13 @@ export function usePlayback({
         if (path) return { url: convertFileSrc(path), fromCache: true, provider: "local" };
       }
       // оффлайн: кэш добычи отдаёт файл и без сети (пустая лестница = только кэш)
-      return resolvePlayable(t.id, [], quality, prefsRef.current.language);
+      try {
+        return await resolvePlayable(t.id, [], quality, prefsRef.current.language);
+      } catch {
+        // Кэш не спас — наружу должна уйти ПРИЧИНА отказа сервера, а не
+        // ошибка движка о пустой лестнице, которую мы сами ему и передали.
+        throw sourcesError instanceof Error ? sourcesError : new Error(String(sourcesError));
+      }
     }
     // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
     return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality, prefsRef.current.language);
@@ -253,13 +274,6 @@ export function usePlayback({
     // запуске (App.tsx). Пишем на каждый реальный старт (клик/авто-переход),
     // не только на клик — чтобы «трек готов» после релонча был актуальным.
     if (prefsRef.current.resumePosition) resumeStore.saveLast(t);
-
-    if (t.kind === "demo") {
-      engine().stop();
-      preloadedRef.current = null;
-      setBuffering(false);
-      return; // дальше тикает демо-симуляция
-    }
 
     if (!engineAvailable()) {
       setPlaying(false);
@@ -308,7 +322,7 @@ export function usePlayback({
     const ni = nextIndexFor(1, true);
     if (ni === null) return;
     const nt = s.queue[ni];
-    if (!nt || nt.kind === "demo" || preloadedRef.current?.id === nt.id) return;
+    if (!nt || preloadedRef.current?.id === nt.id) return;
     if (!engineAvailable()) return;
     preloadingRef.current = true;
     try {
@@ -324,9 +338,10 @@ export function usePlayback({
 
   const advance = async (d: 1 | -1, auto: boolean) => {
     const s = stateRef.current;
+    if (!s.track) return; // пустая очередь — переходить не от чего и не к чему
     if (auto && s.repeat === "one") {
       // повтор трека: с начала, без кроссфейда
-      if (s.track.kind !== "demo") engine().seek(0);
+      engine().seek(0);
       setPos(0);
       return;
     }
@@ -386,7 +401,7 @@ export function usePlayback({
   const pollGapless = () => {
     gaplessTimerRef.current = null;
     const s = stateRef.current;
-    if (s.track.kind === "demo") return;
+    if (!s.track) return;
     const remaining = s.track.duration - engine().position();
     const plan = planAutoAdvance({
       remaining,
@@ -413,24 +428,6 @@ export function usePlayback({
     void advance(1, true);
   };
 
-  // Демо-симуляция: тикаем секундой, как в Stage 1 (реального аудио нет).
-  // Конец трека — вне state-updater (StrictMode дёргает updater дважды).
-  useEffect(() => {
-    if (track.kind !== "demo" || !playing) return;
-    const iv = setInterval(() => {
-      const s = stateRef.current;
-      const p = s.pos + 1;
-      tickPlayed(p);
-      if (p <= s.track.duration) {
-        setPos(p);
-      } else {
-        handleTrackEnd();
-      }
-    }, 1000 / speed);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track, playing, speed]);
-
   // ── Публичное API ─────────────────────────────────────────────────
 
   /** Клик по треку в списке: тот же id — пауза/плей, иначе — играть; если
@@ -439,7 +436,7 @@ export function usePlayback({
     const s = stateRef.current;
     const sameQueue =
       tracks.length === s.queue.length && tracks.every((t, i) => t.id === s.queue[i]?.id);
-    if (sameQueue && id === s.track.id) {
+    if (sameQueue && id === s.track?.id) {
       toggle();
       return;
     }
@@ -456,27 +453,26 @@ export function usePlayback({
 
   const toggle = () => {
     const s = stateRef.current;
-    if (s.track.kind !== "demo") {
-      if (s.playing) {
-        engine().pause();
-        setPlaying(false);
-        stopGaplessPoll(); // пауза — точный опрос ждёт до resume ниже
-        return;
-      }
-      // Трек в очереди мог попасть туда БЕЗ startAt (T2: восстановление
-      // последнего трека при старте — App.tsx кладёт его в initialQueue, но
-      // playing нарочно false и движок ни разу не резолвил URL). engine().resume()
-      // на пустом слоте — тихий no-op (audioEngine.resume: el?.src falsy),
-      // playing выставился бы в true БЕЗ звука. Проверяем и в этом случае
-      // делаем полноценный startAt — он сам ставит playing.
-      if (startedIdRef.current !== s.track.id) {
-        void startAt(s.index);
-        return;
-      }
-      void engine().resume();
-      pollGapless(); // T19 fast-follow: перезапустить точный прицел после паузы
+    if (!s.track) return; // ничего не играет — переключать нечего
+    if (s.playing) {
+      engine().pause();
+      setPlaying(false);
+      stopGaplessPoll(); // пауза — точный опрос ждёт до resume ниже
+      return;
     }
-    setPlaying(!s.playing);
+    // Трек в очереди мог попасть туда БЕЗ startAt (T2: восстановление
+    // последнего трека при старте — App.tsx кладёт его в initialQueue, но
+    // playing нарочно false и движок ни разу не резолвил URL). engine().resume()
+    // на пустом слоте — тихий no-op (audioEngine.resume: el?.src falsy),
+    // playing выставился бы в true БЕЗ звука. Проверяем и в этом случае
+    // делаем полноценный startAt — он сам ставит playing.
+    if (startedIdRef.current !== s.track.id) {
+      void startAt(s.index);
+      return;
+    }
+    void engine().resume();
+    pollGapless(); // T19 fast-follow: перезапустить точный прицел после паузы
+    setPlaying(true);
   };
 
   const next = () => void advance(1, false);
@@ -484,7 +480,7 @@ export function usePlayback({
 
   /** Явная пауза (sleep-таймер и т.п.) — с остановкой движка. */
   const pause = () => {
-    if (stateRef.current.track.kind !== "demo") {
+    if (stateRef.current.track) {
       engine().pause();
       stopGaplessPoll();
     }
@@ -493,15 +489,14 @@ export function usePlayback({
 
   const seek = (sec: number) => {
     const s = stateRef.current;
+    if (!s.track) return; // сик по пустой очереди — некуда
     const clamped = Math.max(0, Math.min(sec, s.track.duration));
     setPos(clamped);
-    if (s.track.kind !== "demo") {
-      engine().seek(clamped);
-      // Позиция скакнула — старый прицел точного триггера (посчитан от
-      // старой remaining) неактуален; пересчитываем, если всё ещё играем.
-      stopGaplessPoll();
-      if (s.playing) pollGapless();
-    }
+    engine().seek(clamped);
+    // Позиция скакнула — старый прицел точного триггера (посчитан от
+    // старой remaining) неактуален; пересчитываем, если всё ещё играем.
+    stopGaplessPoll();
+    if (s.playing) pollGapless();
     autoAdvancedRef.current = false;
   };
 
@@ -626,7 +621,7 @@ export function usePlayback({
    *  играть); плагин Muza.Player.clearQueue. */
   const clearQueue = () => {
     const s = stateRef.current;
-    if (s.queue.length <= 1) return;
+    if (s.queue.length <= 1 || !s.track) return;
     patchQueue([s.track], 0);
   };
 

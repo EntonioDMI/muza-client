@@ -30,6 +30,7 @@ export { Toast } from "./components/feedback/Toast.jsx";
 export { Tooltip } from "./components/feedback/Tooltip.jsx";
 
 // media
+export { Cover } from "./components/media/Cover.jsx";
 export { Lyrics } from "./components/media/Lyrics.jsx";
 export { Shelf } from "./components/media/Shelf.jsx";
 export { Tile } from "./components/media/Tile.jsx";

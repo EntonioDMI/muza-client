@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { IconButton, Slider, Tooltip } from "@muza/ui";
+import { Cover, IconButton, Slider, Tooltip } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
 import type { BarButtonKey, RepeatMode } from "../types";
 import { normalizeBarButtons, type BarButtonPref } from "../lib/barButtons";
@@ -94,7 +94,9 @@ export function PlayerBar({
   pluginKeys = [],
   onPluginButton,
 }: {
-  track: PlayerTrack;
+  /** null — ничего не играет: бар остаётся на месте, но с плейсхолдером
+   *  вместо трека и выключенным транспортом. */
+  track: PlayerTrack | null;
   playing: boolean;
   /** Идёт добыча/буферизация каталожного трека. */
   buffering?: boolean;
@@ -173,6 +175,39 @@ export function PlayerBar({
         zIndex: 40,
       }}
     >
+      {/* Ничего не играет — бар НЕ прячется: его высота (--h-playerbar) забита
+          в сетку окна, и исчезновение дёргало бы раскладку на первом же плее.
+          Вместо трека — честный плейсхолдер, транспорт выключен. */}
+      {!track ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
+          <Cover src={null} size="var(--size-cover-bar)" radius="var(--r-sm)" />
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: "var(--fs-body)",
+                fontWeight: 600,
+                color: "var(--text-2)",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {t("player.empty.title")}
+            </div>
+            <div
+              style={{
+                fontSize: "var(--fs-caption)",
+                color: "var(--text-3)",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {t("player.empty.hint")}
+            </div>
+          </div>
+        </div>
+      ) : (
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
         <Tooltip label={onCoverDragOut ? t("player.listeningModeTooltipDrag") : t("player.listeningModeTooltip")}>
           {/* настоящая кнопка: клавиатура открывает режим прослушивания;
@@ -215,17 +250,14 @@ export function PlayerBar({
             }}
             style={{ border: "none", background: "none", padding: 0, cursor: "pointer", flex: "none", display: "block" }}
           >
-            <img
+            {/* Через Cover, а не голый <img>: здесь не было object-fit, и
+                непрямоугольная обложка источника честно сплющивалась в 60×60. */}
+            <Cover
               key={track.id}
               src={track.cover}
-              alt=""
+              size="var(--size-cover-bar)"
+              radius="var(--r-sm)"
               className="muza-view"
-              style={{
-                width: "var(--size-cover-bar)",
-                height: "var(--size-cover-bar)",
-                borderRadius: "var(--r-sm)",
-                display: "block",
-              }}
             />
           </button>
         </Tooltip>
@@ -258,6 +290,7 @@ export function PlayerBar({
           <IconButton icon="heart" size="sm" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
         </Tooltip>
       </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           {barOn("shuffle") ? (
@@ -266,16 +299,17 @@ export function PlayerBar({
             </Tooltip>
           ) : null}
           <Tooltip label={t("player.previous")}>
-            <IconButton icon="skip-back" label={t("player.previous")} onClick={onPrev} />
+            <IconButton icon="skip-back" label={t("player.previous")} disabled={!track} onClick={onPrev} />
           </Tooltip>
           <IconButton
             icon={buffering ? "loader-circle" : playing ? "pause" : "play"}
             variant="accent"
             label={buffering ? t("player.buffering") : playing ? t("player.pause") : t("player.play")}
+            disabled={!track}
             onClick={onTogglePlay}
           />
           <Tooltip label={t("player.next")}>
-            <IconButton icon="skip-forward" label={t("player.next")} onClick={onNext} />
+            <IconButton icon="skip-forward" label={t("player.next")} disabled={!track} onClick={onNext} />
           </Tooltip>
           {barOn("repeat") ? (
             <Tooltip label={repeatLabel}>
@@ -297,14 +331,14 @@ export function PlayerBar({
           </span>
           <Slider
             value={pos}
-            max={track.duration}
+            max={track?.duration ?? 0}
             onChange={onSeek}
             ariaLabel={t("player.progress")}
-            valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track.duration) })}
+            valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track?.duration ?? 0) })}
             style={{ flex: 1 }}
           />
           <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums", width: 36 }}>
-            {fmtTime(track.duration)}
+            {fmtTime(track?.duration ?? 0)}
           </span>
         </div>
       </div>
@@ -363,7 +397,15 @@ export function PlayerBar({
             case "fullscreen":
               return (
                 <Tooltip key={key} label={t("player.fullscreen")}>
-                  <IconButton icon="maximize-2" size="sm" label={t("player.listeningModeTooltip")} onClick={onExpand} />
+                  {/* второй вход в режим прослушивания (первый — клик по
+                      обложке); без трека там показывать нечего */}
+                  <IconButton
+                    icon="maximize-2"
+                    size="sm"
+                    label={t("player.listeningModeTooltip")}
+                    disabled={!track}
+                    onClick={onExpand}
+                  />
                 </Tooltip>
               );
             default: {

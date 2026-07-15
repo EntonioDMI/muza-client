@@ -48,15 +48,30 @@ export async function checkForUpdate(): Promise<FoundUpdate | null> {
 
 const LAST_CHECK_KEY = "muza.updater.lastCheck.v1";
 
-/** Автопроверка при старте: не чаще раза в сутки, ошибки молча глотаются
- *  (фоновая проверка не должна беспокоить). null = обновления нет/рано. */
+/** Период автопроверки обновлений — на него App.tsx вешает setInterval.
+ *  Раньше периодичности не было вовсе: единственной проверкой был одноразовый
+ *  таймер при старте, поэтому сессия, открытая несколько суток (для плеера это
+ *  норма), не узнавала о новой версии никогда. Два часа взяты щедро, потому что
+ *  цена запроса нулевая: latest.json — статика с GitHub CDN, ни нашего сервера,
+ *  ни трафика это не касается. */
+export const UPDATE_CHECK_INTERVAL_MS = 2 * 3600 * 1000;
+
+/** Автопроверка: не чаще UPDATE_CHECK_INTERVAL_MS, ошибки молча глотаются
+ *  (фоновая проверка не должна беспокоить). null = обновления нет/рано.
+ *  Троттл на метке в localStorage — страховка МЕЖДУ перезапусками (частые
+ *  рестарты не должны долбить проверкой на каждый старт); периодичность внутри
+ *  живой сессии даёт setInterval, а не он. */
 export async function autoCheckForUpdate(): Promise<FoundUpdate | null> {
   if (!isTauri()) return null;
   const last = Number(localStorage.getItem(LAST_CHECK_KEY) ?? 0);
-  if (Date.now() - last < 24 * 3600 * 1000) return null;
-  localStorage.setItem(LAST_CHECK_KEY, String(Date.now()));
+  if (Date.now() - last < UPDATE_CHECK_INTERVAL_MS) return null;
   try {
-    return await checkForUpdate();
+    const found = await checkForUpdate();
+    // Метка ставится ТОЛЬКО после успеха. Раньше она писалась до try, и упавшая
+    // проверка (нет сети, спящий ноутбук) сжигала всё окно до следующей попытки.
+    // Ответ «обновлений нет» (null) — тоже успех: сервер ответил, метку пишем.
+    localStorage.setItem(LAST_CHECK_KEY, String(Date.now()));
+    return found;
   } catch {
     return null;
   }

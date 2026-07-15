@@ -745,10 +745,8 @@ export const ru: typeof en = {
   app: {
     anonymousUsername: "Аноним (без синхронизации)",
     newPlaylistName: "Новый плейлист",
-    zeroTracksMeta: "0 треков",
     unknownPlaylistName: "плейлист",
     queuePlaylistName: "Очередь {date}",
-    demoPlaylistName: "Ночной вайб",
     dropOverlay: {
       title: "Отпусти — добавим в Muza",
       hint: "Аудиофайлы и папки станут локальными треками",
@@ -789,11 +787,6 @@ export const ru: typeof en = {
 
   menu: {
     addToPlaylist: "В плейлист",
-    track: {
-      addToQueue: "В очередь",
-      showLyrics: "Показать текст",
-      copyLink: "Скопировать ссылку",
-    },
     catalog: {
       radio: "Радио по треку",
       addToJam: "В jam",
@@ -833,7 +826,6 @@ export const ru: typeof en = {
     },
     queue: {
       added: "В очередь: {title}",
-      addedGeneric: "Добавлено в очередь",
       trackRemoved: "«{title}» убран из очереди",
       nothingToSave: "В очереди нет каталожных треков — сохранять нечего",
       savedAsPlaylist: "Сохранено: «{name}» · {count} тр.",
@@ -863,6 +855,7 @@ export const ru: typeof en = {
       deleted: "Плейлист удалён",
       created: "Плейлист создан",
       createFailed: "Не удалось создать плейлист",
+      needsAccount: "Плейлисты хранятся в аккаунте — войди, чтобы создать.",
       iconChanged: "Иконка изменена",
       iconChangeFailed: "Не удалось сменить иконку",
       addedTrack: "Добавлено в «{name}»",
@@ -870,12 +863,15 @@ export const ru: typeof en = {
       joined: "Ты в плейлисте «{name}» (от {owner})",
     },
     link: {
-      copied: "Ссылка скопирована",
       trackAdded: "«{title}» добавлен",
     },
   },
 
   player: {
+    empty: {
+      title: "Ничего не играет",
+      hint: "Найди трек и нажми play",
+    },
     speedTooltip: "Скорость воспроизведения",
     speedAria: "Скорость: {speed}",
     speedToast: "Скорость: {speed}×",
@@ -927,6 +923,10 @@ export const ru: typeof en = {
 
   nowPlaying: {
     heading: "Сейчас играет",
+    empty: {
+      title: "Ничего не играет",
+      hint: "Выбери трек — здесь появятся обложка, текст и смысл.",
+    },
   },
 
   listeningMode: {
@@ -1020,7 +1020,7 @@ export const ru: typeof en = {
       hostDescription:
         "Ты управляешь воспроизведением. Друзья входят по коду и слушают то же самое — каждый со своего аккаунта.",
       guestDescription: "{host} управляет. Ты можешь докидывать треки: «⋯ → В jam» у любого трека.",
-      hostUnavailable: "Хост слушает {track} — он недоступен для стриминга (демо/локальный файл). Ждём следующий.",
+      hostUnavailable: "Хост слушает {track} — он недоступен для стриминга (локальный файл). Ждём следующий.",
       genericTrack: "трек",
       listening: "Слушают · {count}",
       hostBadge: "хост",
@@ -1087,7 +1087,6 @@ export const ru: typeof en = {
       verifiedSuffix: " · от автора",
       votesSuffix: " · ▲ {votes}",
       openOnGenius: "Открыть на Genius",
-      demoLabel: "Режим смысла · демо",
     },
     importPlaylist: {
       failed: "Импорт не удался",

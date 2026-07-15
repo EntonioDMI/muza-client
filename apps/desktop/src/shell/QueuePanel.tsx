@@ -5,7 +5,7 @@
  *  возвращает его на кнопку очереди. */
 
 import { useEffect, useRef, useState } from "react";
-import { Icon, IconButton } from "@muza/ui";
+import { Cover, Icon, IconButton } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 import { useT } from "../i18n";
@@ -73,7 +73,7 @@ function QueueRow({
         <span style={{ width: 22, flex: "none", textAlign: "right", fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
           {current ? <Icon name={playing ? "volume-2" : "pause"} size={14} color="var(--accent-text)" /> : position}
         </span>
-        <img src={track.cover} alt="" style={{ width: 36, height: 36, borderRadius: "var(--r-xs)", flex: "none", objectFit: "cover" }} />
+        <Cover src={track.cover} size={36} />
         <span style={{ minWidth: 0, flex: 1 }}>
           <span
             style={{
