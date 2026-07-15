@@ -12,6 +12,7 @@ import {
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
 import { LanguageProvider, resolveMigratedLanguage, translate, type TParams, type TranslationKey } from "./i18n";
 import { accentRoleVars, customAccentVars } from "./lib/accent";
+import { devApiHost } from "./lib/devApiHost";
 import { dominantColor, mixHex } from "./lib/coverTint";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
 import { applySourcePolicy } from "./lib/sources";
@@ -78,17 +79,19 @@ import { pluginHost } from "./plugins/host";
 import { createPluginBridge, type PluginBridgeLive } from "./plugins/appBridge";
 
 export function App() {
-  const api = useMemo(
+  const apiBaseUrl = useMemo(
     () =>
-      new HttpMuzaApi(
-        resolveApiBaseUrl(
-          import.meta.env.VITE_API_URL,
-          import.meta.env.PROD ? "production" : "development",
-          import.meta.env.DEV ? "http://localhost:8000/api" : undefined,
-        ),
+      resolveApiBaseUrl(
+        import.meta.env.VITE_API_URL,
+        import.meta.env.PROD ? "production" : "development",
+        import.meta.env.DEV ? "http://localhost:8000/api" : undefined,
       ),
     [],
   );
+  const api = useMemo(() => new HttpMuzaApi(apiBaseUrl), [apiBaseUrl]);
+  // Дев-сборке подписываем бэкенд в диалогах ввода кода: коды плейлиста и jam
+  // живут в базе КОНКРЕТНОГО сервера и с прода на локалхост не переезжают.
+  const apiHost = useMemo(() => devApiHost(apiBaseUrl, import.meta.env.DEV), [apiBaseUrl]);
   const [session, setSession] = useState<Session | null>(null);
   const [restoring, setRestoring] = useState(true);
 
@@ -108,6 +111,7 @@ export function App() {
   return (
     <Player
       api={api}
+      apiHost={apiHost}
       userId={session.user.id}
       canSearch={!session.user.anonymous}
       greetName={session.user.anonymous ? null : session.user.username}
@@ -209,6 +213,7 @@ function initialPlaybackState(): { queue: PlayerTrack[]; pos: number } {
  *  (добыча на своём IP → LRU-кэш → Web Audio) и локальных файлов с диска. */
 function Player({
   api,
+  apiHost,
   userId,
   canSearch,
   greetName,
@@ -217,6 +222,9 @@ function Player({
   onLogout,
 }: {
   api: MuzaApi;
+  /** Хост API в дев-сборке (в проде null) — подпись в диалогах ввода кода:
+   *  коды плейлиста и jam живут в базе конкретного сервера. См. lib/devApiHost.ts. */
+  apiHost: string | null;
   /** id пользователя — скоуп оффлайн-снапшотов (чужая библиотека не светится). */
   userId: string;
   canSearch: boolean;
@@ -2133,6 +2141,7 @@ function Player({
       <JoinPlaylistDialog
         api={api}
         open={joinOpen}
+        apiHost={apiHost}
         onClose={() => setJoinOpen(false)}
         onJoined={(p) => {
           setJoinOpen(false);
@@ -2143,7 +2152,7 @@ function Player({
       />
 
       {/* Jam — слушать вместе (Stage 7) */}
-      <JamDialog jam={jam} open={jamOpen} canUse={canSearch} onClose={() => setJamOpen(false)} onNotify={showToast} />
+      <JamDialog jam={jam} open={jamOpen} canUse={canSearch} apiHost={apiHost} onClose={() => setJamOpen(false)} onNotify={showToast} />
 
       {/* Шеринг-карточка (Stage 7): трек/плейлист/Wrapped */}
       <ShareDialog data={shareData} onClose={() => setShareData(null)} onNotify={showToast} />
@@ -2254,7 +2263,11 @@ function Player({
         onClose={() => setExpanded(false)}
         visualizer={prefs.visualizer}
         getAnalyser={pb.getAnalyser}
+        visualizerBars={prefs.visualizerBars}
+        visualizerMirror={prefs.visualizerMirror}
+        visualizerWaveSmooth={prefs.visualizerWaveSmooth}
         bassShake={prefs.bassShake}
+        bassShakeStrength={prefs.bassShakeStrength}
         anims={prefs.anims}
       />
       ) : null}

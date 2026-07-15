@@ -9,6 +9,7 @@ export function JamDialog({
   jam,
   open,
   canUse,
+  apiHost,
   onClose,
   onNotify,
 }: {
@@ -16,6 +17,9 @@ export function JamDialog({
   open: boolean;
   /** false у анонима — jam требует серверного аккаунта. */
   canUse: boolean;
+  /** Хост API в дев-сборке (в проде null) — jam живёт в Redis конкретного
+   *  сервера, код с чужого бэкенда не подойдёт. См. lib/devApiHost.ts. */
+  apiHost: string | null;
   onClose: () => void;
   onNotify: (text: string, icon?: string) => void;
 }) {
@@ -199,6 +203,12 @@ export function JamDialog({
                 </Button>
               </div>
               {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-caption)" }}>{error}</div> : null}
+              {apiHost ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
+                  <Icon name="server" size={13} color="var(--text-3)" />
+                  {t("dialogs.devBackend", { host: apiHost })}
+                </div>
+              ) : null}
             </div>
           </>
         )}

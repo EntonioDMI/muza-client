@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Dialog, SearchInput } from "@muza/ui";
+import { Button, Dialog, Icon, SearchInput } from "@muza/ui";
 import type { MuzaApi, PlaylistMeta } from "@muza/api-client";
 import { useT } from "../i18n";
 
@@ -8,11 +8,15 @@ import { useT } from "../i18n";
 export function JoinPlaylistDialog({
   api,
   open,
+  apiHost,
   onClose,
   onJoined,
 }: {
   api: MuzaApi;
   open: boolean;
+  /** Хост API в дев-сборке (в проде null) — код живёт в базе конкретного
+   *  сервера и с чужого бэкенда не подойдёт. См. lib/devApiHost.ts. */
+  apiHost: string | null;
   onClose: () => void;
   /** Успешный вход: перечитать сайдбар и открыть плейлист. */
   onJoined: (playlist: PlaylistMeta) => void;
@@ -83,6 +87,12 @@ export function JoinPlaylistDialog({
           autoFocus
         />
         {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-caption)" }}>{error}</div> : null}
+        {apiHost ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
+            <Icon name="server" size={13} color="var(--text-3)" />
+            {t("dialogs.devBackend", { host: apiHost })}
+          </div>
+        ) : null}
       </div>
     </Dialog>
   );
