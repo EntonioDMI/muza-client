@@ -45,7 +45,7 @@ export type CurrentTrack = PlayerTrack | null;
 export function usePlayback({
   api,
   initialQueue,
-  initialPos = 24,
+  initialPos = 0,
   prefs,
   onError,
   onPlayEnd,
@@ -53,11 +53,12 @@ export function usePlayback({
 }: {
   api: MuzaApi;
   initialQueue: PlayerTrack[];
-  /** Позиция плеер-бара до первого взаимодействия. 24 — как в демо Stage 1
-   *  («уже населённый» бар); при восстановлении последнего трека после
-   *  релонча (App.tsx, prefs.resumePosition) — сохранённая позиция. Playing
-   *  НИКОГДА не наследуется отсюда — см. playing ниже (T2: защита от
-   *  «песни сами играют»). */
+  /** Позиция плеер-бара до первого взаимодействия: при восстановлении
+   *  последнего трека после релонча (App.tsx, prefs.resumePosition) —
+   *  сохранённая позиция, иначе 0. Дефолтом тут стояло 24 — «уже населённый»
+   *  бар демо Stage 1; вместе с демо-очередью это и рисовало новому
+   *  пользователю чужую песню на 0:24. Playing НИКОГДА не наследуется
+   *  отсюда — см. playing ниже (T2: защита от «песни сами играют»). */
   initialPos?: number;
   prefs: Prefs;
   /** Показ ошибок добычи/воспроизведения (тост). */
