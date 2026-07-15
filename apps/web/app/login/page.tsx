@@ -96,6 +96,13 @@ export default function LoginPage() {
         alignItems: "center",
         justifyContent: "center",
         overflowY: "auto",
+        // Безопасные зоны (globals.css :root): в standalone на iPhone экран
+        // отдаётся целиком, включая чёлку. Карточка отцентрована и обычно её
+        // не задевает, но при overflowY:auto (маленький экран, крупный шрифт,
+        // ландшафт) верх уехал бы под Dynamic Island. На десктопе все четыре
+        // переменные = 0 — раскладка не меняется.
+        padding: "var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left)",
+        boxSizing: "border-box",
       }}
     >
       <div

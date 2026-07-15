@@ -25,6 +25,31 @@ a {
   --z-overlay: 50;
   --h-bottomnav: 60px;
   --h-minibar: 60px;
+
+  /* ── Безопасные зоны экрана ──────────────────────────────────────────
+     На iPhone «Добавить на экран Домой» открывает нас в display-mode:
+     standalone, а layout.tsx просит viewportFit:"cover" +
+     statusBarStyle:"black-translucent" — значит iOS отдаёт вебвью ВЕСЬ экран,
+     включая полосу статуса, Dynamic Island и home-indicator. Отступить обязано
+     само приложение, иначе контент лежит ПОД чёлкой: она его закрывает и
+     перехватывает касания (так поиск на главной был недоступен физически).
+
+     UA-детект («узнать, что зашли с телефона») тут не нужен и был бы вреден:
+     env(safe-area-inset-*) сам равен 0 на десктопе и в обычной вкладке Safari,
+     и отличен от нуля ровно там, где чёлка есть. Раскладка остаётся одна.
+
+     Через переменные, а не env() по месту:
+     1) один источник — до этого env(safe-area-inset-top) стоял ровно в ОДНОМ
+        месте (.np-overlay) из пяти, где он нужен, и каркас его не знал;
+     2) значение можно подменить в девтулзах и увидеть раскладку iPhone на
+        десктопе (env() подменить нельзя) — иначе баг ловится только на живом
+        телефоне, а мы его так и проглядели.
+     Фолбэк 0px обязателен: без второго аргумента env() в браузере без
+     поддержки делает всё выражение calc() невалидным. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 /* ── Каркас ── */
@@ -126,7 +151,7 @@ a {
   position: fixed;
   left: var(--sp-2);
   right: var(--sp-2);
-  bottom: calc(var(--h-bottomnav) + env(safe-area-inset-bottom) + var(--sp-2) * 2);
+  bottom: calc(var(--h-bottomnav) + var(--safe-bottom) + var(--sp-2) * 2);
   z-index: var(--z-bar);
   height: var(--h-minibar);
   border-radius: var(--r-md);
@@ -162,8 +187,16 @@ a {
   right: 0;
   bottom: 0;
   z-index: var(--z-nav);
-  height: calc(var(--h-bottomnav) + env(safe-area-inset-bottom));
-  padding-bottom: env(safe-area-inset-bottom);
+  /* box-sizing обязателен: height УЖЕ включает --safe-bottom, и без border-box
+     padding-bottom добавлялся сверху — home-indicator считался ДВАЖДЫ
+     (60+34 height + 34 padding = 128px вместо 94). Это и был «лишний чёрный
+     кусок» под таб-баром на iPhone. На десктопе --safe-bottom = 0, поэтому
+     ошибка не проявлялась вообще: 60+0 и padding 0 дают те же 60.
+     Соседние плавающие панели (.zone, .playerbar, .np-overlay) border-box
+     имеют — эта одна его не получила. */
+  box-sizing: border-box;
+  height: calc(var(--h-bottomnav) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
   background: var(--glass-deep);
   backdrop-filter: blur(var(--blur-glass));
   -webkit-backdrop-filter: blur(var(--blur-glass));
@@ -197,7 +230,8 @@ a {
   z-index: var(--z-overlay);
   display: flex;
   flex-direction: column;
-  padding: calc(env(safe-area-inset-top) + var(--sp-4)) var(--sp-5) calc(env(safe-area-inset-bottom) + var(--sp-5));
+  padding: calc(var(--safe-top) + var(--sp-4)) calc(var(--safe-right) + var(--sp-5))
+    calc(var(--safe-bottom) + var(--sp-5)) calc(var(--safe-left) + var(--sp-5));
   background: var(--glass-deep);
   backdrop-filter: blur(var(--blur-glass));
   -webkit-backdrop-filter: blur(var(--blur-glass));
@@ -289,32 +323,12 @@ a {
   border-color: var(--text-1);
 }
 
-/* Сетка иконок плейлиста (T47) — квадратные тач-таргеты ≥44px, как .swatch */
-.icon-swatch {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  min-width: 44px;
-  min-height: 44px;
-  border-radius: var(--r-xs);
-  border: 2px solid transparent;
-  padding: 2px;
-  background: var(--surface-2);
-  cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-}
-
-.icon-swatch:hover {
-  background: var(--surface-3);
-}
-
-.icon-swatch.active {
-  border-color: var(--text-1);
-}
-
-.icon-swatch:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
+/* .icon-swatch удалён в Э0 веб-паритета: единственным его потребителем был
+   apps/web/src/components/PlaylistIconPicker.tsx, а он сведён с десктопной
+   копией в @muza/app/shell/PlaylistIconPicker.tsx. Общий пикер носит стили
+   инлайном — пакет не вправе рассчитывать, что в приложении-потребителе
+   объявлен нужный класс (у десктопа его никогда не было). Тач-таргеты ≥44px
+   и auto-fill-сетка переехали туда же. */
 
 /* ── Брейкпоинты ── */
 
@@ -333,8 +347,13 @@ a {
   .shell-grid,
   .shell-grid.with-np {
     grid-template-columns: 1fr;
-    padding: var(--sp-2);
-    padding-bottom: calc(var(--h-minibar) + var(--h-bottomnav) + env(safe-area-inset-bottom) + var(--sp-2) * 4);
+    /* Сверху и по бокам — свой отступ ПЛЮС безопасная зона. Без --safe-top
+       контент начинался на 8px от верха ЭКРАНА (а не от полосы статуса) и
+       уезжал под Dynamic Island. Боковые нужны в ландшафте: там чёлка съедает
+       край, а не верх. */
+    padding: calc(var(--safe-top) + var(--sp-2)) calc(var(--safe-right) + var(--sp-2)) 0
+      calc(var(--safe-left) + var(--sp-2));
+    padding-bottom: calc(var(--h-minibar) + var(--h-bottomnav) + var(--safe-bottom) + var(--sp-2) * 4);
   }
 
   .sidebar {
