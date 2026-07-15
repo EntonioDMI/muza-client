@@ -8,11 +8,12 @@ export const dynamic = "force-static";
 /** PWA-манифест (T39). Next 16 App Router отдаёт его сам по
  *  `/manifest.webmanifest` + линкует `<link rel="manifest">` в `<head>`
  *  автоматически — руками в layout.tsx ничего добавлять не нужно.
- *  Иконки — растеризованы из `packages/ui/src/assets/logo/icon.png`
- *  (256×256, уже с тёмным фоном и скруглением) скриптом на PIL, т.к. `sharp`
- *  отключён для веба (`pnpm-workspace.yaml`) и в системе нет ImageMagick —
- *  512 неизбежно апскейл ×2 (LANCZOS), не идеальная резкость, но приемлемо
- *  для PWA-иконки. `theme_color`/`background_color` — тёмный `--bg-0` (совпадает
+ *  Иконки (вместе с `/icons/apple-touch-icon.png`) растеризованы из
+ *  `apps/desktop/src-tauri/app-icon.svg` — того же источника, из которого собран
+ *  иконочный набор десктопа; так веб и приложение не разъезжаются, и 512 берётся
+ *  из вектора без апскейла. Растеризовать из `packages/ui/src/assets/logo/icon.png`
+ *  НЕЛЬЗЯ: этот файл отстал на смене логотипа 13.07 и уже однажды вернул сюда
+ *  старую молнию. `theme_color`/`background_color` — тёмный `--bg-0` (совпадает
  *  с фоном самой иконки). */
 export default function manifest(): MetadataRoute.Manifest {
   return {
