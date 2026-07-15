@@ -829,7 +829,7 @@ export const en = {
       radio: "Radio from this track",
       addToJam: "Add to Jam",
       share: "Share",
-      versions: "Versions & sources",
+      versions: "Sources",
       saveOffline: "Save offline",
       removeOffline: "Remove from offline",
     },
@@ -1082,7 +1082,7 @@ export const en = {
       codeCopied: "Code copied — invite your friends",
     },
     versions: {
-      titleWithTrack: "\"{title}\" — versions & sources",
+      titleWithTrack: "\"{title}\" — sources",
       localFile: "Local file",
       kindDirect: "added via link",
       kindLocal: "file on device",
@@ -1096,7 +1096,7 @@ export const en = {
       priority: "priority {n}",
       noSources: "No live sources — the track can't play yet.",
       footerHint:
-        "Your choice is remembered and won't be overridden by auto-matching. Likes and lyrics stay on the track itself.",
+        "These are places the SAME song is fetched from — remixes and sped-up edits are separate tracks, look for them in search. Your choice is remembered and won't be overridden by auto-matching. Likes and lyrics stay on the track itself.",
     },
     queue: {
       playAria: "Play: {artist} — {title}",

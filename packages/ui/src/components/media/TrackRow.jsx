@@ -8,6 +8,10 @@ import { Cover } from "./Cover.jsx";
  *  on hover/focus), like/more appear on focus-within as well as hover.
  *  Labels default to English (ДС строко-нейтральна, DEFAULT_LANG=en) — приложение
  *  может передать локализованные playLabel/pauseLabel/likeLabel/moreLabel. */
+/** Ширина слота версий = ширине распорки, чтобы ряд с версиями и без были
+ *  одинаковы до пикселя (число + шеврон помещаются с запасом). */
+const VERSIONS_SLOT = 40;
+
 export function TrackRow({
   index,
   cover,
@@ -17,6 +21,11 @@ export function TrackRow({
   duration,
   showDuration = true,
   source,
+  versionCount,
+  showVersions = false,
+  versionsExpanded = false,
+  onVersions,
+  versionsLabel,
   active = false,
   playing = false,
   liked = false,
@@ -140,6 +149,52 @@ export function TrackRow({
         </span>
       ) : null}
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}>
+        {/* Версии (ремиксы/спидапы) — слот ряда, а не сосед строки снаружи.
+            Раньше карточка группы вешала бейдж СБОКУ от TrackRow, тот ужимался
+            на её ширину, и у трека с версиями таймкод уезжал влево относительно
+            соседних строк. Слот резервируется распоркой у ВСЕХ строк списка
+            (showVersions — свойство списка, versionCount — данные строки),
+            поэтому правый кластер стоит на одном месте у всех. */}
+        {showVersions ? (
+          versionCount ? (
+            <button
+              type="button"
+              onClick={onVersions}
+              aria-expanded={versionsExpanded}
+              aria-label={versionsLabel}
+              title={versionsLabel}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 1,
+                width: VERSIONS_SLOT,
+                height: 36,
+                flex: "none",
+                border: "none",
+                borderRadius: "var(--r-sm)",
+                background: versionsExpanded ? "var(--surface-3)" : "transparent",
+                color: versionsExpanded ? "var(--text-1)" : "var(--text-2)",
+                fontFamily: "var(--font-ui)",
+                fontSize: "var(--fs-caption)",
+                fontWeight: "var(--fw-semibold)",
+                fontVariantNumeric: "tabular-nums",
+                lineHeight: 1,
+                cursor: "pointer",
+              }}
+            >
+              {versionCount}
+              <Icon
+                name="chevron-down"
+                size={14}
+                color="currentColor"
+                style={{ transform: versionsExpanded ? "rotate(180deg)" : undefined, transition: "transform var(--dur-fast) var(--ease-out)" }}
+              />
+            </button>
+          ) : (
+            <span style={{ width: VERSIONS_SLOT, flex: "none" }}></span>
+          )
+        ) : null}
         {lit || liked ? (
           <IconButton icon="heart" size="sm" active={liked} filled={liked} label={likeLabel} onClick={onLike} style={{ opacity: liked || lit ? 1 : 0 }} />
         ) : (

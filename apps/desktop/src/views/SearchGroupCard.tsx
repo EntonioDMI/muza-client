@@ -1,18 +1,31 @@
 import { useState } from "react";
-import { Badge, Icon } from "@muza/ui";
 import type { GroupSearchResult, Track } from "@muza/api-client";
 import { pluralVersions, variantLabel } from "../lib/searchGrouping";
 import { useT } from "../i18n";
 
+/** Данные слота версий для строки канона (TrackRow рисует их в правом кластере). */
+export interface VersionsSlot {
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  label: string;
+}
+
 /** T37: карточка-группа результата grouped-поиска (?group=1, T36 сервера) —
- *  канон + бейдж «N версий», разворот показывает варианты с человеческой
- *  подписью категории (Ремикс/Спидап/…). Вся логика строки (drag-out,
- *  очередь/лайк/меню) остаётся в SearchView — сюда передаётся готовый
- *  renderRow, чтобы не дублировать её (DRY с плоским режимом поиска).
+ *  канон со слотом версий в самой строке, разворот показывает варианты с
+ *  человеческой подписью категории (Ремикс/Спидап/…). Вся логика строки
+ *  (drag-out, очередь/лайк/меню) остаётся в SearchView — сюда передаётся
+ *  готовый renderRow, чтобы не дублировать её (DRY с плоским режимом поиска).
  *  Состояние разворота — локальное (key карточки = id канона): новая выдача
  *  просто ремонтирует карточку и сбрасывает разворот сама по себе, без
  *  отдельного эффекта-сброса (в отличие от веб-аналога GroupedTrackList,
- *  где Set<index> требовал явного useEffect на смену results). */
+ *  где Set<index> требовал явного useEffect на смену results).
+ *
+ *  Управление разворотом переехало ВНУТРЬ TrackRow (проп versions* → renderRow).
+ *  Раньше бейдж «N версий» + шеврон висел СОСЕДОМ строки в одном flex-ряду:
+ *  строка получала flex:1/minWidth:0, кнопка — flex:none, кнопка забирала свою
+ *  ширину, строка ужималась ровно на неё, и таймкод у трека с версиями уезжал
+ *  влево относительно обычных строк выдачи (жалоба владельца на v0.1.1). */
 export function SearchGroupCard({
   result,
   index,
@@ -21,7 +34,7 @@ export function SearchGroupCard({
   result: GroupSearchResult;
   /** Порядковый номер карточки в выдаче — уходит в TrackRow.index канона. */
   index: number;
-  renderRow: (track: Track, index?: number) => React.ReactNode;
+  renderRow: (track: Track, index?: number, versions?: VersionsSlot) => React.ReactNode;
 }) {
   const { t, lang } = useT();
   const [expanded, setExpanded] = useState(false);
@@ -32,36 +45,12 @@ export function SearchGroupCard({
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-1)" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>{renderRow(result.canonical, index)}</div>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          aria-label={`${versionCount} ${pluralVersions(versionCount, lang)} — ${expanded ? t("views.search.groupCard.collapse") : t("views.search.groupCard.expand")}`}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--sp-1)",
-            flex: "none",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            padding: "var(--sp-2)",
-            borderRadius: "var(--r-sm)",
-          }}
-        >
-          <Badge tone={result.hasOriginal ? "accent" : "neutral"}>
-            {versionCount} {pluralVersions(versionCount, lang)}
-          </Badge>
-          <Icon
-            name="chevron-down"
-            size={16}
-            color="var(--text-3)"
-            style={{ transform: expanded ? "rotate(180deg)" : undefined, transition: "transform var(--dur-fast, 150ms)" }}
-          />
-        </button>
-      </div>
+      {renderRow(result.canonical, index, {
+        count: versionCount,
+        expanded,
+        onToggle: () => setExpanded((v) => !v),
+        label: `${versionCount} ${pluralVersions(versionCount, lang)} — ${expanded ? t("views.search.groupCard.collapse") : t("views.search.groupCard.expand")}`,
+      })}
       {canonLabel ? (
         <div
           style={{

@@ -5,7 +5,7 @@ import { fmtTime, primarySourceLabel } from "../lib/format";
 import { startTrackDrag } from "../lib/dnd";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { flattenGroupedResults, nextGroupLimit } from "../lib/searchGrouping";
-import { SearchGroupCard } from "./SearchGroupCard";
+import { SearchGroupCard, type VersionsSlot } from "./SearchGroupCard";
 import { useT } from "../i18n";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
@@ -188,8 +188,13 @@ export function SearchView({
   /** Строка трека: тач-таргет/драг-источник (Alt+drag — файл, T18) — общая
    *  для плоского и grouped-режима, чтобы не дублировать DnD/очередь/
    *  лайк/меню. index не задан — TrackRow просто не рисует номер (варианты
-   *  внутри развёрнутой группы). */
-  const renderRow = (tr: Track, index?: number) => (
+   *  внутри развёрнутой группы). versions задан только у канона группы.
+   *
+   *  showVersions включён для ВСЕЙ grouped-выдачи, а не только у групп: в ней
+   *  карточки-группы и одиночные треки идут вперемешку, и слот версий обязан
+   *  быть зарезервирован у всех — иначе правый кластер (лайк/таймкод/«⋯»)
+   *  разъезжается между соседними строками. */
+  const renderRow = (tr: Track, index?: number, versions?: VersionsSlot) => (
     <div
       key={tr.id}
       draggable
@@ -207,6 +212,11 @@ export function SearchView({
         duration={fmtTime(tr.durationSec)}
         showDuration={rowShow?.duration !== false}
         source={primarySourceLabel(tr.sources, lang)}
+        showVersions={searchGrouping}
+        versionCount={versions?.count}
+        versionsExpanded={versions?.expanded}
+        onVersions={versions?.onToggle}
+        versionsLabel={versions?.label}
         active={currentId === tr.id}
         playing={currentId === tr.id && playing}
         liked={likes.includes(tr.id)}

@@ -16,6 +16,19 @@ export interface TrackRowProps {
   showDuration?: boolean;
   /** Compact source-provider badge (e.g. "SoundCloud"); omit to hide. */
   source?: string;
+  /** Сколько ДРУГИХ версий песни (ремиксы/спидапы) свёрнуто под этой строкой.
+   *  0/не задан — строка обычная, слот занимает распорка. */
+  versionCount?: number;
+  /** Резервировать слот версий во ВСЕХ строках списка. Свойство СПИСКА, а не
+   *  строки: в grouped-выдаче группы и одиночки идут вперемешку, и без общего
+   *  резерва правый кластер разъезжается между ними. Default false. */
+  showVersions?: boolean;
+  /** Версии развёрнуты — шеврон повёрнут, слот подсвечен. */
+  versionsExpanded?: boolean;
+  /** Клик по слоту версий (свернуть/развернуть). */
+  onVersions?: () => void;
+  /** Доступное имя слота версий («2 версии — развернуть»); задаёт приложение. */
+  versionsLabel?: string;
   /** This row is the current track (accent title). */
   active?: boolean;
   /** Playback running (equalizer glyph instead of index). */
