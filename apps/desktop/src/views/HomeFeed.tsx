@@ -23,14 +23,6 @@ function greeting(t: T) {
   return t("views.home.greeting.evening");
 }
 
-/** Плейсхолдер обложки: у части каталожных треков cover_url нет, а Tile
- *  требует картинку (нейтральный градиент в токенах бренда). */
-const COVER_FALLBACK =
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="176" height="176"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a2a33"/><stop offset="1" stop-color="#17171c"/></linearGradient></defs><rect width="176" height="176" fill="url(#g)"/></svg>`,
-  );
-
 /** Порядок секций главной (решение владельца): витрины сверху, «Для тебя»
  *  списком ниже, «Потому что…» после него. Неизвестные ключи — в конец. */
 const SECTION_RANK: Record<string, number> = { trending: 0, new: 1, for_you: 2 };
@@ -271,7 +263,11 @@ export function HomeFeed({
                     style={{ flex: "none" }}
                   >
                     <Tile
-                      cover={tr.coverUrl ?? COVER_FALLBACK}
+                      // Нет обложки → плейсхолдер рисует Cover внутри Tile.
+                      // Здесь лежал свой data:svg-градиент: плитка без арта
+                      // выглядела иначе, чем строка без арта, хотя состояние
+                      // одно и то же.
+                      cover={tr.coverUrl}
                       title={tr.title}
                       subtitle={tr.artist}
                       playing={currentId === tr.id && playing}
