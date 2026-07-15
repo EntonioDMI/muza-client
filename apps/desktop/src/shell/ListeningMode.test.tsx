@@ -69,7 +69,7 @@ describe("ListeningMode — «Качание при басах» (T14)", () => {
     expect(getByTestId("listening-mode").style.transform).toBe("");
   });
 
-  it("без analyser (демо/plain-режим) ничего не делает и не падает", async () => {
+  it("без analyser (plain-режим) ничего не делает и не падает", async () => {
     const { getByTestId } = renderMode({ bassShake: true, anims: true, getAnalyser: undefined });
     await new Promise((r) => setTimeout(r, 150));
     expect(getByTestId("listening-mode").style.transform).toBe("");

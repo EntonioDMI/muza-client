@@ -206,7 +206,7 @@ function initialPlaybackState(): { queue: PlayerTrack[]; pos: number } {
 }
 
 /** Каркас плеера. Stage 3: реальное воспроизведение каталожных треков
- *  (добыча на своём IP → LRU-кэш → Web Audio), демо-треки — симуляция. */
+ *  (добыча на своём IP → LRU-кэш → Web Audio) и локальных файлов с диска. */
 function Player({
   api,
   userId,
@@ -253,7 +253,7 @@ function Player({
   const historyRef = useRef<HistoryState<View>>(createHistory<View>({ view }));
   // выбор плейлиста для «В плейлист» из поиска
   const [plPick, setPlPick] = useState<CatalogTrack | null>(null);
-  // Stage 4: меню каталожного трека («⋯») и диалог «Версии и источники»
+  // Stage 4: меню трека («⋯») и диалог «Источники»
   const [catMenu, setCatMenu] = useState<{ open: boolean; x: number; y: number; track: CatalogTrack | null }>({
     open: false,
     x: 0,
@@ -325,7 +325,7 @@ function Player({
     initialPos: initialPlayback.pos,
     prefs,
     onError: (m) => showToast(m, "x"),
-    // Скробблинг: каталожные прослушивания — в историю сервера (демо — нет)
+    // Скробблинг: каталожные прослушивания — в историю сервера
     onPlayEnd: ({ track: t, playedMs, completed }) => {
       if (!canSearch || t.kind !== "catalog") return;
       // анонимный счётчик для телеметрии (без id трека — агрегат)
@@ -477,7 +477,7 @@ function Player({
   }, [prefs.fontScale]);
 
   // Серверная сессия: подтягиваем плейлисты и избранное (лайки каталожных
-  // треков живут на сервере; демо-треки — по-прежнему локально).
+  // треков живут на сервере).
   // Stage 4: удачные ответы снапшотятся — без сети библиотека читается.
   const reloadServerPlaylists = async () => {
     if (!canSearch) return;
@@ -560,7 +560,7 @@ function Player({
     showToast(t("toast.offline.playlistDone", { ok, count: targets.length }), "download");
   };
 
-  /** Каталожный (серверный) id — числовой; демо-ид вида "t1". */
+  /** Каталожный (серверный) id — числовой; у локального файла — "local:<sha256>". */
   const isCatalogId = (id: string) => /^\d+$/.test(id);
 
   /** Иконки, уже занятые плейлистами пользователя — pickRandomPlaylistIcon
@@ -1078,7 +1078,8 @@ function Player({
   const plMenuIsOwner =
     plMenu.pl === null || !canSearch || srvPlaylists.find((x) => x.id === plMenu.pl?.id)?.role !== "collaborator";
 
-  /** Переименование из контекст-меню: сервер — как в PlaylistView, аноним — демо-список. */
+  /** Переименование из контекст-меню: как в PlaylistView. Плейлисты есть
+   *  только у серверной сессии — анониму переименовывать нечего. */
   const renameFromMenu = async () => {
     const target = plRename;
     const name = plRenameValue.trim();

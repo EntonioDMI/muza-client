@@ -1,6 +1,6 @@
 /** Оркестратор воспроизведения (Stage 3): очередь-контекст (откуда запустили —
  *  то и очередь), реальный движок для каталожных треков (добыча → LRU-кэш →
- *  <audio>), демо-треки — симуляция таймером (у них нет аудио). */
+ *  <audio>). Локальные файлы играют оттуда же, с диска. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -73,7 +73,7 @@ export function usePlayback({
   const [queue, setQueue] = useState<PlayerTrack[]>(initialQueue);
   const [index, setIndex] = useState(0);
   // Плеер НИКОГДА не стартует играющим сам — только по явному действию
-  // пользователя (клик/toggle). Раньше здесь было true «как в демо Stage 1»;
+  // пользователя (клик/toggle). Раньше здесь было true «как в макете Stage 1»;
   // с тех пор playing доехало до Discord RPC/mediaSession(SMTC)/мини-плеера,
   // и любой релонч (в т.ч. тихий рестарт tauri dev на правку src-tauri/**)
   // выглядел как «песня сама заиграла» (T2-расследование, живой репро
@@ -523,7 +523,8 @@ export function usePlayback({
   };
   const toggleShuffle = () => setShuffle((s) => !s);
 
-  /** Анализатор движка для визуализатора (Stage 6); null у демо/plain. */
+  /** Анализатор движка для визуализатора (Stage 6); null в plain-режиме
+   *  (движок без Web Audio-графа — не CORS-чистый источник). */
   const getAnalyser = () => engineRef.current?.analyser() ?? null;
 
   // ── Операции над очередью (UX-доводка 2026-07-11) ─────────────────

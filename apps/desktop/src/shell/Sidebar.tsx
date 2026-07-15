@@ -16,7 +16,7 @@ export interface PluginNavItemView {
   icon: string;
 }
 
-/** Пункт списка плейлистов: демо (с обложкой) или серверный — T47b: тоже с
+/** Пункт списка плейлистов (серверный) — T47b: с
  *  cover, если у плейлиста есть валидная иконка манифеста @muza/core;
  *  иначе (или нет иконки) — плейсхолдер (users/list-music по shared). */
 export interface SidebarPlaylist {

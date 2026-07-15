@@ -275,7 +275,7 @@ export class AudioEngine {
     }
   }
 
-  /** Полная остановка (переход на демо-симуляцию). */
+  /** Полная остановка: снять источник и обнулить оба слота. */
   stop(): void {
     for (const slot of this.slots) {
       slot.el.pause();
@@ -316,7 +316,7 @@ export class AudioEngine {
   }
 
   /** Анализатор для визуализатора (Stage 6); null — plain-режим или граф
-   *  ещё не построен (демо-треки, браузер без CORS-чистого источника). */
+   *  ещё не построен (браузер без CORS-чистого источника — plain-режим). */
   analyser(): AnalyserNode | null {
     return this.analyserNode;
   }

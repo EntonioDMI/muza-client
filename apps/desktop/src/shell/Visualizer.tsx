@@ -71,7 +71,7 @@ export function Visualizer({
       }
       ctx.clearRect(0, 0, w, h);
       const analyser = getAnalyserRef.current();
-      if (!analyser) return; // демо/plain — тишина без данных
+      if (!analyser) return; // plain-режим — тишина без данных
 
       const now = performance.now();
       const dt = Math.min(0.25, Math.max(0, (now - lastT) / 1000));

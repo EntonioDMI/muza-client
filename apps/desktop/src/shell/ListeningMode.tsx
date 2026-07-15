@@ -53,7 +53,7 @@ export function ListeningMode({
 }: {
   open: boolean;
   track: PlayerTrack;
-  /** Строки текста (демо — локальные, каталог — LRCLIB, слайс 4). */
+  /** Строки текста — LRCLIB с сервера (слайс 4). */
   lyrics: LyricLine[];
   /** Текст ещё грузится — «Ищем текст…» вместо «Текст не найден». */
   lyricsLoading?: boolean;

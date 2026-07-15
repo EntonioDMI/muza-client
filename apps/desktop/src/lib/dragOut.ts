@@ -13,7 +13,7 @@ export function dragOutAvailable(): boolean {
 }
 
 /** Подготовить файл для драга; бросает с человеческим сообщением,
- *  если трека нет в кэше (демо-треки, ещё не игранные). */
+ *  если трека нет в кэше (ещё не игранные треки). */
 export async function exportCachedTrack(trackId: string, artist: string, title: string): Promise<string> {
   return invoke<string>("engine_export_cached", {
     trackId,

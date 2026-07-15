@@ -12,7 +12,7 @@ const VALID_ICON_IDS = new Set<string>(PLAYLIST_ICON_IDS);
 
 /** Src для обложки плейлиста по id иконки — null, если иконки нет или id
  *  не входит в манифест: вызывающий код должен в этом случае отрисовать
- *  прежний фолбэк (Icon "list-music"/"users" или статичную демо-обложку). */
+ *  прежний фолбэк (Icon "list-music"/"users"). */
 export function playlistIconSrc(icon: string | null | undefined): string | null {
   if (!icon || !VALID_ICON_IDS.has(icon)) return null;
   return playlistIconUrl(icon);
