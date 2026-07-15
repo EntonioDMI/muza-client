@@ -13,6 +13,7 @@ import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
+import { shouldSilenceBeforeResolve } from "./startPlan";
 import type { PlayerTrack } from "./types";
 
 /** За сколько секунд до конца начинать преднагрузку следующего трека. */
@@ -130,7 +131,11 @@ export function usePlayback({
 
   // Преднагрузка: id трека, чей файл уже в кэше и в неактивном слоте
   const preloadedRef = useRef<{ id: string; url: string } | null>(null);
-  // Отбрасываем результаты устаревших resolve при быстром переключении
+  // Токен актуальности незавершённого startAt. Отбрасываем результаты
+  // устаревших resolve — при быстром переключении (успели кликнуть дальше) И
+  // при паузе (см. cancelPendingStart): добыча идёт секундами, за это время
+  // пользователь вполне успевает передумать, а resolve не отменяем — Rust
+  // всё равно докачает файл в кэш, просто заводить движок им уже нельзя.
   const playSeqRef = useRef(0);
   // Ранний стык (кроссфейд/gapless) на естественном переходе уже запущен для этого pos
   const autoAdvancedRef = useRef(false);
@@ -258,8 +263,11 @@ export function usePlayback({
   };
 
   /** Запустить трек очереди по индексу. fadeSec>0 (кроссфейд/gapless) —
-   *  только на авто-переходе, см. advance(). */
-  const startAt = async (i: number, opts?: { fadeSec?: number }) => {
+   *  только на авто-переходе, см. advance(). auto — старт от авто-перехода, а
+   *  не от человека; дефолт false, т.к. все остальные вызывающие (клик по
+   *  треку, toggle, удаление играющего) — ручные. Решает, глушить ли играющий
+   *  трек на время добычи, см. startPlan.shouldSilenceBeforeResolve. */
+  const startAt = async (i: number, opts?: { fadeSec?: number; auto?: boolean }) => {
     const s = stateRef.current;
     const t = s.queue[i];
     if (!t) return;
@@ -283,15 +291,28 @@ export function usePlayback({
     }
 
     try {
+      const preloadedUrl = preloadedRef.current?.id === t.id ? preloadedRef.current.url : null;
+      // Человек переключил трек, а добычи ждать секунды — глушим играющий
+      // СЕЙЧАС. Раньше единственным, что его останавливало, был engine().play()
+      // в конце резолва: бар уже показывал новый трек, а из колонок всё это
+      // время шёл старый (жалоба владельца 2026-07-15). На авто-переходе и на
+      // преднагруженном НЕ глушим — см. startPlan.ts, там же почему признак
+      // именно auto, а не fadeSec.
+      if (shouldSilenceBeforeResolve({ auto: opts?.auto ?? false, preloaded: preloadedUrl !== null })) {
+        engine().pause();
+      }
       let url: string;
-      if (preloadedRef.current?.id === t.id) {
-        url = preloadedRef.current.url;
+      if (preloadedUrl !== null) {
+        url = preloadedUrl;
       } else {
         setBuffering(true);
         const resolved = await resolveForTrack(t);
         url = resolved.url;
       }
-      if (playSeqRef.current !== seq) return; // уже переключили дальше
+      // Старт мог устареть, пока шла добыча: переключили дальше ИЛИ нажали
+      // паузу (cancelPendingStart). Второе — не то же самое, что первое:
+      // playSeq отвечает «актуален ли ЭТОТ старт», а не «тот ли это трек».
+      if (playSeqRef.current !== seq) return;
       preloadedRef.current = null;
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
       await engine().play(url, norm, opts?.fadeSec ?? 0);
@@ -355,7 +376,7 @@ export function usePlayback({
           const nextQueue = [...s.queue, ...more];
           setQueue(nextQueue);
           stateRef.current = { ...stateRef.current, queue: nextQueue };
-          await startAt(s.queue.length, { fadeSec: 0 });
+          await startAt(s.queue.length, { fadeSec: 0, auto: true });
           return;
         }
       }
@@ -369,7 +390,28 @@ export function usePlayback({
     // если ранний триггер не сработал (окно timeupdate проскочили) и advance
     // пришёл сюда из onEnded, всё равно просим движок попробовать фейд — он
     // молча откатится на мгновенный переход, раз текущий слот уже не играет.
-    await startAt(ni, { fadeSec: auto ? pickAutoFadeSec(prefsRef.current) : 0 });
+    await startAt(ni, { fadeSec: auto ? pickAutoFadeSec(prefsRef.current) : 0, auto });
+  };
+
+  /** Отменить незавершённый startAt: добыча дойдёт, но заводить движок ею
+   *  уже нельзя. Зовётся отовсюду, где воспроизведение ОСТАНАВЛИВАЕТСЯ по
+   *  воле пользователя (пауза, sleep-таймер, удаление играющего из очереди).
+   *
+   *  Без этого нажатие паузы во время добычи просто терялось: startAt после
+   *  await проверял только «не переключили ли на ДРУГОЙ трек» (playSeq) и
+   *  заводил движок безусловно — трек заигрывал сам через несколько секунд,
+   *  причём бар показывал «пауза» (React playing уже false), так что кнопка
+   *  play/pause оказывалась в противофазе со звуком. Отсюда вторая половина
+   *  жалобы владельца — «её никак не выключить» (2026-07-15).
+   *
+   *  Спиннер гасим здесь же: ждать больше нечего, а «Добываем трек…» на
+   *  паузе обещал бы, что вот-вот заиграет. Проверять React-стейт playing
+   *  внутри startAt вместо этого НЕЛЬЗЯ — на кэш-хите резолв успевает раньше,
+   *  чем setPlaying(true) долетит до stateRef (та же ловушка, что расписана
+   *  в pollGapless ниже). */
+  const cancelPendingStart = () => {
+    playSeqRef.current++;
+    setBuffering(false);
   };
 
   /** Остановить точный gapless-опрос (пауза/новый трек/сик/размонтирование). */
@@ -458,6 +500,7 @@ export function usePlayback({
     if (s.playing) {
       engine().pause();
       setPlaying(false);
+      cancelPendingStart(); // жали паузу на спиннере добычи — трек не заведётся сам
       stopGaplessPoll(); // пауза — точный опрос ждёт до resume ниже
       return;
     }
@@ -485,6 +528,9 @@ export function usePlayback({
       engine().pause();
       stopGaplessPoll();
     }
+    // И тут тоже: сработавший на добыче sleep-таймер обязан оставить тишину,
+    // а не завести трек, когда yt-dlp наконец отдаст файл.
+    cancelPendingStart();
     setPlaying(false);
   };
 
@@ -552,6 +598,10 @@ export function usePlayback({
         engine().stop();
         setPlaying(false);
         setPos(0);
+        // Тот же класс, что пауза на добыче: убрали последний трек, пока он
+        // добывался — engine().stop() тишины не гарантирует, незавершённый
+        // startAt завёл бы уже удалённый трек поверх пустой очереди.
+        cancelPendingStart();
         stopGaplessPoll();
       } else {
         void startAt(Math.min(i, nextQueue.length - 1));
