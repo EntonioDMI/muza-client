@@ -203,12 +203,28 @@ export const LyricsSchema = z.object({
 });
 export type Lyrics = z.infer<typeof LyricsSchema>;
 
+/** Картинка внутри аннотации Genius. Сервер вынимает её из dom-версии тела и
+ *  вычищает URL из текста; клиент рисует картинку под объяснением.
+ *  `src` — абсолютный https на CDN Genius, `caption` — подпись из <small>. */
+export const AnnotationImageSchema = z.object({
+  src: z.string(),
+  alt: z.string().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  caption: z.string().optional(),
+});
+export type AnnotationImage = z.infer<typeof AnnotationImageSchema>;
+
 /** Аннотация Genius: lineIdx привязывает объяснение к строке synced-текста. */
 export const AnnotationSchema = z.object({
   fragment: z.string(),
   body: z.string(),
   votes: z.number(),
   verified: z.boolean(),
+  /** Пусто у аннотаций без картинок И у записей серверного кэша, снятых до
+   *  этой фичи (в их payload поля нет — `default([])` держит контракт). Кэш
+   *  аннотаций версии не имеет, поэтому обе формы обязаны жить одновременно. */
+  images: z.array(AnnotationImageSchema).default([]),
   lineIdx: z.number().nullable(),
   lineCount: z.number(),
   lineIdxs: z.array(z.number()),

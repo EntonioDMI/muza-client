@@ -43,8 +43,51 @@ export function MeaningDialog({
             <Icon name="sparkles" size={18} color="currentColor" style={{ flex: "none", marginTop: 2 }} />
             <span>«{line.text}»</span>
           </div>
-          <div style={{ color: "var(--text-2)", lineHeight: 1.65, maxHeight: "42vh", overflowY: "auto" }}>
-            {line.note}
+          {/* overflowWrap обязателен: до него длинный URL внутри объяснения
+              распирал диалог и добавлял ГОРИЗОНТАЛЬНЫЙ скролл (overflowY:auto
+              делает overflowX тоже auto). Сами URL картинок сервер теперь из
+              текста вычищает, но в аннотации может стоять любая длинная ссылка. */}
+          <div
+            style={{
+              color: "var(--text-2)",
+              lineHeight: 1.65,
+              maxHeight: "42vh",
+              overflowY: "auto",
+              overflowWrap: "anywhere",
+              whiteSpace: "pre-wrap",
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--sp-3)",
+            }}
+          >
+            <span>{line.note}</span>
+            {/* Картинки аннотации (Genius): раньше терялись — в plain-формате
+                <img> либо пропадала, либо печаталась голым URL. */}
+            {annotation?.images.map((img) => (
+              <figure key={img.src} style={{ margin: 0, display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+                <img
+                  src={img.src}
+                  alt={img.alt ?? ""}
+                  loading="lazy"
+                  // width/height из Genius — резервируют место до загрузки (без
+                  // прыжка вёрстки); картинка при этом остаётся резиновой
+                  width={img.width}
+                  height={img.height}
+                  style={{
+                    maxWidth: "100%",
+                    height: "auto",
+                    borderRadius: "var(--r-sm)",
+                    background: "var(--surface-2)",
+                    display: "block",
+                  }}
+                />
+                {img.caption ? (
+                  <figcaption style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", lineHeight: 1.4 }}>
+                    {img.caption}
+                  </figcaption>
+                ) : null}
+              </figure>
+            ))}
           </div>
           {annotation ? (
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "var(--sp-2)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>

@@ -8,6 +8,7 @@ function annotation(body: string, lineIdxs: number[], lineIdx: number | null = n
     body,
     votes: 1,
     verified: false,
+    images: [],
     lineIdx,
     lineCount: lineIdxs.length,
     lineIdxs,

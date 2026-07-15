@@ -734,7 +734,17 @@ export class HttpMuzaApi implements MuzaApi {
     const out = await this.authedRequest<{
       genius_url: string | null;
       annotations:
-        | { fragment: string; body: string; votes: number; verified: boolean; line_idx?: number | null; line_count?: number; line_idxs?: number[] }[]
+        | {
+            fragment: string;
+            body: string;
+            votes: number;
+            verified: boolean;
+            /** нет у записей серверного кэша, снятых до фичи картинок */
+            images?: { src: string; alt?: string; width?: number; height?: number; caption?: string }[];
+            line_idx?: number | null;
+            line_count?: number;
+            line_idxs?: number[];
+          }[]
         | null;
     }>(`/tracks/${encodeURIComponent(trackId)}/annotations`);
     const annotations: Annotation[] | null =
@@ -743,6 +753,7 @@ export class HttpMuzaApi implements MuzaApi {
         body: a.body,
         votes: a.votes,
         verified: a.verified,
+        images: a.images ?? [],
         lineIdx: a.line_idx ?? null,
         lineCount: a.line_count ?? 0,
         lineIdxs: a.line_idxs ?? [],
