@@ -705,11 +705,11 @@ const paneStyle: React.CSSProperties = {
   paddingBottom: "var(--sp-6)",
 };
 
-/** Ключи вкладок настроек — порядок массива = порядок сегментов Tabs.
+/** Ключи разделов настроек — порядок массива = порядок пунктов навигации.
  *  Подписи НЕ хранятся здесь (модуль верхнего уровня не имеет доступа к
  *  useT()) — берутся в компоненте из словаря по `settings.tabs.<key>`
  *  (T28, i18n): ключи этого массива буквально совпадают с ключами словаря,
- *  см. i18n/en.ts. «О приложении» — секция внутри Системы, не своя вкладка. */
+ *  см. i18n/en.ts. «О приложении» — секция внутри Системы, не свой раздел. */
 const SETTINGS_TAB_KEYS = [
   "account",
   "appearance",
@@ -722,6 +722,81 @@ const SETTINGS_TAB_KEYS = [
   "extensions",
   "system",
 ] as const;
+
+type SettingsTabKey = (typeof SETTINGS_TAB_KEYS)[number];
+
+/** Иконка раздела (lucide, kebab-case). Нужна схлопнутому рельсу: на узкой
+ *  панели подписи прячутся и иконка остаётся единственной приметой раздела —
+ *  поэтому берём те, что уже что-то значат в этом же приложении (paintbrush —
+ *  темы, puzzle — плагины, library-big — «Библиотека» в сайдбаре).
+ *  Record<> по ключам массива: добавили раздел — TS потребует иконку. */
+const SETTINGS_TAB_ICONS: Record<SettingsTabKey, string> = {
+  account: "user",
+  appearance: "paintbrush",
+  playback: "play",
+  sources: "globe",
+  lyrics: "mic-vocal",
+  library: "library-big",
+  integrations: "plug",
+  hotkeys: "keyboard",
+  extensions: "puzzle",
+  system: "monitor-cog",
+};
+
+/** id пункта навигации — на него ссылается aria-labelledby панели. */
+const navItemId = (key: string) => `muza-settings-nav-${key}`;
+/** id панели — на него ссылается aria-controls пунктов навигации. */
+const SETTINGS_PANE_ID = "muza-settings-pane";
+
+/** Вертикальная навигация по разделам настроек (левая колонка каркаса).
+ *
+ *  role=tablist, а не список ссылок: выбор раздела мгновенно меняет соседнюю
+ *  панель и никуда не «уходит» (ни маршрута, ни истории) — это ровно
+ *  tab/tabpanel. Тот же набор ролей, что у Tabs из @muza/ui, плюс то, чего
+ *  Tabs не даёт: aria-orientation=vertical и связка aria-controls ↔
+ *  aria-labelledby с панелью. Роving tabindex со стрелками намеренно нет —
+ *  все пункты достижимы Tab'ом, как и сегменты Tabs по всему приложению.
+ *
+ *  Вид (в т.ч. схлопывание в рельс на узкой панели) — в app.css,
+ *  .muza-settings-nav; активный пункт стилизуется по aria-selected, чтобы
+ *  доступность и подсветка не разъехались. */
+function SettingsNav({ value, onChange }: { value: string; onChange: (key: SettingsTabKey) => void }) {
+  const { t } = useT();
+  return (
+    <nav
+      className="muza-settings-nav"
+      role="tablist"
+      aria-orientation="vertical"
+      aria-label={t("settings.title")}
+    >
+      {SETTINGS_TAB_KEYS.map((key) => {
+        const label = t(`settings.tabs.${key}`);
+        return (
+          <button
+            key={key}
+            id={navItemId(key)}
+            type="button"
+            role="tab"
+            aria-selected={key === value}
+            aria-controls={SETTINGS_PANE_ID}
+            // Рельс прячет подпись СТИЛЕМ, а не условным рендером (@container
+            // из JS не виден), поэтому подпись нужна и машине, и глазу при
+            // любой ширине: aria-label — скринридеру, title — курсору (он же
+            // спасает, если длинная подпись схлопнулась в многоточие).
+            // Тот же приём, что у AccentSwatch выше.
+            aria-label={label}
+            title={label}
+            className="muza-settings-nav__item"
+            onClick={() => onChange(key)}
+          >
+            <Icon name={SETTINGS_TAB_ICONS[key]} size={20} />
+            <span className="muza-settings-nav__label">{label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
 
 // Хоткеи переназначаемы — определения/дефолты в lib/hotkeys, биндинги в prefs.hotkeys
 
@@ -3250,22 +3325,35 @@ export function SettingsView({
     );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 720, margin: "0 auto" }}>
+    // maxWidth 920 = 220 (навигация) + 20 (гаттер) + 680 (панель): панель
+    // остаётся примерно той же ширины, что и прежняя одноколоночная (720),
+    // навигация приезжает сбоку, а не за её счёт. Класс muza-settings —
+    // container query для схлопывания навигации, см. app.css.
+    <div
+      className="muza-settings"
+      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 920, margin: "0 auto" }}
+    >
       <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>{t("settings.title")}</h1>
-      {/* wrap: разделов много — все вкладки видны при любой ширине,
-          скрытый горизонтальный скролл был антипаттерном */}
-      <Tabs
-        wrap
-        items={SETTINGS_TAB_KEYS.map((key) => ({ key, label: t(`settings.tabs.${key}`) }))}
-        value={tab}
-        onChange={(nextTab: string) => {
-          // T28: параметр переименован из "t" в "nextTab" — совпадало по имени
-          // с useT().t (переводчик) в замыкающей области видимости, затеняло его
-          setSub(null); // под-экран живёт внутри вкладки — смена вкладки закрывает его
-          setTab(nextTab);
-        }}
-      />
-      {pane}
+      {/* Навигация слева вместо горизонтальных вкладок: список не зависит от
+          длины подписей, поэтому раскладка не перестраивается при смене языка
+          (у <Tabs wrap> точка переноса ехала: RU 5+5, EN 7+3). */}
+      <div className="muza-settings__cols">
+        <SettingsNav
+          value={tab}
+          onChange={(nextTab) => {
+            // T28: параметр переименован из "t" в "nextTab" — совпадало по имени
+            // с useT().t (переводчик) в замыкающей области видимости, затеняло его
+            setSub(null); // под-экран живёт внутри раздела — смена раздела закрывает его
+            setTab(nextTab);
+          }}
+        />
+        {/* Под-экран (sub !== null) рендерится сюда же вместо содержимого
+            раздела: навигация остаётся на месте с подсвеченным разделом,
+            назад — кнопкой SubHeader. */}
+        <div className="muza-settings__pane" id={SETTINGS_PANE_ID} role="tabpanel" aria-labelledby={navItemId(tab)}>
+          {pane}
+        </div>
+      </div>
 
       {/* T44/T44b: согласие на права при установке плагина из файла —
           app:full-access получает отдельный громкий экран (чекбокс + задержка

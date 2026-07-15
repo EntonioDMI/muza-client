@@ -37,3 +37,149 @@ body,
     animation: none;
   }
 }
+
+/* ══ Настройки: каркас «навигация слева + панель справа» ═════════════════
+   Горизонтальные <Tabs wrap> переносились на две строки, и точка переноса
+   зависела от ДЛИНЫ ПОДПИСЕЙ: RU давал 5+5, EN — 7+3, а flex-grow раздувал
+   недобитый ряд. Вертикальный список от длины подписей не зависит вообще.
+
+   Схлопывание меряется CONTAINER QUERY по ширине САМОЙ ПАНЕЛИ, не @media по
+   окну. Сетка окна — `сайдбар 1fr «сейчас играет»` (App.tsx), обе боковые
+   панели пользователь тянет руками: при одном и том же окне 1024px контенту
+   достаётся то ~950px (панели закрыты), то ~308px (обе открыты на дефолтных
+   280/340). window.innerWidth тут просто врёт. WebView2 = Chromium.
+
+   Почему container-type, а не contain/transform — внутри .muza-settings живут
+   Dialog'и SettingsView и выпадашка Select, все position:fixed. Замерено
+   изолированной пробой (fixed top:0/left:0 внутри родителя со свойством,
+   Chromium/WebView2) — кто делает родителя containing block'ом для fixed:
+
+     container-type: inline-size → НЕТ (проба в 0,0 — от вьюпорта) ✅
+     container-type: size        → НЕТ ✅
+     contain: layout             → ДА (проба в углу родителя) ❌
+     transform / filter          → ДА ❌
+
+   Т.е. container-type безопасен, а `contain: layout` сломал бы все диалоги.
+
+   ⚠ Ловушка при отладке: `.muza-view` (обёртка контента в App.tsx) на время
+   своей 400мс-анимации появления ДЕРЖИТ transform — и в этом окне любой
+   fixed-потомок считается от неё, а не от экрана. В нормальном окне это
+   проходит за 400мс, но в headless-превью анимация висит на currentTime=0
+   вечно, и замер врёт: пробы показывают смещение, которого в живом окне нет.
+   Прежде чем винить container-type — доиграй анимацию
+   (`document.querySelector('.muza-view').getAnimations().forEach(a=>a.finish())`)
+   и перемерь.
+
+   @container меряет CONTENT-box контейнера — числа ниже про него.
+
+   ⚠ Правила @container трогают только ПОТОМКОВ .muza-settings. Менять отсюда
+   padding/ширину самого контейнера нельзя: он мерит свой же content-box,
+   правка вернулась бы на вход запроса (рекурсия). */
+.muza-settings {
+  container-type: inline-size;
+  container-name: settings;
+}
+
+.muza-settings__cols {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--sp-5);
+  /* Навигация — по высоте своего списка, а не во всю высоту панели */
+  align-items: start;
+}
+
+/* 680px ≈ прежние 720px одноколоночной раскладки: ряды настроек не должны
+   были сузиться из-за появления навигации. 220 + 20 + 680 = 920 — столько
+   же стоит maxWidth у .muza-settings (см. SettingsView.tsx). */
+.muza-settings__pane {
+  min-width: 0;
+  max-width: 680px;
+}
+
+.muza-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  box-sizing: border-box;
+}
+
+.muza-settings-nav__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 40px;
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-base) var(--ease-out);
+}
+
+.muza-settings-nav__item:hover {
+  background: var(--surface-2);
+}
+
+/* Активный раздел — CSS-фон на самой кнопке. Слайд-пилюли, как у Tabs, тут
+   намеренно нет: вертикальному списку она не нужна, а её JS-замер — ровно тот
+   класс бага (пилюля не поспевает за сменой языка и подгрузкой шрифта),
+   который в Tabs сейчас и чинят. Колонка фиксированная (220px), поэтому смена
+   веса шрифта у активного пункта ничего не двигает. */
+.muza-settings-nav__item[aria-selected="true"] {
+  background: var(--surface-4);
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+
+.muza-settings-nav__item[aria-selected="true"]:hover {
+  background: var(--surface-4);
+}
+
+.muza-settings-nav__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Узкая панель → рельс из одних иконок (подпись прячется, не рендер-условие:
+   @container из JS не виден, поэтому у кнопки всегда есть aria-label/title).
+   Порог 600px = 220 (навигация) + 20 (гаттер) + 360 (пол панели): ниже него
+   ряду «заголовок + контрол шириной 160px» не остаётся места на текст, и
+   схлопнуть навигацию выгоднее, чем душить содержимое. Горизонтальный скролл
+   как альтернатива отброшен: он прячет часть разделов, а рельс держит все 10
+   видимыми и сохраняет вертикальную модель — под-экран при этом остаётся в
+   правой колонке.
+
+   Худший РЕАЛЬНЫЙ случай — окно 1200 (панель «Сейчас играет» требует
+   min-width:1200, App.tsx; на минимальном окне 1024 её просто нет) с обеими
+   боковыми панелями на дефолтных 280/340: контейнеру достаётся ~556px — это
+   рельс, 48 + 12 + ~496 на панель. Замерено живьём: 1600 → полный список
+   (220 + 504); контейнер 392 → рельс (48 + 284), горизонтального скролла нет.
+   Уже панели пользователь может утащить только сам, растянув боковые зоны. */
+@container settings (max-width: 600px) {
+  .muza-settings__cols {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: var(--sp-3);
+  }
+
+  .muza-settings-nav__item {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .muza-settings-nav__label {
+    display: none;
+  }
+}
