@@ -655,6 +655,20 @@ export class HttpMuzaApi implements MuzaApi {
     );
   }
 
+  /** Полный порядок треков плейлиста (владелец/соавтор). `trackIds` — ВЕСЬ
+   *  список в новом порядке, сервер переписывает `position` каждой строки.
+   *
+   *  Эндпоинт `PUT /me/playlists/:id/tracks` (me.controller.ts:442, ReorderDto,
+   *  ArrayMaxSize 5000) существовал с самого начала, а контракт его никогда не
+   *  выставлял — поэтому реордера в плейлистах не было вовсе, хотя колонка
+   *  `position` в БД и серверная логика были готовы. */
+  async reorderPlaylist(playlistId: string, trackIds: string[]): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+      method: "PUT",
+      body: JSON.stringify({ track_ids: trackIds }),
+    });
+  }
+
   async recordPlay(input: { trackId: string; playedMs: number; durationMs: number; completed: boolean }): Promise<void> {
     await this.authedRequest("/me/plays", {
       method: "POST",
