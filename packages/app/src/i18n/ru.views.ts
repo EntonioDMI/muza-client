@@ -98,6 +98,7 @@ export const viewsRu: typeof viewsEn = {
     renameFailed: "Не удалось переименовать",
     deleteFailed: "Не удалось удалить",
     removeTrackFailed: "Не удалось убрать трек",
+    reorderFailed: "Не удалось изменить порядок",
     removedFromPlaylist: "Убрано из плейлиста",
     trackCount: "{count} тр.",
     sharedCount: "совместный · {count} уч.",

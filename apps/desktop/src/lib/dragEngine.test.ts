@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DRAG_THRESHOLD, HOLD_MS, MOVE_SLOP, dist, insertionIndex, moveItem, shouldStart } from "./dragEngine";
+import {
+  DRAG_THRESHOLD,
+  HOLD_MS,
+  MOVE_SLOP,
+  dist,
+  insertionIndex,
+  moveItem,
+  reorderShift,
+  shouldStart,
+} from "./dragEngine";
 
 /** Строки высотой 40 подряд от y=0: середины 20, 60, 100, 140, 180. */
 const rows = (n: number, h = 40) => Array.from({ length: n }, (_, i) => ({ top: i * h, bottom: (i + 1) * h }));
@@ -86,5 +95,63 @@ describe("moveItem", () => {
   });
   it("to за концом клэмпится", () => {
     expect(moveItem(["a", "b", "c"], 0, 99)).toEqual(["b", "c", "a"]);
+  });
+});
+
+describe("reorderShift: соседи разъезжаются, тащимая едет в слот", () => {
+  // 4 строки по 40: [0-40] [40-80] [80-120] [120-160]
+  const r = rows(4);
+
+  it("тащим 0 вниз в 2: строки 1 и 2 поднимаются на её высоту", () => {
+    expect(reorderShift(r, 0, 2, 1)).toBe(-40);
+    expect(reorderShift(r, 0, 2, 2)).toBe(-40);
+  });
+
+  it("тащим 0 вниз в 2: сама встаёт туда, где кончалась строка 2, минус своя высота", () => {
+    // порядок станет [1,2,0]: слоты 0/40/80, у строки 0 новый top = 80, старый = 0
+    expect(reorderShift(r, 0, 2, 0)).toBe(80);
+  });
+
+  it("тащим 3 вверх в 1: строки 1 и 2 опускаются", () => {
+    expect(reorderShift(r, 3, 1, 1)).toBe(40);
+    expect(reorderShift(r, 3, 1, 2)).toBe(40);
+  });
+
+  it("тащим 3 вверх в 1: сама встаёт на top строки 1", () => {
+    // порядок станет [0,3,1,2]: у 3 новый top = 40, старый = 120
+    expect(reorderShift(r, 3, 1, 3)).toBe(-80);
+  });
+
+  it("строки вне отрезка from..to не двигаются", () => {
+    expect(reorderShift(r, 1, 2, 0)).toBe(0);
+    expect(reorderShift(r, 1, 2, 3)).toBe(0);
+  });
+
+  it("to === from — нулевой сдвиг у всех (иначе список дрожал бы на месте)", () => {
+    for (let i = 0; i < 4; i++) expect(reorderShift(r, 2, 2, i)).toBe(0);
+  });
+
+  it("нет переноса (from/to = -1) — нули", () => {
+    expect(reorderShift(r, -1, 2, 0)).toBe(0);
+    expect(reorderShift(r, 0, -1, 1)).toBe(0);
+  });
+
+  it("едет только высота ТАЩИМОЙ строки, даже если соседи разной высоты", () => {
+    // 0:[0-40] 1:[40-140] (высокая) 2:[140-180]
+    const mixed = [
+      { top: 0, bottom: 40 },
+      { top: 40, bottom: 140 },
+      { top: 140, bottom: 180 },
+    ];
+    // тащим 0 (h=40) вниз в 1 — высокий сосед едет на 40, а не на себя
+    expect(reorderShift(mixed, 0, 1, 1)).toBe(-40);
+    // сама: новый top = 140 - 40 = 100
+    expect(reorderShift(mixed, 0, 1, 0)).toBe(100);
+  });
+
+  it("битые индексы не роняют", () => {
+    expect(reorderShift(r, 9, 0, 0)).toBe(0);
+    expect(reorderShift(r, 0, 9, 0)).toBe(0);
+    expect(reorderShift([], 0, 1, 0)).toBe(0);
   });
 });

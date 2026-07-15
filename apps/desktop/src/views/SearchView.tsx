@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState, SearchInput, TrackRow } from "@muza/ui";
 import type { GroupedSearchResult, MuzaApi, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
-import { startTrackDrag } from "../lib/dnd";
+import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { flattenGroupedResults, nextGroupLimit } from "../lib/searchGrouping";
 import { SearchGroupCard, type VersionsSlot } from "./SearchGroupCard";
@@ -184,6 +184,7 @@ export function SearchView({
   };
 
   const showServerResults = canSearch && query.length >= 2;
+  const { dragSource } = useDrag();
 
   /** Строка трека: тач-таргет/драг-источник (Alt+drag — файл, T18) — общая
    *  для плоского и grouped-режима, чтобы не дублировать DnD/очередь/
@@ -199,9 +200,12 @@ export function SearchView({
       key={tr.id}
       draggable
       onDragStart={(e) => {
+        // Сюда попадаем только с зажатым Alt: для остального dragSource гасит
+        // draggable, иначе native drag убил бы pointer-перенос (pointercancel).
         if (maybeAltFileDrag(e, () => exportCachedTrack(tr.id, tr.artist, tr.title), (m) => onNotify(m, "x"))) return;
-        startTrackDrag(e, tr.id, tr.title, tr.artist);
+        e.preventDefault();
       }}
+      {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
     >
       <TrackRow
         index={index}

@@ -4,7 +4,7 @@ import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { WRAPPED_BANNER_PREVIEW, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
-import { startTrackDrag } from "../lib/dnd";
+import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { useT } from "../i18n";
 import type { TParams, TranslationKey } from "../i18n";
@@ -83,6 +83,7 @@ export function HomeFeed({
   onOpenWrapped?: () => void;
 }) {
   const { t } = useT();
+  const { dragSource } = useDrag();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
   // сервер недоступен / пустая лента нового аккаунта / аноним (ленты нет)
   const [feed, setFeed] = useState<{
@@ -222,10 +223,12 @@ export function HomeFeed({
                       key={tr.id}
                       draggable
                       onDragStart={(e) => {
+                        // Только Alt — см. комментарий в dragSource.
                         if (maybeAltFileDrag(e, () => exportCachedTrack(tr.id, tr.artist, tr.title), (m) => onNotify(m, "x")))
                           return;
-                        startTrackDrag(e, tr.id, tr.title, tr.artist);
+                        e.preventDefault();
                       }}
+                      {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
                     >
                       <TrackRow
                         index={i + 1}
@@ -256,10 +259,12 @@ export function HomeFeed({
                     key={tr.id}
                     draggable
                     onDragStart={(e) => {
+                      // Только Alt — см. комментарий в dragSource.
                       if (maybeAltFileDrag(e, () => exportCachedTrack(tr.id, tr.artist, tr.title), (m) => onNotify(m, "x")))
                         return;
-                      startTrackDrag(e, tr.id, tr.title, tr.artist);
+                      e.preventDefault();
                     }}
+                    {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
                     style={{ flex: "none" }}
                   >
                     <Tile

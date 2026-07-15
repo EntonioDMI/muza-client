@@ -12,10 +12,56 @@ import {
   type LocalEntry,
 } from "../lib/localFiles";
 import { fmtTime } from "../lib/format";
-import { startTrackDrag } from "../lib/dnd";
+import { useDrag, useDropZone } from "../shell/DragLayer";
 import { maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
 import { useT } from "../i18n";
+
+/** Плитка плейлиста, она же зона приёма трека. Отдельный компонент, потому что
+ *  useDropZone — хук, а звать хуки внутри .map() нельзя. */
+function PlaylistDropTile({
+  playlist,
+  subtitle,
+  onOpen,
+  onMenu,
+  onDropTrack,
+}: {
+  playlist: PlaylistMeta;
+  subtitle: string;
+  onOpen: () => void;
+  onMenu?: (e: React.MouseEvent) => void;
+  onDropTrack?: (playlistId: string, trackId: string) => void;
+}) {
+  // Префикс места в id: тот же плейлист бывает целью и в сайдбаре, и здесь, а
+  // реестр зон в DragLayer — плоская Map, одинаковые id затирали бы друг друга.
+  const { over, props } = useDropZone(
+    onDropTrack ? `library-playlist:${playlist.id}` : null,
+    (p) => onDropTrack?.(playlist.id, p.id),
+  );
+  return (
+    <div
+      {...props}
+      style={{
+        borderRadius: "var(--r-md)",
+        outline: over ? "var(--focus-ring)" : undefined,
+        outlineOffset: 2,
+        transition: "outline-color var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <Tile
+        // T47b: иконка-обложка плейлиста (манифест @muza/core); битая/чужая
+        // — null, и Tile рисует плейсхолдер (раньше фолбэком была демо-обложка)
+        cover={playlistIconSrc(playlist.icon)}
+        title={playlist.name}
+        subtitle={subtitle}
+        width="auto"
+        onClick={onOpen}
+        onPlay={onOpen}
+        onMenu={onMenu}
+      />
+    </div>
+  );
+}
 
 /** «Твоя медиатека» (Stage 4): настоящие серверные плейлисты, локальные файлы
  *  (device-bound), добавление по ссылке и импорт. Плейлисты живут на сервере,
@@ -36,11 +82,14 @@ export function LibraryView({
   onImport,
   onJoinCode,
   onNotify,
+  onDropTrack,
 }: {
   api: MuzaApi;
   /** false у анонима: серверная библиотека недоступна (локальные — работают). */
   canSearch: boolean;
   srvPlaylists: PlaylistMeta[];
+  /** Трек брошен на плитку плейлиста (undefined = плитки не цели). */
+  onDropTrack?: (playlistId: string, trackId: string) => void;
   /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
   currentId: string | null;
   playing: boolean;
@@ -60,6 +109,7 @@ export function LibraryView({
   onNotify: (text: string, icon?: string) => void;
 }) {
   const { t } = useT();
+  const { dragSource } = useDrag();
   const chips = localAvailable()
     ? [
         { key: "playlists", label: t("views.library.chips.playlists") },
@@ -159,13 +209,18 @@ export function LibraryView({
             {canSearch ? t("views.library.localFilesHintSynced") : t("views.library.localFilesHintLocal")}
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            {(locals ?? []).map((e, i) => (
-              // T18 draggable: drag — в плейлист сайдбара (нужен серверный id),
-              // Alt+drag — сам локальный файл на рабочий стол / в проводник
+            {(locals ?? []).map((e, i) => {
+              // T18: drag — в плейлист (нужен серверный id), Alt+drag — сам
+              // локальный файл на рабочий стол / в проводник.
+              const sid = serverIds[e.hash];
+              return (
               <div
                 key={e.hash}
                 draggable={e.available}
                 onDragStart={(ev) => {
+                  // Только Alt: для остального dragSource гасит draggable. Файл
+                  // без серверного id тоже сюда доходит — dragSource ему не
+                  // повешен, класть в плейлист нечего; native drag гасим.
                   if (
                     maybeAltFileDrag(
                       ev,
@@ -178,13 +233,9 @@ export function LibraryView({
                     )
                   )
                     return;
-                  const sid = serverIds[e.hash];
-                  if (!sid) {
-                    ev.preventDefault(); // без серверного id класть в плейлист нечего
-                    return;
-                  }
-                  startTrackDrag(ev, sid, e.title, e.artist);
+                  ev.preventDefault();
                 }}
+                {...(sid && e.available ? dragSource({ id: sid, title: e.title, artist: e.artist, kind: "track" }) : {})}
                 style={e.available ? undefined : { opacity: 0.45 }}
               >
                 <TrackRow
@@ -212,7 +263,8 @@ export function LibraryView({
                   }}
                 />
               </div>
-            ))}
+              );
+            })}
             {locals !== null && locals.length === 0 ? (
               <div style={{ padding: "var(--sp-6) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
                 {t("views.library.localFilesEmpty")}
@@ -223,17 +275,13 @@ export function LibraryView({
       ) : chip === "playlists" && canSearch ? (
         <div style={grid}>
           {srvPlaylists.map((p) => (
-            <Tile
+            <PlaylistDropTile
               key={p.id}
-              // T47b: иконка-обложка плейлиста (манифест @muza/core); битая/чужая
-              // — null, и Tile рисует плейсхолдер (раньше фолбэком была демо-обложка)
-              cover={playlistIconSrc(p.icon)}
-              title={p.name}
+              playlist={p}
               subtitle={t("views.library.playlistSubtitle", { count: p.trackCount })}
-              width="auto"
-              onClick={() => onOpenPlaylist(p.id)}
-              onPlay={() => onOpenPlaylist(p.id)}
+              onOpen={() => onOpenPlaylist(p.id)}
               onMenu={onPlaylistMenu ? (e: React.MouseEvent) => onPlaylistMenu({ id: p.id, name: p.name }, e) : undefined}
+              onDropTrack={onDropTrack}
             />
           ))}
           {srvPlaylists.length === 0 ? (

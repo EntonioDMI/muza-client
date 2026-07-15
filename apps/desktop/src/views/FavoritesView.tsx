@@ -3,7 +3,7 @@ import { EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
-import { startTrackDrag } from "../lib/dnd";
+import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { useT } from "../i18n";
 
@@ -44,6 +44,7 @@ export function FavoritesView({
   onNotify: (text: string, icon?: string) => void;
 }) {
   const { t } = useT();
+  const { dragSource } = useDrag();
   const [server, setServer] = useState<Track[] | null>(null);
 
   useEffect(() => {
@@ -74,10 +75,13 @@ export function FavoritesView({
             key={tr.id}
             draggable
             onDragStart={(e) => {
+              // Только Alt: для остального dragSource гасит draggable (native
+              // drag убил бы pointer-перенос через pointercancel).
               if (maybeAltFileDrag(e, () => exportCachedTrack(tr.id, tr.artist, tr.title), (m) => onNotify(m, "x")))
                 return;
-              startTrackDrag(e, tr.id, tr.title, tr.artist);
+              e.preventDefault();
             }}
+            {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
           >
             <TrackRow
               index={i + 1}

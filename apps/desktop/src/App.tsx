@@ -56,6 +56,7 @@ import { QueuePanel } from "./shell/QueuePanel";
 import { ListeningMode } from "./shell/ListeningMode";
 import { MeaningDialog } from "./shell/MeaningDialog";
 import { VersionsDialog } from "./shell/VersionsDialog";
+import { DragLayer } from "./shell/DragLayer";
 import { AddLinkDialog } from "./shell/AddLinkDialog";
 import { ImportDialog } from "./shell/ImportDialog";
 import { JamDialog } from "./shell/JamDialog";
@@ -1183,6 +1184,23 @@ function Player({
   // совсем — прежние «его» плейлисты были демо-заглушкой в useState: не
   // переживали перезапуск и не умели держать треки, а тост врал «Плейлист
   // создан». Пустой список → сайдбар честно показывает, что плейлистов нет.
+  /** Трек брошен на плейлист. Один обработчик на ВСЕ зоны приёма — строку
+   *  сайдбара, плитку медиатеки и страницу плейлиста: раньше зона была ровно
+   *  одна (сайдбар), и владелец справедливо считал, что перенос «не работает»,
+   *  когда плейлист не был виден в списке слева. */
+  const dropTrackOnPlaylist = canSearch
+    ? (playlistId: string, trackId: string) => {
+        const name = srvPlaylists.find((p) => p.id === playlistId)?.name ?? t("app.unknownPlaylistName");
+        api
+          .addPlaylistTrack(playlistId, trackId)
+          .then(async () => {
+            await reloadServerPlaylists();
+            showToast(t("toast.playlist.addedTrack", { name }), "list-music");
+          })
+          .catch((e: unknown) => showToast(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x"));
+      }
+    : undefined;
+
   const sidebarPlaylists = canSearch
     ? srvPlaylists.map((p) => ({
         id: p.id,
@@ -1554,6 +1572,14 @@ function Player({
   return (
     <LanguageProvider lang={prefs.language}>
     <div data-theme={prefs.theme} data-accent={accentAttr} data-radius={prefs.radius} style={rootStyle}>
+    {/* DragLayer ВНУТРИ этого div, а не снаружи: превью переноса рисуется его
+        потомком и берёт токены отсюда (тема/акцент/--glass-panel живут inline
+        на этом div, а не в :root). Старый HTML5-гость вешался на document.body
+        и по той же причине не следовал теме пользователя — резолвился
+        дефолтами из themes.css. position:fixed превью при этом не обрезается:
+        у rootStyle overflow:hidden, но нет transform/filter, поэтому блок-
+        контейнер для fixed — вьюпорт, а не этот div. */}
+    <DragLayer>
       {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
       {/* CSS плагинов (T44): статический contributes.css + динамический
@@ -1602,20 +1628,7 @@ function Player({
           // T17: ПКМ по плейлисту — контекст-меню (открыть/переименовать/удалить)
           onPlaylistMenu={openPlaylistMenu}
           // DnD: строка трека брошена на плейлист (только серверные списки)
-          onDropTrack={
-            canSearch
-              ? (playlistId, trackId) => {
-                  const name = sidebarPlaylists.find((p) => p.id === playlistId)?.name ?? t("app.unknownPlaylistName");
-                  api
-                    .addPlaylistTrack(playlistId, trackId)
-                    .then(async () => {
-                      await reloadServerPlaylists();
-                      showToast(t("toast.playlist.addedTrack", { name }), "list-music");
-                    })
-                    .catch((e: unknown) => showToast(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x"));
-                }
-              : undefined
-          }
+          onDropTrack={dropTrackOnPlaylist}
           isAdmin={isAdmin}
           onOpenHotkeys={openHotkeys}
         />
@@ -1696,6 +1709,7 @@ function Player({
                   })
                 }
                 onSaveOffline={(tracks) => void saveOfflinePlaylist(tracks)}
+                onDropTrack={dropTrackOnPlaylist}
                 onChanged={() => void reloadServerPlaylists()}
                 onDeleted={() => {
                   setOpenPlaylistId(null);
@@ -1718,6 +1732,7 @@ function Player({
                 onImport={() => setImportOpen(true)}
                 onJoinCode={() => setJoinOpen(true)}
                 onNotify={showToast}
+                onDropTrack={dropTrackOnPlaylist}
               />
             ) : view === "stats" ? (
               <StatsView
@@ -2250,6 +2265,7 @@ function Player({
         geniusUrl={geniusUrl}
         onClose={() => setMeaningLine(null)}
       />
+    </DragLayer>
     </div>
     </LanguageProvider>
   );

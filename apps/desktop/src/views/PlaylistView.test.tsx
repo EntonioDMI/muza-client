@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, PlaylistDetail } from "@muza/api-client";
+import { DragLayer } from "../shell/DragLayer";
 import { PlaylistView } from "./PlaylistView";
 
 afterEach(() => {
@@ -28,25 +29,30 @@ const SNAPSHOT_KEY = "muza.snapshot.v1::playlist:pl1";
 
 const noop = () => undefined;
 
+/** <DragLayer> обязателен: строки плейлиста — источники переноса, а сам список
+ *  — зона приёма, поэтому вью зовёт useDrag()/useDropZone(), а те без слоя
+ *  бросают. В приложении слой стоит на корне дерева Player (App.tsx). */
 function renderView(api: MuzaApi) {
   return render(
-    <PlaylistView
-      api={api}
-      playlistId="pl1"
-      userId="u1"
-      likes={[]}
-      currentId=""
-      playing={false}
-      onPlayCatalog={noop}
-      onLike={noop}
-      onNotify={noop}
-      onVersions={noop}
-      onShare={noop}
-      onSaveOffline={noop}
-      onChanged={noop}
-      onDeleted={noop}
-      onChangeIcon={noop}
-    />,
+    <DragLayer>
+      <PlaylistView
+        api={api}
+        playlistId="pl1"
+        userId="u1"
+        likes={[]}
+        currentId=""
+        playing={false}
+        onPlayCatalog={noop}
+        onLike={noop}
+        onNotify={noop}
+        onVersions={noop}
+        onShare={noop}
+        onSaveOffline={noop}
+        onChanged={noop}
+        onDeleted={noop}
+        onChangeIcon={noop}
+      />
+    </DragLayer>,
   );
 }
 

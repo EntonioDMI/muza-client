@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Icon, IconButton, Tooltip } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
-import { isTrackDrag, readTrackDrag } from "../lib/dnd";
+import { useDropZone } from "./DragLayer";
 import { isFillableNavIcon, NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
@@ -99,6 +99,7 @@ function NavItem({
 }
 
 function PlaylistRow({
+  playlistId,
   cover,
   name,
   meta,
@@ -107,6 +108,7 @@ function PlaylistRow({
   onMenu,
   onDropTrack,
 }: {
+  playlistId: string;
   cover?: string;
   name: string;
   meta: string;
@@ -118,7 +120,13 @@ function PlaylistRow({
   onDropTrack?: (trackId: string) => void;
 }) {
   const [hover, setHover] = useState(false);
-  const [dropLit, setDropLit] = useState(false);
+  // id зоны с префиксом места: тот же плейлист бывает целью и здесь, и плиткой
+  // медиатеки, и своей страницей — а реестр зон в DragLayer это плоская Map,
+  // и одинаковые id затирали бы колбэк друг друга.
+  const { over: dropLit, props: dropProps } = useDropZone(
+    onDropTrack ? `sidebar-playlist:${playlistId}` : null,
+    (p) => onDropTrack?.(p.id),
+  );
   return (
     <button
       type="button"
@@ -133,27 +141,7 @@ function PlaylistRow({
             }
           : undefined
       }
-      onDragOver={
-        onDropTrack
-          ? (e) => {
-              if (!isTrackDrag(e)) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "copy";
-              setDropLit(true);
-            }
-          : undefined
-      }
-      onDragLeave={onDropTrack ? () => setDropLit(false) : undefined}
-      onDrop={
-        onDropTrack
-          ? (e) => {
-              e.preventDefault();
-              setDropLit(false);
-              const data = readTrackDrag(e);
-              if (data) onDropTrack(data.id);
-            }
-          : undefined
-      }
+      {...dropProps}
       style={{
         display: "flex",
         alignItems: "center",
@@ -366,6 +354,7 @@ export function Sidebar({
         {playlists.map((p) => (
           <PlaylistRow
             key={p.id}
+            playlistId={p.id}
             cover={p.cover}
             name={p.name}
             meta={p.meta}

@@ -110,6 +110,7 @@ export const viewsEn = {
     renameFailed: "Couldn't rename",
     deleteFailed: "Couldn't delete",
     removeTrackFailed: "Couldn't remove the track",
+    reorderFailed: "Couldn't change the order",
     removedFromPlaylist: "Removed from the playlist",
     trackCount: "{count} tr.",
     sharedCount: "shared · {count} member(s)",

@@ -31,8 +31,10 @@ interface DragState {
 interface DragCtx {
   /** null — ничего не тащим */
   drag: DragState | null;
-  /** Повесить на строку-источник: {...dragSource(payload)} */
-  dragSource: (payload: DragPayload) => { onPointerDown: (e: React.PointerEvent) => void };
+  /** Повесить на строку-источник: {...dragSource(payload)}. Вешать на ТОТ ЖЕ
+   *  элемент, что несёт `draggable` — обработчик правит его draggable на лету
+   *  (см. onPointerDown). */
+  dragSource: (payload: DragPayload) => { onPointerDown: (e: React.PointerEvent<HTMLElement>) => void };
   /** Зарегистрировать зону приёма; onDrop зовётся, если отпустили над ней. */
   registerDrop: (id: string, onDrop: (p: DragPayload) => void) => () => void;
   /** Тащат ли что-то, что эта зона примет (для подсветки «сюда можно») */
@@ -81,7 +83,17 @@ export function DragLayer({ children }: { children: ReactNode }) {
 
   const dragSource = useCallback(
     (payload: DragPayload) => ({
-      onPointerDown: (e: React.PointerEvent) => {
+      onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
+        // Два пути переноса физически несовместимы: как только браузер стартует
+        // нативный HTML5-drag, он шлёт pointercancel и перестаёт слать
+        // pointermove — pointer-жест умирает на середине. Поэтому native drag
+        // разрешён РОВНО тогда, когда он нужен: Alt = вынести файл наружу
+        // (dragOut.ts → Tauri). В остальных случаях draggable гасится ДО того,
+        // как браузер решит начать drag (pointerdown приходит раньше dragstart),
+        // и конфликта не возникает вовсе — а не «мы его потом отменили».
+        // Значение переживает ререндер: React не трогает атрибут, пока не
+        // меняется JSX-проп, а следующий pointerdown выставит его заново.
+        e.currentTarget.draggable = e.altKey;
         if (!shouldStart(e)) return; // Alt → drag-out наружу, правая → меню
         cancelPending();
         const timer = window.setTimeout(() => {

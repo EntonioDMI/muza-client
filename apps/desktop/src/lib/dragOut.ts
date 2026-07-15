@@ -48,12 +48,15 @@ export async function startTrackFileDrag(path: string): Promise<void> {
   await startDrag({ item: [path], icon: dragIcon() });
 }
 
-/** T18, единый UX списков: обычный drag строки = в плейлист (HTML5),
- *  Alt+drag = нативный файл на рабочий стол / в проводник.
+/** T18, единый UX списков: обычный drag строки = в плейлист (pointer-перенос,
+ *  shell/DragLayer), Alt+drag = нативный файл на рабочий стол / в проводник.
  *  Зовётся ПЕРВЫМ в onDragStart draggable-обёртки: если Alt зажат и мы в
  *  Tauri — HTML5-drag отменяется (preventDefault) и запускается файл-drag
  *  (кнопка мыши ещё зажата — OLE-drag подхватывает курсор, как в PlayerBar).
- *  Вернул true — вызывающий НЕ должен стартовать startTrackDrag.
+ *  Вернул false — вызывающий обязан погасить native drag сам (preventDefault):
+ *  внутренний перенос идёт на pointer events, а стартовавший HTML5-drag убил бы
+ *  его через pointercancel. Поэтому dragSource и держит draggable выключенным
+ *  для всего, кроме Alt.
  *  exportFile бросает честную ошибку («Трека нет в кэше…») — она уходит в
  *  onError-тост, файл-drag просто не начинается. */
 export function maybeAltFileDrag(

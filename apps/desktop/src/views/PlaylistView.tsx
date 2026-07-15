@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, Tooltip } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
-import { startTrackDrag } from "../lib/dnd";
+import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
+import { useDrag, useDropZone } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
 import { CollabDialog } from "../shell/CollabDialog";
@@ -31,9 +32,12 @@ export function PlaylistView({
   onChanged,
   onDeleted,
   onChangeIcon,
+  onDropTrack,
 }: {
   api: MuzaApi;
   playlistId: string;
+  /** Трек из другого вью брошен на эту страницу (undefined = не цель). */
+  onDropTrack?: (playlistId: string, trackId: string) => void;
   /** id текущего пользователя (Stage 7: «(ты)» и выход из совместного). */
   userId: string;
   likes: string[];
@@ -132,6 +136,75 @@ export function PlaylistView({
   // владелец живого (не оффлайн-снапшот) плейлиста — как переименование/удаление выше.
   const iconSrc = playlistIconSrc(detail?.icon);
   const canChangeIcon = detail !== null && detail.isOwner && !offline;
+
+  // ---------- реордер треков перетаскиванием ----------
+  // Доступен всем, у кого есть доступ к плейлисту, — ровно как на сервере: PUT
+  // /me/playlists/:id/tracks идёт через тот же playlistsAccess.accessible(),
+  // что и удаление трека, то есть владелец ИЛИ соавтор. Раз detail пришёл с
+  // /me/playlists/:id — доступ есть. Оффлайн — снапшот, писать некуда.
+  const canReorder = detail !== null && !offline;
+  const tracks = detail?.tracks ?? [];
+  const { drag, dragSource } = useDrag();
+  const rowsRef = useRef(new Map<string, HTMLElement>());
+  /** Прямоугольники строк, снятые на pointerdown — ДО подъёма карточки.
+   *  Держатся статичными весь перенос НАМЕРЕННО: соседи разъезжаются
+   *  transform'ом, а transform входит в getBoundingClientRect. Пересчёт по
+   *  живым прямоугольникам раскачивал бы сам себя — сдвинули соседа, индекс
+   *  вставки изменился, сдвинули обратно, и строка дрожит под курсором. */
+  const rectsRef = useRef<{ top: number; bottom: number }[]>([]);
+  const measureRows = () => {
+    rectsRef.current = tracks.map((tr) => {
+      const r = rowsRef.current.get(tr.id)?.getBoundingClientRect();
+      return { top: r?.top ?? 0, bottom: r?.bottom ?? 0 };
+    });
+  };
+
+  const selfReorder =
+    drag !== null && drag.payload.kind === "playlist-track" && drag.payload.fromPlaylistId === playlistId;
+  const from = selfReorder ? tracks.findIndex((tr) => tr.id === drag.payload.id) : -1;
+  // Считается ПРЯМО В РЕНДЕРЕ из статичных прямоугольников и живого drag.y:
+  // чистая функция, лишнего состояния и лишнего ререндера на кадр не нужно.
+  const to =
+    selfReorder && from >= 0 && rectsRef.current.length === tracks.length
+      ? insertionIndex(rectsRef.current, from, drag.y)
+      : -1;
+  // onDrop зовётся из DragLayer уже ПОСЛЕ setDrag(null), поэтому финальный
+  // индекс берём из рефа последнего рендера, а не из drag внутри колбэка.
+  const toRef = useRef(-1);
+  toRef.current = to;
+
+  const commitReorder = async (movedId: string) => {
+    const f = tracks.findIndex((tr) => tr.id === movedId);
+    const target = toRef.current;
+    if (!detail || f < 0 || target < 0 || target === f) return;
+    const prev = detail.tracks;
+    const next = moveItem(prev, f, target);
+    setDetail({ ...detail, tracks: next }); // оптимистично: список встаёт сразу
+    try {
+      await api.reorderPlaylist(
+        playlistId,
+        next.map((tr) => tr.id),
+      );
+      onChanged();
+    } catch (e) {
+      setDetail({ ...detail, tracks: prev }); // сервер отказал — возвращаем как было
+      onNotify(e instanceof Error ? e.message : t("views.playlist.reorderFailed"), "x");
+    }
+  };
+
+  const { over: pageOver, props: pageDropProps } = useDropZone(
+    canReorder ? `playlist-page:${playlistId}` : null,
+    (p) => {
+      if (p.kind === "playlist-track" && p.fromPlaylistId === playlistId) {
+        void commitReorder(p.id);
+        return;
+      }
+      // Трек из поиска/ленты/медиатеки, брошенный на страницу — добавить сюда.
+      // Раньше единственной зоной приёма была строка сайдбара, и бросить трек
+      // на открытый плейлист было нельзя.
+      onDropTrack?.(playlistId, p.id);
+    },
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -232,8 +305,20 @@ export function PlaylistView({
 
       {error ? <div style={{ color: "var(--danger)", fontSize: "var(--fs-body)" }}>{error}</div> : null}
 
-      <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
-        {(detail?.tracks ?? []).map((tr, i) => {
+      <div
+        {...pageDropProps}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          paddingBottom: "var(--sp-6)",
+          borderRadius: "var(--r-md)",
+          // подсветка только когда несут ЧУЖОЙ трек: при реордере на месте
+          // рамка вокруг всего списка — визуальный шум, там говорят соседи
+          outline: pageOver && !selfReorder ? "var(--focus-ring)" : undefined,
+          outlineOffset: 4,
+        }}
+      >
+        {tracks.map((tr, i) => {
           // локальный трек с другого устройства: файла здесь нет — серый
           const missingLocal = tr.localHash !== null && !localHashes.has(tr.localHash) && tr.sources.every((s) => s === "local");
           // Stage 7: в совместных плейлистах видно, кто добавил трек
@@ -248,12 +333,30 @@ export function PlaylistView({
             .join(" · ");
           // локальный трек: Alt+drag тащит сам файл с устройства, каталожный — экспорт из кэша
           const localOnly = tr.localHash !== null && tr.sources.every((s) => s === "local");
+          const shift = reorderShift(rectsRef.current, from, to, i);
+          const dragged = i === from;
+          const rowDrag = dragSource({
+            id: tr.id,
+            title: tr.title,
+            artist: tr.artist,
+            cover: tr.coverUrl,
+            // «playlist-track» + fromPlaylistId — по ним DragLayer-потребители
+            // отличают реордер на месте от переноса в ЧУЖОЙ плейлист
+            kind: canReorder ? "playlist-track" : "track",
+            fromPlaylistId: playlistId,
+          });
           return (
-            // draggable: из плейлиста можно унести в другой плейлист сайдбара; Alt+drag — файл (T18)
+            // draggable: из плейлиста можно унести в другой плейлист; Alt+drag — файл (T18)
             <div
               key={tr.id}
+              ref={(el) => {
+                if (el) rowsRef.current.set(tr.id, el);
+                else rowsRef.current.delete(tr.id);
+              }}
               draggable={!missingLocal}
               onDragStart={(e) => {
+                // Только Alt: для остального dragSource гасит draggable (иначе
+                // native drag убил бы pointer-перенос через pointercancel).
                 if (
                   maybeAltFileDrag(
                     e,
@@ -268,9 +371,28 @@ export function PlaylistView({
                   )
                 )
                   return;
-                startTrackDrag(e, tr.id, tr.title, tr.artist);
+                e.preventDefault();
               }}
-              style={missingLocal ? { opacity: 0.45 } : undefined}
+              onPointerDown={(e) => {
+                // Мерим строки ЗДЕСЬ: список ещё статичен, трансформов нет.
+                if (!missingLocal) measureRows();
+                rowDrag.onPointerDown(e);
+              }}
+              style={{
+                ...(missingLocal ? { opacity: 0.45 } : null),
+                ...(shift !== 0 || dragged
+                  ? {
+                      transform: `translateY(${shift}px)`,
+                      // тащимая строка гаснет: она уже висит под курсором в
+                      // превью, а тут остаётся местом, куда встанет
+                      opacity: dragged ? 0.35 : undefined,
+                      // соседи едут плавно, сама тащимая — мгновенно за курсором
+                      transition: dragged ? "opacity var(--dur-fast) var(--ease-out)" : "transform 160ms var(--ease-out)",
+                      position: "relative",
+                      zIndex: dragged ? 1 : undefined,
+                    }
+                  : null),
+              }}
             >
               <TrackRow
                 index={i + 1}

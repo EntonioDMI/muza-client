@@ -21,7 +21,10 @@ export interface DragPayload {
   id: string;
   title: string;
   artist?: string;
-  cover?: string;
+  /** null — трек без обложки: именно так её отдаёт контракт (Track.coverUrl),
+   *  и превью рисует плейсхолдер. Не `string | undefined`, чтобы пять вью не
+   *  писали `?? undefined` в каждом вызове. */
+  cover?: string | null;
   /** "track" — откуда угодно; "playlist-track" — строка внутри плейлиста
    *  (может быть переупорядочена), `fromPlaylistId` тогда обязателен. */
   kind: "track" | "playlist-track";
@@ -75,6 +78,39 @@ export function insertionIndex(rects: readonly { top: number; bottom: number }[]
   // правее, съезжает на единицу
   if (to > from) to -= 1;
   return Math.max(0, Math.min(rects.length - 1, to));
+}
+
+/** На сколько пикселей сдвинуть строку `i`, пока строку `from` тащат в позицию
+ *  `to`. Это ВИЗУАЛЬНАЯ половина реордера: список в DOM не переставляется до
+ *  отпускания, соседи просто разъезжаются transform'ом.
+ *
+ *  `rects` — прямоугольники строк, снятые ОДИН раз на pointerdown. Живьём их
+ *  пересчитывать нельзя: transform входит в getBoundingClientRect, и расчёт по
+ *  сдвинутым соседям раскачивал бы сам себя (сдвинули — индекс вставки
+ *  изменился — сдвинули обратно).
+ *
+ *  В расчёт входит только высота ТАЩИМОЙ строки: её изъятие и вставка —
+ *  единственное, что меняет стопку, поэтому соседи едут ровно на неё, какими бы
+ *  разными по высоте ни были сами. `to === from` (или нет переноса) — все нули.
+ */
+export function reorderShift(
+  rects: readonly { top: number; bottom: number }[],
+  from: number,
+  to: number,
+  i: number,
+): number {
+  if (from < 0 || to < 0 || to === from) return 0;
+  if (from >= rects.length || to >= rects.length || i >= rects.length) return 0;
+  const h = rects[from].bottom - rects[from].top;
+  // сама тащимая строка: едет в слот, который освободили соседи
+  if (i === from) {
+    return to > from ? rects[to].bottom - h - rects[from].top : rects[to].top - rects[from].top;
+  }
+  // тащат вниз мимо i → i поднимается на её высоту
+  if (from < i && i <= to) return -h;
+  // тащат вверх мимо i → i опускается
+  if (to <= i && i < from) return h;
+  return 0;
 }
 
 /** Перестановка элемента: from → to. Чистая, не мутирует. */
