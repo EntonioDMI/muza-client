@@ -26,10 +26,20 @@ const RECIPE_PUBKEY_SPKI_B64: &str = "MCowBQYDK2VwAyEAtWMO3fH/dJ53pP26jQJUzu6dhD
 
 /// Bundled-дефолт рецепта: движок работает и до первого похода на сервер
 /// (оффлайн-старт). Копия recipe.config.ts сервера на момент сборки.
+///
+/// v6 (2026-07-15): лестница начинается с android_vr. Порядок клиентов — это
+/// не косметика, а ГЛАВНАЯ цена времени на кэш-миссе: клиенты tv/tv_embedded/
+/// web_embedded требуют n-sig JS-challenge (yt-dlp качает и исполняет player JS
+/// в deno) — резолв 10–12с против 3.6с у JS-free android_vr. Плюс tv ловит
+/// DRM-эксперимент (#12563) и ПАДАЕТ «Requested format is not available» (4 из
+/// 4 треков замера), то есть 4–12с уходили в мусор ДО первой удачной попытки.
+/// Замер лестницы целиком (4 трека): v5 9.8–25.7с (в среднем 14.8с) → v6
+/// 4.3–4.6с, ×3.3; формат и байты идентичны (itag 251, тот же размер).
+/// Подробности — docs/notes/2026-07-15-почему-песни-грузятся-долго.md.
 const DEFAULT_RECIPE_JSON: &str = r#"{
-  "recipe_version": 5,
+  "recipe_version": 6,
   "youtube": {
-    "player_clients": ["tv", "tv_embedded", "android_vr", "web_embedded"],
+    "player_clients": ["android_vr", "tv_embedded", "web_embedded", "tv"],
     "format_priority": [251, 140, "bestaudio"],
     "js_runtime": "deno"
   }
@@ -107,9 +117,25 @@ pub fn init(app: &AppHandle) {
     if verify_recipe(&cached.recipe_json, &cached.sig).is_ok() {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&cached.recipe_json) {
             let state = app.state::<EngineState>();
-            *state.recipe.lock().unwrap() = value;
+            let mut current = state.recipe.lock().unwrap();
+            // Тот же анти-даунгрейд, что в recipe_apply: подписанный, но
+            // УСТАРЕВШИЙ кэш не имеет права откатывать бандл-дефолт, который
+            // приехал с обновлением приложения (см. cached_recipe_wins).
+            let cached_version = value["recipe_version"].as_u64().unwrap_or(0);
+            let default_version = current["recipe_version"].as_u64().unwrap_or(0);
+            if cached_recipe_wins(cached_version, default_version) {
+                *current = value;
+            }
         }
     }
+}
+
+/// Применять ли оффлайн-кэш рецепта поверх бандл-дефолта. Кэш новее или равен
+/// — да (у него настоящая подпись сервера, дефолт лишь копия на момент сборки);
+/// кэш старее — нет, иначе `recipe-cache.json` от прошлой версии молча
+/// откатывал бы рецепт, приехавший с обновлением приложения.
+fn cached_recipe_wins(cached_version: u64, default_version: u64) -> bool {
+    cached_version >= default_version
 }
 
 fn persist_pins(app: &AppHandle, ns: &str, pins: &HashSet<String>) {
@@ -1401,6 +1427,94 @@ pub async fn engine_doctor() -> Doctor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Клиенты YouTube, которым yt-dlp обязан скачать и исполнить player JS
+    /// (n-sig challenge) в deno. Список — из замера 2026-07-15: в логе
+    /// `yt-dlp -v` у них есть «Downloading player <id>-main», у android_vr его
+    /// нет. Цена challenge (трек dQw4w9WgXcQ, аргументы движка байт-в-байт,
+    /// резолв метаданных БЕЗ единого байта аудио):
+    ///
+    ///   tv 12.5с | tv_embedded 11.8с | web_embedded 10.1с | android_vr 3.6с
+    ///
+    /// Байты тут ни при чём: те же 3.4 МБ едут 1.2с (Range, 2.9 МБ/с).
+    const JS_CHALLENGE_CLIENTS: &[&str] = &[
+        "tv",
+        "tv_embedded",
+        "web",
+        "web_embedded",
+        "web_music",
+        "web_creator",
+        "mweb",
+    ];
+
+    fn needs_js_challenge(client: &str) -> bool {
+        JS_CHALLENGE_CLIENTS.contains(&client)
+    }
+
+    /// Оффлайн-кэш НЕ должен откатывать бандл-дефолт, приехавший с обновлением
+    /// приложения. Поймано 2026-07-15 на правке лестницы: у всех живых
+    /// пользователей в `recipe-cache.json` лежит подписанный сервером v5, а
+    /// `init()` затирал им свежий бандл-дефолт v6 БЕЗ сравнения версий (в
+    /// отличие от `recipe_apply`, где анти-даунгрейд был). То есть клиентская
+    /// половина фикса скорости не доехала бы вообще — только после деплоя
+    /// сервера.
+    #[test]
+    fn stale_cached_recipe_does_not_downgrade_bundled_default() {
+        // старый кэш против свежего дефолта — выигрывает дефорт приложения
+        assert!(
+            !cached_recipe_wins(5, 6),
+            "кэшированный v5 не имеет права затирать бандл-дефолт v6"
+        );
+        // равные — кэш (у него настоящая подпись сервера, дефолт лишь копия)
+        assert!(cached_recipe_wins(6, 6), "равные версии — кэш применяется");
+        // горячий фикс сервера новее дефолта — обязан выигрывать
+        assert!(
+            cached_recipe_wins(7, 6),
+            "горячий рецепт новее дефолта обязан применяться"
+        );
+    }
+
+    /// Бандл-рецепт (оффлайн-старт до первого похода за горячим) обязан
+    /// начинать лестницу с JS-free клиента.
+    ///
+    /// Регрессия 2026-07-15 («песни грузятся 5–10с»): v5 держал "tv" первым,
+    /// хотя про tv уже было известно, что он ловит DRM-эксперимент (yt-dlp
+    /// #12563). Лестница фолбэков чинила КОРРЕКТНОСТЬ, но цену времени никто
+    /// не мерил: каждая неудачная попытка — отдельный процесс yt-dlp с полным
+    /// n-sig challenge, то есть 4–12с в мусор ДО первой удачной. Замер
+    /// лестницы целиком: было 6.7–8.6с, стало 4.5с.
+    #[test]
+    fn default_recipe_ladder_starts_with_js_free_client() {
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let clients: Vec<&str> = recipe["youtube"]["player_clients"]
+            .as_array()
+            .expect("player_clients — массив")
+            .iter()
+            .map(|v| v.as_str().expect("клиент — строка"))
+            .collect();
+        let first = *clients.first().expect("лестница не пуста");
+        assert!(
+            !needs_js_challenge(first),
+            "лестница бандл-рецепта начинается с «{first}» — ему нужен n-sig \
+             JS-challenge (~10-12с на резолв против ~3.6с у JS-free). Первым \
+             обязан идти клиент без challenge (android_vr)."
+        );
+    }
+
+    /// Анти-даунгрейд `recipe_apply` сравнивает `recipe_version`: рецепт с
+    /// версией НЕ БОЛЬШЕ уже известной не применяется. Если бандл-дефолт
+    /// обгонит серверный, горячий рецепт перестанет доезжать — эти два числа
+    /// обязаны двигаться вместе (см. recipe.config.ts на сервере).
+    #[test]
+    fn default_recipe_version_matches_server_ladder_fix() {
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        assert_eq!(
+            recipe["recipe_version"].as_u64(),
+            Some(6),
+            "бандл-рецепт обязан быть v6 (правка порядка лестницы 2026-07-15); \
+             серверный recipe.config.ts обязан быть той же версии"
+        );
+    }
 
     /// Подпись сервера сходится с вшитым pubkey; подделка отвергается.
     /// Конверт кладётся в файл заранее (curl /api/recipe), путь — в env:
