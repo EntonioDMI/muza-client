@@ -154,22 +154,38 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
         );
       })}
       {/* Конфигурируемая нотка-финал (prefs.lyricsEndNote): декоративный знак в
-          самом низу текста, с отступом — «песня кончилась». Только когда есть
-          что показывать (у пустого/инструментального блока не рисуем). */}
+          самом низу текста, с отступом — «песня кончилась». После последней
+          строки активная переезжает на неё (activeIndex === lines.length,
+          считает App.activeLine): нотка загорается акцентом, как текущая строка,
+          и центрируется — «текст кончился, доигрывает музыка». */}
       {endNote && lines.length > 0 ? (
-        <div
-          aria-hidden="true"
-          style={{
-            flex: "none",
-            display: "flex",
-            justifyContent: "center",
-            paddingTop: karaoke ? "var(--sp-8, 48px)" : "var(--sp-7)",
-            paddingBottom: karaoke ? "var(--sp-6)" : "var(--sp-4)",
-            opacity: 0.55,
-          }}
-        >
-          <Icon name="music" size={karaoke ? 52 : 40} color="var(--text-3)" strokeWidth={1.5} />
-        </div>
+        (() => {
+          const noteActive = synced && activeIndex >= lines.length;
+          return (
+            <div
+              ref={noteActive ? activeRef : null}
+              aria-hidden="true"
+              style={{
+                flex: "none",
+                display: "flex",
+                justifyContent: "center",
+                paddingTop: karaoke ? "var(--sp-8, 48px)" : "var(--sp-7)",
+                paddingBottom: karaoke ? "var(--sp-6)" : "var(--sp-4)",
+                opacity: noteActive ? 1 : 0.55,
+                transform: `scale(${noteActive ? 1.15 : 1})`,
+                transition:
+                  "opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
+              }}
+            >
+              <Icon
+                name="music"
+                size={karaoke ? 52 : 40}
+                color={noteActive ? "var(--accent-text)" : "var(--text-3)"}
+                strokeWidth={noteActive ? 2 : 1.5}
+              />
+            </div>
+          );
+        })()
       ) : null}
       {synced ? <div aria-hidden style={{ flex: "none", height: "50%" }} /> : null}
     </div>

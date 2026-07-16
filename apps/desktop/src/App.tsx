@@ -830,8 +830,19 @@ function Player({
     lyrics.forEach((l, i) => {
       if (l.t <= pos) a = i;
     });
+    // Нотка-финал (prefs.lyricsEndNote): после последней строки активная
+    // «переезжает» на нотку (виртуальный индекс lyrics.length) — «конец, текст
+    // кончился, доигрывает музыка». Последнюю строку держим примерно столько,
+    // сколько типичную (зазор до предпоследней), в рамках 2..8с — иначе нотка
+    // загоралась бы синей ещё пока последняя строка поётся.
+    if (prefs.lyricsEndNote && lyrics.length > 0 && a === lyrics.length - 1) {
+      const last = lyrics[a].t;
+      const prev = lyrics.length > 1 ? lyrics[a - 1].t : last - 4;
+      const hold = Math.min(8, Math.max(2, last - prev));
+      if (pos - last >= hold) a = lyrics.length;
+    }
     return a;
-  }, [pos, lyrics, lyricsSynced, prefs.syncedLyrics]);
+  }, [pos, lyrics, lyricsSynced, prefs.syncedLyrics, prefs.lyricsEndNote]);
 
   const showToast = (text: string, icon = "check") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
