@@ -26,6 +26,8 @@ import { autoCheckForUpdate, UPDATE_CHECK_INTERVAL_MS } from "./lib/updater";
 import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
 import { clearDiscordActivity, formatTemplate, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
+import { useErrorTelemetry } from "./lib/useErrorTelemetry";
+import { useVisitPing } from "./lib/useVisitPing";
 import { useCoverArt } from "./lib/coverArt";
 import { comboFromEvent, matchAction, formatCombo, withDefaults, HOTKEY_ACTIONS, hotkeyActionLabel } from "./lib/hotkeys";
 import {
@@ -364,6 +366,11 @@ function Player({
   // Stage 4: честная галочка согласия (prefs.telemetry) — выключил и не шлём.
   const playCountersRef = useRef<PlayCounters>({ plays: 0, completed: 0 });
   useTelemetry(api, canSearch && prefs.telemetry, playCountersRef);
+  // Ошибки — та же галочка, но БЕЗ canSearch: эндпоинт анонимный, падения
+  // до логина самые ценные (буфер копится с main.tsx, шлётся отсюда).
+  useErrorTelemetry(api, prefs.telemetry);
+  // Посещения: максимум один анонимный пинг в календарный день (кусок B).
+  useVisitPing(api, prefs.telemetry);
 
   // Jam — слушать вместе (Stage 7): хост пушит состояние, гость следует
   const jam = useJam({

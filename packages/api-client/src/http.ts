@@ -1,6 +1,9 @@
 import type { MuzaApi } from "./index";
 import {
   type AdminContent,
+  type AdminDayPoint,
+  type AdminErrors,
+  type AdminGrowth,
   type AdminHealth,
   type AdminOverview,
   type AdminUsers,
@@ -8,6 +11,7 @@ import {
   type MarketPlugin,
   type Annotation,
   type Annotations,
+  type ClientErrorBatch,
   type Credentials,
   type EmailChangeStartResult,
   EmailChangeStartResultSchema,
@@ -1227,6 +1231,61 @@ export class HttpMuzaApi implements MuzaApi {
     };
   }
 
+  async getAdminGrowth(days = 30): Promise<AdminGrowth> {
+    const g = await this.authedRequest<{
+      days: number;
+      registrations: AdminDayPoint[];
+      visits: AdminDayPoint[];
+      downloads: {
+        total: number;
+        by_asset: { tag: string; asset: string; count: number }[];
+        series: AdminDayPoint[];
+      };
+    }>(`/admin/growth?days=${days}`);
+    return {
+      days: g.days,
+      registrations: g.registrations,
+      visits: g.visits,
+      downloads: { total: g.downloads.total, byAsset: g.downloads.by_asset, series: g.downloads.series },
+    };
+  }
+
+  async getAdminErrors(opts?: { days?: number; kind?: string; appVersion?: string }): Promise<AdminErrors> {
+    const params = new URLSearchParams({ days: String(opts?.days ?? 7) });
+    if (opts?.kind) params.set("kind", opts.kind);
+    if (opts?.appVersion) params.set("app_version", opts.appVersion);
+    const e = await this.authedRequest<{
+      days: number;
+      totals: { count: number; distinct: number };
+      series: AdminDayPoint[];
+      top: {
+        stack_hash: string;
+        kind: string;
+        message: string;
+        count: number;
+        last_seen: string;
+        app_versions: string[];
+      }[];
+      by_kind: { kind: string; count: number }[];
+      by_app: { app_version: string; count: number }[];
+    }>(`/admin/errors?${params.toString()}`);
+    return {
+      days: e.days,
+      totals: e.totals,
+      series: e.series,
+      top: e.top.map((t) => ({
+        stackHash: t.stack_hash,
+        kind: t.kind,
+        message: t.message,
+        count: t.count,
+        lastSeen: t.last_seen,
+        appVersions: t.app_versions,
+      })),
+      byKind: e.by_kind,
+      byApp: e.by_app.map((a) => ({ appVersion: a.app_version, count: a.count })),
+    };
+  }
+
   async sendTelemetry(stats: TelemetryStats): Promise<void> {
     await this.authedRequest("/telemetry", {
       method: "POST",
@@ -1243,6 +1302,31 @@ export class HttpMuzaApi implements MuzaApi {
         fail_other: stats.failOther,
         plays: stats.plays,
         plays_completed: stats.playsCompleted,
+      }),
+    });
+  }
+
+  /** Visit-пинг (админ-панель): анонимный эндпоинт, дедуп по дню — на клиенте. */
+  async sendVisit(input: { appVersion: string; platform?: string }): Promise<void> {
+    await this.request("/telemetry/visit", {
+      method: "POST",
+      body: JSON.stringify({ app_version: input.appVersion, platform: input.platform }),
+    });
+  }
+
+  /** Ошибки клиента (админ-панель): анонимный эндпоинт — plain request, без
+   *  Bearer, чтобы падения до логина тоже доходили. */
+  async sendClientErrors(batch: ClientErrorBatch): Promise<void> {
+    await this.request("/telemetry/error", {
+      method: "POST",
+      body: JSON.stringify({
+        app_version: batch.appVersion,
+        errors: batch.errors.map((e) => ({
+          kind: e.kind,
+          message: e.message,
+          stack_hash: e.stackHash,
+          count: e.count,
+        })),
       }),
     });
   }
