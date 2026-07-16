@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Icon, IconButton, Tooltip } from "@muza/ui";
+import { Icon, IconButton } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { useDropZone } from "./DragLayer";
 import { isFillableNavIcon, NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
@@ -206,10 +206,81 @@ function PlaylistRow({
   );
 }
 
+/** «Любимое» — закреплённая ПЕРВАЯ строка списка плейлистов (Spotify-паттерн,
+ *  2026-07-16): не вкладка сайдбара, а особый плейлист. Фирменный градиент
+ *  логотипа Музы + сердце вместо обложки; подсвечивается, когда открыт её
+ *  экран (view==="favorites"). Приёмной зоны дропа нет — это агрегат лайков,
+ *  трек в него кладут кнопкой-сердцем, а не перетаскиванием. */
+function FavoritesRow({ count, active, onOpen }: { count: number; active: boolean; onOpen: () => void }) {
+  const { t } = useT();
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      // имя — только «Любимое» (без счётчика в подписи): и скринридеру чище, и
+      // это стабильный role-name для тестов навигации
+      aria-label={t("views.favorites.title")}
+      aria-current={active ? "page" : undefined}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--sp-3)",
+        padding: "var(--sp-2)",
+        border: "none",
+        borderRadius: "var(--r-sm)",
+        background: active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "background var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: "var(--r-xs)",
+          flex: "none",
+          display: "grid",
+          placeItems: "center",
+          // тот же фирменный градиент, что у плитки библиотеки (glyph.svg)
+          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
+        }}
+      >
+        <Icon name="heart" size={22} color="#fff" filled />
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span
+          style={{
+            display: "block",
+            fontFamily: "var(--font-ui)",
+            fontSize: "var(--fs-body)",
+            fontWeight: 500,
+            color: "var(--text-1)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {t("views.favorites.title")}
+        </span>
+        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+          {t("views.library.playlistSubtitle", { count })}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function Sidebar({
   view,
   setView,
   playlists,
+  favoritesCount,
+  onOpenFavorites,
   onCreatePlaylist,
   onOpenPlaylist,
   onPlaylistMenu,
@@ -225,6 +296,9 @@ export function Sidebar({
   view: View;
   setView: (v: View) => void;
   playlists: SidebarPlaylist[];
+  /** «Любимое» — закреплённая первая строка списка (счётчик лайков + переход). */
+  favoritesCount: number;
+  onOpenFavorites: () => void;
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
   /** T17: ПКМ по плейлисту — контекст-меню (App: Открыть/Переименовать/Удалить). */
@@ -339,18 +413,18 @@ export function Sidebar({
         >
           {t("sidebar.playlistsHeading")}
         </span>
-        <Tooltip label={t("sidebar.newPlaylistTooltip")}>
-          <IconButton
-            icon="plus"
-            size="sm"
-            label={t("sidebar.createPlaylistAria")}
-            style={{ width: 28, height: 28 }}
-            iconSize={16}
-            onClick={onCreatePlaylist}
-          />
-        </Tooltip>
+        <IconButton
+          icon="plus"
+          size="sm"
+          label={t("sidebar.newPlaylistTooltip")}
+          style={{ width: 28, height: 28 }}
+          iconSize={16}
+          onClick={onCreatePlaylist}
+        />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", scrollbarWidth: "none" }}>
+        {/* «Любимое» закреплено первым (2026-07-16) — над обычными плейлистами */}
+        <FavoritesRow count={favoritesCount} active={view === "favorites"} onOpen={onOpenFavorites} />
         {playlists.map((p) => (
           <PlaylistRow
             key={p.id}
@@ -373,16 +447,14 @@ export function Sidebar({
           <div style={{ flex: 1, minWidth: 0 }}>
             <NavItem icon="settings" label={t("settings.title")} active={view === "settings"} onClick={() => setView("settings")} />
           </div>
-          <Tooltip label={t("sidebar.hotkeysTooltip")}>
-            <IconButton
-              icon="circle-help"
-              size="sm"
-              label={t("sidebar.hotkeysAria")}
-              style={{ width: 28, height: 28 }}
-              iconSize={16}
-              onClick={onOpenHotkeys}
-            />
-          </Tooltip>
+          <IconButton
+            icon="circle-help"
+            size="sm"
+            label={t("sidebar.hotkeysTooltip")}
+            style={{ width: 28, height: 28 }}
+            iconSize={16}
+            onClick={onOpenHotkeys}
+          />
         </div>
       </div>
     </aside>

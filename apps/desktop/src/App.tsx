@@ -24,7 +24,7 @@ import { exportCachedTrack } from "./lib/dragOut";
 import { syncAutostart, trayConfigure } from "./lib/system";
 import { autoCheckForUpdate, UPDATE_CHECK_INTERVAL_MS } from "./lib/updater";
 import { setSnapshotScope, withSnapshot } from "./lib/offlineSnapshot";
-import { clearDiscordActivity, formatTemplate, updateDiscordActivity } from "./lib/discord";
+import { clearDiscordActivity, discordCoverUrl, formatTemplate, updateDiscordActivity } from "./lib/discord";
 import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useErrorTelemetry } from "./lib/useErrorTelemetry";
 import { useVisitPing } from "./lib/useVisitPing";
@@ -108,7 +108,18 @@ export function App() {
     return <div style={{ position: "absolute", inset: 0, background: "var(--bg-0)" }} />;
   }
   if (!session) {
-    return <LoginScreen api={api} onSession={setSession} lang={loadPrefs().language} />;
+    return (
+      <LoginScreen
+        api={api}
+        onSession={setSession}
+        lang={loadPrefs().language}
+        // Выбор «анонимная статистика» при создании аккаунта → prefs.telemetry
+        // ДО монтирования Player (он читает prefs один раз, loadPrefs в useState)
+        onTelemetry={(enabled) => {
+          localStorage.setItem(PREFS_KEY, JSON.stringify({ ...loadPrefs(), telemetry: enabled }));
+        }}
+      />
+    );
   }
   return (
     <Player
@@ -308,7 +319,13 @@ function Player({
   const [plBump, setPlBump] = useState(0);
   // T47b: пикер иконки плейлиста — открывается ПКМ на плейлисте (сайдбар/медиатека)
   // ИЛИ ПКМ на треке внутри PlaylistView; id — независимо от того, что сейчас открыто.
-  const [iconPicker, setIconPicker] = useState<{ id: string; icon: string | null } | null>(null);
+  // T47c: coverTile — обложка кликнутого трека первой плиткой пикера (value =
+  // "track:<id>" для сервера, src — что рисовать; null = открыт не с трека).
+  const [iconPicker, setIconPicker] = useState<{
+    id: string;
+    icon: string | null;
+    coverTile: { value: string; src: string } | null;
+  } | null>(null);
   const [iconPickerBusy, setIconPickerBusy] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Кастомизация переживает перезапуск: без этого все настройки слетали
@@ -694,6 +711,11 @@ function Player({
   // Discord Rich Presence: активность на смену трека/паузу (RPC живёт в Rust;
   // Discord не запущен или client_id не настроен — no-op). Строки — из
   // шаблонов настроек ({track}/{artist}/{album}; альбома у каталожных нет).
+  // Обложка — СЫРАЯ (pbRaw), не track.cover: тот прошёл useCoverArt, который
+  // ytimg-тумбы кропает в data-URL канвы — не https ⇒ у большинства каталожных
+  // треков в Discord уезжал логотип-фолбэк (жалоба 2026-07-16). Discord тянет
+  // картинку сам по публичному https-URL, локальные байты ему не отдать.
+  const rawCover = pbRaw.track?.cover ?? null;
   useEffect(() => {
     if (!prefs.discordRpcOn || !playing || !track) {
       void clearDiscordActivity();
@@ -703,7 +725,7 @@ function Player({
     void updateDiscordActivity({
       details: formatTemplate(prefs.discordLine1, vars) || track.title,
       state: formatTemplate(prefs.discordLine2, vars) || track.artist,
-      coverUrl: prefs.discordShowCover && track.cover?.startsWith("https") ? track.cover : null,
+      coverUrl: prefs.discordShowCover ? discordCoverUrl(rawCover) : null,
       startTs: Math.floor(Date.now() / 1000 - pos),
       buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
       buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
@@ -712,6 +734,7 @@ function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     track?.id,
+    rawCover,
     playing,
     prefs.discordRpcOn,
     prefs.discordBtnOn,
@@ -1177,10 +1200,15 @@ function Player({
   };
 
   /** T47b: ПКМ на плейлисте (сайдбар/медиатека) ИЛИ ПКМ на треке внутри
-   *  PlaylistView — оба ведут сюда, id плейлиста разный только по источнику клика. */
-  const openIconPicker = (id: string) => {
+   *  PlaylistView — оба ведут сюда, id плейлиста разный только по источнику
+   *  клика. T47c: с трека едет и его обложка — первой плиткой пикера. */
+  const openIconPicker = (id: string, fromTrack?: { id: string; coverUrl: string | null }) => {
     const icon = srvPlaylists.find((p) => p.id === id)?.icon ?? null;
-    setIconPicker({ id, icon });
+    setIconPicker({
+      id,
+      icon,
+      coverTile: fromTrack?.coverUrl ? { value: `track:${fromTrack.id}`, src: fromTrack.coverUrl } : null,
+    });
   };
 
   const changePlaylistIcon = async (icon: string) => {
@@ -1189,9 +1217,12 @@ function Player({
     setIconPickerBusy(true);
     try {
       await api.setPlaylistIcon(target.id, icon);
+      // T47c: track-иконка рисуется через iconCoverUrl — локальный патч знает
+      // обложку из самой плитки, сервер спрашивать не нужно
+      const iconCoverUrl = icon === target.coverTile?.value ? target.coverTile.src : null;
       // патчим локальный список вместо полного reloadServerPlaylists — быстрее,
       // и сразу видно в сайдбаре/медиатеке без лишнего запроса
-      setSrvPlaylists((ps) => ps.map((p) => (p.id === target.id ? { ...p, icon } : p)));
+      setSrvPlaylists((ps) => ps.map((p) => (p.id === target.id ? { ...p, icon, iconCoverUrl } : p)));
       // открытая страница этого же плейлиста сама иконку не знает — ремоунт
       // перечитает detail.icon (как renameFromMenu делает для имени)
       if (openPlaylistId === target.id) setPlBump((v) => v + 1);
@@ -1240,9 +1271,10 @@ function Player({
               ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
               : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
-        // T47b: иконка-обложка из манифеста @muza/core; нет/невалидна — PlaylistRow
-        // сама рисует прежний фолбэк (users/list-music)
-        cover: playlistIconSrc(p.icon) ?? undefined,
+        // T47b: иконка-обложка из манифеста @muza/core; T47c: track-иконка —
+        // готовой ссылкой iconCoverUrl; нет/невалидна — PlaylistRow сама
+        // рисует прежний фолбэк (users/list-music)
+        cover: p.iconCoverUrl ?? playlistIconSrc(p.icon) ?? undefined,
       }))
     : [];
 
@@ -1658,6 +1690,8 @@ function Player({
           }
           onSelectPluginTab={(pid, tab) => plugins.openTab(pid, tab)}
           playlists={sidebarPlaylists}
+          favoritesCount={likes.length}
+          onOpenFavorites={() => navigate("favorites")}
           onCreatePlaylist={() => setDialogOpen(true)}
           onOpenPlaylist={openPlaylist}
           // T17: ПКМ по плейлисту — контекст-меню (открыть/переименовать/удалить)
@@ -1750,7 +1784,7 @@ function Player({
                   setOpenPlaylistId(null);
                   navigate("home");
                 }}
-                onChangeIcon={() => openIconPicker(openPlaylistId)}
+                onChangeIcon={(fromTrack) => openIconPicker(openPlaylistId, fromTrack)}
               />
             ) : view === "library" ? (
               <LibraryView
@@ -1759,6 +1793,8 @@ function Player({
                 srvPlaylists={srvPlaylists}
                 currentId={track?.id ?? null}
                 playing={playing}
+                favoritesCount={likes.length}
+                onOpenFavorites={() => navigate("favorites")}
                 onOpenPlaylist={openPlaylist}
                 onPlaylistMenu={openPlaylistMenu}
                 onPlayLocal={playLocal}
@@ -1813,6 +1849,7 @@ function Player({
             onLike={() => track && toggleLike(track.id)}
             activeLine={activeLine}
             lyricsAutoScroll={prefs.lyricsAutoScroll}
+            lyricsEndNote={prefs.lyricsEndNote}
             onSeekLine={seekLine}
             onExplain={setMeaningLine}
           />
@@ -2133,6 +2170,7 @@ function Player({
         open={iconPicker !== null}
         currentIcon={iconPicker?.icon ?? null}
         busy={iconPickerBusy}
+        coverTile={iconPicker?.coverTile ?? null}
         onClose={() => setIconPicker(null)}
         onPick={(icon) => void changePlaylistIcon(icon)}
       />
@@ -2255,7 +2293,7 @@ function Player({
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 280 }}>
           {srvPlaylists.map((p) => (
-            <PlaylistPickRow key={p.id} icon={p.icon} name={p.name} onClick={() => void addToPlaylist(p.id, p.name)} />
+            <PlaylistPickRow key={p.id} icon={p.icon} coverUrl={p.iconCoverUrl} name={p.name} onClick={() => void addToPlaylist(p.id, p.name)} />
           ))}
           {srvPlaylists.length === 0 ? (
             <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.5 }}>
@@ -2310,6 +2348,7 @@ function Player({
         pos={pos}
         activeLine={activeLine}
         lyricsAutoScroll={prefs.lyricsAutoScroll}
+        lyricsEndNote={prefs.lyricsEndNote}
         onTogglePlay={pb.toggle}
         onPrev={pb.prev}
         onNext={pb.next}
@@ -2356,9 +2395,20 @@ function Player({
  *  что в сайдбаре/медиатеке/шапке, вместо статичной "list-music" у всех подряд.
  *  Кнопка @muza/ui поддерживает только именованный Lucide-icon (не картинку) —
  *  поэтому здесь свой pill-баттон в стиле Button variant="secondary". */
-function PlaylistPickRow({ icon, name, onClick }: { icon: string | null; name: string; onClick: () => void }) {
+function PlaylistPickRow({
+  icon,
+  coverUrl,
+  name,
+  onClick,
+}: {
+  icon: string | null;
+  /** T47c: готовая ссылка обложки для track-иконки (важнее манифестной). */
+  coverUrl?: string | null;
+  name: string;
+  onClick: () => void;
+}) {
   const [hover, setHover] = useState(false);
-  const src = playlistIconSrc(icon);
+  const src = coverUrl ?? playlistIconSrc(icon);
   return (
     <button
       type="button"

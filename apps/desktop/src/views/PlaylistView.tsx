@@ -62,8 +62,9 @@ export function PlaylistView({
   onChanged: () => void;
   onDeleted: () => void;
   /** ПКМ на треке → «Сменить иконку плейлиста» (T47b): открывает пикер
-   *  App-уровня для ТЕКУЩЕГО плейлиста (не трека). */
-  onChangeIcon: () => void;
+   *  App-уровня для ТЕКУЩЕГО плейлиста (не трека). T47c: трек клика едет
+   *  параметром — пикер предлагает его обложку первой плиткой. */
+  onChangeIcon: (fromTrack?: { id: string; coverUrl: string | null }) => void;
 }) {
   const { t } = useT();
   const [detail, setDetail] = useState<PlaylistDetail | null>(null);
@@ -132,9 +133,11 @@ export function PlaylistView({
   };
 
   // T47b: иконка-обложка плейлиста в шапке — валидный icon манифеста @muza/core,
-  // иначе прежний фолбэк "list-music". Смену иконки может запускать только
-  // владелец живого (не оффлайн-снапшот) плейлиста — как переименование/удаление выше.
-  const iconSrc = playlistIconSrc(detail?.icon);
+  // иначе прежний фолбэк "list-music". T47c: track-иконка приходит готовой
+  // ссылкой iconCoverUrl (сервер разрешил "track:<id>" в cover_url трека).
+  // Смену иконки может запускать только владелец живого (не оффлайн-снапшот)
+  // плейлиста — как переименование/удаление выше.
+  const iconSrc = detail?.iconCoverUrl ?? playlistIconSrc(detail?.icon);
   const canChangeIcon = detail !== null && detail.isOwner && !offline;
 
   // ---------- реордер треков перетаскиванием ----------
@@ -451,7 +454,15 @@ export function PlaylistView({
           // самом плейлисте в сайдбаре/медиатеке; меняет иконку плейлиста,
           // не трека. Только владелец живого плейлиста (как выше в шапке).
           ...(canChangeIcon
-            ? ([{ icon: "image", label: t("views.playlist.changePlaylistIcon"), onClick: () => onChangeIcon() }] as const)
+            ? ([
+                {
+                  icon: "image",
+                  label: t("views.playlist.changePlaylistIcon"),
+                  // T47c: обложка кликнутого трека уезжает в пикер первой плиткой
+                  onClick: () =>
+                    onChangeIcon(menu.track ? { id: menu.track.id, coverUrl: menu.track.coverUrl } : undefined),
+                },
+              ] as const)
             : []),
           "-",
           {

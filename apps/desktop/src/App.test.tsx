@@ -89,6 +89,8 @@ const session = {
  *  language фиксируем явно: без него resolveMigratedLanguage() даёт "ru" —
  *  не полагаемся на дефолт миграции, строки ниже подобраны под ru. */
 function seedResumedTrack() {
+  // «Любимое» — закреплённая строка сайдбара (2026-07-16), не вкладка: тесты
+  // ниже кликают именно эту строку (role button «Любимое»).
   localStorage.setItem("muza.prefs.v1", JSON.stringify({ resumePosition: true, language: "ru" }));
   localStorage.setItem(
     "muza.resume.last.v1",

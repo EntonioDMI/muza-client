@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Lyrics } from "@muza/ui";
 
+// jsdom не реализует scrollTo, а синхронный режим (activeIndex ≥ 0) центрует
+// активную строку на маунте
+window.HTMLElement.prototype.scrollTo = () => {};
+
 afterEach(cleanup);
 
 describe("Lyrics meaning interaction", () => {
@@ -32,5 +36,35 @@ describe("Lyrics meaning interaction", () => {
 
     expect(onExplain).toHaveBeenCalledTimes(3);
     expect(onExplain).toHaveBeenLastCalledWith(1);
+  });
+
+  it("с onSeek одиночный клик по аннотированной строке ПЕРЕМАТЫВАЕТ, двойной — открывает смысл", () => {
+    // Жалоба 2026-07-16: аннотация перехватывала клик, и на строку нельзя
+    // было перемотать. Теперь клик у всех строк одинаковый — seek.
+    const onExplain = vi.fn();
+    const onSeek = vi.fn();
+    render(
+      <Lyrics
+        lines={[
+          { t: 0, text: "Обычная строка" },
+          { t: 5, text: "Строка со смыслом", note: "Объяснение" },
+        ]}
+        activeIndex={0}
+        onSeek={onSeek}
+        onExplain={onExplain}
+      />,
+    );
+
+    const annotated = screen.getByRole("button", { name: "Смысл строки: Строка со смыслом" });
+    fireEvent.click(annotated);
+    expect(onSeek).toHaveBeenCalledWith(1);
+    expect(onExplain).not.toHaveBeenCalled();
+
+    fireEvent.doubleClick(annotated);
+    expect(onExplain).toHaveBeenCalledWith(1);
+
+    // клавиатура — прежняя: Enter открывает смысл (a11y-путь без мыши)
+    fireEvent.keyDown(annotated, { key: "Enter" });
+    expect(onExplain).toHaveBeenCalledTimes(2);
   });
 });

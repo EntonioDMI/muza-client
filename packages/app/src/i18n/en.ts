@@ -528,7 +528,11 @@ export const en = {
     // ── Воспроизведение ──────────────────────────────────────────────
     playback: {
       transitionsGroup: "Transitions",
-      crossfade: { title: "Crossfade", hint: "Smooth transition between tracks (4 seconds)" },
+      crossfade: {
+        title: "Crossfade",
+        hint: "Smooth transition between tracks",
+        duration: { title: "Crossfade length", hint: "How long tracks overlap on transition", seconds: "{n} s" },
+      },
       gapless: {
         title: "Gapless",
         hint: "The next track starts without a pause; the last ~50ms of the current track are skipped — usually unnoticeable. If the window is minimized, the transition sometimes falls back to a regular switch (no trimming — just not gapless that time)",
@@ -599,6 +603,7 @@ export const en = {
       displayGroup: "Display",
       synced: { title: "Synced lyrics", hint: "Karaoke-style lines in time with the music; off — a plain list without highlighting" },
       autoScroll: { title: "Auto-scroll", hint: "Follow the current line; off — free scrolling through the whole text" },
+      endNote: { title: "End note", hint: "A decorative music note at the very bottom of the lyrics" },
       karaokeSize: { title: "Karaoke text size", hint: "Line shown in listening mode (same slider as in Customize)" },
       understandingGroup: "Understanding",
       translation: { title: "Translation", hint: "Translate lines into a chosen language (coming later)" },
@@ -1013,6 +1018,17 @@ export const en = {
     },
     submit: { login: "Sign in", register: "Create account", recover: "Send link" },
     continueAnon: "Continue anonymously",
+    telemetry: {
+      label: "Send anonymous statistics",
+      more: "Details",
+      title: "What gets sent",
+      intro: "Only anonymized numbers — they can't be tied to you. Three things:",
+      item1: "Player counters: how many tracks started fine vs failed, app version.",
+      item2: "Error reports: the error text, scrubbed of paths and names. No stack traces or code.",
+      item3: "An \"app was opened\" mark: once a day — date, version, OS (Windows/macOS/Linux).",
+      never: "Never sent: your name, email, IP address, your tracks, playlists or listening history.",
+      settingsNote: "You can turn this off anytime: Settings → Account.",
+    },
     hint: {
       login: "No email needed. No personal listening history.",
       register: "Email is optional: everything works without it, but the password can't be recovered.",
@@ -1210,6 +1226,7 @@ export const en = {
     iconPicker: {
       title: "Change icon",
       iconAria: "Icon {id}",
+      coverTileAria: "This track's cover",
     },
   },
 

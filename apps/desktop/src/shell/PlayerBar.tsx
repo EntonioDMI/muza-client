@@ -286,21 +286,15 @@ export function PlayerBar({
             {track.artist}
           </div>
         </div>
-        <Tooltip label={t("common.like")}>
-          <IconButton icon="heart" size="sm" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
-        </Tooltip>
+        <IconButton icon="heart" size="sm" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
       </div>
       )}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           {barOn("shuffle") ? (
-            <Tooltip label={t("player.shuffle")}>
-              <IconButton icon="shuffle" size="sm" active={shuffle} label={t("player.shuffle")} onClick={onShuffle} />
-            </Tooltip>
+            <IconButton icon="shuffle" size="sm" active={shuffle} label={t("player.shuffle")} onClick={onShuffle} />
           ) : null}
-          <Tooltip label={t("player.previous")}>
-            <IconButton icon="skip-back" label={t("player.previous")} disabled={!track} onClick={onPrev} />
-          </Tooltip>
+          <IconButton icon="skip-back" label={t("player.previous")} disabled={!track} onClick={onPrev} />
           <IconButton
             icon={buffering ? "loader-circle" : playing ? "pause" : "play"}
             variant="accent"
@@ -308,19 +302,15 @@ export function PlayerBar({
             disabled={!track}
             onClick={onTogglePlay}
           />
-          <Tooltip label={t("player.next")}>
-            <IconButton icon="skip-forward" label={t("player.next")} disabled={!track} onClick={onNext} />
-          </Tooltip>
+          <IconButton icon="skip-forward" label={t("player.next")} disabled={!track} onClick={onNext} />
           {barOn("repeat") ? (
-            <Tooltip label={repeatLabel}>
-              <IconButton
-                icon={repeat === "one" ? "repeat-1" : "repeat"}
-                size="sm"
-                active={repeat !== "off"}
-                label={repeatLabel}
-                onClick={onRepeat}
-              />
-            </Tooltip>
+            <IconButton
+              icon={repeat === "one" ? "repeat-1" : "repeat"}
+              size="sm"
+              active={repeat !== "off"}
+              label={repeatLabel}
+              onClick={onRepeat}
+            />
           ) : null}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", width: 480 }}>
@@ -347,66 +337,60 @@ export function PlayerBar({
           switch (key) {
             case "sleep":
               return (
-                <Tooltip key={key} label={sleepLabel}>
-                  <IconButton icon="moon" size="sm" active={sleepActive} label={sleepLabel} onClick={onSleep} />
-                </Tooltip>
+                <IconButton key={key} icon="moon" size="sm" active={sleepActive} label={sleepLabel} onClick={onSleep} />
               );
             case "speed":
               return <SpeedButton key={key} speed={speed} onClick={onSpeed} />;
             case "equalizer":
               return (
-                <Tooltip key={key} label={t("settings.equalizer.title")}>
-                  <IconButton icon="sliders-vertical" size="sm" label={t("settings.equalizer.title")} onClick={onEqualizer} />
-                </Tooltip>
+                <IconButton key={key} icon="sliders-vertical" size="sm" label={t("settings.equalizer.title")} onClick={onEqualizer} />
               );
             case "lyrics":
               return (
-                <Tooltip key={key} label={t("player.lyrics")}>
-                  <IconButton icon="mic-vocal" size="sm" active={lyricsOn} label={t("player.lyrics")} onClick={onLyrics} />
-                </Tooltip>
+                <IconButton key={key} icon="mic-vocal" size="sm" active={lyricsOn} label={t("player.lyrics")} onClick={onLyrics} />
               );
             case "jam":
               return (
-                <Tooltip key={key} label={jamActive ? t("player.jamActiveTooltip") : t("player.jamTooltip")}>
-                  <IconButton icon="radio-tower" size="sm" active={jamActive} label={t("player.jamTooltip")} onClick={onJam} />
-                </Tooltip>
+                <IconButton
+                  key={key}
+                  icon="radio-tower"
+                  size="sm"
+                  active={jamActive}
+                  label={jamActive ? t("player.jamActiveTooltip") : t("player.jamTooltip")}
+                  onClick={onJam}
+                />
               );
             case "queue":
               return (
-                <Tooltip key={key} label={t("player.queue")}>
-                  <IconButton icon="list-music" size="sm" active={queueOn} label={t("player.queue")} onClick={onQueue} />
-                </Tooltip>
+                <IconButton key={key} icon="list-music" size="sm" active={queueOn} label={t("player.queue")} onClick={onQueue} />
               );
             case "volume":
               // клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость
               return (
                 <div key={key} style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-                  <Tooltip label={vol === 0 ? t("player.unmute") : t("player.mute")}>
-                    <IconButton
-                      icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
-                      size="sm"
-                      label={vol === 0 ? t("player.unmute") : t("player.mute")}
-                      onClick={onMute}
-                    />
-                  </Tooltip>
+                  <IconButton
+                    icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
+                    size="sm"
+                    label={vol === 0 ? t("player.unmute") : t("player.mute")}
+                    onClick={onMute}
+                  />
                   <div onWheel={(e) => onVol(Math.max(0, Math.min(100, vol + (e.deltaY < 0 ? 5 : -5))))} style={{ display: "flex" }}>
                     <Slider value={vol} onChange={onVol} ariaLabel={t("player.volume")} valueText={`${Math.round(vol)} %`} style={{ width: 110 }} />
                   </div>
                 </div>
               );
             case "fullscreen":
+              // второй вход в режим прослушивания (первый — клик по обложке);
+              // без трека там показывать нечего
               return (
-                <Tooltip key={key} label={t("player.fullscreen")}>
-                  {/* второй вход в режим прослушивания (первый — клик по
-                      обложке); без трека там показывать нечего */}
-                  <IconButton
-                    icon="maximize-2"
-                    size="sm"
-                    label={t("player.listeningModeTooltip")}
-                    disabled={!track}
-                    onClick={onExpand}
-                  />
-                </Tooltip>
+                <IconButton
+                  key={key}
+                  icon="maximize-2"
+                  size="sm"
+                  label={t("player.fullscreen")}
+                  disabled={!track}
+                  onClick={onExpand}
+                />
               );
             default: {
               // T44: плагинная кнопка бара (ключ plugin:<id>:<slot>)
@@ -414,15 +398,14 @@ export function PlayerBar({
               const pb = pluginBtn(key);
               if (!pb) return null;
               return (
-                <Tooltip key={key} label={pb.badge ? `${pb.title} · ${pb.badge}` : pb.title}>
-                  <IconButton
-                    icon={pb.icon}
-                    size="sm"
-                    active={pb.active}
-                    label={pb.title}
-                    onClick={() => onPluginButton?.(pb.pluginId, pb.slotId)}
-                  />
-                </Tooltip>
+                <IconButton
+                  key={key}
+                  icon={pb.icon}
+                  size="sm"
+                  active={pb.active}
+                  label={pb.badge ? `${pb.title} · ${pb.badge}` : pb.title}
+                  onClick={() => onPluginButton?.(pb.pluginId, pb.slotId)}
+                />
               );
             }
           }

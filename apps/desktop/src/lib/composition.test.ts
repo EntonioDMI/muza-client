@@ -33,7 +33,9 @@ describe("normalizeNavItems", () => {
     const out = normalizeNavItems(saved);
     expect(out[0]).toEqual({ key: "home", on: true });
     expect(out[1]).toEqual({ key: "stats", on: false, label: "Цифры" });
-    expect(out).toHaveLength(5);
+    // 4 вкладки: home, search, library, stats — «favorites» с 2026-07-16 не
+    // вкладка сайдбара, а закреплённая строка (NAV_ITEM_KEYS без него)
+    expect(out).toHaveLength(4);
   });
 
   it("пустой label не сохраняется (дефолтное имя)", () => {

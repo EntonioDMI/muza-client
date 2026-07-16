@@ -1,5 +1,7 @@
 ﻿import React, { useState } from "react";
 import { Icon } from "./Icon.jsx";
+// Кросс-импорт внутри @muza/ui — цикла нет: Tooltip не тянет IconButton.
+import { Tooltip } from "../feedback/Tooltip.jsx";
 
 /** Round icon-only button for transport, toggles and panel chrome. */
 export function IconButton({
@@ -13,6 +15,8 @@ export function IconButton({
   onClick,
   iconSize,
   style,
+  noTooltip = false,
+  tooltipPlacement,
 }) {
   const [hover, setHover] = useState(false);
   const [press, setPress] = useState(false);
@@ -34,11 +38,10 @@ export function IconButton({
         ? "var(--accent-text)"
         : hover ? "var(--text-1)" : "var(--text-2)";
 
-  return (
+  const button = (
     <button
       type="button"
       aria-label={label || icon}
-      title={label}
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
@@ -71,4 +74,16 @@ export function IconButton({
       />
     </button>
   );
+
+  // Красивая подсказка — централизованно: нативный title убран (уродливая
+  // белая обводка + задвоение с внешним Tooltip). Есть label и не запрещено —
+  // оборачиваем сами; иначе голая кнопка (имя иконки в подсказку не годится).
+  if (label && noTooltip !== true) {
+    return (
+      <Tooltip label={label} placement={tooltipPlacement || "top"}>
+        {button}
+      </Tooltip>
+    );
+  }
+  return button;
 }

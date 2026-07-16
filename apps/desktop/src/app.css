@@ -134,8 +134,15 @@ textarea,
 .muza-settings-nav {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-1);
+  /* Воздух рельса. Пункты метрически равны NavItem сайдбара (48px, sp-4), но
+     в сайдбаре всего ~5 пунктов в высокой колонке — вокруг много пустоты, и
+     он «дышит». Здесь 10 разделов набиты вплотную и читаются теснее при том же
+     размере. Зона настроек по высоте имеет запас (~170px снизу на дефолтном
+     окне), поэтому крупный зазор sp-2 (вместо sp-1) отдаём между пунктами —
+     колонка распределяется свободнее, ближе к ощущению сайдбара. Переполнение
+     на низком окне по-прежнему ловит overflow-y:auto (layout.css). */
+  gap: var(--sp-2);
+  padding: var(--sp-2);
   border-radius: var(--r-md);
   background: var(--glass-sidebar, var(--surface-1));
   backdrop-filter: var(--bf-zone, none);
@@ -160,7 +167,38 @@ textarea,
   text-overflow: ellipsis;
 }
 
+/* Обёртка пунктов: держит скользящую пилюлю (position: relative — её якорь).
+   Заголовок ВНЕ обёртки, поэтому пилюля считается от индекса пункта без учёта
+   его высоты (translateY в SettingsView.tsx). */
+.muza-settings-nav__items {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* Скользящий фон активного раздела — тот же приём, что у главного сайдбара
+   (Sidebar.tsx): переключение едет, а не мигает fade'ом (жалоба 2026-07-16).
+   Замера тут нет намеренно: пункты фиксированной высоты (48) с фиксированным
+   gap (sp-2), позиция считается арифметикой по индексу — без бага «пилюля не
+   поспевает за сменой языка/шрифта», которым страдал горизонтальный Tabs. */
+.muza-settings-nav__pill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 48px;
+  border-radius: var(--r-sm);
+  background: var(--surface-4);
+  pointer-events: none;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+
 .muza-settings-nav__item {
+  position: relative;
+  z-index: 1; /* поверх пилюли */
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -180,28 +218,18 @@ textarea,
   text-align: left;
   cursor: pointer;
   box-sizing: border-box;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-base) var(--ease-out);
+  transition: color var(--dur-base) var(--ease-out);
 }
 
-.muza-settings-nav__item:hover {
+/* Ховер — только у НЕактивного: под активным едет пилюля, свой фон затёр бы её
+   (как active в NavItem сайдбара: hover активному фон не меняет). */
+.muza-settings-nav__item:not([aria-selected="true"]):hover {
   background: var(--surface-2);
 }
 
-/* Активный раздел — CSS-фон на самой кнопке. Слайд-пилюли, как у Tabs, тут
-   намеренно нет: вертикальному списку она не нужна, а её JS-замер — ровно тот
-   класс бага (пилюля не поспевает за сменой языка и подгрузкой шрифта),
-   который в Tabs сейчас и чинят. Колонка фиксированная (220px), поэтому смена
-   веса шрифта у активного пункта ничего не двигает. */
 .muza-settings-nav__item[aria-selected="true"] {
-  background: var(--surface-4);
   color: var(--text-1);
   font-weight: var(--fw-semibold);
-}
-
-.muza-settings-nav__item[aria-selected="true"]:hover {
-  background: var(--surface-4);
 }
 
 .muza-settings-nav__label {

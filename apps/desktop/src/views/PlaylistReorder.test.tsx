@@ -47,6 +47,7 @@ const detail: PlaylistDetail = {
   collaborators: [],
   addedBy: {},
   icon: null,
+  iconCoverUrl: null,
 };
 
 const noop = () => undefined;

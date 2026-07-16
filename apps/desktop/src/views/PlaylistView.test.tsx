@@ -21,6 +21,7 @@ const ownerDetail: PlaylistDetail = {
   collaborators: [],
   addedBy: {},
   icon: null,
+  iconCoverUrl: null,
 };
 
 /** Ключ снапшота повторяет формат offlineSnapshot.ts: PREFIX+scope+key.

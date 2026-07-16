@@ -51,7 +51,7 @@ export function normalizeNavItems(saved: NavItemPref[], pluginKeys: readonly str
 export const NAV_ITEM_META: Record<NavItemKey, { label: string; icon: string }> = {
   home: { label: translate(DEFAULT_LANG, "media.nav.home"), icon: "home" },
   search: { label: translate(DEFAULT_LANG, "media.nav.search"), icon: "search" },
-  favorites: { label: translate(DEFAULT_LANG, "media.nav.favorites"), icon: "heart" },
+  // favorites — не вкладка сайдбара (2026-07-16), закреплён отдельной строкой
   library: { label: translate(DEFAULT_LANG, "media.nav.library"), icon: "library-big" },
   stats: { label: translate(DEFAULT_LANG, "media.nav.stats"), icon: "chart-line" },
 };

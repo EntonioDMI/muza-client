@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Dialog, Icon, IconButton, Tooltip } from "@muza/ui";
+import { Button, Dialog, Icon, IconButton } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail } from "@muza/api-client";
 import { useT } from "../i18n";
 
@@ -115,9 +115,7 @@ export function CollabDialog({
       {badge ? (
         <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{badge}</span>
       ) : canKick ? (
-        <Tooltip label={t("dialogs.collab.removeFromPlaylist")}>
-          <IconButton icon="user-x" size="sm" label={t("dialogs.collab.removeAria", { username })} onClick={() => void kick(id, username)} />
-        </Tooltip>
+        <IconButton icon="user-x" size="sm" label={t("dialogs.collab.removeFromPlaylist")} onClick={() => void kick(id, username)} />
       ) : null}
     </div>
   );
@@ -175,9 +173,7 @@ export function CollabDialog({
                   >
                     {detail.inviteCode}
                   </code>
-                  <Tooltip label={t("dialogs.copyCode")}>
-                    <IconButton icon="copy" label={t("dialogs.copyCode")} onClick={() => void copyCode()} />
-                  </Tooltip>
+                  <IconButton icon="copy" label={t("dialogs.copyCode")} onClick={() => void copyCode()} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
                   <span style={{ flex: 1, fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>

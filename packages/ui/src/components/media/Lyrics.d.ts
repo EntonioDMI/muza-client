@@ -9,11 +9,14 @@ export interface LyricsProps {
   activeIndex?: number;
   /** "panel" (right sidebar, accent active line) | "karaoke" (fullscreen, white active line). */
   mode?: "panel" | "karaoke";
-  /** Click a line to seek. */
+  /** Click a line to seek — у ВСЕХ строк, включая аннотированные. */
   onSeek?: (index: number) => void;
-  /** Клик по строке с note открывает объяснение (вместо seek). */
+  /** Объяснение смысла (Genius): ДВОЙНОЙ клик по строке с note (одиночный —
+   *  перемотка, как у всех). Без onSeek (plain-текст) — одиночным кликом. */
   onExplain?: (index: number) => void;
   /** false — не следовать за активной строкой (весь текст, свободный скролл). */
   autoScroll?: boolean;
+  /** Декоративная нотка в самом низу текста (prefs.lyricsEndNote). */
+  endNote?: boolean;
   style?: React.CSSProperties;
 }

@@ -42,7 +42,12 @@ export const BAR_BUTTON_KEYS = [
 export type BarButtonKey = (typeof BAR_BUTTON_KEYS)[number];
 
 /** Вкладки сайдбара, доступные компоновке (админка/настройки — вне её). */
-export const NAV_ITEM_KEYS = ["home", "search", "favorites", "library", "stats"] as const;
+// «favorites» здесь НЕТ намеренно (2026-07-16): «Любимое» больше не вкладка
+// сайдбара, а закреплённый первым плейлист (в сайдбаре и в библиотеке —
+// Spotify-паттерн). Экран остаётся живым (тип View его держит), в сайдбар
+// ведёт закреплённая строка. Убрав ключ отсюда, normalizeNavItems заодно
+// вычищает favorites из СТАРЫХ сохранений — иначе он завис бы во вкладках.
+export const NAV_ITEM_KEYS = ["home", "search", "library", "stats"] as const;
 export type NavItemKey = (typeof NAV_ITEM_KEYS)[number];
 
 export interface Prefs {
@@ -175,6 +180,12 @@ export interface Prefs {
   closeToTray: boolean;
   normalize: boolean;
   crossfade: boolean;
+  /** Длительность кроссфейда в секундах (диапазон 1–12; ползунок в настройках).
+   *  Действует ТОЛЬКО при crossfade: true — задаёт и длину самого фейда, и окно
+   *  раннего триггера авто-перехода (см. player/gaplessPlan.ts::planAutoAdvance).
+   *  Кламп границ — там же (clampCrossfadeSec), т.к. значение приходит и из
+   *  чужих/старых сохранений, а не только из ползунка. */
+  crossfadeSec: number;
   /** Честный gapless-стык (T19, точный триггер — fast-follow ревью #2):
    *  вместо длинного слышимого кроссфейда — короткий (~50мс) micro-fade на
    *  границе треков, запланированный заранее по engine().position() (не по
@@ -273,6 +284,9 @@ export interface Prefs {
   syncedLyrics: boolean;
   /** Автоследование за активной строкой текста (выкл = свободный скролл). */
   lyricsAutoScroll: boolean;
+  /** Декоративная нотка в самом низу текста песни (по умолчанию вкл). Мелочь
+   *  оформления — но поведенческий преф пользователя, НЕ THEME_KEYS. */
+  lyricsEndNote: boolean;
   /** Текст в режиме прослушивания показан (кнопка mic-vocal в слое
    *  авто-прячущихся контролов оверлея + клавиша T). false — «только
    *  обложка/визуализатор»: блок текста плавно скрыт, обложка по центру.
@@ -365,6 +379,7 @@ export const DEFAULT_PREFS: Prefs = {
   closeToTray: true,
   normalize: true,
   crossfade: false,
+  crossfadeSec: 4,
   gapless: false,
   blur: 28,
   glassOpacity: 62,
@@ -402,6 +417,7 @@ export const DEFAULT_PREFS: Prefs = {
   searchGrouping: true,
   syncedLyrics: true,
   lyricsAutoScroll: true,
+  lyricsEndNote: true,
   listeningLyricsShown: true,
   wrappedAmbientVol: 20,
   streamQuality: "auto",

@@ -86,9 +86,12 @@
 }
 
 /* Пункты и заголовок не сжимаются при нехватке высоты: метрика пункта 48px —
-   инвариант (как NavItem сайдбара); при переполнении рельс скроллится. */
-.muza-settings-nav > .muza-settings-nav__item,
-.muza-settings-nav > .muza-settings-nav__title {
+   инвариант (как NavItem сайдбара); при переполнении рельс скроллится. Пункты
+   переехали в .muza-settings-nav__items (обёртка для скользящей пилюли) —
+   не сжимаем и обёртку, и её пункты. */
+.muza-settings-nav > .muza-settings-nav__items,
+.muza-settings-nav > .muza-settings-nav__title,
+.muza-settings-nav__items > .muza-settings-nav__item {
   flex-shrink: 0;
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, ChipGroup, EmptyState, Menu, Tile, TrackRow } from "@muza/ui";
+import { Button, ChipGroup, EmptyState, Icon, Menu, Tile, TrackRow } from "@muza/ui";
 import type { MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
 import {
   loadServerIds,
@@ -16,6 +16,73 @@ import { useDrag, useDropZone } from "../shell/DragLayer";
 import { maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
 import { useT } from "../i18n";
+
+/** «Любимое» — закреплённая ПЕРВАЯ плитка библиотеки (Spotify-паттерн, выбор
+ *  владельца 2026-07-16): не пункт сайдбара, а особый плейлист. Вместо обложки
+ *  — акцентный градиент с сердцем: выделяется среди обычных плиток без ломки
+ *  сетки. Геометрия и текстовый блок повторяют Tile ДС. */
+function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void }) {
+  const { t } = useT();
+  const [lit, setLit] = useState(false);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={t("views.favorites.title")}
+      onMouseEnter={() => setLit(true)}
+      onMouseLeave={() => setLit(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      onClick={onOpen}
+      style={{
+        padding: "var(--pad-tile)",
+        borderRadius: "var(--r-md)",
+        background: lit ? "var(--surface-3)" : "var(--surface-2)",
+        cursor: "pointer",
+        transition: "background var(--dur-base) var(--ease-out)",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          aspectRatio: "1",
+          marginBottom: "var(--sp-3)",
+          borderRadius: "var(--r-sm)",
+          display: "grid",
+          placeItems: "center",
+          overflow: "hidden",
+          // Градиент логотипа Музы (glyph.svg: #F76967 → #3B82F6, сверху вниз) —
+          // «Любимое» носит фирменный цвет, а не общий акцент.
+          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
+        }}
+      >
+        {/* Крупное сердце — почти во всю обложку (жалоба 2026-07-16: сделать
+            больше). vw-единица тянет его за размером плитки в текучей сетке. */}
+        <Icon name="heart" size={96} color="#fff" filled style={{ width: "58%", height: "58%" }} />
+      </div>
+      <div
+        style={{
+          fontSize: "var(--fs-body)",
+          fontWeight: "var(--fw-semibold)",
+          color: "var(--text-1)",
+          lineHeight: "var(--lh-ui)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {t("views.favorites.title")}
+      </div>
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>
+        {t("views.library.playlistSubtitle", { count })}
+      </div>
+    </div>
+  );
+}
 
 /** Плитка плейлиста, она же зона приёма трека. Отдельный компонент, потому что
  *  useDropZone — хук, а звать хуки внутри .map() нельзя. */
@@ -49,9 +116,10 @@ function PlaylistDropTile({
       }}
     >
       <Tile
-        // T47b: иконка-обложка плейлиста (манифест @muza/core); битая/чужая
-        // — null, и Tile рисует плейсхолдер (раньше фолбэком была демо-обложка)
-        cover={playlistIconSrc(playlist.icon)}
+        // T47b: иконка-обложка плейлиста (манифест @muza/core); T47c: track-
+        // иконка — готовой ссылкой iconCoverUrl; битая/чужая — null, и Tile
+        // рисует плейсхолдер (раньше фолбэком была демо-обложка)
+        cover={playlist.iconCoverUrl ?? playlistIconSrc(playlist.icon)}
         title={playlist.name}
         subtitle={subtitle}
         width="auto"
@@ -74,6 +142,8 @@ export function LibraryView({
   srvPlaylists,
   currentId,
   playing,
+  favoritesCount,
+  onOpenFavorites,
   onOpenPlaylist,
   onPlaylistMenu,
   onPlayLocal,
@@ -93,6 +163,9 @@ export function LibraryView({
   /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
   currentId: string | null;
   playing: boolean;
+  /** «Любимое» — закреплённая первая плитка вкладки «Плейлисты». */
+  favoritesCount: number;
+  onOpenFavorites: () => void;
   onOpenPlaylist: (id: string) => void;
   /** T17: ПКМ по плитке серверного плейлиста — то же меню, что в сайдбаре. */
   onPlaylistMenu?: (p: { id: string; name: string }, e: React.MouseEvent) => void;
@@ -274,6 +347,8 @@ export function LibraryView({
         </div>
       ) : chip === "playlists" && canSearch ? (
         <div style={grid}>
+          {/* «Любимое» закреплено первым — Spotify-паттерн (2026-07-16) */}
+          <FavoritesTile count={favoritesCount} onOpen={onOpenFavorites} />
           {srvPlaylists.map((p) => (
             <PlaylistDropTile
               key={p.id}

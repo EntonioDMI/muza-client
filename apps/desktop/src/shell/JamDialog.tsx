@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Dialog, Icon, SearchInput, Tooltip, IconButton } from "@muza/ui";
+import { Button, Dialog, Icon, SearchInput, IconButton } from "@muza/ui";
 import type { JamUi } from "../player/useJam";
 import { useT } from "../i18n";
 
@@ -106,9 +106,7 @@ export function JamDialog({
                 >
                   {jam.code}
                 </code>
-                <Tooltip label={t("dialogs.copyCode")}>
-                  <IconButton icon="copy" label={t("dialogs.copyCode")} onClick={() => void copyCode()} />
-                </Tooltip>
+                <IconButton icon="copy" label={t("dialogs.copyCode")} onClick={() => void copyCode()} />
               </div>
               <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
                 {jam.isHost

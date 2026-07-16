@@ -102,7 +102,10 @@ describe("ListeningMode — скрытие текста (кнопка в сло�
       const { getByLabelText } = renderMode({ lyrics: lines, lyricsShown: true, onToggleLyrics: vi.fn() });
       // Тесты без LanguageProvider — английский фолбэк (DEFAULT_LANG="en").
       const btn = getByLabelText("Hide lyrics");
-      const layer = btn.parentElement!;
+      // IconButton теперь оборачивает кнопку в <span> кастомной подсказки
+      // (Tooltip встроен в IconButton, 2026-07-16) — слой контролов это
+      // ближайший <div>-предок, а не прямой parentElement.
+      const layer = btn.closest("div")!;
       expect(layer.style.opacity).toBe("1"); // wake() на открытии
       act(() => {
         vi.advanceTimersByTime(2600); // таймер спокойствия — 2500мс

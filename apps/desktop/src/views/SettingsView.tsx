@@ -163,6 +163,44 @@ function DisabledSlider({ value, max, label, width = 160 }: { value: number; max
   );
 }
 
+/** Слайдер масштаба интерфейса: применяет prefs.uiScale ТОЛЬКО на отпускании.
+ *  Живое применение (как у LiveSlider) здесь — петля обратной связи: каждый
+ *  тик меняет zoom корня, весь интерфейс прыгает, и ползунок уезжает из-под
+ *  курсора — «экран дёргается, мышь не удержать» (жалоба 2026-07-16). Пока
+ *  тянут — живёт только цифра процента; зум встаёт один раз, на pointerup
+ *  (событие всплывает с захватившего указатель Slider). Клавиатура (стрелки
+ *  на фокусе) применяет на keyup — у неё петли нет, но путь один и тот же. */
+function ScaleSlider({ value, label, onCommit }: { value: number; label: string; onCommit: (v: number) => void }) {
+  const [live, setLive] = useState<number | null>(null); // null = не тянут
+  const shown = live ?? value;
+  const commit = () => {
+    if (live === null) return;
+    setLive(null);
+    if (live !== value) onCommit(live);
+  };
+  return (
+    <div
+      onPointerUp={commit}
+      onKeyUp={commit}
+      onBlur={commit}
+      style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", width: 240 }}
+    >
+      <Slider value={shown - 85} max={40} onChange={(v) => setLive(85 + Math.round(v))} ariaLabel={label} style={{ flex: 1 }} />
+      <span
+        style={{
+          fontSize: "var(--fs-caption)",
+          color: "var(--text-3)",
+          width: 48,
+          textAlign: "right",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {shown} %
+      </span>
+    </div>
+  );
+}
+
 /** Живой слайдер со значением справа (blur, стекло). */
 function LiveSlider({
   value,
@@ -808,6 +846,7 @@ const SETTINGS_PANE_ID = "muza-settings-pane";
  *  доступность и подсветка не разъехались. */
 function SettingsNav({ value, onChange }: { value: string; onChange: (key: SettingsTabKey) => void }) {
   const { t } = useT();
+  const activeIdx = SETTINGS_TAB_KEYS.indexOf(value as SettingsTabKey);
   return (
     <nav
       className="muza-settings-nav"
@@ -819,31 +858,43 @@ function SettingsNav({ value, onChange }: { value: string; onChange: (key: Setti
           так он выровнен по левому краю с подписями пунктов. В рельсе
           прячется по @container, aria-label выше его дублирует. */}
       <h1 className="muza-settings-nav__title">{t("settings.title")}</h1>
-      {SETTINGS_TAB_KEYS.map((key) => {
-        const label = t(`settings.tabs.${key}`);
-        return (
-          <button
-            key={key}
-            id={navItemId(key)}
-            type="button"
-            role="tab"
-            aria-selected={key === value}
-            aria-controls={SETTINGS_PANE_ID}
-            // Рельс прячет подпись СТИЛЕМ, а не условным рендером (@container
-            // из JS не виден), поэтому подпись нужна и машине, и глазу при
-            // любой ширине: aria-label — скринридеру, title — курсору (он же
-            // спасает, если длинная подпись схлопнулась в многоточие).
-            // Тот же приём, что у AccentSwatch выше.
-            aria-label={label}
-            title={label}
-            className="muza-settings-nav__item"
-            onClick={() => onChange(key)}
-          >
-            <Icon name={SETTINGS_TAB_ICONS[key]} size={20} />
-            <span className="muza-settings-nav__label">{label}</span>
-          </button>
-        );
-      })}
+      {/* Пункты в своей обёртке, чтобы пилюля считалась от индекса без учёта
+          высоты заголовка — тот же приём анимированного фона, что у главного
+          сайдбара (Sidebar.tsx): переключение раздела едет, а не мигает
+          (жалоба 2026-07-16). PILL_STEP = высота пункта 48 + gap sp-2 (8) из
+          app.css — держать в паре с ними. */}
+      <div className="muza-settings-nav__items">
+        <div
+          aria-hidden="true"
+          className="muza-settings-nav__pill"
+          style={{ transform: `translateY(${Math.max(activeIdx, 0) * 56}px)`, opacity: activeIdx >= 0 ? 1 : 0 }}
+        />
+        {SETTINGS_TAB_KEYS.map((key) => {
+          const label = t(`settings.tabs.${key}`);
+          return (
+            <button
+              key={key}
+              id={navItemId(key)}
+              type="button"
+              role="tab"
+              aria-selected={key === value}
+              aria-controls={SETTINGS_PANE_ID}
+              // Рельс прячет подпись СТИЛЕМ, а не условным рендером (@container
+              // из JS не виден), поэтому подпись нужна и машине, и глазу при
+              // любой ширине: aria-label — скринридеру, title — курсору (он же
+              // спасает, если длинная подпись схлопнулась в многоточие).
+              // Тот же приём, что у AccentSwatch выше.
+              aria-label={label}
+              title={label}
+              className="muza-settings-nav__item"
+              onClick={() => onChange(key)}
+            >
+              <Icon name={SETTINGS_TAB_ICONS[key]} size={20} />
+              <span className="muza-settings-nav__label">{label}</span>
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 }
@@ -2891,13 +2942,7 @@ export function SettingsView({
           </div>
         </SettingRow>
         <SettingRow title={t("settings.appearance.scale.title")} hint={t("settings.appearance.scale.hint")}>
-          <LiveSlider
-            value={prefs.uiScale - 85}
-            max={40}
-            label={t("settings.appearance.scale.title")}
-            suffix={`${prefs.uiScale} %`}
-            onChange={(v) => set({ uiScale: 85 + Math.round(v) })}
-          />
+          <ScaleSlider value={prefs.uiScale} label={t("settings.appearance.scale.title")} onCommit={(uiScale) => set({ uiScale })} />
         </SettingRow>
         <SettingRow
           title={t("settings.appearance.customize.title")}
@@ -2912,6 +2957,19 @@ export function SettingsView({
         <SettingRow title={t("settings.playback.crossfade.title")} hint={t("settings.playback.crossfade.hint")}>
           <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label={t("settings.playback.crossfade.title")} />
         </SettingRow>
+        {/* Длительность имеет смысл только при включённом кроссфейде — прячем
+            ползунок целиком, как строку силы bassShake, а не дизейблим. */}
+        {prefs.crossfade ? (
+          <SettingRow title={t("settings.playback.crossfade.duration.title")} hint={t("settings.playback.crossfade.duration.hint")}>
+            <LiveSlider
+              value={prefs.crossfadeSec - 1}
+              max={11}
+              label={t("settings.playback.crossfade.duration.title")}
+              suffix={t("settings.playback.crossfade.duration.seconds", { n: prefs.crossfadeSec })}
+              onChange={(v) => set({ crossfadeSec: 1 + Math.round(v) })}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow
           title={t("settings.playback.gapless.title")}
           hint={prefs.crossfade ? t("settings.playback.gapless.hintCrossfadeOn") : t("settings.playback.gapless.hint")}
@@ -3042,6 +3100,9 @@ export function SettingsView({
         </SettingRow>
         <SettingRow title={t("settings.lyrics.autoScroll.title")} hint={t("settings.lyrics.autoScroll.hint")}>
           <Switch checked={prefs.lyricsAutoScroll} onChange={(lyricsAutoScroll: boolean) => set({ lyricsAutoScroll })} label={t("settings.lyrics.autoScroll.title")} />
+        </SettingRow>
+        <SettingRow title={t("settings.lyrics.endNote.title")} hint={t("settings.lyrics.endNote.hint")}>
+          <Switch checked={prefs.lyricsEndNote} onChange={(lyricsEndNote: boolean) => set({ lyricsEndNote })} label={t("settings.lyrics.endNote.title")} />
         </SettingRow>
         <SettingRow title={t("settings.lyrics.karaokeSize.title")} hint={t("settings.lyrics.karaokeSize.hint")}>
           <LiveSlider

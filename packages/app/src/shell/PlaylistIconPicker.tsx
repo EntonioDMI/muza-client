@@ -27,6 +27,10 @@ interface PlaylistIconPickerProps {
   open: boolean;
   /** текущая иконка плейлиста — подсвечивается в сетке */
   currentIcon?: string | null;
+  /** T47c: обложка трека, с которого открыт пикер (ПКМ по треку в плейлисте):
+   *  первая плитка сетки; value — что уедет в onPick ("track:<id>"), src — что
+   *  рисовать. null/не передан — пикер открыт с самого плейлиста, плитки нет. */
+  coverTile?: { value: string; src: string } | null;
   onClose: () => void;
   onPick: (icon: string) => void;
   /** запрос setPlaylistIcon в процессе — блокирует повторный клик */
@@ -71,7 +75,47 @@ function IconSwatch({ id, active, busy, onClick }: { id: string; active: boolean
   );
 }
 
-export function PlaylistIconPicker({ open, currentIcon, onClose, onPick, busy = false }: PlaylistIconPickerProps) {
+/** T47c: плитка «обложка трека» — та же геометрия, что IconSwatch, но с
+ *  живой обложкой; выделяется акцентной рамкой при наведении/активности. */
+function CoverSwatch({ src, active, busy, onClick }: { src: string; active: boolean; busy: boolean; onClick: () => void }) {
+  const { t } = useT();
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      aria-label={t("dialogs.iconPicker.coverTileAria")}
+      title={t("dialogs.iconPicker.coverTileAria")}
+      aria-pressed={active}
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        width: "100%",
+        aspectRatio: "1",
+        minWidth: 44,
+        minHeight: 44,
+        padding: 2,
+        border: active ? "2px solid var(--text-1)" : "2px solid var(--accent)",
+        borderRadius: "var(--r-xs)",
+        background: hover ? "var(--surface-3)" : "var(--surface-2)",
+        cursor: busy ? "default" : "pointer",
+        opacity: busy ? 0.6 : 1,
+        transition: "border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <img
+        src={src}
+        alt=""
+        width={44}
+        height={44}
+        style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit", display: "block" }}
+      />
+    </button>
+  );
+}
+
+export function PlaylistIconPicker({ open, currentIcon, coverTile, onClose, onPick, busy = false }: PlaylistIconPickerProps) {
   const { t } = useT();
   return (
     <Dialog open={open} title={t("dialogs.iconPicker.title")} onClose={onClose} width={380}>
@@ -92,6 +136,15 @@ export function PlaylistIconPicker({ open, currentIcon, onClose, onPick, busy = 
           paddingRight: 2,
         }}
       >
+        {/* T47c: обложка кликнутого трека — первой, до манифестных иконок */}
+        {coverTile ? (
+          <CoverSwatch
+            src={coverTile.src}
+            active={coverTile.value === currentIcon}
+            busy={busy}
+            onClick={() => onPick(coverTile.value)}
+          />
+        ) : null}
         {PLAYLIST_ICON_IDS.map((id) => (
           <IconSwatch key={id} id={id} active={id === currentIcon} busy={busy} onClick={() => onPick(id)} />
         ))}

@@ -17,4 +17,8 @@ export interface IconButtonProps {
   /** Override glyph px size. */
   iconSize?: number;
   style?: React.CSSProperties;
+  /** Skip the built-in Tooltip (e.g. label used only for aria). Default false. */
+  noTooltip?: boolean;
+  /** Placement of the built-in Tooltip. Default "top". */
+  tooltipPlacement?: "top" | "bottom";
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Icon } from "../core/Icon.jsx";
 
 /** Synced lyrics — the product's signature. Full, uncensored, and NEVER blurred.
  *
@@ -12,7 +13,7 @@ import React, { useEffect, useRef, useState } from "react";
  *    строки) и давало ровно тот эффект, на который пожаловался владелец:
  *    скрытая строка получает opacity:0, но ОСТАЁТСЯ В ПОТОКЕ и держит своё
  *    место пустым — панель читалась как три строки посреди пустоты. */
-export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, autoScroll = true, style }) {
+export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, autoScroll = true, endNote = false, style }) {
   const wrapRef = useRef(null);
   const activeRef = useRef(null);
   // Пользователь листает сам: показываем весь текст и не дёргаем автоскролл
@@ -99,18 +100,22 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
             role={hasNote ? "button" : undefined}
             tabIndex={hasNote ? 0 : undefined}
             aria-label={hasNote ? `Смысл строки: ${line.text}` : undefined}
+            title={hasNote ? "Двойной клик — смысл строки" : undefined}
             onClick={() => {
-              if (hasNote) {
-                onExplain(i);
-                return;
-              }
+              // Одиночный клик — ВСЕГДА перемотка (жалоба 2026-07-16: строка с
+              // аннотацией перехватывала клик, и на неё нельзя было перемотать).
+              // Аннотация — двойным кликом; без onSeek (plain-текст) прежнее
+              // поведение: клик открывает объяснение.
               if (onSeek) {
                 onSeek(i);
                 // клик = «нашёл нужную строчку»: сразу возвращаем автоследование
                 if (manualTimer.current) clearTimeout(manualTimer.current);
                 setManual(false);
+              } else if (hasNote) {
+                onExplain(i);
               }
             }}
+            onDoubleClick={hasNote && onSeek ? () => onExplain(i) : undefined}
             onKeyDown={(e) => {
               if (hasNote && (e.key === "Enter" || e.key === " ")) {
                 e.preventDefault();
@@ -138,9 +143,34 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
             }}
           >
             {line.text || "•••"}
+            {/* Метка аннотации: строка кликается как все (перемотка), поэтому
+                о «смысле по двойному клику» говорит звёздочка, а не цвет-ловушка */}
+            {hasNote ? (
+              <span aria-hidden style={{ marginLeft: 6, fontSize: "0.55em", verticalAlign: "super", opacity: 0.85 }}>
+                ✦
+              </span>
+            ) : null}
           </div>
         );
       })}
+      {/* Конфигурируемая нотка-финал (prefs.lyricsEndNote): декоративный знак в
+          самом низу текста, с отступом — «песня кончилась». Только когда есть
+          что показывать (у пустого/инструментального блока не рисуем). */}
+      {endNote && lines.length > 0 ? (
+        <div
+          aria-hidden="true"
+          style={{
+            flex: "none",
+            display: "flex",
+            justifyContent: "center",
+            paddingTop: karaoke ? "var(--sp-8, 48px)" : "var(--sp-7)",
+            paddingBottom: karaoke ? "var(--sp-6)" : "var(--sp-4)",
+            opacity: 0.55,
+          }}
+        >
+          <Icon name="music" size={karaoke ? 52 : 40} color="var(--text-3)" strokeWidth={1.5} />
+        </div>
+      ) : null}
       {synced ? <div aria-hidden style={{ flex: "none", height: "50%" }} /> : null}
     </div>
   );
