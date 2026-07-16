@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { bandCount, bandIndexForBar, barBands, waveShape } from "./visualizerMath";
+import {
+  bandCount,
+  bandIndexForBar,
+  barBands,
+  barGeometry,
+  calmTau,
+  fallBars,
+  glideWave,
+  normalizeVisualizerTuning,
+  smoothingStep,
+  VIS_LIMITS,
+  visClamp,
+  waveShape,
+} from "./visualizerMath";
+import { DEFAULT_PREFS } from "../types";
 
 /** Реальные параметры движка (`player/audioEngine.ts`): fftSize 2048 →
  *  frequencyBinCount 1024; sampleRate Windows/WASAPI обычно 48000. */
@@ -212,5 +226,163 @@ describe("waveShape — сглаживание волны", () => {
     expect(waveShape(sineBytes(LEN, 480), 1, 0.5)).toHaveLength(1);
     expect(waveShape(new Uint8Array(0), 8, 0.5)).toHaveLength(8);
     expect(waveShape(sineBytes(4, 4), 16, 1)).toHaveLength(16);
+  });
+});
+
+describe("VIS_LIMITS / visClamp — диапазоны и защита от мусора", () => {
+  it("значение в диапазоне проходит как есть (с округлением до целого)", () => {
+    expect(visClamp("bars", 56)).toBe(56);
+    expect(visClamp("waveThick", 45.4)).toBe(45);
+    expect(visClamp("waveAmp", 149.6)).toBe(150);
+  });
+
+  it("выход за диапазон клампится к границе", () => {
+    expect(visClamp("bars", 5)).toBe(VIS_LIMITS.bars.min);
+    expect(visClamp("bars", 500)).toBe(VIS_LIMITS.bars.max);
+    expect(visClamp("waveAmp", -10)).toBe(VIS_LIMITS.waveAmp.min);
+    expect(visClamp("opacity", 101)).toBe(VIS_LIMITS.opacity.max);
+  });
+
+  it("мусор (NaN, Infinity, не-число, undefined) → дефолт, а не граница", () => {
+    // localStorage правят не только ползунки (плагины, руки) — мусор не должен
+    // ни ронять рендер, ни прилипать к краю диапазона.
+    expect(visClamp("waveFill", Number.NaN)).toBe(VIS_LIMITS.waveFill.def);
+    expect(visClamp("waveFill", Infinity)).toBe(VIS_LIMITS.waveFill.def);
+    expect(visClamp("waveFill", "70" as unknown as number)).toBe(VIS_LIMITS.waveFill.def);
+    expect(visClamp("waveFill", undefined)).toBe(VIS_LIMITS.waveFill.def);
+  });
+
+  it("дефолты согласованы с DEFAULT_PREFS — одна точка правды на двоих", () => {
+    expect(DEFAULT_PREFS.visualizerBars).toBe(VIS_LIMITS.bars.def);
+    expect(DEFAULT_PREFS.visualizerBarFill).toBe(VIS_LIMITS.barFill.def);
+    expect(DEFAULT_PREFS.visualizerBarRound).toBe(VIS_LIMITS.barRound.def);
+    expect(DEFAULT_PREFS.visualizerBarCalm).toBe(VIS_LIMITS.barCalm.def);
+    expect(DEFAULT_PREFS.visualizerWaveSmooth).toBe(VIS_LIMITS.waveSmooth.def);
+    expect(DEFAULT_PREFS.visualizerWaveCalm).toBe(VIS_LIMITS.waveCalm.def);
+    expect(DEFAULT_PREFS.visualizerWaveThick).toBe(VIS_LIMITS.waveThick.def);
+    expect(DEFAULT_PREFS.visualizerWaveFill).toBe(VIS_LIMITS.waveFill.def);
+    expect(DEFAULT_PREFS.visualizerWaveAmp).toBe(VIS_LIMITS.waveAmp.def);
+    expect(DEFAULT_PREFS.visualizerOpacity).toBe(VIS_LIMITS.opacity.def);
+  });
+
+  it("normalizeVisualizerTuning: пусто → дефолты, mirror строго boolean", () => {
+    const t = normalizeVisualizerTuning(undefined);
+    expect(t.bars).toBe(VIS_LIMITS.bars.def);
+    expect(t.opacity).toBe(VIS_LIMITS.opacity.def);
+    expect(t.mirror).toBe(false);
+    const g = normalizeVisualizerTuning({ bars: 999, mirror: 1 as unknown as boolean });
+    expect(g.bars).toBe(VIS_LIMITS.bars.max);
+    expect(g.mirror).toBe(false);
+  });
+});
+
+describe("smoothingStep / calmTau — инерция", () => {
+  it("tau=0 — мгновенно: весь путь за кадр", () => {
+    expect(smoothingStep(0.016, 0)).toBe(1);
+  });
+
+  it("за время tau проходит ~63% пути (экспоненциальный закон)", () => {
+    expect(smoothingStep(0.2, 0.2)).toBeCloseTo(1 - Math.exp(-1), 5);
+  });
+
+  it("кадронезависима: два шага по dt/2 дают то же, что один по dt", () => {
+    // Иначе на 144 Гц мониторе инерция читалась бы иначе, чем на 60 Гц.
+    const one = smoothingStep(0.032, 0.15);
+    const half = smoothingStep(0.016, 0.15);
+    expect(1 - (1 - half) * (1 - half)).toBeCloseTo(one, 6);
+  });
+
+  it("calmTau: 0 → 0 (сырое), 100 → максимум, между — монотонно", () => {
+    expect(calmTau(0, 0.4)).toBe(0);
+    expect(calmTau(100, 0.4)).toBeCloseTo(0.4, 6);
+    expect(calmTau(75, 0.4)).toBeGreaterThan(calmTau(25, 0.4));
+  });
+});
+
+describe("glideWave — межкадровая инерция волны", () => {
+  it("k=1 — копия цели, инерции нет", () => {
+    const state = new Float32Array([0, 0, 0]);
+    glideWave(state, new Float32Array([0.5, -0.25, 1]), 1);
+    expect([...state]).toEqual([0.5, -0.25, 1]);
+  });
+
+  it("движется к цели ровно на долю k за шаг", () => {
+    const state = new Float32Array([0]);
+    const target = new Float32Array([1]);
+    glideWave(state, target, 0.25);
+    expect(state[0]).toBeCloseTo(0.25, 6);
+    glideWave(state, target, 0.25);
+    expect(state[0]).toBeCloseTo(0.4375, 6);
+  });
+
+  it("возвращает пик |state| ПОСЛЕ шага — гейн считается с нарисованного", () => {
+    const state = new Float32Array([0.2, -0.8, 0.1]);
+    const peak = glideWave(state, new Float32Array([0.2, -0.4, 0.1]), 0.5);
+    expect(peak).toBeCloseTo(0.6, 6); // |-0.8 → -0.6| — самый громкий после шага
+  });
+
+  it("пустые массивы не падают, пик 0", () => {
+    expect(glideWave(new Float32Array(0), new Float32Array(0), 0.5)).toBe(0);
+  });
+});
+
+describe("fallBars — огибающая баров: атака мгновенная, спад плавный", () => {
+  it("рост цели виден в тот же кадр (удар не размазывается)", () => {
+    const env = new Float32Array([0.1, 0.5]);
+    fallBars(env, [0.9, 0.6], 0.2);
+    expect(env[0]).toBeCloseTo(0.9, 6);
+    expect(env[1]).toBeCloseTo(0.6, 6);
+  });
+
+  it("спад — на долю kDown за кадр, а не обрыв", () => {
+    const env = new Float32Array([1]);
+    fallBars(env, [0], 0.3);
+    expect(env[0]).toBeCloseTo(0.7, 6);
+    fallBars(env, [0], 0.3);
+    expect(env[0]).toBeCloseTo(0.49, 6);
+  });
+
+  it("kDown=1 — спад мгновенный (инерция выключена)", () => {
+    const env = new Float32Array([1]);
+    fallBars(env, [0.2], 1);
+    expect(env[0]).toBeCloseTo(0.2, 6);
+  });
+
+  it("возвращает пик state после шага", () => {
+    const env = new Float32Array([0.3, 0.9]);
+    expect(fallBars(env, [0.5, 0], 0.5)).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("barGeometry — раскладка баров по ширине", () => {
+  it("fill 100% — бар на весь слот, без полей", () => {
+    const g = barGeometry(560, 56, 100);
+    expect(g.slot).toBeCloseTo(10, 6);
+    expect(g.bw).toBeCloseTo(10, 6);
+    expect(g.pad).toBeCloseTo(0, 6);
+  });
+
+  it("fill 50% — бар в полслота, поля симметричны", () => {
+    const g = barGeometry(560, 56, 50);
+    expect(g.bw).toBeCloseTo(5, 6);
+    expect(g.pad).toBeCloseTo(2.5, 6);
+  });
+
+  it("бар не тоньше 1px даже на узком канвасе с сотней баров", () => {
+    const g = barGeometry(120, 96, 30);
+    expect(g.bw).toBeGreaterThanOrEqual(1);
+  });
+
+  it("бар с полями не вылезает из слота", () => {
+    for (const fill of [30, 60, 84, 100]) {
+      const g = barGeometry(777, 33, fill);
+      expect(g.bw + g.pad * 2).toBeLessThanOrEqual(g.slot + 1e-6);
+    }
+  });
+
+  it("вырожденные размеры не падают и не делят на ноль", () => {
+    const g = barGeometry(0, 0, 84);
+    expect(g.bw).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(g.slot)).toBe(true);
   });
 });
