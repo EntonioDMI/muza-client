@@ -298,6 +298,15 @@ fn valid_path_slug(value: &str) -> bool {
             .all(|byte| lower_alnum(*byte) || matches!(*byte, b'-' | b'_'))
 }
 
+/// SoundCloud numeric track id: 1..=20 ASCII digits, no leading zero.
+fn valid_numeric_track_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 20
+        && bytes.iter().all(|byte| byte.is_ascii_digit())
+        && (bytes.len() == 1 || bytes[0] != b'0')
+}
+
 /// One DNS label before `.bandcamp.com`: 1..=63, no underscore.
 fn valid_domain_slug(value: &str) -> bool {
     let bytes = value.as_bytes();
@@ -348,6 +357,20 @@ fn byte_canonical_locator(provider: &str, raw: &str) -> Result<Url, String> {
                 && segments.iter().all(|segment| valid_path_slug(segment)) =>
         {
             format!("https://soundcloud.com/{}/{}", segments[0], segments[1])
+        }
+        // Числовая API-форма: каталог до 2026-07-16 сохранял SoundCloud-источники
+        // как api.soundcloud.com/tracks/<URN> — миграция сервера переписала их в
+        // /tracks/<цифры> (64% SoundCloud-каталога, иначе «нет живых источников»
+        // у половины главной). yt-dlp резолвит форму нативно. Грамматика ровно
+        // одна: хост api.soundcloud.com, путь tracks/<1..=20 цифр без ведущего
+        // нуля> — ни api-v2, ни URN, ни слэшей сверх того.
+        "soundcloud"
+            if host == "api.soundcloud.com"
+                && segments.len() == 2
+                && segments[0] == "tracks"
+                && valid_numeric_track_id(segments[1]) =>
+        {
+            format!("https://api.soundcloud.com/tracks/{}", segments[1])
         }
         "bandcamp"
             if segments.len() == 2 && segments[0] == "track" && valid_path_slug(segments[1]) =>
@@ -1772,6 +1795,40 @@ mod source_policy_tests {
                 ("artist.bandcamp.com".to_string(), 443),
             ]
         );
+    }
+
+    #[test]
+    fn source_policy_accepts_numeric_api_soundcloud_locator() {
+        // Числовая API-форма — норма каталога после миграции URN→цифры
+        // (20260716143000_soundcloud_urn_urls_to_numeric на сервере).
+        let mut lookup = |_: &str, _: u16| Ok(vec![PUBLIC_V4]);
+        let sc = canonical_target_with_lookup(
+            &soundcloud("123", "https://api.soundcloud.com/tracks/254111945"),
+            &mut lookup,
+        )
+        .unwrap();
+        assert_eq!(sc.as_str(), "https://api.soundcloud.com/tracks/254111945");
+    }
+
+    #[test]
+    fn source_policy_rejects_noncanonical_api_soundcloud_locators_before_dns() {
+        let cases = vec![
+            // URN-форма, отравлявшая каталог до миграции, — навсегда вне грамматики
+            "https://api.soundcloud.com/tracks/soundcloud%3Atracks%3A254111945".to_string(),
+            "https://api.soundcloud.com/tracks/soundcloud:tracks:254111945".to_string(),
+            "https://api-v2.soundcloud.com/tracks/254111945".to_string(),
+            "https://api.soundcloud.com/tracks/254111945/".to_string(),
+            "https://api.soundcloud.com/tracks".to_string(),
+            "https://api.soundcloud.com/tracks/254111945/extra".to_string(),
+            "https://api.soundcloud.com/playlists/254111945".to_string(),
+            "https://api.soundcloud.com/tracks/0254111945".to_string(),
+            "https://api.soundcloud.com/tracks/25411x945".to_string(),
+            "https://api.soundcloud.com/tracks/254111945?x=1".to_string(),
+            format!("https://api.soundcloud.com/tracks/{}", "9".repeat(21)),
+        ];
+        for raw in cases {
+            assert_rejected_before_dns(&soundcloud("123", &raw));
+        }
     }
 
     #[test]
