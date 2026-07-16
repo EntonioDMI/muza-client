@@ -71,6 +71,7 @@ function rank(index: number) {
   return String(index + 1).padStart(2, "0");
 }
 
+
 /** Циферблат суток: 24 деления по кругу, акцентная дуга и точка любимого
  *  часа. SVG-штрихи — графика данных (та же роль, что точка на старой оси
  *  00→24), не декоративные обводки. При topHour=null дуга — доля дней с
@@ -404,8 +405,16 @@ export function WrappedOverlay({
             </p>
           </div>
           <div className="wrapped__vinyl wrapped__art" aria-hidden="true">
+            {/* ⚠ Гоча приёмки: CDP-скриншоты (Page.captureScreenshot) рисуют
+                ВРАЩАЮЩИЙСЯ растр без круглого клипа — «обложка квадратом
+                поверх диска» — независимо от видимости окна; экран при этом
+                корректен (проверено PrintWindow, 16.07; перебор span-фона,
+                SVG clipPath и canvas даёт тот же артефакт в скриншоте).
+                Не чинить разметку по CDP-скринам — сверяться PrintWindow. */}
             <div className="wrapped__vinyl-disc">
-              {heroCover ? <img src={heroCover} alt="" draggable={false} /> : null}
+              <span className="wrapped__vinyl-spin">
+                {heroCover ? <img className="wrapped__vinyl-art" src={heroCover} alt="" draggable={false} /> : null}
+              </span>
               <span className="wrapped__vinyl-shade" />
               <span className="wrapped__vinyl-center" />
               <span className="wrapped__vinyl-label">MUZA</span>
@@ -677,7 +686,15 @@ export function WrappedOverlay({
 
       <footer className="wrapped__footer" aria-hidden="true">
         <span>{slides.length > 0 ? `${String(position).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}` : "— / —"}</span>
-        <span>{kind === "final" ? t("views.wrapped.footer.savePoster") : t("views.wrapped.footer.clickHint")}</span>
+        {/* Хинт «клик листает» уместен, только когда листать есть что:
+            на empty/error/загрузке он обещал бы пустое действие */}
+        <span>
+          {slides.length > 1
+            ? kind === "final"
+              ? t("views.wrapped.footer.savePoster")
+              : t("views.wrapped.footer.clickHint")
+            : ""}
+        </span>
       </footer>
     </div>
   );

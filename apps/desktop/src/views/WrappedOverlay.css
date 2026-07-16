@@ -431,7 +431,7 @@
 /* Пустой год: гигантский год — сценография, а не заголовок */
 .wrapped__empty-year {
   position: absolute;
-  inset: auto 0 55%;
+  inset: auto 0 63%; /* выше кикера — титры не наезжают на водяной год */
   z-index: -1;
   color: var(--surface-3);
   font-family: var(--font-display);
@@ -614,6 +614,9 @@
 
 /* Винил = круг обложки (язык .muza-orb-spin из app.css): без колец-штрихов,
    глубина — затемняющая шайба и плотный центр. Пластинка медленно крутится. */
+/* Клип статичный, вращается внутренний спиннер (паттерн орбит app.css).
+   В CDP-скриншотах круг «ломается» квадратом — артефакт captureScreenshot
+   для вращающегося растра, на экране всё корректно (см. TSX-комментарий). */
 .wrapped__vinyl-disc {
   position: relative;
   width: min(31vw, 300px);
@@ -621,15 +624,22 @@
   overflow: hidden;
   border-radius: 50%;
   background: var(--bg-1);
+}
+
+.wrapped__vinyl-spin {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
   animation: wrappedSpin 22s linear infinite;
 }
 
-.wrapped__vinyl-disc > img {
+.wrapped__vinyl-art {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
   opacity: 0.78;
   filter: saturate(0.9) brightness(0.74);
 }
@@ -671,11 +681,13 @@
   justify-self: end;
 }
 
-/* «01» — за обложкой, выглядывает слева-снизу: ранг как афишная литера */
+/* «01» — афишная литера ПОВЕРХ угла обложки (за обложкой от цифр оставались
+   нечитаемые обрезки — CDP-скрин 16.07) */
 .wrapped__poster-rank {
   position: absolute;
-  left: -0.5em;
-  bottom: -0.34em;
+  z-index: 2;
+  left: -0.26em;
+  bottom: -0.16em;
   color: var(--accent);
   font-family: var(--font-display);
   font-size: clamp(3.6rem, 7.5vw, 5.25rem);
@@ -1312,7 +1324,7 @@
    мгновенный показ тем же 1ms-правилом. */
 @media (prefers-reduced-motion: reduce) {
   .wrapped__scenery,
-  .wrapped__vinyl-disc,
+  .wrapped__vinyl-spin,
   .wrapped__loading-line span,
   .wrapped__progress span.is-current::after,
   .wrapped__slide,
