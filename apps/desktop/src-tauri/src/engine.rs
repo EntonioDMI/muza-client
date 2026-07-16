@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Manager, State};
 use url::{Host, Url};
 
@@ -81,6 +81,13 @@ pub struct EngineState {
     pins: Mutex<HashSet<String>>,
     /// Неймспейс, которому принадлежит текущее содержимое `pins`.
     pins_ns: Mutex<Option<String>>,
+    /// Прогрев резолва (2026-07-16): метаданные добычи, разрешённые заранее
+    /// через `yt-dlp --simulate` (0 байт трафика). Ключ включает ns по той же
+    /// причине, что и кэш файлов (баг «чужая песня»). Только в памяти, без
+    /// персиста: добытый URL живёт ~6 часов, перезапуск приложения редок, а
+    /// файл-состояние с протухающими URL был бы третьим после
+    /// recipe-cache.json/offline-pins.json.
+    warm: Mutex<HashMap<(String, String), WarmEntry>>,
 }
 
 impl Default for EngineState {
@@ -94,6 +101,7 @@ impl Default for EngineState {
             inflight: Mutex::new(HashMap::new()),
             pins: Mutex::new(HashSet::new()),
             pins_ns: Mutex::new(None),
+            warm: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -1051,6 +1059,592 @@ fn is_pinned(path: &Path, pins: &HashSet<String>) -> bool {
         .unwrap_or(false)
 }
 
+// ── Прогрев резолва (Фаза 1, 2026-07-16) ──────────────────────────
+// Разбивка 4.5с кэш-мисса (замер 2026-07-15): 1.2с старт yt-dlp + ~2.1с
+// сеть-резолв + 1.2с байты. Добытый googlevideo-URL живёт ~6ч, а
+// `--simulate --print` резолвит метаданные за 0 байт трафика — значит резолв
+// можно сделать заранее (engine_warm), а на клике оставить только байты
+// (fetch_to_cache): ~4.5с → ~1.2с. Дизайн и инварианты безопасности —
+// docs/notes/2026-07-16-прогрев-и-стрим-дизайн.md.
+
+/// Запас до `expire` URL: не начинаем скачивание впритык к протуханию.
+const WARM_EXPIRY_MARGIN: Duration = Duration::from_secs(300);
+/// TTL записи без `expire` в URL (SoundCloud/Bandcamp): консервативно коротко.
+const WARM_FALLBACK_TTL: Duration = Duration::from_secs(600);
+/// Потолок записей прогрева (защита памяти от многочасовой сессии).
+const WARM_MAX_ENTRIES: usize = 512;
+
+/// Прогретые метаданные одного трека: прямой CDN-URL + размер + расширение.
+/// Провайдер — для ResolveOut быстрого пути (той же формы, что у лестницы).
+#[derive(Debug, Clone)]
+struct WarmEntry {
+    url: Url,
+    size: u64,
+    ext: String,
+    provider: String,
+    expires_at: SystemTime,
+}
+
+/// Разобранный выхлоп `--print` прогрева (см. build_ytdlp_simulate_args).
+#[derive(Debug, PartialEq)]
+struct SimulatedFormat {
+    url: String,
+    size: u64,
+    ext: String,
+}
+
+/// argv прогрева — ОТДЕЛЬНАЯ функция, а не правка build_ytdlp_args: боевой
+/// argv security-hardened и покрыт своими тестами, смешивать режимы флагом
+/// значило бы перепроверять оба пути на каждую правку. Отличия от боя:
+/// `--simulate` вместо `--no-simulate` (0 байт трафика), `--print` метаданных
+/// вместо пути файла, нет `--max-downloads` (без скачивания бессмыслен, а его
+/// exit-101 маскировал бы ошибки — см. simulate_exit_ok), нет `-P`/`-o`
+/// (выходного файла не будет). `--max-filesize` ОСТАЁТСЯ: он фильтрует
+/// лестницу форматов на резолве, прогрев обязан видеть ту же лестницу, что бой.
+fn build_ytdlp_simulate_args(
+    attempt: &Attempt,
+    format_str: &str,
+    deno_path: &Path,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--ignore-config"),
+        OsString::from("--no-playlist"),
+        OsString::from("--max-filesize"),
+        OsString::from("512M"),
+        OsString::from("--js-runtimes"),
+        OsString::from(format!("deno:{}", deno_path.display())),
+        OsString::from("-f"),
+        OsString::from(format_str),
+        OsString::from("--no-warnings"),
+        OsString::from("--no-progress"),
+        OsString::from("--socket-timeout"),
+        OsString::from("15"),
+        OsString::from("--retries"),
+        OsString::from("2"),
+        OsString::from("--simulate"),
+        OsString::from("--print"),
+        // protocol — 4-м полем не для красоты: hls/dash-форматы (SoundCloud
+        // без progressive) печатают в %(url)s МАНИФЕСТ; скачав его, прогрев
+        // положил бы в кэш текст вместо аудио (см. parse_simulate_output).
+        OsString::from("%(url)s\t%(filesize,filesize_approx)s\t%(ext)s\t%(protocol)s"),
+    ];
+    if let Some(client) = &attempt.client {
+        args.push(OsString::from("--extractor-args"));
+        args.push(OsString::from(format!("youtube:player_client={client}")));
+    }
+    args.push(OsString::from(attempt.url.as_str()));
+    args
+}
+
+/// Успех simulate — ТОЛЬКО 0. Переиспользовать ytdlp_exit_ok нельзя: боевой
+/// 101 (MaxDownloadsReached) означает «скачал и упёрся в --max-downloads», у
+/// simulate скачивания нет и 101 может быть только ошибкой.
+fn simulate_exit_ok(code: Option<i32>) -> bool {
+    code == Some(0)
+}
+
+/// Расширение станет именем файла кэша `<id>.<ext>` — грамматика жёсткая:
+/// 1..=8 строчных ASCII-букв/цифр, никаких точек/слэшей (yt-dlp отдаёт
+/// webm/m4a/opus/mp3 — всё влезает).
+fn valid_warm_ext(ext: &str) -> bool {
+    !ext.is_empty()
+        && ext.len() <= 8
+        && ext
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// Разбор `--print "%(url)s\t%(filesize,filesize_approx)s\t%(ext)s\t%(protocol)s"`.
+/// Как run_ytdlp_once: наша строка — последняя непустая в stdout. Протокол
+/// принимается только "https" (прямой файл): hls/dash кладут в %(url)s
+/// манифест, скачивание которого отравило бы кэш текстом вместо аудио и
+/// сделало трек неиграбельным — прямое нарушение инварианта прогрева.
+/// Размер обязателен (не "NA"): без него не построить явный Range, а без
+/// Range googlevideo троттлит до 32 КБ/с (замер 2026-07-15).
+fn parse_simulate_output(stdout: &str) -> Result<SimulatedFormat, String> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .ok_or("yt-dlp --simulate не напечатал метаданные")?;
+    let fields: Vec<&str> = line.split('\t').collect();
+    let [url, size, ext, protocol] = fields.as_slice() else {
+        return Err(format!("неожиданный выхлоп simulate: {line:?}"));
+    };
+    if *protocol != "https" {
+        return Err(format!("формат с протоколом {protocol:?} не прогревается (нужен прямой https)"));
+    }
+    let size: u64 = size
+        .parse()
+        .map_err(|_| format!("simulate не отдал размер файла: {size:?}"))?;
+    if !valid_warm_ext(ext) {
+        return Err(format!("подозрительное расширение из simulate: {ext:?}"));
+    }
+    if url.trim().is_empty() {
+        return Err("simulate отдал пустой URL".into());
+    }
+    Ok(SimulatedFormat {
+        url: (*url).to_string(),
+        size,
+        ext: (*ext).to_string(),
+    })
+}
+
+/// Срок жизни warm-записи: `expire` из query URL (unix-секунды у googlevideo)
+/// минус запас — не начинаем скачивание впритык к протуханию. Нет/битый
+/// expire (SoundCloud/Bandcamp) — консервативный короткий TTL.
+fn warm_expires_at(url: &Url, now: SystemTime) -> SystemTime {
+    let expire = url
+        .query_pairs()
+        .find(|(k, _)| k == "expire")
+        .and_then(|(_, v)| v.parse::<u64>().ok());
+    match expire {
+        Some(secs) => SystemTime::UNIX_EPOCH + Duration::from_secs(secs) - WARM_EXPIRY_MARGIN,
+        None => now + WARM_FALLBACK_TTL,
+    }
+}
+
+/// Новая граница доверия (по сравнению с боевым путём): по добытому URL ходит
+/// не yt-dlp, а МЫ (reqwest в fetch_to_cache). Валидация: только https, без
+/// credentials, хост — домен (не IP-литерал), DNS-ответ — публичный по той же
+/// prefix-policy (is_public_ip), что и canonical_target. Домен CDN намеренно
+/// НЕ whitelist-ится: список хостов googlevideo/SoundCloud плавает, whitelist
+/// ломал бы прогрев молча, а планку не поднимает — yt-dlp и сегодня резолвит
+/// домен заново и следует редиректам (см. «Остаточный риск» ниже).
+///
+/// Остаточный риск (честно): это валидация ответа, а не пиннинг —
+/// reqwest резолвит заново и следует редиректам; полностью SSRF закрывается
+/// только egress-proxy/firewall, как и было записано про yt-dlp.
+fn validate_warm_url_with_lookup(
+    raw: &str,
+    lookup: &mut impl FnMut(&str, u16) -> LookupResult,
+) -> Result<Url, String> {
+    let parsed = Url::parse(raw).map_err(|_| "warm-URL не парсится".to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("warm-URL не https".into());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("warm-URL с credentials".into());
+    }
+    let host = match parsed.host() {
+        Some(Host::Domain(host)) => host.to_string(),
+        _ => return Err("warm-URL хост — не домен".into()),
+    };
+    // Best-effort, не гейт — та же философия, что DNS-преflight
+    // canonical_target: за DPI-обходом/прокси локальный getaddrinfo врёт
+    // NXDOMAIN, тогда как reqwest тем же хостом ходит через прокси. Режем
+    // только реальный приватный ответ.
+    if let Ok(answers) = lookup(&host, 443) {
+        if !answers.is_empty() && answers.iter().copied().any(|answer| !is_public_ip(answer)) {
+            return Err("warm-URL резолвится в непубличный адрес".into());
+        }
+    }
+    Ok(parsed)
+}
+
+fn validate_warm_url(raw: &str) -> Result<Url, String> {
+    let mut lookup = |host: &str, port: u16| {
+        debug_assert_eq!(port, 443);
+        (host, 443)
+            .to_socket_addrs()
+            .map(|answers| answers.map(|answer| answer.ip()).collect())
+            .map_err(|error| format!("DNS lookup failed: {error}"))
+    };
+    validate_warm_url_with_lookup(raw, &mut lookup)
+}
+
+/// Заявленный размер: >0 и в лимите кэша (тот же 512 МиБ, что у yt-dlp-пути).
+fn content_length_ok(len: u64) -> bool {
+    len > 0 && len <= MAX_YTDLP_OUTPUT_BYTES
+}
+
+/// `Content-Range: bytes 0-<end>/<total>` 206-ответа. total — ИСТИННЫЙ размер
+/// файла (filesize_approx из simulate мог наврать; обрезанный файл в кэше
+/// хуже медленного старта — см. fetch_to_cache). Диапазоны не с нуля и
+/// звёздочки не принимаем: мы всегда просим bytes=0-…
+fn parse_content_range(value: &str) -> Option<(u64, u64)> {
+    let rest = value.strip_prefix("bytes ")?;
+    let (range, total) = rest.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    if start != "0" {
+        return None;
+    }
+    Some((end.parse().ok()?, total.parse().ok()?))
+}
+
+fn warm_key(ns: &str, track_id: &str) -> (String, String) {
+    (ns.to_string(), track_id.to_string())
+}
+
+fn store_warm_entry(state: &EngineState, ns: &str, track_id: &str, entry: WarmEntry) {
+    let mut warm = state.warm.lock().unwrap();
+    if warm.len() >= WARM_MAX_ENTRIES {
+        // сперва дёшево выкидываем протухшие; если живых всё ещё потолок —
+        // жертвуем самой близкой к протуханию (она наименее ценна)
+        let now = SystemTime::now();
+        warm.retain(|_, e| e.expires_at > now);
+        if warm.len() >= WARM_MAX_ENTRIES {
+            if let Some(key) = warm
+                .iter()
+                .min_by_key(|(_, e)| e.expires_at)
+                .map(|(k, _)| k.clone())
+            {
+                warm.remove(&key);
+            }
+        }
+    }
+    warm.insert(warm_key(ns, track_id), entry);
+}
+
+/// Изъятие ОДНОРАЗОВОЕ: быстрый путь engine_resolve берёт запись и либо
+/// доводит её до файла в кэше, либо она уже выброшена — «молча выбросить и
+/// упасть на лестницу» получается самим take. Протухшее удаляется на месте.
+fn take_live_warm_entry(
+    state: &EngineState,
+    ns: &str,
+    track_id: &str,
+    now: SystemTime,
+) -> Option<WarmEntry> {
+    let mut warm = state.warm.lock().unwrap();
+    let key = warm_key(ns, track_id);
+    let entry = warm.remove(&key)?;
+    if entry.expires_at > now {
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+/// Неразрушающая проверка для engine_warm: живая запись уже есть — греть
+/// нечего. Протухшая выбрасывается сразу (иначе бы врала до первого take).
+fn has_live_warm_entry(state: &EngineState, ns: &str, track_id: &str, now: SystemTime) -> bool {
+    let mut warm = state.warm.lock().unwrap();
+    let key = warm_key(ns, track_id);
+    match warm.get(&key) {
+        Some(entry) if entry.expires_at > now => true,
+        Some(_) => {
+            warm.remove(&key);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Одна попытка прогрева: тот же процесс yt-dlp, что run_ytdlp_once, но
+/// `--simulate --print` — метаданные без единого байта аудио (~2-4с против
+/// ~4.5с полной добычи; трафик 0). Успех — прямой CDN-URL + размер + ext.
+fn run_ytdlp_simulate(
+    ytdlp: &Path,
+    deno: &Path,
+    attempt: &Attempt,
+    format_str: &str,
+) -> Result<SimulatedFormat, String> {
+    let mut cmd = command(ytdlp);
+    cmd.args(build_ytdlp_simulate_args(attempt, format_str, deno));
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("yt-dlp не запустился ({}): {e}", ytdlp.display()))?;
+    let status = wait_with_timeout(&mut child, RESOLVE_TIMEOUT)?;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_string(&mut stdout);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_string(&mut stderr);
+    }
+
+    if !simulate_exit_ok(status.code()) {
+        let last = stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("yt-dlp --simulate упал без stderr");
+        return Err(last.to_string());
+    }
+    parse_simulate_output(&stdout)
+}
+
+/// Общий HTTP-клиент прогрева: пул соединений/тлс-сессий между прогревом и
+/// кликом (тот же CDN-хост) экономит рукопожатие на пути «клик → звук».
+fn warm_http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .expect("reqwest client строится")
+    })
+}
+
+/// Скачивание по прогретому URL в кэш — замена всего процесса yt-dlp на один
+/// GET, когда метаданные уже разрешены прогревом.
+///
+/// Инварианты боевого пути сохраняются ЗДЕСЬ (см. таблицу в
+/// docs/notes/2026-07-16-прогрев-и-стрим-дизайн.md):
+/// - явный `Range: bytes=0-<size-1>` обязателен — обычный GET по googlevideo
+///   троттлится до 32 КБ/с (замер 2026-07-15: 802 КБ за 25с против 1.2с);
+/// - лимит 512 МиБ трижды: заявленный размер до запроса, Content-Length /
+///   Content-Range до чтения тела, счётчик байт при записи (заголовки врут
+///   бесплатно);
+/// - целостность: сколько CDN заявил (total из Content-Range/Content-Length),
+///   столько и записали — иначе .part удаляется (filesize_approx из simulate
+///   мог наврать, обрезанное аудио в кэше хуже медленного старта);
+/// - результат становится кэшем только атомарным rename ПОСЛЕ полной записи;
+///   `.part` не может стать кэш-хитом (find_cached, тест part_file_is_not_a_cache_hit);
+/// - `validate_ytdlp_output` на финальном пути — буквально та же функция.
+async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result<PathBuf, String> {
+    if !content_length_ok(entry.size) {
+        return Err(format!("warm-размер вне лимита: {}", entry.size));
+    }
+    let resp = warm_http_client()
+        .get(entry.url.clone())
+        .header("Range", format!("bytes=0-{}", entry.size - 1))
+        .timeout(RESOLVE_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("warm GET не ушёл: {e}"))?;
+
+    let status = resp.status();
+    // total — сколько байт СУЩЕСТВУЕТ у CDN: у 206 — из Content-Range (наш
+    // Range мог попросить меньше или больше реального), у 200 — Content-Length.
+    let total = match status.as_u16() {
+        206 => {
+            let (end, total) = resp
+                .headers()
+                .get("Content-Range")
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_content_range)
+                .ok_or("206 без разборчивого Content-Range")?;
+            if end + 1 != total {
+                // CDN отдаёт кусок меньше файла (настоящий размер больше
+                // simulate-оценки) — привезли бы обрезанное аудио
+                return Err(format!("warm-ответ неполный: {end}+1 из {total}"));
+            }
+            total
+        }
+        200 => resp
+            .content_length()
+            .ok_or("200 без Content-Length — размер не проверить")?,
+        other => return Err(format!("warm GET: статус {other}")),
+    };
+    if !content_length_ok(total) {
+        return Err(format!("warm Content-Length вне лимита: {total}"));
+    }
+
+    let part = dir.join(format!("{track_id}.{}.part", entry.ext));
+    let final_path = dir.join(format!("{track_id}.{}", entry.ext));
+    let written = write_body_to_part(resp, &part, total).await;
+    match written {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            return Err(e);
+        }
+    }
+    // На Windows rename поверх существующего файла падает — а yt-dlp мог
+    // оставить одноимённый файл от прошлой жизни. Кэш-промах уже установлен
+    // (engine_resolve смотрел find_cached), так что снести безопасно.
+    let _ = fs::remove_file(&final_path);
+    if let Err(e) = fs::rename(&part, &final_path) {
+        let _ = fs::remove_file(&part);
+        return Err(format!("rename .part не прошёл: {e}"));
+    }
+    validate_ytdlp_output(dir, &final_path)
+}
+
+/// Тело ответа → `.part`, с подсчётом байт (Content-Length врёт бесплатно,
+/// проверяем и по факту) и жёсткой сверкой с total по завершении.
+async fn write_body_to_part(
+    mut resp: reqwest::Response,
+    part: &Path,
+    total: u64,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut file = fs::File::create(part).map_err(|e| format!("не создался .part: {e}"))?;
+    let mut written: u64 = 0;
+    loop {
+        let chunk = resp
+            .chunk()
+            .await
+            .map_err(|e| format!("обрыв warm-скачивания: {e}"))?;
+        let Some(bytes) = chunk else { break };
+        written += bytes.len() as u64;
+        if written > total {
+            return Err(format!("CDN прислал больше заявленного: {written} > {total}"));
+        }
+        file.write_all(&bytes)
+            .map_err(|e| format!("запись .part: {e}"))?;
+    }
+    if written != total {
+        return Err(format!("warm-скачивание неполное: {written} из {total}"));
+    }
+    file.flush().map_err(|e| format!("flush .part: {e}"))?;
+    Ok(())
+}
+
+/// Валидация id трека: имя каталога/файла кэша (общая для resolve и warm).
+fn validate_track_id(track_id: &str) -> Result<(), String> {
+    if track_id.is_empty()
+        || !track_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("некорректный id трека".into());
+    }
+    Ok(())
+}
+
+/// Лестница из рецепта: player_clients + формат-строка (общая для resolve и
+/// warm — прогрев обязан резолвить ровно тот формат, который скачал бы бой).
+fn ladder_from_recipe(state: &EngineState, quality: Option<&str>) -> (Vec<String>, String) {
+    let recipe = state.recipe.lock().unwrap();
+    let clients: Vec<String> = recipe["youtube"]["player_clients"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .unwrap_or_else(|| vec!["tv".into(), "web_music".into()]);
+    let mut format_str = recipe["youtube"]["format_priority"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_else(|| "251/140/bestaudio".to_string());
+    if quality == Some("econom") {
+        format_str = format!("{ECONOM_FORMATS}/{format_str}");
+    }
+    (clients, format_str)
+}
+
+#[derive(Serialize)]
+pub struct WarmOut {
+    /// Живая warm-запись есть (уже была или только что добыта).
+    pub warm: bool,
+    /// Файл уже в кэше — греть нечего (и warm=false).
+    pub cached: bool,
+}
+
+/// Прогрев резолва: та же лестница «источники × player_clients», но
+/// `--simulate --print` вместо скачивания — 0 байт трафика, только метаданные.
+/// Результат — WarmEntry в памяти; клик по треку заберёт её быстрым путём
+/// engine_resolve (fetch_to_cache) и оставит от 4.5с только ~1.2с байтов.
+///
+/// Ошибка прогрева НЕ трогает счётчики EngineStats: KPI (SABR/403-rate) мерит
+/// боевые добычи, фоновый прогрев размывал бы сигнал.
+#[tauri::command]
+pub async fn engine_warm(
+    app: AppHandle,
+    state: State<'_, EngineState>,
+    track_id: String,
+    sources: Vec<SourceRef>,
+    quality: Option<String>,
+    cache_ns: String,
+) -> Result<WarmOut, String> {
+    validate_track_id(&track_id)?;
+    let dir = cache_dir(&app, &cache_ns)?;
+
+    // Тот же single-flight, что у engine_resolve: если резолв этого трека уже
+    // идёт, прогрев подождёт и увидит кэш-хит вместо второго yt-dlp.
+    let gate = {
+        let mut inflight = state.inflight.lock().unwrap();
+        inflight
+            .entry(track_id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _guard = gate.lock().await;
+
+    if find_cached(&dir, &track_id).is_some() {
+        return Ok(WarmOut {
+            warm: false,
+            cached: true,
+        });
+    }
+    if has_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now()) {
+        return Ok(WarmOut {
+            warm: true,
+            cached: false,
+        });
+    }
+
+    let (clients, format_str) = ladder_from_recipe(&state, quality.as_deref());
+    let Attempts { attempts, drops } =
+        tauri::async_runtime::spawn_blocking(move || build_attempts(&sources, &clients))
+            .await
+            .map_err(|error| format!("source policy spawn_blocking: {error}"))?;
+    if attempts.is_empty() {
+        return Err(if drops.is_empty() {
+            "у трека нет живых источников".to_string()
+        } else {
+            format!("у трека нет живых источников ({})", drops.join("; "))
+        });
+    }
+
+    let sidecars = sidecar_paths()?;
+    let mut last_error = String::new();
+    for attempt in attempts {
+        let fmt = format_str.clone();
+        let ytdlp_clone = sidecars.ytdlp.clone();
+        let deno_clone = sidecars.deno.clone();
+        let attempt_provider = attempt.provider.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            run_ytdlp_simulate(&ytdlp_clone, &deno_clone, &attempt, &fmt)
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?;
+
+        match result {
+            Ok(sim) => {
+                if !content_length_ok(sim.size) {
+                    last_error = format!("warm-размер вне лимита: {}", sim.size);
+                    continue;
+                }
+                let url = match validate_warm_url(&sim.url) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        last_error = e;
+                        continue;
+                    }
+                };
+                let now = SystemTime::now();
+                let entry = WarmEntry {
+                    expires_at: warm_expires_at(&url, now),
+                    url,
+                    size: sim.size,
+                    ext: sim.ext,
+                    provider: attempt_provider,
+                };
+                if entry.expires_at <= now {
+                    last_error = "warm-URL уже протух".into();
+                    continue;
+                }
+                store_warm_entry(&state, &cache_ns, &track_id, entry);
+                return Ok(WarmOut {
+                    warm: true,
+                    cached: false,
+                });
+            }
+            Err(e) => last_error = e,
+        }
+    }
+    Err(format!("прогрев не удался: {last_error}"))
+}
+
 /// Эконом-лестница форматов: низкий битрейт в голове (250/249 = opus 64/48k,
 /// 139 = AAC 48k), обычная лестница рецепта в хвосте — не-YouTube источники
 /// и треки без низкобитрейтных форматов не ломаются.
@@ -1070,13 +1664,7 @@ pub async fn engine_resolve(
     cache_ns: String,
 ) -> Result<ResolveOut, String> {
     // id каталога числовой; заодно это защита имени файла кэша
-    if track_id.is_empty()
-        || !track_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err("некорректный id трека".into());
-    }
+    validate_track_id(&track_id)?;
     let dir = cache_dir(&app, &cache_ns)?;
 
     // Single-flight: параллельный резолв того же трека (play + преднагрузка)
@@ -1102,35 +1690,28 @@ pub async fn engine_resolve(
         });
     }
 
-    // Лестница попыток из рецепта (спайк Stage 0: tv → web_music → след. источник)
-    let (clients, format_str) = {
-        let recipe = state.recipe.lock().unwrap();
-        let clients: Vec<String> = recipe["youtube"]["player_clients"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .filter(|v: &Vec<String>| !v.is_empty())
-            .unwrap_or_else(|| vec!["tv".into(), "web_music".into()]);
-        let mut format_str = recipe["youtube"]["format_priority"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("/")
-            })
-            .unwrap_or_else(|| "251/140/bestaudio".to_string());
-        if quality.as_deref() == Some("econom") {
-            format_str = format!("{ECONOM_FORMATS}/{format_str}");
+    // Быстрый путь прогрева (Фаза 1): метаданные уже разрешены engine_warm —
+    // вместо процесса yt-dlp остаётся один GET (~4.5с → ~1.2с). Любая ошибка
+    // (URL протух, CDN отказал, размер не сошёлся) — запись уже выброшена
+    // самим take, молча падаем на обычную лестницу ниже: прогрев не имеет
+    // права сделать трек неиграбельным.
+    if let Some(entry) = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now()) {
+        if let Ok(path) = fetch_to_cache(&dir, &track_id, &entry).await {
+            let limit = *state.cache_limit_bytes.lock().unwrap();
+            ensure_pins_loaded(&app, &state, &cache_ns);
+            let pins = state.pins.lock().unwrap().clone();
+            evict_lru(&dir, limit, &path, &pins);
+            state.stats.lock().unwrap().resolve_ok += 1;
+            return Ok(ResolveOut {
+                path: path.to_string_lossy().into_owned(),
+                from_cache: false,
+                provider: Some(entry.provider),
+            });
         }
-        (clients, format_str)
-    };
+    }
+
+    // Лестница попыток из рецепта (спайк Stage 0: tv → web_music → след. источник)
+    let (clients, format_str) = ladder_from_recipe(&state, quality.as_deref());
 
     // URL parsing + DNS are blocking work. Move owned renderer input and the
     // recipe client list off the async Tauri thread before any child process
@@ -2635,5 +3216,330 @@ mod sidecar_policy_tests {
         let p = pins_file(&base, "a1b2c3d4").unwrap();
         assert_eq!(p, base.join("a1b2c3d4").join("offline-pins.json"));
         assert!(pins_file(&base, "../evil").is_err());
+    }
+}
+
+#[cfg(test)]
+mod warm_tests {
+    use super::*;
+
+    fn yt_attempt() -> Attempt {
+        Attempt {
+            provider: "youtube".into(),
+            url: Url::parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap(),
+            client: Some("android_vr".into()),
+        }
+    }
+
+    fn simulate_args() -> Vec<String> {
+        build_ytdlp_simulate_args(&yt_attempt(), "251/140/bestaudio", Path::new("C:/t/deno.exe"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// `--max-filesize` фильтрует лестницу ФОРМАТОВ уже на резолве, а не только
+    /// обрывает скачивание — прогрев обязан видеть ту же лестницу, что бой,
+    /// иначе warm-URL укажет на формат, который боевой путь отверг бы.
+    #[test]
+    fn simulate_args_keep_max_filesize() {
+        let args = simulate_args();
+        let i = args
+            .iter()
+            .position(|a| a == "--max-filesize")
+            .expect("--max-filesize обязан остаться в argv прогрева");
+        assert_eq!(args[i + 1], "512M");
+    }
+
+    /// При `--simulate` скачивания нет — `--max-downloads` бессмыслен, а его
+    /// exit-101 в боевом пути особый (успех). Прогреву флаг только мешает.
+    #[test]
+    fn simulate_args_have_no_max_downloads() {
+        assert!(
+            !simulate_args().iter().any(|a| a == "--max-downloads"),
+            "у simulate-argv не должно быть --max-downloads"
+        );
+    }
+
+    /// Прогрев — это `--simulate` + `--print` метаданных; боевого
+    /// `--no-simulate`/`after_move:filepath` быть не должно. Клиент лестницы и
+    /// URL — как в боевом argv.
+    #[test]
+    fn simulate_args_are_simulate_only() {
+        let args = simulate_args();
+        assert!(args.iter().any(|a| a == "--simulate"));
+        assert!(!args.iter().any(|a| a == "--no-simulate"));
+        assert!(!args.iter().any(|a| a.contains("after_move")));
+        let i = args.iter().position(|a| a == "--print").expect("--print");
+        assert_eq!(
+            args[i + 1],
+            "%(url)s\t%(filesize,filesize_approx)s\t%(ext)s\t%(protocol)s"
+        );
+        assert!(args.iter().any(|a| a == "youtube:player_client=android_vr"));
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        );
+        // выходной файл не пишется — шаблонов вывода в argv нет
+        assert!(!args.iter().any(|a| a == "-P" || a == "-o"));
+    }
+
+    /// В боевом пути 101 (MaxDownloadsReached) — успех ПОСЛЕ скачивания.
+    /// В simulate скачивания нет, 101 там может значить только ошибку —
+    /// переиспользовать ytdlp_exit_ok нельзя (ловушка из спеки).
+    #[test]
+    fn simulate_exit_ok_rejects_101() {
+        assert!(simulate_exit_ok(Some(0)));
+        assert!(!simulate_exit_ok(Some(YTDLP_MAX_DOWNLOADS_REACHED)));
+        assert!(!simulate_exit_ok(Some(1)));
+        assert!(!simulate_exit_ok(None));
+    }
+
+    #[test]
+    fn parse_simulate_output_happy_path() {
+        let out = "https://rr4---sn-abc.googlevideo.com/videoplayback?expire=1780000000&itag=251\t3433755\topus\thttps\n";
+        let f = parse_simulate_output(out).expect("валидный выхлоп разбирается");
+        assert_eq!(
+            f,
+            SimulatedFormat {
+                url: "https://rr4---sn-abc.googlevideo.com/videoplayback?expire=1780000000&itag=251"
+                    .into(),
+                size: 3_433_755,
+                ext: "opus".into(),
+            }
+        );
+    }
+
+    /// yt-dlp может печатать служебные строки до нашей — берём последнюю
+    /// непустую (как run_ytdlp_once берёт путь).
+    #[test]
+    fn parse_simulate_output_takes_last_nonempty_line() {
+        let out = "WARNING: что-то\nhttps://cdn.example.com/a?x=1\t100\tm4a\thttps\n\n";
+        let f = parse_simulate_output(out).expect("последняя непустая строка");
+        assert_eq!(f.url, "https://cdn.example.com/a?x=1");
+    }
+
+    /// Без размера warm-запись бесполезна: явный Range строится по size
+    /// (без Range googlevideo троттлит до 32 КБ/с — замер 2026-07-15).
+    #[test]
+    fn parse_simulate_output_rejects_na_size() {
+        let out = "https://cdn.example.com/a\tNA\topus\thttps\n";
+        assert!(parse_simulate_output(out).is_err());
+    }
+
+    #[test]
+    fn parse_simulate_output_rejects_missing_fields() {
+        assert!(parse_simulate_output("").is_err());
+        assert!(parse_simulate_output("\n\n").is_err());
+        assert!(parse_simulate_output("https://cdn.example.com/a\t123\n").is_err());
+    }
+
+    /// ext становится именем файла кэша `<id>.<ext>` — грамматика жёсткая.
+    #[test]
+    fn parse_simulate_output_rejects_weird_ext() {
+        for ext in ["", "OPUS", "op us", "we..bm", "a/b", "оченьдлинное", "webm2000x"] {
+            let out = format!("https://cdn.example.com/a\t123\t{ext}\thttps\n");
+            assert!(
+                parse_simulate_output(&out).is_err(),
+                "ext {ext:?} обязан отвергаться"
+            );
+        }
+    }
+
+    /// hls/dash печатают протокол m3u8_native/http_dash_segments, а их «url» —
+    /// манифест: скачав его, мы положили бы в кэш ТЕКСТ вместо аудио и сделали
+    /// трек неиграбельным (нарушение главного инварианта прогрева). Принимаем
+    /// только прямой https.
+    #[test]
+    fn parse_simulate_output_rejects_non_https_protocol() {
+        for proto in ["m3u8_native", "http_dash_segments", "http", "ftp"] {
+            let out = format!("https://cdn.example.com/manifest\t123\tm4a\t{proto}\n");
+            assert!(
+                parse_simulate_output(&out).is_err(),
+                "протокол {proto:?} обязан отвергаться"
+            );
+        }
+    }
+
+    /// `expire` в googlevideo-URL — unix-секунды; запись живёт до него минус
+    /// запас (не начинаем скачивание впритык к протуханию).
+    #[test]
+    fn warm_url_expire_parsed_from_query() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let url =
+            Url::parse("https://r4.googlevideo.com/videoplayback?a=1&expire=1021000&b=2").unwrap();
+        assert_eq!(
+            warm_expires_at(&url, now),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_021_000) - WARM_EXPIRY_MARGIN
+        );
+    }
+
+    /// Нет/битый expire (SoundCloud, Bandcamp) — консервативный короткий TTL.
+    #[test]
+    fn warm_url_expire_fallback_without_param() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for raw in [
+            "https://cdn.example.com/a.mp3",
+            "https://cdn.example.com/a.mp3?expire=abc",
+        ] {
+            let url = Url::parse(raw).unwrap();
+            assert_eq!(warm_expires_at(&url, now), now + WARM_FALLBACK_TTL);
+        }
+    }
+
+    fn entry_with_expiry(expires_at: SystemTime) -> WarmEntry {
+        WarmEntry {
+            url: Url::parse("https://cdn.example.com/a").unwrap(),
+            size: 100,
+            ext: "opus".into(),
+            provider: "youtube".into(),
+            expires_at,
+        }
+    }
+
+    /// Протухшая запись не имеет права попасть в быстрый путь: URL умер,
+    /// скачивание по нему только съело бы время до фолбэка на лестницу.
+    #[test]
+    fn expired_warm_entry_is_not_used() {
+        let state = EngineState::default();
+        let now = SystemTime::now();
+        store_warm_entry(
+            &state,
+            "ns1",
+            "42",
+            entry_with_expiry(now - Duration::from_secs(1)),
+        );
+        assert!(take_live_warm_entry(&state, "ns1", "42", now).is_none());
+        assert!(!has_live_warm_entry(&state, "ns1", "42", now));
+    }
+
+    /// take — одноразовое изъятие (ошибка скачивания = запись уже выброшена);
+    /// ключ включает ns (баг «чужая песня» — id уникален только внутри БД).
+    #[test]
+    fn live_warm_entry_is_taken_once_and_namespaced() {
+        let state = EngineState::default();
+        let now = SystemTime::now();
+        let live = now + Duration::from_secs(3600);
+        store_warm_entry(&state, "ns1", "42", entry_with_expiry(live));
+        assert!(
+            !has_live_warm_entry(&state, "ns2", "42", now),
+            "чужой ns не видит запись"
+        );
+        assert!(take_live_warm_entry(&state, "ns2", "42", now).is_none());
+        assert!(has_live_warm_entry(&state, "ns1", "42", now));
+        assert!(take_live_warm_entry(&state, "ns1", "42", now).is_some());
+        assert!(
+            take_live_warm_entry(&state, "ns1", "42", now).is_none(),
+            "повторное изъятие пусто — запись одноразовая"
+        );
+    }
+
+    fn no_lookup(_host: &str, _port: u16) -> LookupResult {
+        panic!("до DNS дойти не должны");
+    }
+
+    /// Новая граница доверия: по добытому URL теперь ходим МЫ (reqwest), а не
+    /// yt-dlp — валидация обязана быть не слабее канонической (https, без
+    /// credentials, не IP-литерал, публичный DNS-ответ).
+    #[test]
+    fn validate_warm_url_rejects_http() {
+        assert!(validate_warm_url_with_lookup("http://cdn.example.com/a", &mut no_lookup).is_err());
+    }
+
+    #[test]
+    fn validate_warm_url_rejects_credentials() {
+        for raw in [
+            "https://user:pass@cdn.example.com/a",
+            "https://user@cdn.example.com/a",
+        ] {
+            assert!(
+                validate_warm_url_with_lookup(raw, &mut no_lookup).is_err(),
+                "{raw:?} обязан отвергаться"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_warm_url_rejects_ip_literal() {
+        for raw in [
+            "https://142.250.74.14/videoplayback",
+            "https://[2a00:1450:4010:c05::5f]/videoplayback",
+        ] {
+            assert!(
+                validate_warm_url_with_lookup(raw, &mut no_lookup).is_err(),
+                "{raw:?} обязан отвергаться"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_warm_url_rejects_private_dns_answer() {
+        let mut lookup =
+            |_host: &str, _port: u16| -> LookupResult { Ok(vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))]) };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut lookup).is_err());
+    }
+
+    /// Та же философия, что у DNS-преflight canonical_target: best-effort, не
+    /// гейт. За DPI-обходом/прокси локальный getaddrinfo может врать
+    /// NXDOMAIN, тогда как reqwest тем же хостом сходит через прокси. Режем
+    /// только реальный приватный ответ.
+    #[test]
+    fn validate_warm_url_is_best_effort_on_dns_failure() {
+        let mut failing = |_h: &str, _p: u16| -> LookupResult { Err("nx".into()) };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut failing).is_ok());
+        let mut empty = |_h: &str, _p: u16| -> LookupResult { Ok(vec![]) };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut empty).is_ok());
+        let mut public = |_h: &str, _p: u16| -> LookupResult {
+            Ok(vec![IpAddr::V4(Ipv4Addr::new(142, 250, 74, 14))])
+        };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut public).is_ok());
+    }
+
+    /// Content-Length врёт бесплатно, но заведомый перебор лимита режем ДО
+    /// чтения тела (по факту байты пересчитываются ещё раз при записи).
+    #[test]
+    fn content_length_over_limit_rejected() {
+        assert!(content_length_ok(1));
+        assert!(content_length_ok(MAX_YTDLP_OUTPUT_BYTES));
+        assert!(!content_length_ok(MAX_YTDLP_OUTPUT_BYTES + 1));
+        assert!(!content_length_ok(0));
+    }
+
+    /// Content-Range 206-ответа — источник ИСТИННОГО размера файла:
+    /// filesize_approx мог наврать, и обрезанный файл в кэше хуже медленного
+    /// старта. Формат: `bytes 0-<end>/<total>`.
+    #[test]
+    fn content_range_total_parsed() {
+        assert_eq!(parse_content_range("bytes 0-99/1234"), Some((99, 1234)));
+        assert_eq!(
+            parse_content_range("bytes 0-3433754/3433755"),
+            Some((3_433_754, 3_433_755))
+        );
+        assert_eq!(parse_content_range("bytes */1234"), None);
+        assert_eq!(parse_content_range("bytes 0-99/*"), None);
+        assert_eq!(parse_content_range("garbage"), None);
+        assert_eq!(
+            parse_content_range("bytes 5-99/1234"),
+            None,
+            "начало не с нуля"
+        );
+    }
+
+    /// Регресс-защита от огрызков: `.part` недокачки не имеет права стать
+    /// кэш-хитом (двойная защита: find_cached пропускает .part явно, плюс
+    /// file_stem у `<id>.<ext>.part` — это `<id>.<ext>`, не `<id>`).
+    #[test]
+    fn part_file_is_not_a_cache_hit() {
+        let dir = std::env::temp_dir().join(format!("muza-warm-part-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("42.opus.part"), b"partial").unwrap();
+        assert!(
+            find_cached(&dir, "42").is_none(),
+            ".part не имеет права быть кэш-хитом"
+        );
+        fs::write(dir.join("42.opus"), b"full").unwrap();
+        assert!(find_cached(&dir, "42").is_some(), "полный файл — хит");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

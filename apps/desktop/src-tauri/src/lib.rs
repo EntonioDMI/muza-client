@@ -68,6 +68,7 @@ pub fn run() {
             engine::recipe_apply,
             engine::recipe_current,
             engine::engine_resolve,
+            engine::engine_warm,
             engine::engine_cache_stats,
             engine::engine_cache_remove,
             engine::engine_export_cached,
