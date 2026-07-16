@@ -130,11 +130,12 @@ export const mediaEn = {
     eveningListener: "evening listener",
   },
   shareCard: {
+    // Wrapped-карточка (редизайн 2026-07-16, дистилляция): бледные подписи
+    // «artist/track of the year» и строка plays·artists убраны — имена-браги
+    // рисуются без подписей, год стал графикой. Осталась одна подпись под
+    // героем-минутами. artistOfYear/trackOfYear/myYearRecap/playsAndArtists
+    // удалены как мёртвые (карточка была единственным их потребителем).
     minutesOfMusic: "minutes of music",
-    artistOfYear: "artist of the year",
-    trackOfYear: "track of the year",
-    myYearRecap: "My {year} recap",
-    playsAndArtists: "{plays} plays · {artists} artists",
     trackCount: "{count} tr.",
     fromOwner: " · from {owner}",
     errors: {

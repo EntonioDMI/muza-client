@@ -98,11 +98,10 @@ export const mediaRu: typeof mediaEn = {
     eveningListener: "вечерний слушатель",
   },
   shareCard: {
+    // Редизайн 2026-07-16 (дистилляция): бледные подписи и строка
+    // прослушиваний убраны, имена-браги без подписей, год — графика. См.
+    // en.media.ts. Осталась одна подпись под героем-минутами.
     minutesOfMusic: "минут музыки",
-    artistOfYear: "артист года",
-    trackOfYear: "трек года",
-    myYearRecap: "Мои итоги {year}",
-    playsAndArtists: "{plays} прослушиваний · {artists} артистов",
     trackCount: "{count} тр.",
     fromOwner: " · от {owner}",
     errors: {

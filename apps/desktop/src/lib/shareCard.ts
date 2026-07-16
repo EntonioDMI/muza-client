@@ -216,70 +216,79 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
     ctx.fillText(ellipsize(ctx, meta, SIZE - 200), SIZE / 2, 862);
     drawBranding(ctx, glyph, 984);
   } else {
-    // Wrapped: «афиша года» (редизайн 2026-07-16) — левая выключка, дисплейные
-    // цифры Unbounded, вертикальный год-водяной знак справа: карточка обязана
-    // визуально совпадать с оверлеем (тот же язык, что wrapped__year /
-    // wrapped__metric / wrapped__final-yearbg в WrappedOverlay.css).
+    // Wrapped «афиша года» — редизайн 2026-07-16 (жалоба владельца: «много
+    // еле заметного текста, для карточки лучше графика, а не куча подписей»).
+    // Дистилляция: один герой-результат (минуты), два имени-брага БЕЗ бледных
+    // «label: value», графика вместо текста. Ушли: титр, серые подписи «артист
+    // года / трек года», бледная строка «прослушиваний · артистов». Год теперь
+    // не текст-подпись, а крупный графический водяной знак.
     const locale = lang === "ru" ? "ru" : "en";
-    const left = 96;
-    const maxW = SIZE - left - 220; // справа живёт вертикальный год
+    const left = 100;
+    const maxW = SIZE - left - 250; // справа живёт вертикальный год-водяной знак
 
-    // Вертикальный год-водяной знак (как wrapped__final-yearbg: surface-слой,
-    // не градиент): rotate(90°) вместо writing-mode.
+    // ГРАФИКА 1 — гигантский вертикальный год акцентом (главный визуальный
+    // объект справа, а не подпись). rotate(90°) вместо writing-mode для canvas.
     ctx.save();
-    ctx.translate(SIZE - 68, 96);
+    ctx.translate(SIZE - 40, 60);
     ctx.rotate(Math.PI / 2);
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.font = "700 190px Unbounded, sans-serif";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.10)";
+    ctx.font = "700 320px Unbounded, sans-serif";
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = accent;
     ctx.fillText(String(data.year), 0, 0);
+    ctx.globalAlpha = 1;
     ctx.restore();
 
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
 
-    // Титр
-    ctx.font = "600 44px Unbounded, sans-serif";
-    ctx.fillStyle = "rgba(244, 243, 241, 0.85)";
-    ctx.fillText(translate(lang, "media.shareCard.myYearRecap", { year: data.year }), left, 168);
-
-    // Минуты — герой афиши, акцентным Unbounded
-    ctx.font = "700 168px Unbounded, sans-serif";
+    // ГЕРОЙ — минуты: огромные, акцентом, с мягким акцентным свечением.
+    ctx.save();
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 72;
+    ctx.font = "700 232px Unbounded, sans-serif";
     ctx.fillStyle = accent;
-    ctx.fillText(ellipsize(ctx, data.minutes.toLocaleString(locale), maxW), left, 366);
-    ctx.font = "400 44px 'Golos Text', sans-serif";
-    ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
-    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), left, 436);
+    ctx.fillText(ellipsize(ctx, data.minutes.toLocaleString(locale), maxW + 120), left, 456);
+    ctx.restore();
+    // единственная подпись — читаемая, не бледный шёпот
+    ctx.font = "500 46px 'Golos Text', sans-serif";
+    ctx.fillStyle = "rgba(244, 243, 241, 0.74)";
+    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), left, 528);
 
-    const line = (label: string, value: string, y: number) => {
-      ctx.font = "400 34px 'Golos Text', sans-serif";
-      ctx.fillStyle = "rgba(244, 243, 241, 0.5)";
-      ctx.fillText(label, left, y);
-      ctx.font = "700 52px 'Golos Text', sans-serif";
-      ctx.fillStyle = "#f4f3f1";
-      ctx.fillText(ellipsize(ctx, value, maxW), left, y + 62);
+    // ГРАФИКА 2 — короткий акцентный делитель, отбивает героя от имён.
+    roundedPath(ctx, left, 604, 104, 6, 3);
+    ctx.fillStyle = accent;
+    ctx.fill();
+
+    // Имена-браги БЕЗ подписей: маркер-графика слева (у артиста — заливка,
+    // у трека — кольцо), дальше имя. Размер сам задаёт иерархию.
+    const nameRow = (marker: "dot" | "ring", value: string, size: number, alpha: number, y: number) => {
+      const cx = left + 13;
+      const cy = y - Math.round(size * 0.32);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+      if (marker === "dot") {
+        ctx.fillStyle = accent;
+        ctx.fill();
+      } else {
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = accent;
+        ctx.stroke();
+      }
+      ctx.font = `700 ${size}px 'Golos Text', sans-serif`;
+      ctx.fillStyle = `rgba(244, 243, 241, ${alpha})`;
+      ctx.fillText(ellipsize(ctx, value, maxW - 52), left + 52, y);
     };
-    let y = 566;
+    let y = 712;
     if (data.topArtist) {
-      line(translate(lang, "media.shareCard.artistOfYear"), data.topArtist, y);
-      y += 148;
+      nameRow("dot", data.topArtist, 60, 1, y);
+      y += 108;
     }
     if (data.topTrack) {
-      line(translate(lang, "media.shareCard.trackOfYear"), data.topTrack, y);
-      y += 148;
+      nameRow("ring", data.topTrack, 46, 0.82, y);
     }
-    ctx.font = "400 34px 'Golos Text', sans-serif";
-    ctx.fillStyle = "rgba(244, 243, 241, 0.5)";
-    ctx.fillText(
-      ellipsize(
-        ctx,
-        translate(lang, "media.shareCard.playsAndArtists", { plays: data.plays.toLocaleString(locale), artists: data.artists }),
-        maxW,
-      ),
-      left,
-      y + 10,
-    );
+
     ctx.textAlign = "center";
     drawBranding(ctx, glyph, 984);
   }
