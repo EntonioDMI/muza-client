@@ -86,6 +86,136 @@ export function bandIndexForBar(bar: number, barCount: number, mirror: boolean):
   return Math.abs(bar - (barCount - 1) / 2);
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Ручки визуализатора (T50): диапазоны, дефолты, нормализация.
+
+/** Диапазоны и дефолты ползунков — одна точка правды для настроек
+ *  (SettingsView), рендера (Visualizer) и пресетов (lib/visualizerPresets).
+ *  Дефолты продублированы литералами в DEFAULT_PREFS (types.ts) — расхождение
+ *  ловит тест «дефолты согласованы». */
+export const VIS_LIMITS = {
+  /** Плотность баров, штук: ниже 24 спектр не читается как спектр, выше 96
+   *  бары тоньше зазора — каша (диапазон T48, переехал из SettingsView). */
+  bars: { min: 24, max: 96, def: 56 },
+  /** Ширина бара, % слота: 100 — сплошная лента. Дефолт 84 ≈ прежний зазор
+   *  slot/6 — вид «как было» с точностью до долей пикселя. */
+  barFill: { min: 30, max: 100, def: 84 },
+  /** Скругление, % от половины ширины: 0 — прямоугольники, 100 — пилюли
+   *  (прежний вид). */
+  barRound: { min: 0, max: 100, def: 100 },
+  /** Плавность спада баров: 0 — сырой кадр (как было), 100 — тягучее падение.
+   *  Дефолт 30 — лёгкая доводка «все виды красивее» (задание T50). */
+  barCalm: { min: 0, max: 100, def: 30 },
+  /** Пространственное сглаживание волны вдоль X (ФНЧ, см. waveShape). */
+  waveSmooth: { min: 0, max: 100, def: 60 },
+  /** Межкадровая инерция волны — главное лекарство от «дёргается». */
+  waveCalm: { min: 0, max: 100, def: 60 },
+  /** Толщина ядра волны: 0 — прежняя нитка 2px, 100 — плотная лента. */
+  waveThick: { min: 0, max: 100, def: 45 },
+  /** Заливка от линии к центру: тело волны. 0 — только линия (как было). */
+  waveFill: { min: 0, max: 100, def: 45 },
+  /** Размах волны, % высоты её полосы. */
+  waveAmp: { min: 25, max: 150, def: 100 },
+  /** Насыщенность канваса на сцене; раньше жёсткие 50 в ListeningMode. */
+  opacity: { min: 15, max: 100, def: 50 },
+} as const;
+
+export type VisLimitKey = keyof typeof VIS_LIMITS;
+
+/** Все ручки одним объектом — то, что течёт из Prefs через ListeningMode в
+ *  рендер. Числа в пользовательских единицах (как в Prefs, обычно %). */
+export interface VisualizerTuning extends Record<VisLimitKey, number> {
+  mirror: boolean;
+}
+
+/** Кламп одного значения: в диапазоне — округляется до целого, за диапазоном —
+ *  граница, мусор (NaN/Infinity/не-число) — дефолт, а НЕ граница: prefs пишут
+ *  не только ползунки (плагины, localStorage руками), и криво записанное не
+ *  должно ни ронять рендер, ни прилипать к краю диапазона. */
+export function visClamp(key: VisLimitKey, value: unknown): number {
+  const { min, max, def } = VIS_LIMITS[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) return def;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** Сырые пропсы → полный набор ручек с гарантированными диапазонами. */
+export function normalizeVisualizerTuning(raw?: Partial<VisualizerTuning>): VisualizerTuning {
+  const out = {} as VisualizerTuning;
+  for (const key of Object.keys(VIS_LIMITS) as VisLimitKey[]) out[key] = visClamp(key, raw?.[key]);
+  out.mirror = raw?.mirror === true;
+  return out;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Межкадровая инерция (T50).
+//
+// ПОЧЕМУ ИМЕННО ОНА ЧИНИТ «дёргается при любых настройках»: time-domain срез
+// (getByteTimeDomainData) каждый кадр — целиком новый кусок сигнала (окно
+// 43 мс сдвигается на ~800 сэмплов между кадрами 60 Гц), поэтому форма
+// прыгала с частотой кадров. smoothingTimeConstant анализатора волну НЕ
+// сглаживает — он действует только на частотные данные (баров это и
+// спасало). Пространственный ползунок «мягкости» (waveShape) сглаживает
+// вдоль X и межкадровый прыжок не лечит в принципе.
+//
+// Инерция — экспоненциальное приближение к цели с постоянной времени tau:
+// кадронезависимо (два шага по dt/2 = один шаг по dt — тест держит),
+// без буфера истории, один Float32Array состояния.
+
+/** Доля пути к цели за кадр длиной dt (сек) при постоянной времени tau. */
+export function smoothingStep(dt: number, tau: number): number {
+  if (tau <= 0) return 1;
+  return 1 - Math.exp(-dt / tau);
+}
+
+/** Ползунок «плавности» 0..100 → постоянная времени 0..maxTau (сек), линейно:
+ *  0 — сырое покадровое (инерции нет), 100 — максимум тягучести. */
+export function calmTau(calm: number, maxTau: number): number {
+  return (Math.min(100, Math.max(0, calm)) / 100) * maxTau;
+}
+
+/** Шаг инерции волны: state ← state + (target − state)·k, по месту, симметрично
+ *  (волна и растёт, и опадает плавно — асимметрия тут читалась бы как рывки
+ *  вверх). Возвращает пик |state| ПОСЛЕ шага: авто-gain обязан считаться с
+ *  того, что реально нарисовано, — инерция ужимает движение, и не видящий
+ *  этого гейн недокачивал бы тихие треки. Длины равны — за пересоздание при
+ *  смене числа точек отвечает вызывающий код (свежий state + k=1 = старт с
+ *  цели без прыжка). */
+export function glideWave(state: Float32Array, target: Float32Array, k: number): number {
+  let peak = 0;
+  for (let i = 0; i < state.length; i++) {
+    const v = state[i] + (target[i] - state[i]) * k;
+    state[i] = v;
+    const a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+  }
+  return peak;
+}
+
+/** Шаг огибающей баров: атака МГНОВЕННАЯ (удар виден в тот же кадр — это
+ *  ритм), спад — на долю kDown за кадр (классика анализаторов: плавное
+ *  падение убирает мельтешение, не размазывая бит). Возвращает пик state —
+ *  тем же проходом, что и раньше пик по полосам. */
+export function fallBars(state: Float32Array, target: ArrayLike<number>, kDown: number): number {
+  let peak = 0;
+  for (let i = 0; i < state.length; i++) {
+    const t = target[i];
+    const v = t >= state[i] ? t : state[i] + (t - state[i]) * kDown;
+    state[i] = v;
+    if (v > peak) peak = v;
+  }
+  return peak;
+}
+
+/** Геометрия баров: слот = width/count, бар занимает fill% слота по центру
+ *  (поля симметричны), но не тоньше 1px — иначе на узком канвасе с высокой
+ *  плотностью бары исчезали бы совсем. */
+export function barGeometry(width: number, count: number, fillPct: number): { slot: number; bw: number; pad: number } {
+  if (width <= 0 || count <= 0) return { slot: 0, bw: 0, pad: 0 };
+  const slot = width / count;
+  const bw = Math.min(slot, Math.max(1, (slot * Math.min(100, Math.max(0, fillPct))) / 100));
+  return { slot, bw, pad: (slot - bw) / 2 };
+}
+
 /** Форма волны для отрисовки: `points` значений в −1..1 из сырых байтов
  *  `getByteTimeDomainData` (128 = ноль).
  *

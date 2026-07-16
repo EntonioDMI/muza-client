@@ -2284,9 +2284,19 @@ function Player({
         onToggleLyrics={() => setPrefs({ ...prefs, listeningLyricsShown: !prefs.listeningLyricsShown })}
         visualizer={prefs.visualizer}
         getAnalyser={pb.getAnalyser}
-        visualizerBars={prefs.visualizerBars}
-        visualizerMirror={prefs.visualizerMirror}
-        visualizerWaveSmooth={prefs.visualizerWaveSmooth}
+        visualizerTuning={{
+          bars: prefs.visualizerBars,
+          mirror: prefs.visualizerMirror,
+          barFill: prefs.visualizerBarFill,
+          barRound: prefs.visualizerBarRound,
+          barCalm: prefs.visualizerBarCalm,
+          waveSmooth: prefs.visualizerWaveSmooth,
+          waveCalm: prefs.visualizerWaveCalm,
+          waveThick: prefs.visualizerWaveThick,
+          waveFill: prefs.visualizerWaveFill,
+          waveAmp: prefs.visualizerWaveAmp,
+          opacity: prefs.visualizerOpacity,
+        }}
         bassShake={prefs.bassShake}
         bassShakeStrength={prefs.bassShakeStrength}
         anims={prefs.anims}

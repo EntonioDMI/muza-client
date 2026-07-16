@@ -4,6 +4,7 @@ import type { LyricLine } from "../player/types";
 import type { PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
 import { Visualizer } from "./Visualizer";
+import type { VisualizerTuning } from "./visualizerMath";
 import { useT } from "../i18n";
 
 /** OS-уровень «уменьшить анимацию» — жёсткий выключатель качания независимо
@@ -56,9 +57,7 @@ export function ListeningMode({
   onToggleLyrics,
   visualizer = "off",
   getAnalyser,
-  visualizerBars = 56,
-  visualizerMirror = false,
-  visualizerWaveSmooth = 60,
+  visualizerTuning,
   bassShake = false,
   bassShakeStrength = 150,
   anims = true,
@@ -93,12 +92,9 @@ export function ListeningMode({
   /** Визуализатор (Stage 6): бары/волна поверх сцены, за контентом. */
   visualizer?: "bars" | "wave" | "off";
   getAnalyser?: () => AnalyserNode | null;
-  /** Настройка визуализатора: плотность баров, штук (T48). */
-  visualizerBars?: number;
-  /** Настройка визуализатора: зеркальный спектр (T48). */
-  visualizerMirror?: boolean;
-  /** Настройка визуализатора: сглаживание волны, % (T48). */
-  visualizerWaveSmooth?: number;
+  /** Ручки вида визуализатора одним объектом (T50): проценты как в Prefs,
+   *  недостающее Visualizer добьёт дефолтами VIS_LIMITS. */
+  visualizerTuning?: Partial<VisualizerTuning>;
   /** Преф «Качание при басах» (T14, Настройки → Расширения → Встроенные). */
   bassShake?: boolean;
   /** Сила качания, % (T48): 100 = амплитуда T14, 0 — качания нет. */
@@ -265,7 +261,8 @@ export function ListeningMode({
         }}
       ></div>
 
-      {/* Визуализатор — за контентом, клики не перехватывает */}
+      {/* Визуализатор — за контентом, клики не перехватывает; прозрачность
+          теперь ручка (tuning.opacity) и живёт на самом канвасе */}
       {visualizer !== "off" && getAnalyser ? (
         <div
           aria-hidden="true"
@@ -276,17 +273,9 @@ export function ListeningMode({
             bottom: 0,
             height: visualizer === "bars" ? "24vh" : "34vh",
             pointerEvents: "none",
-            opacity: 0.5,
           }}
         >
-          <Visualizer
-            mode={visualizer}
-            active={open}
-            getAnalyser={getAnalyser}
-            barCount={visualizerBars}
-            mirror={visualizerMirror}
-            waveSmooth={visualizerWaveSmooth / 100}
-          />
+          <Visualizer mode={visualizer} active={open} getAnalyser={getAnalyser} tuning={visualizerTuning} />
         </div>
       ) : null}
 

@@ -5,6 +5,8 @@ import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey,
 import { useT, type TParams, type TranslationKey } from "../i18n";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
 import { barButtonLabel, normalizeBarButtons } from "../lib/barButtons";
+import { VIS_LIMITS } from "../shell/visualizerMath";
+import { activeVisPreset, BAR_PRESETS, WAVE_PRESETS } from "../lib/visualizerPresets";
 import { NAV_ITEM_META, navItemLabel, normalizeNavItems } from "../lib/navItems";
 import { isPluginKey, parsePluginKey, pluginSlotKey } from "../lib/pluginSlots";
 import { isFullAccessManifest, PERMISSION_INFO, type PluginPermission } from "@muza/core";
@@ -187,6 +189,38 @@ function LiveSlider({
         {suffix}
       </span>
     </div>
+  );
+}
+
+/** Строка-ползунок визуализатора (T50): диапазон приезжает из VIS_LIMITS
+ *  (единая точка правды с рендером и пресетами) — настройки не хранят
+ *  собственных границ и не могут с ним разъехаться. */
+function VisSliderRow({
+  title,
+  hint,
+  value,
+  limit,
+  unit = "%",
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  value: number;
+  limit: { readonly min: number; readonly max: number };
+  /** Единица подписи; пустая строка — голое число (плотность баров). */
+  unit?: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <SettingRow title={title} hint={hint}>
+      <LiveSlider
+        value={value - limit.min}
+        max={limit.max - limit.min}
+        label={title}
+        suffix={unit ? `${value} ${unit}` : String(value)}
+        onChange={(v) => onChange(limit.min + Math.round(v))}
+      />
+    </SettingRow>
   );
 }
 
@@ -698,10 +732,6 @@ function PresetTile({
 /** Диапазон плотности стекла: ниже 30% интерфейс нечитаем. */
 const GLASS_MIN = 30;
 
-/** Диапазон плотности баров визуализатора (T48). Ниже 24 спектр перестаёт
- *  читаться как спектр, выше 96 бары тоньше зазора между ними — каша. */
-const VIS_BARS_MIN = 24;
-const VIS_BARS_MAX = 96;
 /** Потолок силы качания (T48), % от базовой амплитуды T14: 300% — заметная
  *  тряска, дальше начинается морская болезнь, а не музыка. */
 const BASS_STRENGTH_MAX = 300;
@@ -3163,52 +3193,129 @@ export function SettingsView({
             label={t("settings.extensions.visualizer.title")}
           />
         </SettingRow>
-        {prefs.visualizer !== "off" ? (
-          <SettingRow title={t("settings.extensions.visualizerKind.title")} hint={t("settings.extensions.visualizerKind.hint")}>
-            <Tabs
-              items={[
-                { key: "bars", label: t("settings.extensions.visualizerKind.bars") },
-                { key: "wave", label: t("settings.extensions.visualizerKind.wave") },
-              ]}
-              value={prefs.visualizer}
-              onChange={(k: string) => set({ visualizer: k as Prefs["visualizer"] })}
-            />
-          </SettingRow>
-        ) : null}
         {/* Ручки показываются только для того вида, на который влияют: у баров
-            и волны общего нечего, а вываливать всё сразу — ровно та беда, за
-            которую настройки уже критиковали (равновесная простыня опций). */}
-        {prefs.visualizer === "bars" ? (
-          <>
-            <SettingRow title={t("settings.extensions.visualizerBars.title")} hint={t("settings.extensions.visualizerBars.hint")}>
-              <LiveSlider
-                value={prefs.visualizerBars - VIS_BARS_MIN}
-                max={VIS_BARS_MAX - VIS_BARS_MIN}
-                label={t("settings.extensions.visualizerBars.title")}
-                suffix={String(prefs.visualizerBars)}
-                onChange={(v) => set({ visualizerBars: VIS_BARS_MIN + Math.round(v) })}
-              />
-            </SettingRow>
-            <SettingRow title={t("settings.extensions.visualizerMirror.title")} hint={t("settings.extensions.visualizerMirror.hint")}>
-              <Switch
-                checked={prefs.visualizerMirror}
-                onChange={(on: boolean) => set({ visualizerMirror: on })}
-                label={t("settings.extensions.visualizerMirror.title")}
-              />
-            </SettingRow>
-          </>
-        ) : null}
-        {prefs.visualizer === "wave" ? (
-          <SettingRow title={t("settings.extensions.visualizerWaveSmooth.title")} hint={t("settings.extensions.visualizerWaveSmooth.hint")}>
-            <LiveSlider
-              value={prefs.visualizerWaveSmooth}
-              max={100}
-              label={t("settings.extensions.visualizerWaveSmooth.title")}
-              suffix={`${prefs.visualizerWaveSmooth} %`}
-              onChange={(v) => set({ visualizerWaveSmooth: Math.round(v) })}
-            />
-          </SettingRow>
-        ) : null}
+            и волны общего почти нет, а вываливать всё сразу — ровно та беда,
+            за которую настройки уже критиковали (равновесная простыня опций).
+            Пресеты — по конвенции «пресеты→ползунки» (lib/visualizerPresets):
+            чип записывает числа в обычные префы, подсветка вычисляется
+            обратным сравнением, «Свой» — индикатор, а не значение. */}
+        {prefs.visualizer !== "off"
+          ? (() => {
+              const visPresets = prefs.visualizer === "bars" ? BAR_PRESETS : WAVE_PRESETS;
+              return (
+                <>
+                  <SettingRow title={t("settings.extensions.visualizerKind.title")} hint={t("settings.extensions.visualizerKind.hint")}>
+                    <Tabs
+                      items={[
+                        { key: "bars", label: t("settings.extensions.visualizerKind.bars") },
+                        { key: "wave", label: t("settings.extensions.visualizerKind.wave") },
+                      ]}
+                      value={prefs.visualizer}
+                      onChange={(k: string) => set({ visualizer: k as Prefs["visualizer"] })}
+                    />
+                  </SettingRow>
+                  <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+                    <ChipGroup
+                      items={[
+                        ...visPresets.map((p) => ({ key: p.key, label: t(`settings.extensions.visualizerStyle.${p.key}`) })),
+                        { key: "custom", label: t("settings.extensions.visualizerStyle.custom") },
+                      ]}
+                      value={activeVisPreset(visPresets, prefs) ?? "custom"}
+                      onChange={(k: string) => {
+                        const p = visPresets.find((x) => x.key === k);
+                        if (p) set(p.set);
+                      }}
+                    />
+                  </div>
+                  {prefs.visualizer === "bars" ? (
+                    <>
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerBars.title")}
+                        hint={t("settings.extensions.visualizerBars.hint")}
+                        value={prefs.visualizerBars}
+                        limit={VIS_LIMITS.bars}
+                        unit=""
+                        onChange={(v) => set({ visualizerBars: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerBarFill.title")}
+                        hint={t("settings.extensions.visualizerBarFill.hint")}
+                        value={prefs.visualizerBarFill}
+                        limit={VIS_LIMITS.barFill}
+                        onChange={(v) => set({ visualizerBarFill: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerBarRound.title")}
+                        hint={t("settings.extensions.visualizerBarRound.hint")}
+                        value={prefs.visualizerBarRound}
+                        limit={VIS_LIMITS.barRound}
+                        onChange={(v) => set({ visualizerBarRound: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerBarCalm.title")}
+                        hint={t("settings.extensions.visualizerBarCalm.hint")}
+                        value={prefs.visualizerBarCalm}
+                        limit={VIS_LIMITS.barCalm}
+                        onChange={(v) => set({ visualizerBarCalm: v })}
+                      />
+                      <SettingRow title={t("settings.extensions.visualizerMirror.title")} hint={t("settings.extensions.visualizerMirror.hint")}>
+                        <Switch
+                          checked={prefs.visualizerMirror}
+                          onChange={(on: boolean) => set({ visualizerMirror: on })}
+                          label={t("settings.extensions.visualizerMirror.title")}
+                        />
+                      </SettingRow>
+                    </>
+                  ) : (
+                    <>
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerWaveThick.title")}
+                        hint={t("settings.extensions.visualizerWaveThick.hint")}
+                        value={prefs.visualizerWaveThick}
+                        limit={VIS_LIMITS.waveThick}
+                        onChange={(v) => set({ visualizerWaveThick: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerWaveFill.title")}
+                        hint={t("settings.extensions.visualizerWaveFill.hint")}
+                        value={prefs.visualizerWaveFill}
+                        limit={VIS_LIMITS.waveFill}
+                        onChange={(v) => set({ visualizerWaveFill: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerWaveSmooth.title")}
+                        hint={t("settings.extensions.visualizerWaveSmooth.hint")}
+                        value={prefs.visualizerWaveSmooth}
+                        limit={VIS_LIMITS.waveSmooth}
+                        onChange={(v) => set({ visualizerWaveSmooth: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerWaveCalm.title")}
+                        hint={t("settings.extensions.visualizerWaveCalm.hint")}
+                        value={prefs.visualizerWaveCalm}
+                        limit={VIS_LIMITS.waveCalm}
+                        onChange={(v) => set({ visualizerWaveCalm: v })}
+                      />
+                      <VisSliderRow
+                        title={t("settings.extensions.visualizerWaveAmp.title")}
+                        hint={t("settings.extensions.visualizerWaveAmp.hint")}
+                        value={prefs.visualizerWaveAmp}
+                        limit={VIS_LIMITS.waveAmp}
+                        onChange={(v) => set({ visualizerWaveAmp: v })}
+                      />
+                    </>
+                  )}
+                  <VisSliderRow
+                    title={t("settings.extensions.visualizerOpacity.title")}
+                    hint={t("settings.extensions.visualizerOpacity.hint")}
+                    value={prefs.visualizerOpacity}
+                    limit={VIS_LIMITS.opacity}
+                    onChange={(v) => set({ visualizerOpacity: v })}
+                  />
+                </>
+              );
+            })()
+          : null}
         <SettingRow title={t("settings.extensions.bassShake.title")} hint={t("settings.extensions.bassShake.hint")}>
           <Switch checked={prefs.bassShake} onChange={(on: boolean) => set({ bassShake: on })} label={t("settings.extensions.bassShake.title")} />
         </SettingRow>
