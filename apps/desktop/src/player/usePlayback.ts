@@ -13,6 +13,7 @@ import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
+import { getCachedSources, invalidateCachedSources, putCachedSources } from "./sourcesCache";
 import { shouldSilenceBeforeResolve } from "./startPlan";
 import type { PlayerTrack } from "./types";
 
@@ -233,15 +234,22 @@ export function usePlayback({
       if (!path) throw new Error(translate(prefsRef.current.language, "media.player.errors.localFileNotFound"));
       return { url: convertFileSrc(path), fromCache: true, provider: "local" };
     }
-    // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
-    // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
-    // движок с пустой лестницей отвечал безликим «нет живых источников».
-    let sources: TrackSource[] | null = null;
+    // Источники — сперва из кэша плеера (sourcesCache.ts): без него КАЖДЫЙ
+    // резолв — включая повторный клик по треку, чей файл давно в Rust-кэше —
+    // платил полный RTT до сервера. Кэшируется только УСПЕШНЫЙ ответ; отказ
+    // сервера не кэшируем — оффлайн-ветка ниже должна отработать заново.
+    let sources: TrackSource[] | null = getCachedSources(t.id);
     let sourcesError: unknown = null;
-    try {
-      sources = await api.getTrackSources(t.id);
-    } catch (e) {
-      sourcesError = e;
+    if (sources === null) {
+      // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
+      // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
+      // движок с пустой лестницей отвечал безликим «нет живых источников».
+      try {
+        sources = await api.getTrackSources(t.id);
+        putCachedSources(t.id, sources);
+      } catch (e) {
+        sourcesError = e;
+      }
     }
     const quality = prefsRef.current.streamQuality;
     if (sources === null) {
@@ -258,8 +266,17 @@ export function usePlayback({
         throw sourcesError instanceof Error ? sourcesError : new Error(String(sourcesError));
       }
     }
-    // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
-    return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality, prefsRef.current.language);
+    try {
+      // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
+      return await resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality, prefsRef.current.language);
+    } catch (e) {
+      // Лестница целиком не заиграла — источники могли протухнуть (is_dead на
+      // сервере ставится позже, чем умирает сам источник). Сбрасываем запись,
+      // чтобы СЛЕДУЮЩАЯ попытка взяла свежие. Повторяем НЕ сами: семантика
+      // ошибок клика не меняется — честный тост, без ретраев внутри старта.
+      invalidateCachedSources(t.id);
+      throw e;
+    }
   };
 
   /** Запустить трек очереди по индексу. fadeSec>0 (кроссфейд/gapless) —
