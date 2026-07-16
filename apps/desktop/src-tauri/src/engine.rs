@@ -1945,9 +1945,15 @@ pub fn handle_stream_request(
     });
 }
 
+/// CORS во всех ответах протокола обязателен: слоты AudioEngine создаются с
+/// crossOrigin="anonymous" (под Web Audio-граф — EQ/визуализатор), и без
+/// Access-Control-Allow-Origin медиастек WebView2 молча бросал загрузку после
+/// первого чанка (стенд 16.07: изолированный <audio> без crossOrigin играл,
+/// слот приложения — нет). Asset-протокол Tauri отвечает так же.
 fn stream_error(code: u16, msg: &str) -> tauri::http::Response<Vec<u8>> {
     tauri::http::Response::builder()
         .status(code)
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(msg.as_bytes().to_vec())
         .unwrap()
@@ -1968,6 +1974,7 @@ fn stream_206(
     );
     tauri::http::Response::builder()
         .status(206)
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(
             tauri::http::header::CONTENT_RANGE,
             format!("bytes {start}-{end}/{total}"),
@@ -2019,6 +2026,7 @@ async fn build_stream_response(
             None => match fs::read(&file) {
                 Ok(bytes) => tauri::http::Response::builder()
                     .status(200)
+                    .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                     .header(tauri::http::header::ACCEPT_RANGES, "bytes")
                     .header(tauri::http::header::CONTENT_TYPE, stream_content_type(&file))
                     .body(bytes)

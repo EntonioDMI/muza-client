@@ -174,9 +174,12 @@ export async function engineStreamStart(trackId: string): Promise<boolean> {
 }
 
 /** URL стрима для <audio>: http://muza-stream.localhost/<ns>/<id> (Windows)
- *  или muza-stream://localhost/<ns>/<id> — формирует convertFileSrc. */
+ *  или muza-stream://localhost/<ns>/<id>. convertFileSrc даёт платформенную
+ *  базу, но путь кодирует ЦЕЛИКОМ (слэш → %2F, обработчик видел один сегмент
+ *  и отвечал 400 — поймано живым стендом 16.07) — поэтому в него идёт только
+ *  ns, а id доклеивается сырым: оба валидны как [a-z0-9_-], кодировать нечего. */
 export function engineStreamUrl(trackId: string): string {
-  return convertFileSrc(`${CACHE_NS}/${trackId}`, "muza-stream");
+  return `${convertFileSrc(CACHE_NS, "muza-stream")}/${trackId}`;
 }
 
 /** Резолв с учётом локальных источников (Stage 4): source provider=local —
