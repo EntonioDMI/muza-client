@@ -157,6 +157,28 @@ export async function engineWarm(
   return out;
 }
 
+/** Стрим с первых килобайт (Фаза 2): если файл НЕ в кэше, а warm-запись
+ *  жива, Rust начинает закачку в кэш и подтверждает первые байты — тогда
+ *  трек играется прямо из наполняющегося .part через протокол muza-stream
+ *  (handler отвечает 206-чанками, дожидаясь нужных байт). true даёт Rust
+ *  ТОЛЬКО когда первые килобайты уже на диске: провал закачки схлопывается
+ *  в false ДО того, как <audio> закоммитится на stream-URL, — «молча упасть
+ *  на обычную лестницу» соблюдается по построению. */
+export async function engineStreamStart(trackId: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  const out = await invoke<{ stream: boolean }>("engine_stream_start", {
+    trackId,
+    cacheNs: CACHE_NS,
+  }).catch(() => ({ stream: false })); // стрим — best-effort по определению
+  return out.stream;
+}
+
+/** URL стрима для <audio>: http://muza-stream.localhost/<ns>/<id> (Windows)
+ *  или muza-stream://localhost/<ns>/<id> — формирует convertFileSrc. */
+export function engineStreamUrl(trackId: string): string {
+  return convertFileSrc(`${CACHE_NS}/${trackId}`, "muza-stream");
+}
+
 /** Резолв с учётом локальных источников (Stage 4): source provider=local —
  *  это файл на устройстве (sourceId = sha256), в yt-dlp ему нельзя.
  *  Локальный, стоящий первым (выбор пользователя или единственный источник),

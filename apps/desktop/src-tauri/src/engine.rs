@@ -88,6 +88,9 @@ pub struct EngineState {
     /// файл-состояние с протухающими URL был бы третьим после
     /// recipe-cache.json/offline-pins.json.
     warm: Mutex<HashMap<(String, String), WarmEntry>>,
+    /// Живые стримы (Фаза 2): закачка пишет .part и публикует прогресс,
+    /// handler протокола muza-stream ждёт нужные байты. Ключ — (ns, track_id).
+    streams: Mutex<HashMap<(String, String), StreamHandle>>,
 }
 
 impl Default for EngineState {
@@ -102,6 +105,7 @@ impl Default for EngineState {
             pins: Mutex::new(HashSet::new()),
             pins_ns: Mutex::new(None),
             warm: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -1043,7 +1047,9 @@ fn evict_lru(dir: &Path, limit_bytes: u64, keep: &Path, pins: &HashSet<String>) 
         if total <= limit_bytes {
             break;
         }
-        if path == keep || is_pinned(&path, pins) {
+        // Свежий .part — возможно, живой стрим Фазы 2: не сносим на ходу
+        // (старый .part — мусор, идёт под общую уборку)
+        if path == keep || is_pinned(&path, pins) || is_live_stream_part(&path) {
             continue;
         }
         // Файл может быть занят плеером — просто пропускаем, удалим в другой раз
@@ -1091,6 +1097,28 @@ struct SimulatedFormat {
     url: String,
     size: u64,
     ext: String,
+}
+
+/// Прогресс живого стрима (Фаза 2): публикуется закачкой после каждого чанка.
+/// total здесь, а не в StreamHandle: warm-оценка (filesize_approx) могла
+/// разойтись с настоящим размером из Content-Range — handler обязан считать
+/// Content-Range ответа по ПОСЛЕДНЕЙ правде, иначе <audio> ждал бы байты,
+/// которых не существует.
+#[derive(Debug, Clone, Copy)]
+struct StreamProgress {
+    written: u64,
+    total: u64,
+    /// rename прошёл — файл стал валидным кэшем.
+    finalized: bool,
+    failed: bool,
+}
+
+/// Живой стрим в реестре EngineState.streams: пути + канал прогресса.
+#[derive(Clone)]
+struct StreamHandle {
+    part: PathBuf,
+    final_path: PathBuf,
+    progress: tokio::sync::watch::Receiver<StreamProgress>,
 }
 
 /// argv прогрева — ОТДЕЛЬНАЯ функция, а не правка build_ytdlp_args: боевой
@@ -1272,6 +1300,27 @@ fn parse_content_range(value: &str) -> Option<(u64, u64)> {
     Some((end.parse().ok()?, total.parse().ok()?))
 }
 
+/// `Range: bytes=<start>-[<end>]` запроса `<audio>` (протокол muza-stream,
+/// Фаза 2). Поддержан ровно тот диалект, которым говорят медиа-стеки:
+/// одиночный диапазон от start. Мульти-диапазон и суффиксную форму
+/// (`bytes=-500`) не поддерживаем: None = «отвечай 200 целиком» — законно.
+fn parse_range_header(value: &str) -> Option<(u64, Option<u64>)> {
+    let rest = value.strip_prefix("bytes=")?;
+    let (start, end) = rest.split_once('-')?;
+    if end.contains(',') {
+        return None;
+    }
+    let start: u64 = start.parse().ok()?;
+    if end.is_empty() {
+        return Some((start, None));
+    }
+    let end: u64 = end.parse().ok()?;
+    if end < start {
+        return None;
+    }
+    Some((start, Some(end)))
+}
+
 fn warm_key(ns: &str, track_id: &str) -> (String, String) {
     (ns.to_string(), track_id.to_string())
 }
@@ -1399,6 +1448,17 @@ fn warm_http_client() -> &'static reqwest::Client {
 ///   `.part` не может стать кэш-хитом (find_cached, тест part_file_is_not_a_cache_hit);
 /// - `validate_ytdlp_output` на финальном пути — буквально та же функция.
 async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result<PathBuf, String> {
+    fetch_to_cache_with_progress(dir, track_id, entry, None).await
+}
+
+/// То же скачивание, но с публикацией прогресса для протокола muza-stream
+/// (Фаза 2): стрим и заполнение кэша — ОДНА закачка, не две.
+async fn fetch_to_cache_with_progress(
+    dir: &Path,
+    track_id: &str,
+    entry: &WarmEntry,
+    progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+) -> Result<PathBuf, String> {
     if !content_length_ok(entry.size) {
         return Err(format!("warm-размер вне лимита: {}", entry.size));
     }
@@ -1436,10 +1496,19 @@ async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result
     if !content_length_ok(total) {
         return Err(format!("warm Content-Length вне лимита: {total}"));
     }
+    if let Some(tx) = progress {
+        // настоящий total из заголовков — правим warm-оценку до первого байта
+        tx.send_replace(StreamProgress {
+            written: 0,
+            total,
+            finalized: false,
+            failed: false,
+        });
+    }
 
     let part = dir.join(format!("{track_id}.{}.part", entry.ext));
     let final_path = dir.join(format!("{track_id}.{}", entry.ext));
-    let written = write_body_to_part(resp, &part, total).await;
+    let written = write_body_to_part(resp, &part, total, progress).await;
     match written {
         Ok(()) => {}
         Err(e) => {
@@ -1459,11 +1528,13 @@ async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result
 }
 
 /// Тело ответа → `.part`, с подсчётом байт (Content-Length врёт бесплатно,
-/// проверяем и по факту) и жёсткой сверкой с total по завершении.
+/// проверяем и по факту) и жёсткой сверкой с total по завершении. progress —
+/// для протокола muza-stream: handler ждёт written, а не опрашивает диск.
 async fn write_body_to_part(
     mut resp: reqwest::Response,
     part: &Path,
     total: u64,
+    progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
 ) -> Result<(), String> {
     use std::io::Write as _;
     let mut file = fs::File::create(part).map_err(|e| format!("не создался .part: {e}"))?;
@@ -1480,6 +1551,15 @@ async fn write_body_to_part(
         }
         file.write_all(&bytes)
             .map_err(|e| format!("запись .part: {e}"))?;
+        if let Some(tx) = progress {
+            // читатель срезов ждёт БАЙТЫ НА ДИСКЕ — публикуем после write
+            tx.send_replace(StreamProgress {
+                written,
+                total,
+                finalized: false,
+                failed: false,
+            });
+        }
     }
     if written != total {
         return Err(format!("warm-скачивание неполное: {written} из {total}"));
@@ -1645,6 +1725,365 @@ pub async fn engine_warm(
     Err(format!("прогрев не удался: {last_error}"))
 }
 
+// ── Протокол muza-stream (Фаза 2): стрим с первых килобайт ────────
+// Спайк 2026-07-16 подтвердил: WebView2 шлёт `Range` кастомному протоколу
+// (`bytes=0-` на старте, дальше по мере проигрывания/сика). Схема: клик по
+// прогретому некэшированному треку → engine_stream_start запускает ту же
+// fetch_to_cache (ОДНА закачка: стрим и кэш не дублируют трафик), ждёт
+// первые 128 КиБ и отдаёт фронту добро; <audio> играет с
+// muza-stream://localhost/<ns>/<id> (Windows: http://muza-stream.localhost),
+// handler отвечает 206-чанками, дожидаясь нужных байт по watch-каналу.
+// По завершении — тот же атомарный rename, файл становится валидным кэшем.
+
+/// Сколько ждать ПЕРВЫЕ байты в engine_stream_start: протухший warm-URL
+/// отваливается за секунды, а дольше ждать нет смысла — обычная лестница
+/// на фронте не медленнее.
+const STREAM_START_TIMEOUT: Duration = Duration::from_secs(15);
+/// Сколько handler ждёт байты одного чанка (закачка обычно опережает
+/// playback на порядок; ожидание дольше значит закачка умерла).
+const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Serialize)]
+pub struct StreamStartOut {
+    /// true — закачка идёт и первые килобайты уже на диске: фронт может
+    /// отдавать <audio> stream-URL. false — стрим не нужен/недоступен
+    /// (файл уже в кэше, warm-записи нет, закачка не завелась) — фронт
+    /// молча идёт обычным путём. Ошибок наружу нет НАМЕРЕННО: стрим —
+    /// best-effort, любой провал обязан выглядеть как «играй как раньше».
+    pub stream: bool,
+}
+
+/// Начать (или подхватить) стрим прогретого трека. Подтверждает готовность
+/// только когда первый чанк уже в .part — провалы схлопываются в
+/// {stream:false} ДО того, как <audio> закоммитится на stream-URL.
+#[tauri::command]
+pub async fn engine_stream_start(
+    app: AppHandle,
+    state: State<'_, EngineState>,
+    track_id: String,
+    cache_ns: String,
+) -> Result<StreamStartOut, String> {
+    validate_track_id(&track_id)?;
+    let dir = cache_dir(&app, &cache_ns)?;
+    let key = warm_key(&cache_ns, &track_id);
+    let no_stream = Ok(StreamStartOut { stream: false });
+
+    // уже стримится (повторный клик по треку) — подхватываем тот же канал
+    let existing = state.streams.lock().unwrap().get(&key).cloned();
+    let handle = if let Some(handle) = existing {
+        handle
+    } else {
+        if find_cached(&dir, &track_id).is_some() {
+            return no_stream; // кэш-хит быстрее обычным путём
+        }
+        let Some(entry) = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now())
+        else {
+            return no_stream; // не прогрет — обычная лестница
+        };
+        let part = dir.join(format!("{track_id}.{}.part", entry.ext));
+        let final_path = dir.join(format!("{track_id}.{}", entry.ext));
+        let (tx, rx) = tokio::sync::watch::channel(StreamProgress {
+            written: 0,
+            total: entry.size,
+            finalized: false,
+            failed: false,
+        });
+        let handle = StreamHandle {
+            part,
+            final_path,
+            progress: rx,
+        };
+        state.streams.lock().unwrap().insert(key.clone(), handle.clone());
+
+        let app_task = app.clone();
+        let ns_task = cache_ns.clone();
+        let id_task = track_id.clone();
+        let key_task = key.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = match cache_dir(&app_task, &ns_task) {
+                Ok(dir) => {
+                    fetch_to_cache_with_progress(&dir, &id_task, &entry, Some(&tx)).await
+                }
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(path) => {
+                    // тот же хвост, что у быстрого пути engine_resolve
+                    let state = app_task.state::<EngineState>();
+                    let limit = *state.cache_limit_bytes.lock().unwrap();
+                    ensure_pins_loaded(&app_task, &state, &ns_task);
+                    let pins = state.pins.lock().unwrap().clone();
+                    if let Ok(dir) = cache_dir(&app_task, &ns_task) {
+                        evict_lru(&dir, limit, &path, &pins);
+                    }
+                    let total = tx.borrow().total;
+                    tx.send_replace(StreamProgress {
+                        written: total,
+                        total,
+                        finalized: true,
+                        failed: false,
+                    });
+                }
+                Err(_) => {
+                    // молча: стрим best-effort, фронт уйдёт обычной лестницей;
+                    // .part уже удалён самим fetch_to_cache_with_progress
+                    let p = *tx.borrow();
+                    tx.send_replace(StreamProgress {
+                        failed: true,
+                        finalized: false,
+                        ..p
+                    });
+                }
+            }
+            // запись уходит из реестра ПОСЛЕ финального сигнала; handler'ы
+            // с клоном receiver'а доживут своё
+            app_task
+                .state::<EngineState>()
+                .streams
+                .lock()
+                .unwrap()
+                .remove(&key_task);
+        });
+        handle
+    };
+
+    // добро фронту — только с первыми килобайтами на диске
+    let mut rx = handle.progress.clone();
+    let wait = async {
+        loop {
+            let p = *rx.borrow();
+            if p.failed {
+                return false;
+            }
+            if p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1)) {
+                return true;
+            }
+            if rx.changed().await.is_err() {
+                // sender умер без финального сигнала — считаем провалом
+                let p = *rx.borrow();
+                return p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1));
+            }
+        }
+    };
+    match tokio::time::timeout(STREAM_START_TIMEOUT, wait).await {
+        Ok(true) => Ok(StreamStartOut { stream: true }),
+        _ => no_stream,
+    }
+}
+
+/// Первый ответ стрима — он и есть «клик → звук»: 128 КиБ с запасом на
+/// заголовки контейнера и первые кадры, чтобы декодер точно завёлся.
+const STREAM_FIRST_CHUNK: u64 = 128 * 1024;
+/// Последующие — 512 КиБ ≈ 32с opus: playback закачку не догонит (весь файл
+/// едет ~1.2с). Чанк — гранулярность ответа <audio>, НЕ отдельный запрос в
+/// сеть: закачка одна и идёт на полной скорости.
+const STREAM_NEXT_CHUNK: u64 = 512 * 1024;
+
+/// Конец окна ответа на Range-запрос стрима. Отдавать всё до конца файла
+/// нельзя: спайк 2026-07-16 показал, что на `bytes=0-` WebView2 буферизует
+/// ответ целиком и больше Range не шлёт — дробление держит стрим стримом.
+fn stream_chunk_end(start: u64, total: u64) -> u64 {
+    let want = if start == 0 {
+        STREAM_FIRST_CHUNK
+    } else {
+        STREAM_NEXT_CHUNK
+    };
+    (start + want - 1).min(total - 1)
+}
+
+/// Свежий `.part` — возможно, ЖИВОЙ стрим (Фаза 2): его не трогают ни
+/// LRU-эвикция, ни «Очистить кэш» (риск из спеки: снести на ходу). Старше
+/// grace-периода — мусор упавшей закачки, подлежит обычной уборке.
+const STREAM_PART_GRACE: Duration = Duration::from_secs(600);
+
+fn is_live_stream_part(path: &Path) -> bool {
+    if !path.to_string_lossy().ends_with(".part") {
+        return false;
+    }
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|mtime| {
+            SystemTime::now()
+                .duration_since(mtime)
+                .map(|age| age < STREAM_PART_GRACE)
+                .unwrap_or(true) // mtime из будущего — часы прыгнули, не трогаем
+        })
+        .unwrap_or(false)
+}
+
+fn stream_content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("webm") | Some("opus") => "audio/webm",
+        Some("m4a") => "audio/mp4",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Срез файла [start..=end] — File::seek + read_exact, без чтения целиком.
+fn read_slice(path: &Path, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    file.seek(SeekFrom::Start(start))?;
+    let mut buf = vec![0u8; (end - start + 1) as usize];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
+/// Async-протокол: handler может ЖДАТЬ байты живого стрима (watch-канал) —
+/// синхронной регистрации это не под силу. Ответ отдаётся целым телом
+/// (responder Tauri не умеет стримить), поэтому дробление — через Range.
+pub fn handle_stream_request(
+    ctx: tauri::UriSchemeContext<'_, tauri::Wry>,
+    request: tauri::http::Request<Vec<u8>>,
+    responder: tauri::UriSchemeResponder,
+) {
+    let app = ctx.app_handle().clone();
+    tauri::async_runtime::spawn(async move {
+        responder.respond(build_stream_response(&app, &request).await);
+    });
+}
+
+fn stream_error(code: u16, msg: &str) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(code)
+        .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(msg.as_bytes().to_vec())
+        .unwrap()
+}
+
+fn stream_206(
+    file: &Path,
+    start: u64,
+    end: u64,
+    total: u64,
+) -> tauri::http::Response<Vec<u8>> {
+    let Ok(body) = read_slice(file, start, end) else {
+        return stream_error(500, "срез не читается");
+    };
+    eprintln!(
+        "[muza-stream] 206 bytes {start}-{end}/{total} ({})",
+        file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    );
+    tauri::http::Response::builder()
+        .status(206)
+        .header(
+            tauri::http::header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        )
+        .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+        .header(tauri::http::header::CONTENT_TYPE, stream_content_type(file))
+        .body(body)
+        .unwrap()
+}
+
+async fn build_stream_response(
+    app: &AppHandle,
+    request: &tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    // путь: /<ns>/<track_id> — те же валидации, что у команд движка
+    let path = request.uri().path();
+    let mut parts = path.trim_matches('/').split('/');
+    let (Some(ns), Some(id), None) = (parts.next(), parts.next(), parts.next()) else {
+        return stream_error(400, "ожидается /<ns>/<track_id>");
+    };
+    if validate_cache_ns(ns).is_err() || validate_track_id(id).is_err() {
+        return stream_error(400, "некорректный ns или id");
+    }
+    let Ok(dir) = cache_dir(app, ns) else {
+        return stream_error(500, "кэш-каталог недоступен");
+    };
+    let range = request
+        .headers()
+        .get(tauri::http::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_range_header);
+
+    // 1) Файл уже в кэше целиком — отдаём срезы из него. Тоже ЧАНКАМИ:
+    // спайк показал, что полный ответ на bytes=0- буферизуется целиком
+    // и Range больше не приходит — а нам нужен живой запрос под сик.
+    if let Some(file) = find_cached(&dir, id) {
+        let total = match fs::metadata(&file).map(|m| m.len()) {
+            Ok(len) if len > 0 => len,
+            _ => return stream_error(500, "файл кэша не читается"),
+        };
+        return match range {
+            Some((start, end_opt)) if start < total => {
+                let end = stream_chunk_end(start, total).min(end_opt.unwrap_or(u64::MAX));
+                stream_206(&file, start, end, total)
+            }
+            Some(_) => stream_error(416, "range вне файла"),
+            // без Range — целиком (законный 200; media-стек WebView2 так не
+            // делает, ветка для честности HTTP)
+            None => match fs::read(&file) {
+                Ok(bytes) => tauri::http::Response::builder()
+                    .status(200)
+                    .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+                    .header(tauri::http::header::CONTENT_TYPE, stream_content_type(&file))
+                    .body(bytes)
+                    .unwrap(),
+                Err(_) => stream_error(500, "файл кэша не читается"),
+            },
+        };
+    }
+
+    // 2) Живой стрим: ждём, пока .part наберёт байты окна, отдаём срез.
+    let handle = app
+        .state::<EngineState>()
+        .streams
+        .lock()
+        .unwrap()
+        .get(&warm_key(ns, id))
+        .cloned();
+    let Some(handle) = handle else {
+        return stream_error(404, "трека нет ни в кэше, ни в стриме");
+    };
+    let mut rx = handle.progress.clone();
+    let (start, end_opt) = match range {
+        Some((s, e)) => (s, e),
+        None => (0, None), // не должен случаться (спайк), но 206 с нуля законен
+    };
+
+    let wait = async {
+        loop {
+            let p = *rx.borrow();
+            if p.failed {
+                return Err(stream_error(502, "закачка стрима оборвалась"));
+            }
+            if start >= p.total {
+                return Err(stream_error(416, "range вне файла"));
+            }
+            let end = stream_chunk_end(start, p.total).min(end_opt.unwrap_or(u64::MAX));
+            if p.finalized || p.written >= end + 1 {
+                return Ok((end, p.total, p.finalized));
+            }
+            if rx.changed().await.is_err() {
+                // sender умер: перечитываем финальное состояние в голове цикла
+                let p = *rx.borrow();
+                if !(p.finalized || p.failed) {
+                    return Err(stream_error(502, "закачка стрима пропала"));
+                }
+            }
+        }
+    };
+    let (end, total, finalized) = match tokio::time::timeout(STREAM_CHUNK_TIMEOUT, wait).await {
+        Ok(Ok(win)) => win,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return stream_error(504, "байты стрима не пришли вовремя"),
+    };
+
+    // rename мог пройти между сигналом и чтением — пробуем .part, затем финал
+    let source = if !finalized && handle.part.exists() {
+        handle.part.clone()
+    } else if handle.final_path.exists() {
+        handle.final_path.clone()
+    } else {
+        handle.part.clone()
+    };
+    stream_206(&source, start, end, total)
+}
+
 /// Эконом-лестница форматов: низкий битрейт в голове (250/249 = opus 64/48k,
 /// 139 = AAC 48k), обычная лестница рецепта в хвосте — не-YouTube источники
 /// и треки без низкобитрейтных форматов не ломаются.
@@ -1688,6 +2127,37 @@ pub async fn engine_resolve(
             from_cache: true,
             provider: None,
         });
+    }
+
+    // Трек прямо сейчас стримится (Фаза 2): клик и стрим — одна закачка,
+    // второй yt-dlp/GET на те же байты не запускаем. Дожидаемся финала и
+    // отдаём готовый файл; стрим упал — честно идём лестницей ниже.
+    let streaming = state
+        .streams
+        .lock()
+        .unwrap()
+        .get(&warm_key(&cache_ns, &track_id))
+        .map(|h| h.progress.clone());
+    if let Some(mut rx) = streaming {
+        loop {
+            let p = *rx.borrow();
+            if p.finalized || p.failed {
+                break;
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        if let Some(path) = find_cached(&dir, &track_id) {
+            let now = filetime::FileTime::now();
+            let _ = filetime::set_file_mtime(&path, now);
+            state.stats.lock().unwrap().cache_hits += 1;
+            return Ok(ResolveOut {
+                path: path.to_string_lossy().into_owned(),
+                from_cache: true,
+                provider: None,
+            });
+        }
     }
 
     // Быстрый путь прогрева (Фаза 1): метаданные уже разрешены engine_warm —
@@ -1892,8 +2362,9 @@ pub fn engine_cache_clear(
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            // Оффлайн-пины переживают чистку; занятые плеером файлы пропускаем
-            if path.is_file() && !is_pinned(&path, &pins) {
+            // Оффлайн-пины переживают чистку; занятые плеером файлы пропускаем;
+            // свежий .part — возможно, живой стрим Фазы 2 (не рвать на ходу)
+            if path.is_file() && !is_pinned(&path, &pins) && !is_live_stream_part(&path) {
                 let _ = fs::remove_file(path);
             }
         }
@@ -3523,6 +3994,168 @@ mod warm_tests {
             None,
             "начало не с нуля"
         );
+    }
+
+    /// Окно ответа стрима: первый чанк 128 КиБ (он и есть «клик → звук»:
+    /// с запасом на заголовки контейнера, чтобы декодер завёлся), дальше
+    /// 512 КиБ (~32с opus — playback закачку не догонит). Отдавать ВЕСЬ файл
+    /// на `bytes=0-` нельзя: спайк 2026-07-16 показал, что WebView2 тогда
+    /// буферизует целиком одним ответом и больше Range не шлёт — чанки
+    /// обязаны резать ответ, чтобы стрим оставался стримом.
+    #[test]
+    fn stream_chunk_end_first_and_next() {
+        let total = 4_605_080;
+        assert_eq!(stream_chunk_end(0, total), 128 * 1024 - 1);
+        assert_eq!(stream_chunk_end(128 * 1024, total), 128 * 1024 + 512 * 1024 - 1);
+        // хвост не вылезает за файл
+        assert_eq!(stream_chunk_end(total - 10, total), total - 1);
+        // крошечный файл — первый чанк упирается в конец
+        assert_eq!(stream_chunk_end(0, 1000), 999);
+    }
+
+    /// `Range` запроса от <audio> (Фаза 2): `bytes=<start>-[<end>]`.
+    /// Мульти-диапазоны и суффиксную форму (`bytes=-500`) не поддерживаем —
+    /// None означает «отвечай 200 целиком», это законно по HTTP.
+    #[test]
+    fn parse_range_header_start_only() {
+        assert_eq!(parse_range_header("bytes=0-"), Some((0, None)));
+        assert_eq!(parse_range_header("bytes=131072-"), Some((131_072, None)));
+    }
+
+    #[test]
+    fn parse_range_header_start_end() {
+        assert_eq!(parse_range_header("bytes=100-511"), Some((100, Some(511))));
+        assert_eq!(parse_range_header("bytes=0-0"), Some((0, Some(0))));
+        assert_eq!(parse_range_header("bytes=511-100"), None, "конец раньше начала");
+    }
+
+    #[test]
+    fn parse_range_header_rejects_garbage() {
+        for raw in ["", "items=0-", "bytes=", "bytes=a-b", "bytes=0-1,5-9", "bytes=-500", "bytes=0"] {
+            assert_eq!(parse_range_header(raw), None, "{raw:?} обязан отвергаться");
+        }
+    }
+
+    /// Живой A/B-замер «клик → файл готов» (сеть + sidecar-бинари):
+    /// ДО = полная лестница run_ytdlp_once; ПОСЛЕ = fetch_to_cache по
+    /// прогретой записи (стоимость прогрева печатается отдельно — на клик
+    /// она не ложится). Те же 4 трека, что в замере 2026-07-15. Сеть шумная —
+    /// серии с чередованием порядка, одиночному прогону не верить.
+    /// `MUZA_AB_SERIES=3 cargo test warm_ab_real_tracks -- --ignored --nocapture`
+    #[test]
+    #[ignore = "сеть + yt-dlp + deno"]
+    fn warm_ab_real_tracks() {
+        let series: u32 = std::env::var("MUZA_AB_SERIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        let tracks = ["dQw4w9WgXcQ", "kJQP7kiw5Fk", "9bZkp7q19f0", "JGwWNGJdvx8"];
+        let dir = std::env::temp_dir().join("muza-warm-ab");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let clients: Vec<String> = recipe["youtube"]["player_clients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        let sidecars = sidecar_paths().expect("sidecar-файлы доступны");
+        let fmt = "251/140/bestaudio";
+
+        let cold = |vid: &str, tag: &str| -> f64 {
+            let source = SourceRef::Youtube {
+                source_id: vid.into(),
+            };
+            let attempts = build_attempts(&[source], &clients).attempts;
+            let t0 = Instant::now();
+            for attempt in attempts {
+                if let Ok(path) =
+                    run_ytdlp_once(&sidecars.ytdlp, &sidecars.deno, &dir, tag, &attempt, fmt)
+                {
+                    let secs = t0.elapsed().as_secs_f64();
+                    let _ = fs::remove_file(path);
+                    return secs;
+                }
+            }
+            panic!("лестница не добыла {vid}");
+        };
+        let warm = |vid: &str, tag: &str| -> (f64, f64) {
+            let source = SourceRef::Youtube {
+                source_id: vid.into(),
+            };
+            let attempts = build_attempts(&[source], &clients).attempts;
+            let t0 = Instant::now();
+            for attempt in attempts {
+                let Ok(sim) = run_ytdlp_simulate(&sidecars.ytdlp, &sidecars.deno, &attempt, fmt)
+                else {
+                    continue;
+                };
+                let warm_secs = t0.elapsed().as_secs_f64();
+                let url = validate_warm_url(&sim.url).expect("warm-URL валиден");
+                let now = SystemTime::now();
+                let entry = WarmEntry {
+                    expires_at: warm_expires_at(&url, now),
+                    url,
+                    size: sim.size,
+                    ext: sim.ext,
+                    provider: "youtube".into(),
+                };
+                let t1 = Instant::now();
+                let path = tauri::async_runtime::block_on(fetch_to_cache(&dir, tag, &entry))
+                    .expect("fetch_to_cache по свежему warm-URL");
+                let fetch_secs = t1.elapsed().as_secs_f64();
+                let _ = fs::remove_file(path);
+                return (warm_secs, fetch_secs);
+            }
+            panic!("simulate не разрешил {vid}");
+        };
+
+        println!("серия;трек;порядок;cold_лестница_с;warm_simulate_с;warm_fetch_с");
+        for s in 0..series {
+            for (i, vid) in tracks.iter().enumerate() {
+                let tag = format!("ab{s}x{i}");
+                // чередуем порядок: чётные серии cold→warm, нечётные warm→cold,
+                // чтобы дрейф сети не работал систематически на одну сторону
+                if s % 2 == 0 {
+                    let c = cold(vid, &tag);
+                    let (w, f) = warm(vid, &tag);
+                    println!("{s};{vid};cold→warm;{c:.2};{w:.2};{f:.2}");
+                } else {
+                    let (w, f) = warm(vid, &tag);
+                    let c = cold(vid, &tag);
+                    println!("{s};{vid};warm→cold;{c:.2};{w:.2};{f:.2}");
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Свежий `.part` — это, возможно, ЖИВОЙ стрим (Фаза 2): эвикция и
+    /// «Очистить кэш» не имеют права снести его на ходу (спека помечала это
+    /// явным риском — на Windows спасал бы открытый хэндл записи, но читатель
+    /// открывает файл на каждый чанк, и окно есть). Старый `.part` — мусор
+    /// упавшей закачки, его эвиктить МОЖНО и НУЖНО.
+    #[test]
+    fn evict_and_clear_spare_fresh_part_only() {
+        let dir = std::env::temp_dir().join(format!("muza-warm-evict-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let fresh = dir.join("1.opus.part");
+        let stale = dir.join("2.opus.part");
+        fs::write(&fresh, vec![0u8; 1000]).unwrap();
+        fs::write(&stale, vec![0u8; 1000]).unwrap();
+        let old = filetime::FileTime::from_unix_time(
+            filetime::FileTime::now().unix_seconds() - 3600,
+            0,
+        );
+        filetime::set_file_mtime(&stale, old).unwrap();
+        let keep = dir.join("нет-такого");
+        evict_lru(&dir, 0, &keep, &HashSet::new());
+        assert!(fresh.exists(), "свежий .part (живой стрим) пережил эвикцию");
+        assert!(!stale.exists(), "старый .part (мусор) эвиктнут");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Регресс-защита от огрызков: `.part` недокачки не имеет права стать

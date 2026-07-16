@@ -7,7 +7,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MuzaApi, TrackSource } from "@muza/api-client";
 import type { Prefs, RepeatMode } from "../types";
 import { translate, type TParams, type TranslationKey } from "../i18n";
-import { engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
+import { engineAvailable, engineStreamStart, engineStreamUrl, resolvePlayable, type ResolveResult } from "../lib/engine";
 import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
@@ -323,8 +323,17 @@ export function usePlayback({
         url = preloadedUrl;
       } else {
         setBuffering(true);
-        const resolved = await resolveForTrack(t);
-        url = resolved.url;
+        // Стрим с первых килобайт (Фаза 2): у прогретого некэшированного
+        // трека резолв уже сделан (WarmEntry), Rust начал закачку и
+        // подтвердил первые байты — играем прямо из наполняющегося кэша
+        // (~0.5с до звука вместо ожидания всего файла). false — обычная
+        // добыча: кэш-хит, warm-fetch или полная лестница.
+        if (t.kind === "catalog" && (await engineStreamStart(t.id))) {
+          url = engineStreamUrl(t.id);
+        } else {
+          const resolved = await resolveForTrack(t);
+          url = resolved.url;
+        }
       }
       // Старт мог устареть, пока шла добыча: переключили дальше ИЛИ нажали
       // паузу (cancelPendingStart). Второе — не то же самое, что первое:

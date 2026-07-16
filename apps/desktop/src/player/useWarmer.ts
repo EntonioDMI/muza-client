@@ -17,7 +17,7 @@
  *  Прогрев греет и кэш ИСТОЧНИКОВ (sourcesCache, T1b): клик по прогретому
  *  треку не платит ни за yt-dlp-резолв, ни за RTT getTrackSources. */
 
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { createContext, useContext, useMemo, useRef } from "react";
 import type { MuzaApi } from "@muza/api-client";
 import type { Prefs } from "../types";
 import { engineAvailable, engineWarm } from "../lib/engine";
@@ -158,6 +158,12 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
     };
   }, []);
 
-  useEffect(() => () => warmer.dispose(), [warmer]);
+  // Намеренно БЕЗ dispose на размонтировании. App живёт, пока жив документ, —
+  // таймер очереди и IntersectionObserver умрут вместе с ним. А «аккуратный»
+  // useEffect(() => () => warmer.dispose()) в dev убивал прогрев НАВСЕГДА:
+  // StrictMode монтирует→размонтирует→монтирует, cleanup фейкового
+  // размонтирования вызывал dispose() у мемоизированного (одного и того же!)
+  // warmer, и очередь молча глотала все заявки. Найдено живым стендом
+  // 2026-07-16: обработчики на строках стояли, а прогрев не шёл.
   return warmer;
 }

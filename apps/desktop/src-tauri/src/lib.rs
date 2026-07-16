@@ -31,6 +31,9 @@ pub fn run() {
         // plugins::run_full_access_plugin (ниже, invoke_handler); никакой
         // правки CSP это не требует.
         .register_uri_scheme_protocol("muza-plugin", plugins::handle_plugin_request)
+        // Стрим с первых килобайт (Фаза 2, пока спайк Range): <audio> играет
+        // прямо из наполняющегося кэша добычи, см. engine::handle_stream_request
+        .register_asynchronous_uri_scheme_protocol("muza-stream", engine::handle_stream_request)
         .manage(engine::EngineState::default())
         .manage(local::LocalState::default())
         .manage(rpc::RpcState::default())
@@ -69,6 +72,7 @@ pub fn run() {
             engine::recipe_current,
             engine::engine_resolve,
             engine::engine_warm,
+            engine::engine_stream_start,
             engine::engine_cache_stats,
             engine::engine_cache_remove,
             engine::engine_export_cached,
