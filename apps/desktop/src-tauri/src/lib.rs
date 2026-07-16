@@ -7,6 +7,7 @@ mod miniplayer;
 mod plugins;
 mod rpc;
 mod share;
+mod state_kv;
 mod tray;
 
 use tauri::Manager;
@@ -84,6 +85,9 @@ pub fn run() {
             rpc::rpc_update,
             rpc::rpc_clear,
             rpc::rpc_available,
+            state_kv::state_get,
+            state_kv::state_set,
+            state_kv::state_del,
             share::share_save_file,
             tray::tray_configure,
             miniplayer::miniplayer_show,

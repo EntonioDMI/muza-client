@@ -6,6 +6,7 @@ import { App } from "./App";
 import { MiniPlayer } from "./mini/MiniPlayer";
 import { ErrorBoundary } from "./shell/ErrorBoundary";
 import { errorReporter } from "./lib/errorReporter";
+import { initDurableState } from "./lib/durableState";
 import "./app.css";
 
 // Слушатели ошибок — ДО первого рендера: падение на старте тоже попадает в
@@ -16,8 +17,14 @@ errorReporter.install(window);
 // (надёжнее URL-параметров: dev и prod грузят одинаковый адрес)
 const isMini = isTauri() && getCurrentWebviewWindow().label === "mini";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <ErrorBoundary>{isMini ? <MiniPlayer /> : <App />}</ErrorBoundary>
-  </React.StrictMode>,
-);
+// Сессия/prefs — из долговечного файла-зеркала, ДО рендера: App читает prefs
+// при монтировании, а api-client — сессию. Иначе после «завершить задачу»
+// LevelDB WebView2 отдаёт устаревшее (durableState.ts — почему это важно).
+void initDurableState().finally(() => {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <ErrorBoundary>{isMini ? <MiniPlayer /> : <App />}</ErrorBoundary>
+    </React.StrictMode>,
+  );
+});
+
