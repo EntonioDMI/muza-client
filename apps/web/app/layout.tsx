@@ -16,8 +16,18 @@ export const metadata: Metadata = {
     apple: "/icons/apple-touch-icon.png",
   },
   appleWebApp: {
+    // Next 16 при capable: true эмитит ТОЛЬКО стандартный
+    // <meta name="mobile-web-app-capable"> (проверено по out/ 16.07.2026),
+    // а iOS <16.4 понимает лишь легаси-имя apple-mobile-web-app-capable и без
+    // него открывает «на экран Домой» с хромом Safari — поэтому легаси-мета
+    // добавлена руками через `other` ниже. Современный iOS берёт standalone
+    // из display манифеста, ему обе меты не нужны.
+    capable: true,
     title: "Muza",
     statusBarStyle: "black-translucent",
+  },
+  other: {
+    "apple-mobile-web-app-capable": "yes",
   },
 };
 
@@ -36,6 +46,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ru">
       <body>
         <Providers>{children}</Providers>
+        {/* app-shell SW — только в production: в dev закэшировал бы
+            нехэшированные чанки (инварианты кэша — в public/sw.js) */}
+        {process.env.NODE_ENV === "production" && <script src="/sw-register.js" defer />}
       </body>
     </html>
   );
