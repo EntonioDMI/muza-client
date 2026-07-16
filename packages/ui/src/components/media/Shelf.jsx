@@ -43,24 +43,31 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
     <div
       style={{
         position: "absolute",
+        // по вертикали центрируем над обложкой (верхний квадрат карточки),
+        // а не над всей плиткой с подписью — так стрелка не наезжает на текст
         top: 0,
-        bottom: 0,
+        bottom: "var(--sp-7)",
         [dir < 0 ? "left" : "right"]: 0,
         display: "flex",
         alignItems: "center",
-        // клики мимо кнопки не крадём у карточек
+        justifyContent: dir < 0 ? "flex-start" : "flex-end",
+        // клики мимо кнопки не крадём у карточек; без широкого градиента-«тени»
+        // (из-за неё крайняя обложка «выпирала» — жалоба 2026-07-16): просто
+        // плавающая кнопка со своей мягкой тенью, слегка над краем.
         pointerEvents: "none",
-        paddingInline: "var(--sp-1)",
-        // мягкая подложка-фейд, чтобы стрелка читалась поверх обложек
-        background:
-          dir < 0
-            ? "linear-gradient(90deg, var(--bg-0) 10%, transparent)"
-            : "linear-gradient(270deg, var(--bg-0) 10%, transparent)",
+        padding: "0 2px",
+        zIndex: 2,
         opacity: hover && !hidden ? 1 : 0,
         transition: "opacity var(--dur-fast) var(--ease-out)",
       }}
     >
-      <span style={{ pointerEvents: hidden ? "none" : "auto" }}>
+      <span
+        style={{
+          pointerEvents: hidden ? "none" : "auto",
+          borderRadius: "var(--r-pill)",
+          boxShadow: "0 6px 20px rgba(0, 0, 0, 0.5)",
+        }}
+      >
         <IconButton
           icon={dir < 0 ? "chevron-left" : "chevron-right"}
           variant="surface"
