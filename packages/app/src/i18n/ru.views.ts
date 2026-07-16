@@ -88,6 +88,7 @@ export const viewsRu: typeof viewsEn = {
     artistFileMissing: "{artist} · файла нет на этом устройстве",
     localFilesEmpty: "Пока пусто. Добавь файлы или папку с музыкой — они заиграют вместе с каталожными треками, в том числе в одном плейлисте.",
     playlistSubtitle: "{count} тр. · синхронизируется",
+    reorderHandle: "Перетащить — изменить порядок",
     playlistsEmpty: "Плейлистов пока нет. Создай первый кнопкой «+» в сайдбаре, импортируй из Spotify/YouTube/Apple Music или добавь треки по ссылке.",
     removeFromMuza: "Убрать из Muza (файл останется)",
     removedFromLocal: "Убрано из локальных",

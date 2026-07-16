@@ -99,6 +99,7 @@ export const viewsEn = {
     localFilesEmpty:
       "Nothing here yet. Add files or a folder of music — they'll play alongside catalog tracks, including in the same playlist.",
     playlistSubtitle: "{count} tr. · syncing",
+    reorderHandle: "Drag to reorder",
     playlistsEmpty:
       'No playlists yet. Create your first one with the "+" button in the sidebar, import from Spotify/YouTube/Apple Music, or add tracks by link.',
     removeFromMuza: "Remove from Muza (file stays)",

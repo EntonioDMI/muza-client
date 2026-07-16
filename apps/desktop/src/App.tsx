@@ -524,6 +524,29 @@ function Player({
       /* сервер недоступен и снапшота нет — сайдбар просто не обновится */
     }
   };
+
+  /** Реордер плейлистов (drag-drop за ручку в Библиотеке): draggedId встаёт
+   *  ПЕРЕД beforeId. Оптимистично правим локальный список (сайдбар/медиатека
+   *  сразу), затем шлём полный порядок на сервер; ошибка — откат перечиткой. */
+  const reorderPlaylists = async (draggedId: string, beforeId: string) => {
+    if (draggedId === beforeId) return;
+    let nextIds: string[] = [];
+    setSrvPlaylists((ps) => {
+      const rest = ps.filter((p) => p.id !== draggedId);
+      const to = rest.findIndex((p) => p.id === beforeId);
+      const dragged = ps.find((p) => p.id === draggedId);
+      if (to < 0 || !dragged) return ps;
+      const next = [...rest.slice(0, to), dragged, ...rest.slice(to)];
+      nextIds = next.map((p) => p.id);
+      return next;
+    });
+    if (nextIds.length === 0) return;
+    try {
+      await api.reorderPlaylists(nextIds);
+    } catch {
+      void reloadServerPlaylists(); // не сохранилось — вернём серверный порядок
+    }
+  };
   useEffect(() => {
     if (!canSearch) return;
     void reloadServerPlaylists();
@@ -1815,6 +1838,7 @@ function Player({
                 onJoinCode={() => setJoinOpen(true)}
                 onNotify={showToast}
                 onDropTrack={dropTrackOnPlaylist}
+                onReorderPlaylists={reorderPlaylists}
               />
             ) : view === "stats" ? (
               <StatsView

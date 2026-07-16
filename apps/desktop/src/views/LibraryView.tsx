@@ -84,33 +84,56 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
   );
 }
 
-/** Плитка плейлиста, она же зона приёма трека. Отдельный компонент, потому что
- *  useDropZone — хук, а звать хуки внутри .map() нельзя. */
+/** Плитка плейлиста: зона приёма трека И реордера плейлистов. Отдельный
+ *  компонент, потому что useDropZone/useDrag — хуки, а звать их внутри .map()
+ *  нельзя. Реордер тянется ТОЛЬКО за ручку-⠿ (grip) справа сверху — по самой
+ *  плитке остаётся обычный клик «открыть», без мисс-кликов (T-drag, 2026-07-16). */
 function PlaylistDropTile({
   playlist,
   subtitle,
   onOpen,
   onMenu,
   onDropTrack,
+  onReorder,
 }: {
   playlist: PlaylistMeta;
   subtitle: string;
   onOpen: () => void;
   onMenu?: (e: React.MouseEvent) => void;
   onDropTrack?: (playlistId: string, trackId: string) => void;
+  /** Плейлист p.id брошен на этот (drag за ручку) — переставить перед ним. */
+  onReorder?: (draggedId: string, beforeId: string) => void;
 }) {
-  // Префикс места в id: тот же плейлист бывает целью и в сайдбаре, и здесь, а
-  // реестр зон в DragLayer — плоская Map, одинаковые id затирали бы друг друга.
+  const { t } = useT();
+  const { drag, dragSource } = useDrag();
+  const [hover, setHover] = useState(false);
+  const cover = playlist.iconCoverUrl ?? playlistIconSrc(playlist.icon);
+  // Зона живёт, если возможен хоть один приём (трек ИЛИ реордер). Префикс места
+  // в id: тот же плейлист — цель и в сайдбаре, и здесь; плоская Map зон в
+  // DragLayer одинаковые id затёрла бы.
   const { over, props } = useDropZone(
-    onDropTrack ? `library-playlist:${playlist.id}` : null,
-    (p) => onDropTrack?.(playlist.id, p.id),
+    onDropTrack || onReorder ? `library-playlist:${playlist.id}` : null,
+    (p) => {
+      if (p.kind === "playlist") {
+        if (p.id !== playlist.id) onReorder?.(p.id, playlist.id);
+      } else {
+        onDropTrack?.(playlist.id, p.id);
+      }
+    },
   );
+  const draggingPlaylist = drag?.payload.kind === "playlist";
+  // Не подсвечиваем плитку как цель, когда тащат ЕЁ ЖЕ.
+  const litTarget = over && !(draggingPlaylist && drag?.payload.id === playlist.id);
+  const grip = dragSource({ id: playlist.id, title: playlist.name, cover: cover ?? null, kind: "playlist" });
   return (
     <div
       {...props}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
+        position: "relative",
         borderRadius: "var(--r-md)",
-        outline: over ? "var(--focus-ring)" : undefined,
+        outline: litTarget ? "var(--focus-ring)" : undefined,
         outlineOffset: 2,
         transition: "outline-color var(--dur-fast) var(--ease-out)",
       }}
@@ -119,7 +142,7 @@ function PlaylistDropTile({
         // T47b: иконка-обложка плейлиста (манифест @muza/core); T47c: track-
         // иконка — готовой ссылкой iconCoverUrl; битая/чужая — null, и Tile
         // рисует плейсхолдер (раньше фолбэком была демо-обложка)
-        cover={playlist.iconCoverUrl ?? playlistIconSrc(playlist.icon)}
+        cover={cover}
         title={playlist.name}
         subtitle={subtitle}
         width="auto"
@@ -127,6 +150,34 @@ function PlaylistDropTile({
         onPlay={onOpen}
         onMenu={onMenu}
       />
+      {onReorder ? (
+        <span
+          {...grip}
+          role="button"
+          aria-label={t("views.library.reorderHandle")}
+          title={t("views.library.reorderHandle")}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: 10,
+            right: 10,
+            display: "grid",
+            placeItems: "center",
+            width: 30,
+            height: 30,
+            borderRadius: "var(--r-sm)",
+            background: "var(--surface-4)",
+            color: "var(--text-2)",
+            cursor: "grab",
+            // видна на hover плитки или пока вообще тащат плейлист (видно куда)
+            opacity: hover || draggingPlaylist ? 1 : 0,
+            transition: "opacity var(--dur-fast) var(--ease-out)",
+            touchAction: "none",
+          }}
+        >
+          <Icon name="grip-vertical" size={18} />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -153,6 +204,7 @@ export function LibraryView({
   onJoinCode,
   onNotify,
   onDropTrack,
+  onReorderPlaylists,
 }: {
   api: MuzaApi;
   /** false у анонима: серверная библиотека недоступна (локальные — работают). */
@@ -160,6 +212,8 @@ export function LibraryView({
   srvPlaylists: PlaylistMeta[];
   /** Трек брошен на плитку плейлиста (undefined = плитки не цели). */
   onDropTrack?: (playlistId: string, trackId: string) => void;
+  /** Плейлист перетащили за ручку на другой — переставить перед ним. */
+  onReorderPlaylists?: (draggedId: string, beforeId: string) => void;
   /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
   currentId: string | null;
   playing: boolean;
@@ -357,6 +411,7 @@ export function LibraryView({
               onOpen={() => onOpenPlaylist(p.id)}
               onMenu={onPlaylistMenu ? (e: React.MouseEvent) => onPlaylistMenu({ id: p.id, name: p.name }, e) : undefined}
               onDropTrack={onDropTrack}
+              onReorder={onReorderPlaylists}
             />
           ))}
           {srvPlaylists.length === 0 ? (

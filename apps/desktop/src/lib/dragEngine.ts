@@ -26,8 +26,9 @@ export interface DragPayload {
    *  писали `?? undefined` в каждом вызове. */
   cover?: string | null;
   /** "track" — откуда угодно; "playlist-track" — строка внутри плейлиста
-   *  (может быть переупорядочена), `fromPlaylistId` тогда обязателен. */
-  kind: "track" | "playlist-track";
+   *  (может быть переупорядочена), `fromPlaylistId` тогда обязателен;
+   *  "playlist" — сам плейлист тащат за ручку-⠿ для реордера в Библиотеке. */
+  kind: "track" | "playlist-track" | "playlist";
   fromPlaylistId?: string;
 }
 

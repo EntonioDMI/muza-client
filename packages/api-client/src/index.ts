@@ -139,6 +139,8 @@ export interface MuzaApi {
   removePlaylistTrack(playlistId: string, trackId: string): Promise<void>;
   /** Переупорядочить треки: `trackIds` — ВЕСЬ список в новом порядке. */
   reorderPlaylist(playlistId: string, trackIds: string[]): Promise<void>;
+  /** Новый порядок плейлистов пользователя (drag-drop в Библиотеке). */
+  reorderPlaylists(playlistIds: string[]): Promise<void>;
   /** Скроббл (клиент шлёт с реальным движком — Stage 3; сервер уже готов). */
   recordPlay(input: { trackId: string; playedMs: number; durationMs: number; completed: boolean }): Promise<void>;
   getHistory(limit?: number): Promise<HistoryItem[]>;

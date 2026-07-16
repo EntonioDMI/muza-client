@@ -701,6 +701,14 @@ export class HttpMuzaApi implements MuzaApi {
     });
   }
 
+  /** Новый порядок ПЛЕЙЛИСТОВ пользователя (drag-drop в Библиотеке). */
+  async reorderPlaylists(playlistIds: string[]): Promise<void> {
+    await this.authedRequest("/me/playlists/order", {
+      method: "PUT",
+      body: JSON.stringify({ playlist_ids: playlistIds }),
+    });
+  }
+
   async recordPlay(input: { trackId: string; playedMs: number; durationMs: number; completed: boolean }): Promise<void> {
     await this.authedRequest("/me/plays", {
       method: "POST",
