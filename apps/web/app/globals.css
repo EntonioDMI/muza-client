@@ -2,9 +2,15 @@
    Раскладка и адаптация живут здесь (inline-стили не умеют media queries).
    Материалы — токены ДС: зоны surface-1 поверх сценографии, стекло
    glass-panel + blur только у плавающих панелей (бар, нижняя навигация,
-   мобильный now-playing) — как в десктопе. Брейкпоинты:
-   <900px — телефон (нижняя навигация), 900–1199px — узкий десктоп/планшет
-   (без правой панели), ≥1200px — полная тройная раскладка. */
+   мобильный now-playing) — как в десктопе.
+
+   Режимы шелла — 4 ориентации (телефон/планшет × портрет/ландшафт), разбор
+   веток — в секции «Брейкпоинты» внизу:
+   ≥1200px — полная тройная раскладка (сайдбар + контент + NP-панель);
+   900–1199px и планшет-портрет (700–899) — сайдбар + контент, NP скрыта;
+   телефон-портрет — одна колонка, нижняя навигация + мини-бар;
+   ландшафт высотой ≤480px (телефон на боку) — левый иконный рельс вместо
+   нижней навигации, тонкий мини-бар, контент во всю высоту. */
 
 html,
 body {
@@ -25,6 +31,10 @@ a {
   --z-overlay: 50;
   --h-bottomnav: 60px;
   --h-minibar: 60px;
+  /* телефон-ландшафт: левый иконный рельс вместо нижней навигации,
+     мини-бар ужат — иначе высоты 375px на контент не остаётся */
+  --w-navrail: 64px;
+  --h-minibar-compact: 48px;
 
   /* ── Безопасные зоны экрана ──────────────────────────────────────────
      На iPhone «Добавить на экран Домой» открывает нас в display-mode:
@@ -85,8 +95,13 @@ a {
   display: grid;
   grid-template-columns: 260px 1fr;
   gap: var(--gap-zone);
-  padding: var(--gap-zone);
-  padding-bottom: calc(var(--h-playerbar) + 2 * var(--gap-zone));
+  /* Безопасные зоны нужны и десктопной раскладке: iPad-PWA (standalone,
+     viewport-fit=cover) кладёт статус-бар и home-indicator ПОВЕРХ вебвью,
+     а планшет-портрет ходит именно этой веткой. На десктопе --safe-* = 0,
+     и padding вырождается в прежний --gap-zone. */
+  padding: calc(var(--safe-top) + var(--gap-zone)) calc(var(--safe-right) + var(--gap-zone))
+    calc(var(--h-playerbar) + 2 * var(--gap-zone) + var(--safe-bottom))
+    calc(var(--safe-left) + var(--gap-zone));
   min-height: 0;
 }
 
@@ -127,9 +142,9 @@ a {
 
 .playerbar {
   position: absolute;
-  left: var(--gap-zone);
-  right: var(--gap-zone);
-  bottom: var(--gap-zone);
+  left: calc(var(--safe-left) + var(--gap-zone));
+  right: calc(var(--safe-right) + var(--gap-zone));
+  bottom: calc(var(--safe-bottom) + var(--gap-zone));
   z-index: var(--z-bar);
   height: var(--h-playerbar);
   box-sizing: border-box;
@@ -343,7 +358,13 @@ a {
   }
 }
 
-@media (max-width: 899px) {
+/* Телефонная раскладка. Не просто «узко»: планшет-портрет (700–899px,
+   iPad 768 / iPad mini 744) сюда НЕ попадает — по ширине там помещается
+   десктопная раскладка с сайдбаром (ветка ≤1199px выше), прятать её в одну
+   колонку было бы расточительно. Ландшафт 700–899px (телефон на боку или
+   низкое окно) остаётся телефонным: десктопному плеербару нужно ~796px,
+   а низкие вьюпорты перекроет ландшафтная ветка ниже. */
+@media (max-width: 699px), (max-width: 899px) and (orientation: landscape) {
   .shell-grid,
   .shell-grid.with-np {
     grid-template-columns: 1fr;
@@ -382,6 +403,95 @@ a {
 
   .shelf {
     grid-auto-columns: 132px;
+  }
+}
+
+/* ── Планшет-портрет (700–899px) ──
+   Раскладка уже десктопная (ветка ≤1199px), дожать надо одно: десктопные
+   колонки плеербара (200/300/200 + зазоры и паддинги) требуют ~796px
+   вьюпорта — на iPad 768 не влезают. Правая колонка не жмётся (NP-тумблер +
+   громкость со слайдером 110px — ей фикс-минимум), середина упругая,
+   транспорт цел. */
+@media (min-width: 700px) and (max-width: 899px) and (orientation: portrait) {
+  .playerbar {
+    grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr) minmax(196px, 1fr);
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+  }
+}
+
+/* ── Ландшафт ниже 481px высоты: телефон на боку ──
+   Порог по ВЫСОТЕ, а не ширине: iPhone в ландшафте бывает шире 899px
+   (Pro Max — 932×430) и иначе получил бы сайдбар с плеербаром, которым не
+   хватает вертикали; планшеты в ландшафте (высота ≥600px) сюда не попадают.
+   Нижняя навигация + мини-бар съедали бы полвысоты (120 из 375) — вместо
+   этого .bottomnav становится узким левым иконным рельсом, мини-бар
+   ужимается до --h-minibar-compact, контент получает всю высоту. Боковые
+   --safe-* обязательны: чёлка в ландшафте съедает край, а не верх. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .shell-grid,
+  .shell-grid.with-np {
+    grid-template-columns: 1fr;
+    padding: calc(var(--safe-top) + var(--sp-2)) calc(var(--safe-right) + var(--sp-2))
+      calc(var(--h-minibar-compact) + var(--safe-bottom) + var(--sp-2) * 3)
+      calc(var(--w-navrail) + var(--safe-left) + var(--sp-2));
+  }
+
+  .sidebar,
+  .np-panel,
+  .playerbar {
+    display: none;
+  }
+
+  .main {
+    padding: var(--sp-4);
+  }
+
+  .page-title {
+    font-size: 22px;
+  }
+
+  .bottomnav {
+    display: grid;
+    grid-auto-flow: row;
+    grid-auto-rows: 1fr;
+    top: 0;
+    right: auto;
+    width: calc(var(--w-navrail) + var(--safe-left));
+    height: auto;
+    padding: var(--safe-top) 0 var(--safe-bottom) var(--safe-left);
+  }
+
+  /* подпись под иконкой прячем размером шрифта: текстовый узел в <a> нечем
+     таргетить селектором, а имя ссылки для скринридера так остаётся живым */
+  .bottomnav a {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .minibar {
+    display: block;
+    height: var(--h-minibar-compact);
+    left: calc(var(--w-navrail) + var(--safe-left) + var(--sp-2));
+    right: calc(var(--safe-right) + var(--sp-2));
+    bottom: calc(var(--safe-bottom) + var(--sp-2));
+  }
+
+  /* Полноэкранный NP: колонна MobileNowPlaying свёрстана под портрет, его
+     обложке (inline width: min(78vw, 46vh)) в 375px высоты места нет.
+     Капаем ОБЁРТКУ обложки (у неё aspect-ratio: 1 — высота следует за
+     шириной): 100dvh минус ~256px фиксированных рядов (шапка, название,
+     прогресс, транспорт, отступы). Селектор по inline-стилю — временный
+     шов до Э7 марафона (общий NP из @muza/app принесёт свою ландшафтную
+     раскладку, тогда правило умрёт вместе с этим комментарием). */
+  .np-overlay {
+    padding: calc(var(--safe-top) + var(--sp-2)) calc(var(--safe-right) + var(--sp-5))
+      calc(var(--safe-bottom) + var(--sp-3)) calc(var(--safe-left) + var(--sp-5));
+  }
+
+  .np-overlay [style*="aspect-ratio"] {
+    max-width: calc(100vh - 256px);
+    max-width: calc(100dvh - 256px);
   }
 }
 
