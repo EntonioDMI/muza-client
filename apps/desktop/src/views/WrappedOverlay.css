@@ -1,3 +1,12 @@
+/* Wrapped «Итоги года» — редизайн 2026-07-16: «афиша года».
+   Сцена — обложки пользователя (кроссфейд + медленный дрейф), дисплейные
+   цифры Unbounded, у каждого слайда своя постановка. Перелистывание
+   направленное: уходящая копия с классом .is-leaving-* и входящая с
+   .is-entering-* живут одновременно (стек absolute внутри __content).
+   Материалы строго ДС: поверхности-слои и стекло, никаких теней/градиентов
+   (effects.css); все шрифты — токены/rem, хардкод px запрещён (проход
+   «пиксели→токены» 16.07). */
+
 .wrapped {
   position: absolute;
   inset: 0;
@@ -11,6 +20,12 @@
   font-family: var(--font-ui);
   outline: none;
   cursor: pointer;
+
+  /* Локальная типографическая шкала афиши (rem, не px) */
+  --wr-display-xl: clamp(4.2rem, 9vw, 6rem);    /* год на intro */
+  --wr-display-lg: clamp(3.4rem, 7.5vw, 5.25rem); /* минуты, час */
+  --wr-display-md: clamp(2.4rem, 5vw, 3.4rem);  /* заголовки-строки */
+  --wr-headliner: clamp(2.5rem, 6vw, 4.25rem);  /* имя артиста года */
 }
 
 .wrapped *,
@@ -19,41 +34,14 @@
   box-sizing: border-box;
 }
 
-.wrapped__backdrop,
-.wrapped__backdrop > * {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.wrapped__backdrop {
-  z-index: -1;
-  overflow: hidden;
-  background: var(--bg-0);
-}
-
-.wrapped__backdrop > img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  opacity: 0.34;
-  filter: blur(var(--blur-scenery)) saturate(1.35) brightness(0.72);
-  transform: scale(1.24);
-  animation: wrappedBackdropIn 900ms var(--ease-out) both;
-}
-
-.wrapped__scrim {
-  background: rgba(18, 17, 16, 0.76);
-}
-
-/* W2-хвосты: Wrapped — намеренно «тёмное шоу» (T11). Скрим выше захардкожен
+/* W2-хвосты: Wrapped — намеренно «тёмное шоу» (T11). Скрим ниже захардкожен
    тёмным независимо от темы приложения, поэтому фактическая подложка внутри
    оверлея всегда тёмная — но токены текста/поверхностей в светлой теме
    (data-theme="light" в themes.css) переключаются на «тёмный-на-светлом»
    вариант и становятся невидимы на тёмном скриме. Фикс: форсируем внутри
    .wrapped ту же тёмную рампу, что действует по умолчанию (:root в
    colors.css) — независимо от текущей темы приложения. Акцентные токены
-   учитывают выбранный data-accent (red/bolt), чтобы хue акцента не менялся —
+   учитывают выбранный data-accent (red/bolt), чтобы hue акцента не менялся —
    только его «тёмный» вариант вместо «тёмный-на-светлом». Тёмная тема не
    тронута: правила применяются только под [data-theme="light"], а значения
    в них дословно совпадают с её же дефолтами. */
@@ -64,6 +52,7 @@
   --surface-2: rgba(255, 255, 255, 0.07);
   --surface-3: rgba(255, 255, 255, 0.11);
   --surface-4: rgba(255, 255, 255, 0.15);
+  --glass-panel: rgba(23, 22, 20, 0.62);
   --text-1: #f4f3f1;
   --text-2: rgba(244, 243, 241, 0.62);
   --text-3: rgba(244, 243, 241, 0.38);
@@ -88,7 +77,43 @@
   --accent-soft: rgba(50, 122, 217, 0.16);
 }
 
-.wrapped__ambient {
+/* ── Сцена: обложка-задник, скрим, амбиент-пятна ─────────────────── */
+
+.wrapped__backdrop,
+.wrapped__backdrop > * {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.wrapped__backdrop {
+  z-index: -1;
+  overflow: hidden;
+  background: var(--bg-0);
+}
+
+.wrapped__scenery {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.34;
+  filter: blur(var(--blur-scenery)) saturate(1.35) brightness(0.72);
+  transform: scale(1.24);
+  animation:
+    wrappedSceneIn 900ms var(--ease-out) both,
+    wrappedDrift 36s ease-in-out 900ms infinite alternate;
+}
+
+/* Прошлая обложка гаснет ПОД новой — настоящий кроссфейд, без скачка яркости */
+.wrapped__scenery.is-past {
+  animation: wrappedSceneOut 900ms var(--ease-out) forwards;
+}
+
+.wrapped__scrim {
+  background: rgba(18, 17, 16, 0.76);
+}
+
+.wrapped__glow {
   inset: auto;
   width: min(58vw, 620px);
   aspect-ratio: 1;
@@ -98,16 +123,18 @@
   filter: blur(110px);
 }
 
-.wrapped__ambient--a {
+.wrapped__glow--a {
   top: -36%;
   right: -16%;
 }
 
-.wrapped__ambient--b {
+.wrapped__glow--b {
   bottom: -54%;
   left: -20%;
   opacity: 0.06;
 }
+
+/* ── Хром: бренд, прогресс, звук, крестик ────────────────────────── */
 
 .wrapped__chrome,
 .wrapped__footer {
@@ -144,15 +171,22 @@
   gap: 6px;
   align-items: center;
   width: 100%;
+  padding-block: 8px; /* зона клика по сегментам заметно шире полоски */
 }
 
 .wrapped__progress span {
   position: relative;
-  height: 3px;
+  height: 4px;
   flex: 1;
   overflow: hidden;
   border-radius: var(--r-pill);
   background: var(--surface-3);
+  cursor: pointer;
+  transition: height var(--dur-fast) var(--ease-out);
+}
+
+.wrapped__progress:hover span {
+  height: 6px;
 }
 
 .wrapped__progress span::after {
@@ -173,45 +207,167 @@
   animation: wrappedProgressIn 500ms var(--ease-out) both;
 }
 
-.wrapped__close {
+.wrapped__controls {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
   justify-self: end;
+  cursor: default;
 }
+
+/* Регулятор эмбиента: поповер-стекло за иконкой (правый верхний угол) */
+.wrapped__sound {
+  position: relative;
+}
+
+.wrapped__sound-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 264px;
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--glass-panel);
+  backdrop-filter: blur(var(--blur-glass));
+  transform-origin: top right;
+  animation: wrappedPopIn var(--dur-base) var(--ease-out) both;
+}
+
+.wrapped__sound-title {
+  display: block;
+  margin-bottom: var(--sp-3);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.wrapped__sound-row {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+.wrapped__sound-row > [role="slider"] {
+  flex: 1;
+}
+
+.wrapped__sound-val {
+  min-width: 4ch;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Контент: стек слайдов и направленное перелистывание ─────────── */
 
 .wrapped__content {
   position: relative;
   z-index: 1;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.wrapped__slide {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 8px 56px;
-}
-
-.wrapped__slide {
-  width: min(100%, 1080px);
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   animation: wrappedSlideIn 560ms var(--ease-out) both;
 }
 
-.wrapped__primary {
-  animation: wrappedPrimaryIn 680ms var(--ease-out) both;
+.wrapped__slide > section {
+  width: min(100%, 1080px);
+  min-width: 0;
+  min-height: 0;
 }
 
+.wrapped__slide.is-entering-next {
+  animation: wrappedEnterNext 480ms var(--ease-out) both;
+}
+
+.wrapped__slide.is-entering-prev {
+  animation: wrappedEnterPrev 480ms var(--ease-out) both;
+}
+
+.wrapped__slide.is-leaving {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.wrapped__slide.is-leaving-next {
+  animation: wrappedLeaveNext 240ms var(--ease-out) forwards;
+}
+
+.wrapped__slide.is-leaving-prev {
+  animation: wrappedLeavePrev 240ms var(--ease-out) forwards;
+}
+
+/* Уходящая копия — стоп-кадр: внутренние reveal-анимации (fill: both)
+   иначе перезапустились бы с нуля и копия улетала бы «пустой». */
+.wrapped__slide.is-leaving * {
+  animation: none !important;
+}
+
+/* Staggered reveal: смысловые блоки слайда поднимаются друг за другом.
+   Список задержек — здесь, а не в разметке: слайды статичны по составу. */
+.wrapped__kicker,
+.wrapped__slide h1,
+.wrapped__metric,
+.wrapped__intro-line,
+.wrapped__first-track,
+.wrapped__meta-line,
+.wrapped__track-artist,
+.wrapped__track-plays,
+.wrapped__headliner-sub,
+.wrapped__rhythm-lead p,
+.wrapped__final-artist,
+.wrapped__share,
+.wrapped__state p {
+  animation: wrappedRise 540ms var(--ease-out) both;
+}
+
+.wrapped__kicker { animation-delay: 40ms; }
+.wrapped__slide h1, .wrapped__metric { animation-delay: 100ms; }
+.wrapped__intro-line, .wrapped__track-artist, .wrapped__headliner-sub, .wrapped__rhythm-lead p, .wrapped__state p { animation-delay: 170ms; }
+.wrapped__first-track, .wrapped__meta-line, .wrapped__track-plays, .wrapped__final-artist { animation-delay: 240ms; }
+.wrapped__share { animation-delay: 310ms; }
+
 .wrapped__art {
-  animation: wrappedArtIn 760ms var(--ease-out) both;
+  animation: wrappedArtIn 720ms var(--ease-out) 140ms both;
 }
 
 .wrapped__kicker {
   display: inline-block;
   color: var(--accent-text);
-  font-size: 13px;
+  font-size: var(--fs-caption);
   font-weight: var(--fw-semibold);
-  letter-spacing: 0;
+}
+
+/* ── Общие фразы-метрики: цифры вшиты в строку, не в плитки ──────── */
+
+.wrapped__meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--sp-2);
+  align-items: baseline;
+  margin: var(--sp-5) 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+
+.wrapped__meta-line b {
+  color: var(--text-1);
+  font-size: var(--fs-strong);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.wrapped__meta-line i {
+  color: var(--text-3);
+  font-style: normal;
 }
 
 .wrapped__footer {
@@ -220,25 +376,28 @@
   color: var(--text-2);
   font-size: var(--fs-caption);
   letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 .wrapped__footer span:last-child {
   justify-self: end;
 }
 
-/* ── Loading / error / empty ─────────────────────────────────── */
+/* ── Состояния: загрузка / ошибка / пустой год ───────────────────── */
 
 .wrapped__state {
+  position: relative;
   width: min(560px, 100%);
+  margin-inline: auto;
   text-align: center;
 }
 
 .wrapped__state h1 {
   max-width: 520px;
-  margin: 18px auto 12px;
+  margin: var(--sp-4) auto var(--sp-3);
   color: var(--text-1);
-  font-size: 38px;
-  line-height: 1.08;
+  font-size: var(--wr-display-md);
+  line-height: var(--lh-tight);
   text-wrap: balance;
 }
 
@@ -254,7 +413,7 @@
 .wrapped__loading-line {
   width: 220px;
   height: 3px;
-  margin: 24px auto;
+  margin: var(--sp-6) auto;
   overflow: hidden;
   border-radius: var(--r-pill);
   background: var(--surface-3);
@@ -269,17 +428,25 @@
   animation: wrappedLoading 1.15s var(--ease-out) infinite alternate;
 }
 
+/* Пустой год: гигантский год — сценография, а не заголовок */
 .wrapped__empty-year {
-  margin: 8px 0 -10px;
-  color: var(--surface-4);
+  position: absolute;
+  inset: auto 0 63%; /* выше кикера — титры не наезжают на водяной год */
+  z-index: -1;
+  color: var(--surface-3);
   font-family: var(--font-display);
-  font-size: 92px;
+  font-size: clamp(7rem, 18vw, 11rem);
   font-weight: 700;
   line-height: 1;
   letter-spacing: var(--ls-display);
+  animation: wrappedRise 700ms var(--ease-out) both;
 }
 
-/* ── Intro ───────────────────────────────────────────────────── */
+.wrapped__state--empty {
+  padding-top: clamp(3rem, 9vh, 5.5rem);
+}
+
+/* ── Слайды: общий двухколоночный каркас ─────────────────────────── */
 
 .wrapped__intro,
 .wrapped__minutes,
@@ -287,27 +454,29 @@
 .wrapped__artists,
 .wrapped__rhythm,
 .wrapped__final {
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-.wrapped__intro {
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(250px, 0.88fr);
-  gap: 52px;
+  gap: 56px;
   align-items: center;
 }
+
+.wrapped__intro { grid-template-columns: minmax(0, 1.12fr) minmax(250px, 0.88fr); }
+.wrapped__minutes { grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.95fr); }
+.wrapped__tracks { grid-template-columns: minmax(230px, 0.84fr) minmax(0, 1.16fr); gap: 50px; }
+.wrapped__artists { grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr); gap: 64px; }
+.wrapped__rhythm { grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr); gap: 60px; }
+.wrapped__final { grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.95fr); }
+
+/* ── Intro: год-афиша + кадр №1 ──────────────────────────────────── */
 
 .wrapped__intro-copy {
   min-width: 0;
 }
 
 .wrapped__year {
-  margin: 14px 0 10px;
+  margin: var(--sp-3) 0 var(--sp-2);
   color: var(--text-1);
   font-family: var(--font-display);
-  font-size: 88px;
+  font-size: var(--wr-display-xl);
   font-weight: 700;
   line-height: 0.98;
   letter-spacing: var(--ls-display);
@@ -316,7 +485,7 @@
 .wrapped__intro-line {
   margin: 0;
   color: var(--text-1);
-  font-size: 25px;
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
   font-weight: var(--fw-medium);
   line-height: 1.22;
   text-wrap: balance;
@@ -325,22 +494,21 @@
 .wrapped__first-track {
   display: grid;
   width: min(100%, 430px);
-  margin-top: 28px;
-  padding-top: 16px;
+  margin-top: var(--sp-6);
 }
 
 .wrapped__first-track span {
   margin-bottom: 7px;
   color: var(--text-2);
   font-size: var(--fs-caption);
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-caps);
   text-transform: uppercase;
 }
 
 .wrapped__first-track strong {
   overflow: hidden;
   color: var(--text-1);
-  font-size: 17px;
+  font-size: var(--fs-strong);
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -356,76 +524,35 @@
   white-space: nowrap;
 }
 
-.wrapped__cover-stage {
+/* Кадр №1: обложка в крупном скруглении, позади — сдвинутая пластина.
+   Глубина слоями (surface поверх surface), не тенями — правило effects.css. */
+.wrapped__intro-art {
   position: relative;
-  width: min(31vw, 300px);
+  width: min(30vw, 310px);
   aspect-ratio: 1;
   justify-self: center;
 }
 
-/* Винил читается кругом и центральным отверстием, а не волосяными кольцами.
-   Бороздки были тремя `outline: 1px` — владелец 16.07.2026 назвал их ровно тем,
-   чем они выглядели: «линии, напоминающие обводку». Приложение уже рисует винил
-   без единого кольца (фон «Анимированный», `.muza-orb-spin` в app.css крутит
-   диски-обложки), а `effects.css` запрещает всё, чем бороздку можно было бы
-   подделать: тени, свечения, градиенты. Глубина осталась на поверхностях —
-   диск темнее фона, внутренний круг на тон светлее. */
-.wrapped__record {
+.wrapped__frame-back {
   position: absolute;
-  inset: 8%;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.76);
-  transform: translate(24%, 1%);
+  inset: 0;
+  border-radius: var(--r-xl);
+  background: var(--surface-2);
+  transform: translate(7%, 6%) rotate(3deg);
 }
 
-.wrapped__record::before {
-  content: "";
+.wrapped__frame {
   position: absolute;
-  border-radius: 50%;
-  background: var(--surface-1);
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  background: var(--bg-1);
 }
 
-.wrapped__record::before { inset: 16%; }
-
-.wrapped__record span {
-  position: absolute;
-  width: 12%;
-  aspect-ratio: 1;
-  top: 44%;
-  left: 44%;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.wrapped__stack-cover {
-  position: absolute;
-  width: 72%;
-  aspect-ratio: 1;
+.wrapped__frame img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: var(--r-md);
-}
-
-.wrapped__stack-cover--1 {
-  left: 3%;
-  bottom: 5%;
-  z-index: 3;
-  transform: rotate(-4deg);
-}
-
-.wrapped__stack-cover--2 {
-  right: 0;
-  top: 4%;
-  z-index: 2;
-  opacity: 0.52;
-  transform: rotate(7deg) scale(0.88);
-}
-
-.wrapped__stack-cover--3 {
-  right: 7%;
-  bottom: 0;
-  z-index: 1;
-  opacity: 0.28;
-  transform: rotate(13deg) scale(0.74);
 }
 
 .wrapped__cover-fallback {
@@ -433,41 +560,39 @@
   place-items: center;
   width: 100%;
   height: 100%;
-  border-radius: var(--r-md);
+  border-radius: inherit;
   background: var(--accent-soft);
   color: var(--accent-text);
   font-family: var(--font-display);
-  font-size: 72px;
+  font-size: clamp(3rem, 7vw, 4.5rem);
   font-weight: 700;
 }
 
-/* ── Minutes ─────────────────────────────────────────────────── */
+/* ── Minutes: минуты-герой + вращающийся винил ───────────────────── */
 
-.wrapped__minutes {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.95fr);
-  gap: 54px;
-  align-items: center;
+.wrapped__minutes-copy {
+  min-width: 0;
 }
 
 .wrapped__metric {
   display: flex;
-  align-items: flex-end;
-  gap: 15px;
-  margin: 10px 0 12px;
+  align-items: baseline;
+  gap: var(--sp-4);
+  margin: var(--sp-2) 0 var(--sp-3);
 }
 
+/* Дисплейные цифры — Unbounded (требование брифа) */
 .wrapped__metric strong {
   color: var(--accent-text);
-  font-size: 96px;
+  font-family: var(--font-display);
+  font-size: var(--wr-display-lg);
   font-weight: 700;
-  line-height: 0.92;
-  letter-spacing: -0.035em;
+  line-height: 0.95;
+  letter-spacing: var(--ls-display);
   font-variant-numeric: tabular-nums;
 }
 
 .wrapped__metric span {
-  padding-bottom: 8px;
   color: var(--text-1);
   font-size: var(--fs-title);
   font-weight: var(--fw-semibold);
@@ -477,78 +602,63 @@
   max-width: 460px;
   margin: 0;
   color: var(--text-1);
-  font-size: 28px;
-  line-height: 1.15;
+  font-size: clamp(1.5rem, 2.6vw, 1.95rem);
+  line-height: var(--lh-tight);
   text-wrap: balance;
 }
 
-.wrapped__supporting-stats {
-  display: flex;
-  gap: 34px;
-  margin-top: 28px;
-  padding-top: 16px;
-}
-
-.wrapped__supporting-stats div {
-  display: grid;
-  gap: 2px;
-}
-
-.wrapped__supporting-stats strong {
-  color: var(--text-1);
-  font-size: 22px;
-  font-variant-numeric: tabular-nums;
-}
-
-.wrapped__supporting-stats span {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.wrapped__disc-stage {
+.wrapped__vinyl {
   display: grid;
   place-items: center;
 }
 
-.wrapped__disc {
+/* Винил = круг обложки (язык .muza-orb-spin из app.css): без колец-штрихов,
+   глубина — затемняющая шайба и плотный центр. Пластинка медленно крутится. */
+/* Клип статичный, вращается внутренний спиннер (паттерн орбит app.css).
+   В CDP-скриншотах круг «ломается» квадратом — артефакт captureScreenshot
+   для вращающегося растра, на экране всё корректно (см. TSX-комментарий). */
+.wrapped__vinyl-disc {
   position: relative;
-  width: min(31vw, 290px);
+  width: min(31vw, 300px);
   aspect-ratio: 1;
   overflow: hidden;
   border-radius: 50%;
   background: var(--bg-1);
-  transform: rotate(8deg);
 }
 
-.wrapped__disc > img {
+.wrapped__vinyl-spin {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+  animation: wrappedSpin 22s linear infinite;
+}
+
+.wrapped__vinyl-art {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0.72;
-  filter: saturate(0.88) brightness(0.72);
+  display: block;
+  opacity: 0.78;
+  filter: saturate(0.9) brightness(0.74);
 }
 
-/* Кольца диска были двумя `outline: 1px` поверх обложки — те самые «линии,
-   напоминающие обводку». Теперь бороздку держит поверхность, а не штрих:
-   внешнее кольцо — полупрозрачная затемняющая шайба, внутреннее — плотный
-   центр пластинки, из которого растёт лейбл. Тот же язык, что у `.muza-orb-spin`
-   в app.css: винил = круг обложки, а не набор колец. */
-.wrapped__disc-ring {
+.wrapped__vinyl-shade {
   position: absolute;
+  inset: 9%;
   border-radius: 50%;
+  background: rgba(18, 17, 16, 0.3);
 }
 
-.wrapped__disc-ring--outer {
-  inset: 10%;
-  background: rgba(18, 17, 16, 0.28);
-}
-
-.wrapped__disc-ring--inner {
+.wrapped__vinyl-center {
+  position: absolute;
   inset: 27%;
+  border-radius: 50%;
   background: var(--bg-0);
 }
 
-.wrapped__disc-label {
+.wrapped__vinyl-label {
   position: absolute;
   inset: 39%;
   display: grid;
@@ -557,43 +667,49 @@
   background: var(--accent);
   color: var(--text-on-accent);
   font-family: var(--font-display);
-  font-size: 8px;
+  font-size: 0.5rem;
   font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
-/* ── Tracks ──────────────────────────────────────────────────── */
+/* ── Tracks: постер топ-1 и чарт 02+ ─────────────────────────────── */
 
-.wrapped__tracks {
-  display: grid;
-  grid-template-columns: minmax(230px, 0.84fr) minmax(0, 1.16fr);
-  gap: 50px;
-  align-items: center;
-}
-
-.wrapped__track-poster {
+.wrapped__poster {
   position: relative;
-  width: min(31vw, 288px);
+  width: min(31vw, 296px);
   aspect-ratio: 1;
   justify-self: end;
 }
 
-.wrapped__track-poster > img {
+/* «01» — афишная литера ПОВЕРХ угла обложки (за обложкой от цифр оставались
+   нечитаемые обрезки — CDP-скрин 16.07) */
+.wrapped__poster-rank {
+  position: absolute;
+  z-index: 2;
+  left: -0.26em;
+  bottom: -0.16em;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: clamp(3.6rem, 7.5vw, 5.25rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: var(--ls-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.wrapped__poster-cover {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--bg-1);
+}
+
+.wrapped__poster-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: var(--r-md);
-}
-
-.wrapped__poster-rank {
-  position: absolute;
-  left: -24px;
-  bottom: -18px;
-  color: var(--accent-text);
-  font-size: 68px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.035em;
-  font-variant-numeric: tabular-nums;
 }
 
 .wrapped__track-story {
@@ -602,13 +718,13 @@
 
 .wrapped__track-title {
   display: -webkit-box;
-  max-width: 14ch;
-  margin: 9px 0 2px;
+  max-width: 16ch;
+  margin: var(--sp-2) 0 2px;
   overflow: hidden;
   color: var(--text-1);
-  font-size: 40px;
-  line-height: 1.04;
-  letter-spacing: -0.025em;
+  font-size: clamp(2rem, 4.2vw, 2.9rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
   text-wrap: balance;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -624,7 +740,7 @@
 }
 
 .wrapped__track-plays {
-  margin: 12px 0 18px;
+  margin: var(--sp-3) 0 var(--sp-5);
   color: var(--text-2);
   font-size: var(--fs-caption);
 }
@@ -632,311 +748,286 @@
 .wrapped__track-plays b {
   color: var(--accent-text);
   font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
 }
 
-.wrapped__track-list,
-.wrapped__artist-list {
+.wrapped__chart {
   margin: 0;
   padding: 0;
   list-style: none;
+  cursor: default;
 }
 
-.wrapped__track-list {
-}
-
-.wrapped__track-list li {
+.wrapped__chart li {
   display: grid;
-  grid-template-columns: 25px 32px minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 26px 40px minmax(0, 1fr) auto;
+  gap: var(--sp-3);
   align-items: center;
-  min-height: 42px;
-  animation: wrappedListIn 520ms var(--ease-out) both;
+  min-height: 48px;
+  animation: wrappedRise 520ms var(--ease-out) both;
 }
 
-.wrapped__track-list li:nth-child(2) { animation-delay: 45ms; }
-.wrapped__track-list li:nth-child(3) { animation-delay: 90ms; }
-.wrapped__track-list li:nth-child(4) { animation-delay: 135ms; }
+.wrapped__chart li:nth-child(1) { animation-delay: 260ms; }
+.wrapped__chart li:nth-child(2) { animation-delay: 315ms; }
+.wrapped__chart li:nth-child(3) { animation-delay: 370ms; }
+.wrapped__chart li:nth-child(4) { animation-delay: 425ms; }
 
-.wrapped__track-list img {
-  width: 32px;
+.wrapped__chart img {
+  width: 40px;
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: var(--r-xs);
 }
 
-.wrapped__list-rank {
-  color: var(--text-2);
+.wrapped__chart-rank {
+  color: var(--text-3);
+  font-family: var(--font-display);
   font-size: var(--fs-caption);
   font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
 }
 
-.wrapped__list-title {
+.wrapped__chart-title {
   min-width: 0;
   display: grid;
 }
 
-.wrapped__list-title strong,
-.wrapped__list-title small {
+.wrapped__chart-title strong,
+.wrapped__chart-title small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.wrapped__list-title strong {
+.wrapped__chart-title strong {
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: var(--fw-medium);
 }
 
-.wrapped__list-title small,
-.wrapped__list-count {
+.wrapped__chart-title small,
+.wrapped__chart-count {
   color: var(--text-2);
   font-size: var(--fs-caption);
 }
 
-.wrapped__list-count {
+.wrapped__chart-count {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Artists ─────────────────────────────────────────────────── */
+/* ── Artists: хедлайнер и line-up фестиваля ──────────────────────── */
 
-.wrapped__artists {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
-  gap: 64px;
-  align-items: center;
-}
-
-.wrapped__artist-headline {
-  position: relative;
+.wrapped__artists-head {
   min-width: 0;
 }
 
-.wrapped__artist-rank {
-  position: absolute;
-  top: 22px;
-  left: -8px;
-  color: var(--accent-text);
-  font-size: 15px;
-  font-weight: var(--fw-bold);
-  font-variant-numeric: tabular-nums;
-}
-
-.wrapped__artist-headline h1 {
-  max-width: 10ch;
-  margin: 30px 0 9px 24px;
+/* Имя года — как хедлайнер на афише: Unbounded, брендовый момент */
+.wrapped__headliner {
+  margin: var(--sp-2) 0 var(--sp-2);
   overflow-wrap: anywhere;
   color: var(--text-1);
-  font-size: 62px;
-  line-height: 0.98;
-  letter-spacing: -0.035em;
+  font-family: var(--font-display);
+  font-size: var(--wr-headliner);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: var(--ls-display);
 }
 
-.wrapped__artist-headline p {
-  margin: 0 0 0 25px;
+.wrapped__headliner-sub {
+  margin: 0;
   color: var(--text-2);
   font-size: var(--fs-body);
 }
 
-.wrapped__artist-headline p b {
+.wrapped__headliner-sub b {
   color: var(--text-1);
   font-size: var(--fs-strong);
   font-variant-numeric: tabular-nums;
 }
 
-.wrapped__artist-list {
-}
-
-.wrapped__artist-list li {
-  position: relative;
+/* Line-up: каскад убывающих имён — иерархия шрифтом, без баров и плиток */
+.wrapped__lineup {
+  margin: 0;
+  padding: 0;
+  list-style: none;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  min-height: 58px;
-  animation: wrappedListIn 520ms var(--ease-out) both;
+  gap: var(--sp-3);
 }
 
-.wrapped__artist-list li:nth-child(2) { animation-delay: 60ms; }
-.wrapped__artist-list li:nth-child(3) { animation-delay: 120ms; }
-.wrapped__artist-list li:nth-child(4) { animation-delay: 180ms; }
+.wrapped__lineup li {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: baseline;
+  min-width: 0;
+  animation: wrappedRise 520ms var(--ease-out) both;
+}
 
-.wrapped__artist-name {
+.wrapped__lineup li:nth-child(1) { animation-delay: 240ms; }
+.wrapped__lineup li:nth-child(2) { animation-delay: 300ms; }
+.wrapped__lineup li:nth-child(3) { animation-delay: 360ms; }
+.wrapped__lineup li:nth-child(4) { animation-delay: 420ms; }
+
+.wrapped__lineup-rank {
+  color: var(--accent-text);
+  font-family: var(--font-display);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.wrapped__lineup-name {
   overflow: hidden;
   color: var(--text-1);
-  font-size: var(--fs-body);
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.wrapped__artist-time {
+.wrapped__lineup li:nth-child(1) .wrapped__lineup-name { font-size: clamp(1.35rem, 2.4vw, 1.7rem); }
+.wrapped__lineup li:nth-child(2) .wrapped__lineup-name { font-size: clamp(1.2rem, 2.1vw, 1.45rem); opacity: 0.9; }
+.wrapped__lineup li:nth-child(3) .wrapped__lineup-name { font-size: clamp(1.05rem, 1.9vw, 1.25rem); opacity: 0.78; }
+.wrapped__lineup li:nth-child(4) .wrapped__lineup-name { font-size: var(--fs-strong); opacity: 0.66; }
+
+.wrapped__lineup-min {
+  margin-left: auto;
   color: var(--text-2);
   font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.wrapped__artist-bar {
-  position: absolute;
-  left: 40px;
-  right: 0;
-  bottom: 8px;
-  height: 2px;
-  overflow: hidden;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-}
+/* ── Rhythm: любимый час + циферблат суток ───────────────────────── */
 
-.wrapped__artist-bar i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-  opacity: 0.72;
-}
-
-/* ── Rhythm ──────────────────────────────────────────────────── */
-
-.wrapped__rhythm {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
-  gap: 66px;
-  align-items: center;
+.wrapped__rhythm-lead {
+  min-width: 0;
 }
 
 .wrapped__rhythm-lead h1 {
-  margin: 12px 0 6px;
+  margin: var(--sp-3) 0 6px;
   color: var(--text-1);
-  font-size: 72px;
+  font-family: var(--font-display);
+  font-size: var(--wr-display-lg);
   font-weight: 700;
   line-height: 1;
-  letter-spacing: -0.035em;
+  letter-spacing: var(--ls-display);
   font-variant-numeric: tabular-nums;
 }
 
-.wrapped__rhythm-lead p {
+.wrapped__rhythm-lead > p {
   max-width: 30ch;
   margin: 0;
   color: var(--text-2);
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 1.45;
 }
 
-/* Ось суток: 00→24 с отметкой пикового часа. Заливка растёт слева до пика,
-   точка = любимый час — осмысленный график вместо случайной диагонали. */
-.wrapped__dayline {
-  max-width: 320px;
-  margin-top: 26px;
-}
-
-.wrapped__dayline-track {
-  position: relative;
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: var(--surface-3);
-}
-
-.wrapped__dayline-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  min-width: 6px;
-  border-radius: inherit;
-  background: var(--accent);
-  opacity: 0.55;
-  transform-origin: left;
-  animation: wrappedLineIn 720ms var(--ease-out) both;
-}
-
-.wrapped__dayline-peak {
-  position: absolute;
-  top: 50%;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--accent);
-  outline: 3px solid rgba(18, 17, 16, 0.92);
-  transform: translate(-50%, -50%);
-  animation: wrappedDaylinePeak 420ms var(--ease-out) 300ms both;
-}
-
-.wrapped__dayline-scale {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 11px;
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-}
-
+/* Факты: подпись слева, значение справа табличным числом (спека 07-11 §2);
+   разделители не рисуем — строки держит выключка, линии запрещены ДС */
 .wrapped__rhythm-facts {
-  position: relative;
-  z-index: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 30px 38px;
+  gap: var(--sp-3);
+  max-width: 360px;
+  margin: var(--sp-6) 0 0;
 }
 
-.wrapped__rhythm-facts div {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-  padding-bottom: 12px;
+.wrapped__rhythm-facts > div {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: baseline;
+  justify-content: space-between;
+  animation: wrappedRise 520ms var(--ease-out) both;
 }
 
-.wrapped__rhythm-facts div:nth-child(even) {
-  transform: translateY(24px);
+.wrapped__rhythm-facts > div:nth-child(1) { animation-delay: 260ms; }
+.wrapped__rhythm-facts > div:nth-child(2) { animation-delay: 330ms; }
+.wrapped__rhythm-facts > div:nth-child(3) { animation-delay: 400ms; }
+.wrapped__rhythm-facts > div:nth-child(4) { animation-delay: 470ms; }
+
+.wrapped__rhythm-facts dt {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
 }
 
-.wrapped__rhythm-facts strong {
+.wrapped__rhythm-facts dd {
+  margin: 0;
   overflow: hidden;
   color: var(--text-1);
-  font-size: 27px;
-  line-height: 1.05;
+  font-size: var(--fs-strong);
+  font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-.wrapped__rhythm-facts .is-accent strong {
+.wrapped__rhythm-facts .is-accent dd {
   color: var(--accent-text);
 }
 
-.wrapped__rhythm-facts span {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
+.wrapped__dial {
+  position: relative;
+  width: min(34vw, 330px);
+  aspect-ratio: 1;
+  justify-self: center;
 }
 
-/* ── Final ───────────────────────────────────────────────────── */
+.wrapped__dial svg {
+  width: 100%;
+  height: 100%;
+}
 
-.wrapped__final {
+/* Дуга «набегает» до любимого часа: draw-эффект через dashoffset */
+.wrapped__dial-arc {
+  stroke-dashoffset: 0;
+  animation: wrappedDialDraw 900ms var(--ease-out) 250ms both;
+}
+
+.wrapped__dial-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wrappedPop 420ms var(--ease-out) 950ms both;
+}
+
+.wrapped__dial-center {
+  position: absolute;
+  inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.95fr);
-  gap: 54px;
-  align-items: center;
+  place-content: center;
+  gap: 4px;
+  text-align: center;
 }
+
+.wrapped__dial-center b {
+  color: var(--text-1);
+  font-family: var(--font-display);
+  font-size: clamp(1.9rem, 3.6vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: var(--ls-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.wrapped__dial-center span {
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+
+/* ── Final: постер-коллаж года ───────────────────────────────────── */
 
 .wrapped__final-copy {
   min-width: 0;
 }
 
 .wrapped__final-copy > h1 {
-  margin: 10px 0 10px;
+  margin: var(--sp-2) 0 var(--sp-3);
   color: var(--text-1);
-  font-size: 43px;
+  font-size: var(--wr-display-md);
   line-height: 1.05;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.02em;
   text-wrap: balance;
 }
 
 .wrapped__final-copy > h1 b {
   color: var(--accent-text);
   font-family: var(--font-display);
-  font-size: 46px;
+  font-size: 1.06em;
   letter-spacing: var(--ls-display);
 }
 
@@ -948,34 +1039,11 @@
   line-height: 1.45;
 }
 
-.wrapped__final-stats {
-  display: flex;
-  gap: 28px;
-  margin-top: 20px;
-  padding-top: 15px;
-}
-
-.wrapped__final-stats div {
-  display: grid;
-  gap: 1px;
-}
-
-.wrapped__final-stats strong {
-  color: var(--text-1);
-  font-size: var(--fs-strong);
-  font-variant-numeric: tabular-nums;
-}
-
-.wrapped__final-stats span {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
 .wrapped__final-artist {
   display: flex;
   align-items: baseline;
-  gap: 9px;
-  margin-top: 15px;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
   color: var(--text-2);
   font-size: var(--fs-caption);
 }
@@ -989,7 +1057,8 @@
 }
 
 .wrapped__share {
-  margin-top: 18px;
+  margin-top: var(--sp-5);
+  cursor: default;
 }
 
 .wrapped__final-art {
@@ -999,13 +1068,13 @@
   justify-self: center;
 }
 
-.wrapped__final-year {
+.wrapped__final-yearbg {
   position: absolute;
   right: -7%;
   top: -8%;
   color: var(--surface-4);
   font-family: var(--font-display);
-  font-size: 64px;
+  font-size: clamp(3.2rem, 6.5vw, 4.25rem);
   font-weight: 700;
   line-height: 1;
   letter-spacing: var(--ls-display);
@@ -1043,14 +1112,15 @@
   transform: rotate(13deg) scale(0.74);
 }
 
-.wrapped__final-seal {
+/* Круглая этикетка-печать: язык винилового лейбла */
+.wrapped__seal {
   position: absolute;
   left: 0;
   bottom: 3%;
   z-index: 4;
   display: grid;
   place-items: center;
-  width: 72px;
+  width: 76px;
   aspect-ratio: 1;
   border-radius: 50%;
   background: var(--accent);
@@ -1061,39 +1131,72 @@
   transform: rotate(-9deg);
 }
 
-/* ── Motion / fit ────────────────────────────────────────────── */
+/* ── Движение ────────────────────────────────────────────────────── */
 
 @keyframes wrappedSlideIn {
-  from { transform: translateX(18px); }
+  from { opacity: 0; transform: translateY(14px); }
 }
 
-@keyframes wrappedPrimaryIn {
-  from { filter: blur(4px); transform: translateY(10px) scale(0.985); }
-  to { filter: blur(0); transform: translateY(0) scale(1); }
+@keyframes wrappedEnterNext {
+  from { opacity: 0; transform: translateX(46px); filter: blur(6px); }
+  to { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
+@keyframes wrappedEnterPrev {
+  from { opacity: 0; transform: translateX(-46px); filter: blur(6px); }
+  to { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
+@keyframes wrappedLeaveNext {
+  to { opacity: 0; transform: translateX(-46px) scale(0.985); filter: blur(6px); }
+}
+
+@keyframes wrappedLeavePrev {
+  to { opacity: 0; transform: translateX(46px) scale(0.985); filter: blur(6px); }
+}
+
+@keyframes wrappedRise {
+  from { opacity: 0; transform: translateY(12px); }
 }
 
 @keyframes wrappedArtIn {
   from { opacity: 0; transform: translateX(24px) rotate(2deg) scale(0.96); }
 }
 
-@keyframes wrappedListIn {
-  from { transform: translateY(8px); }
+@keyframes wrappedSceneIn {
+  from { opacity: 0; transform: scale(1.32); }
+  to { opacity: 0.34; transform: scale(1.24); }
 }
 
-@keyframes wrappedBackdropIn {
-  from { opacity: 0; transform: scale(1.32); }
+@keyframes wrappedSceneOut {
+  from { opacity: 0.34; }
+  to { opacity: 0; }
+}
+
+@keyframes wrappedDrift {
+  from { transform: scale(1.24) translate(0, 0); }
+  to { transform: scale(1.3) translate(-1.2%, 1%); }
+}
+
+@keyframes wrappedSpin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes wrappedProgressIn {
   from { transform: scaleX(0); }
 }
 
-@keyframes wrappedLineIn {
-  from { transform: scaleX(0); transform-origin: left; }
+@keyframes wrappedPopIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
 }
 
-@keyframes wrappedDaylinePeak {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+@keyframes wrappedDialDraw {
+  from { stroke-dashoffset: var(--arc); }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes wrappedPop {
+  from { opacity: 0; transform: scale(0.4); }
 }
 
 @keyframes wrappedLoading {
@@ -1101,35 +1204,31 @@
   to { transform: translateX(145%); }
 }
 
+/* ── Подгонка под размеры окна ───────────────────────────────────── */
+
 @media (min-width: 1100px) and (min-height: 750px) {
-  .wrapped__slide { width: min(100%, 1160px); }
+  .wrapped__slide > section { width: min(100%, 1160px); }
   .wrapped__intro,
   .wrapped__minutes,
   .wrapped__tracks,
   .wrapped__artists,
   .wrapped__rhythm,
   .wrapped__final { gap: 72px; }
-  .wrapped__year { font-size: 96px; }
-  .wrapped__intro-line { font-size: 28px; }
-  .wrapped__cover-stage { width: min(30vw, 350px); }
-  .wrapped__metric strong { font-size: 96px; }
-  .wrapped__minutes-copy h1 { font-size: 31px; }
-  .wrapped__disc { width: min(30vw, 338px); }
-  .wrapped__track-poster { width: min(30vw, 330px); }
-  .wrapped__track-title { font-size: 46px; }
-  .wrapped__track-list li { min-height: 46px; }
-  .wrapped__artist-headline h1 { font-size: 72px; }
-  .wrapped__artist-list li { min-height: 64px; }
-  .wrapped__rhythm-lead h1 { font-size: 84px; }
-  .wrapped__rhythm-facts strong { font-size: 31px; }
-  .wrapped__final-copy > h1 { font-size: 51px; }
-  .wrapped__final-copy > h1 b { font-size: 54px; }
+  .wrapped__intro-art { width: min(29vw, 350px); }
+  .wrapped__vinyl-disc { width: min(30vw, 338px); }
+  .wrapped__poster { width: min(30vw, 330px); }
+  .wrapped__chart li { min-height: 52px; }
+  .wrapped__dial { width: min(32vw, 360px); }
   .wrapped__final-art { width: min(29vw, 350px); }
 }
 
 @media (max-height: 650px) {
   .wrapped {
     grid-template-rows: 52px minmax(0, 1fr) 40px;
+    --wr-display-xl: clamp(3.4rem, 8vw, 4.75rem);
+    --wr-display-lg: clamp(2.8rem, 6.5vw, 4.1rem);
+    --wr-display-md: clamp(2rem, 4.2vw, 2.6rem);
+    --wr-headliner: clamp(2.1rem, 5vw, 3.4rem);
   }
 
   .wrapped__chrome,
@@ -1137,31 +1236,21 @@
     padding-inline: var(--sp-5);
   }
 
-  .wrapped__content {
+  .wrapped__slide {
     padding: 2px 48px;
   }
 
-  .wrapped__year { font-size: 76px; }
-  .wrapped__intro-line { font-size: 21px; }
-  .wrapped__first-track { margin-top: 20px; }
-  .wrapped__metric strong { font-size: 82px; }
-  .wrapped__minutes-copy h1 { font-size: 24px; }
-  .wrapped__supporting-stats { margin-top: 20px; }
-  .wrapped__track-poster { width: min(29vw, 250px); }
-  .wrapped__track-title { font-size: 34px; }
-  .wrapped__track-plays { margin-block: 8px 12px; }
-  .wrapped__track-list li { min-height: 37px; }
-  .wrapped__track-list img { width: 28px; }
-  .wrapped__track-list li { grid-template-columns: 23px 28px minmax(0, 1fr) auto; }
-  .wrapped__artist-headline h1 { font-size: 54px; }
-  .wrapped__artist-list li { min-height: 50px; }
-  .wrapped__rhythm-lead h1 { font-size: 62px; }
-  .wrapped__rhythm-facts { gap: 24px 34px; }
-  .wrapped__rhythm-facts strong { font-size: 24px; }
-  .wrapped__final-copy > h1 { font-size: 36px; }
-  .wrapped__final-copy > h1 b { font-size: 39px; }
-  .wrapped__final-stats { margin-top: 15px; }
-  .wrapped__share { margin-top: 13px; }
+  .wrapped__first-track { margin-top: var(--sp-5); }
+  .wrapped__meta-line { margin-top: var(--sp-4); }
+  .wrapped__intro-art { width: min(28vw, 250px); }
+  .wrapped__vinyl-disc { width: min(29vw, 250px); }
+  .wrapped__poster { width: min(29vw, 250px); }
+  .wrapped__track-plays { margin-block: var(--sp-2) var(--sp-3); }
+  .wrapped__chart li { min-height: 40px; grid-template-columns: 23px 32px minmax(0, 1fr) auto; }
+  .wrapped__chart img { width: 32px; }
+  .wrapped__rhythm-facts { margin-top: var(--sp-5); gap: var(--sp-2); }
+  .wrapped__dial { width: min(30vw, 260px); }
+  .wrapped__share { margin-top: var(--sp-4); }
   .wrapped__final-art { width: min(28vw, 258px); }
 }
 
@@ -1171,7 +1260,7 @@
     gap: var(--sp-4);
   }
 
-  .wrapped__content {
+  .wrapped__slide {
     padding-inline: 30px;
   }
 
@@ -1199,8 +1288,6 @@
     grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.15fr);
   }
 
-  .wrapped__year { font-size: 66px; }
-  .wrapped__artist-headline h1 { font-size: 46px; }
   .wrapped__final-copy > p { display: none; }
 }
 
@@ -1211,7 +1298,7 @@
     display: none;
   }
 
-  .wrapped__content {
+  .wrapped__slide {
     padding-inline: var(--sp-7);
   }
 
@@ -1225,24 +1312,32 @@
   }
 
   .wrapped__track-story,
-  .wrapped__artist-headline,
+  .wrapped__artists-head,
   .wrapped__rhythm-lead,
   .wrapped__final-copy {
     width: 100%;
   }
 }
 
+/* Reduced motion: бесконечные циклы глушим явно (глобальный 1ms-фолбэк
+   base.css превратил бы их в мерцание), разовые появления схлопываются в
+   мгновенный показ тем же 1ms-правилом. */
 @media (prefers-reduced-motion: reduce) {
-  .wrapped__backdrop > img,
+  .wrapped__scenery,
+  .wrapped__vinyl-spin,
+  .wrapped__loading-line span,
   .wrapped__progress span.is-current::after,
   .wrapped__slide,
-  .wrapped__primary,
+  .wrapped__slide *,
   .wrapped__art,
-  .wrapped__track-list li,
-  .wrapped__artist-list li,
-  .wrapped__dayline-fill,
-  .wrapped__dayline-peak,
-  .wrapped__loading-line span {
-    animation: none;
+  .wrapped__dial-arc,
+  .wrapped__dial-dot,
+  .wrapped__empty-year {
+    animation: none !important;
+  }
+
+  /* Кроссфейд задника выключен — прошлой обложке нельзя оставаться видимой */
+  .wrapped__scenery.is-past {
+    opacity: 0;
   }
 }

@@ -216,42 +216,71 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
     ctx.fillText(ellipsize(ctx, meta, SIZE - 200), SIZE / 2, 862);
     drawBranding(ctx, glyph, 984);
   } else {
-    // Wrapped: цифры — герои
+    // Wrapped: «афиша года» (редизайн 2026-07-16) — левая выключка, дисплейные
+    // цифры Unbounded, вертикальный год-водяной знак справа: карточка обязана
+    // визуально совпадать с оверлеем (тот же язык, что wrapped__year /
+    // wrapped__metric / wrapped__final-yearbg в WrappedOverlay.css).
     const locale = lang === "ru" ? "ru" : "en";
-    ctx.font = "600 48px Unbounded, sans-serif";
+    const left = 96;
+    const maxW = SIZE - left - 220; // справа живёт вертикальный год
+
+    // Вертикальный год-водяной знак (как wrapped__final-yearbg: surface-слой,
+    // не градиент): rotate(90°) вместо writing-mode.
+    ctx.save();
+    ctx.translate(SIZE - 68, 96);
+    ctx.rotate(Math.PI / 2);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = "700 190px Unbounded, sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.10)";
+    ctx.fillText(String(data.year), 0, 0);
+    ctx.restore();
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+
+    // Титр
+    ctx.font = "600 44px Unbounded, sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.85)";
-    ctx.fillText(translate(lang, "media.shareCard.myYearRecap", { year: data.year }), SIZE / 2, 150);
-    ctx.font = "700 176px 'Golos Text', sans-serif";
+    ctx.fillText(translate(lang, "media.shareCard.myYearRecap", { year: data.year }), left, 168);
+
+    // Минуты — герой афиши, акцентным Unbounded
+    ctx.font = "700 168px Unbounded, sans-serif";
     ctx.fillStyle = accent;
-    ctx.fillText(String(data.minutes.toLocaleString(locale)), SIZE / 2, 340);
+    ctx.fillText(ellipsize(ctx, data.minutes.toLocaleString(locale), maxW), left, 366);
     ctx.font = "400 44px 'Golos Text', sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
-    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), SIZE / 2, 452);
+    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), left, 436);
 
     const line = (label: string, value: string, y: number) => {
       ctx.font = "400 34px 'Golos Text', sans-serif";
       ctx.fillStyle = "rgba(244, 243, 241, 0.5)";
-      ctx.fillText(label, SIZE / 2, y);
-      ctx.font = "700 48px 'Golos Text', sans-serif";
+      ctx.fillText(label, left, y);
+      ctx.font = "700 52px 'Golos Text', sans-serif";
       ctx.fillStyle = "#f4f3f1";
-      ctx.fillText(ellipsize(ctx, value, SIZE - 200), SIZE / 2, y + 56);
+      ctx.fillText(ellipsize(ctx, value, maxW), left, y + 62);
     };
     let y = 566;
     if (data.topArtist) {
       line(translate(lang, "media.shareCard.artistOfYear"), data.topArtist, y);
-      y += 130;
+      y += 148;
     }
     if (data.topTrack) {
       line(translate(lang, "media.shareCard.trackOfYear"), data.topTrack, y);
-      y += 130;
+      y += 148;
     }
     ctx.font = "400 34px 'Golos Text', sans-serif";
     ctx.fillStyle = "rgba(244, 243, 241, 0.5)";
     ctx.fillText(
-      translate(lang, "media.shareCard.playsAndArtists", { plays: data.plays.toLocaleString(locale), artists: data.artists }),
-      SIZE / 2,
+      ellipsize(
+        ctx,
+        translate(lang, "media.shareCard.playsAndArtists", { plays: data.plays.toLocaleString(locale), artists: data.artists }),
+        maxW,
+      ),
+      left,
       y + 10,
     );
+    ctx.textAlign = "center";
     drawBranding(ctx, glyph, 984);
   }
 

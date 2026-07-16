@@ -259,6 +259,11 @@ export const viewsEn = {
       savePoster: "Save your music poster",
       clickHint: "Click anywhere, or press →",
     },
+    ambient: {
+      toggleLabel: "Sound of the year",
+      popoverTitle: "Your top track plays softly",
+      sliderLabel: "Sound of the year volume",
+    },
     errors: {
       fetchFailed: "Couldn't load your Wrapped",
     },
