@@ -5,6 +5,7 @@ import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
+import { useWarmRow } from "../player/useWarmer";
 import { useDrag, useDropZone } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
@@ -145,6 +146,7 @@ export function PlaylistView({
   const canReorder = detail !== null && !offline;
   const tracks = detail?.tracks ?? [];
   const { drag, dragSource } = useDrag();
+  const warmRow = useWarmRow();
   const rowsRef = useRef(new Map<string, HTMLElement>());
   /** Прямоугольники строк, снятые на pointerdown — ДО подъёма карточки.
    *  Держатся статичными весь перенос НАМЕРЕННО: соседи разъезжаются
@@ -349,10 +351,23 @@ export function PlaylistView({
             // draggable: из плейлиста можно унести в другой плейлист; Alt+drag — файл (T18)
             <div
               key={tr.id}
+              // два потребителя одного ref: DnD-замеры строк и прогрев
+              // (IntersectionObserver). React 19 ref-cleanup: возврат функции
+              // означает, что ref(null) на размонтировании НЕ придёт — обе
+              // отписки живут в cleanup.
               ref={(el) => {
-                if (el) rowsRef.current.set(tr.id, el);
-                else rowsRef.current.delete(tr.id);
+                if (!el) {
+                  rowsRef.current.delete(tr.id);
+                  return;
+                }
+                rowsRef.current.set(tr.id, el);
+                const unwarm = localOnly ? undefined : warmRow(tr.id).ref(el);
+                return () => {
+                  rowsRef.current.delete(tr.id);
+                  unwarm?.();
+                };
               }}
+              onMouseEnter={localOnly ? undefined : warmRow(tr.id).onMouseEnter}
               draggable={!missingLocal}
               onDragStart={(e) => {
                 // Только Alt: для остального dragSource гасит draggable (иначе

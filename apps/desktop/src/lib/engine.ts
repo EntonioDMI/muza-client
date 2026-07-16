@@ -128,6 +128,35 @@ export async function resolveTrack(
   return { url: convertFileSrc(out.path), fromCache: out.from_cache, provider: out.provider };
 }
 
+export interface WarmResult {
+  /** Живая warm-запись есть (уже была или только что добыта). */
+  warm: boolean;
+  /** Файл уже в кэше добычи — греть нечего. */
+  cached: boolean;
+}
+
+/** Прогреть резолв трека (Фаза 1, спека 2026-07-16): yt-dlp --simulate
+ *  разрешает метаданные (прямой CDN-URL + размер) за 0 байт трафика; клик по
+ *  прогретому треку скачает файл одним GET вместо полного процесса yt-dlp
+ *  (~4.5с → ~1.2с). Ошибка прогрева не фатальна по определению — трек
+ *  добудется обычной лестницей; вызывающий (useWarmer) её глотает в кулдаун. */
+export async function engineWarm(
+  trackId: string,
+  sources: TrackSource[],
+  quality: StreamQuality = "auto",
+): Promise<WarmResult> {
+  const out = await invoke<{ warm: boolean; cached: boolean }>("engine_warm", {
+    trackId,
+    sources: toNativeSourceRefs(sources),
+    quality,
+    cacheNs: CACHE_NS,
+  }).catch((e: unknown) => {
+    // та же граница IPC, что у resolveTrack: Tauri реджектит голой строкой
+    throw e instanceof Error ? e : new Error(typeof e === "string" ? e : String(e));
+  });
+  return out;
+}
+
 /** Резолв с учётом локальных источников (Stage 4): source provider=local —
  *  это файл на устройстве (sourceId = sha256), в yt-dlp ему нельзя.
  *  Локальный, стоящий первым (выбор пользователя или единственный источник),

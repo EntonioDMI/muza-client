@@ -42,6 +42,7 @@ import {
 } from "./lib/historyStack";
 import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
+import { useWarmer, WarmerProvider } from "./player/useWarmer";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
@@ -412,6 +413,13 @@ function Player({
     [pbRaw, cleanCover],
   );
   const { track, playing, pos, vol } = pb;
+
+  // Прогрев метаданных добычи (Фаза 1): hover/видимость подают вьюхи через
+  // useWarmRow (контекст ниже), очередь воспроизведения — отсюда.
+  const warmer = useWarmer({ api, prefs });
+  useEffect(() => {
+    warmer.noteQueue(pb.queue, pb.index);
+  }, [warmer, pb.queue, pb.index]);
 
   // ── Плагины уровня 1 (T44) ────────────────────────────────────────
   // Бридж строится один раз и читает живое состояние Player через ref
@@ -1587,6 +1595,7 @@ function Player({
         дефолтами из themes.css. position:fixed превью при этом не обрезается:
         у rootStyle overflow:hidden, но нет transform/filter, поэтому блок-
         контейнер для fixed — вьюпорт, а не этот div. */}
+    <WarmerProvider value={warmer}>
     <DragLayer>
       {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
@@ -2279,6 +2288,7 @@ function Player({
         onClose={() => setMeaningLine(null)}
       />
     </DragLayer>
+    </WarmerProvider>
     </div>
     </LanguageProvider>
   );
