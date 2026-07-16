@@ -20,7 +20,14 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Muza",
     short_name: "Muza",
     description: "Muza — веб-плеер: тексты-герой, без цензуры, тотальная кастомизация.",
+    // id фиксирует identity установленного PWA: без него Chrome выводит id из
+    // start_url, и смена start_url оторвала бы установленные приложения.
+    id: "/",
     start_url: "/",
+    // Display-политика (бриф T3-B 16.07): standalone — дефолт-рекомендация,
+    // часы/батарея для плеера ценнее полного погружения; iOS true-fullscreen
+    // для PWA не даёт вовсе. Альтернатива для Android — "fullscreen" (прячет
+    // статус-бар); сравнение у владельца, финальное слово за ним.
     display: "standalone",
     background_color: "#121110",
     theme_color: "#121110",

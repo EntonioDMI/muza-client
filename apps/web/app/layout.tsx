@@ -16,6 +16,10 @@ export const metadata: Metadata = {
     apple: "/icons/apple-touch-icon.png",
   },
   appleWebApp: {
+    // capable: true → <meta name="apple-mobile-web-app-capable">: без него
+    // iOS <16.4 (не читает display из манифеста) открывает PWA с хромом Safari;
+    // современный iOS берёт standalone из манифеста, ему мета не нужна.
+    capable: true,
     title: "Muza",
     statusBarStyle: "black-translucent",
   },
