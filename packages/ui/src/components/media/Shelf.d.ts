@@ -6,6 +6,9 @@ export interface ShelfProps {
   action?: string;
   /** Shown only when provided. */
   onAction?: () => void;
+  /** aria-label стрелок-листалок (иконочные кнопки ‹ ›). */
+  prevLabel?: string;
+  nextLabel?: string;
   /** Row content — usually <Tile /> elements. */
   children: React.ReactNode;
   style?: React.CSSProperties;

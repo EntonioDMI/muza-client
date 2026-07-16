@@ -1,8 +1,76 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../core/Button.jsx";
+import { IconButton } from "../core/IconButton.jsx";
 
-/** Home-feed shelf: section header + horizontally scrolling row of tiles. */
-export function Shelf({ title, action = "Show all", onAction, children, style }) {
+/** Home-feed shelf: section header + horizontally scrolling row of tiles.
+ *  Листается стрелками ‹ › (появляются по краям на hover; гаснут на упоре) —
+ *  раньше ряд скроллился только колёсиком/тачпадом, без видимого способа
+ *  пролистать (жалоба владельца 2026-07-16). Колёсико/драг по-прежнему работают. */
+export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back", nextLabel = "Forward", children, style }) {
+  const rowRef = useRef(null);
+  // atStart/atEnd — на упоре стрелку прячем (нечего листать в ту сторону).
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
+  const [hover, setHover] = useState(false);
+
+  const sync = useCallback(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setAtStart(el.scrollLeft <= 1);
+    setAtEnd(el.scrollLeft >= max - 1);
+  }, []);
+
+  useEffect(() => {
+    sync();
+    const el = rowRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // ряд меняется (пришли реки/сузили окно) — пересчитываем упоры
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [sync, children]);
+
+  const page = (dir) => {
+    const el = rowRef.current;
+    if (!el) return;
+    // ~80% ширины — почти полный экран карточек, но с нахлёстом для контекста
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: reduce ? "auto" : "smooth" });
+  };
+
+  const arrow = (dir, hidden, label) => (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        [dir < 0 ? "left" : "right"]: 0,
+        display: "flex",
+        alignItems: "center",
+        // клики мимо кнопки не крадём у карточек
+        pointerEvents: "none",
+        paddingInline: "var(--sp-1)",
+        // мягкая подложка-фейд, чтобы стрелка читалась поверх обложек
+        background:
+          dir < 0
+            ? "linear-gradient(90deg, var(--bg-0) 10%, transparent)"
+            : "linear-gradient(270deg, var(--bg-0) 10%, transparent)",
+        opacity: hover && !hidden ? 1 : 0,
+        transition: "opacity var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <span style={{ pointerEvents: hidden ? "none" : "auto" }}>
+        <IconButton
+          icon={dir < 0 ? "chevron-left" : "chevron-right"}
+          variant="surface"
+          label={label}
+          onClick={() => page(dir)}
+        />
+      </span>
+    </div>
+  );
+
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", ...style }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 var(--sp-1)" }}>
@@ -24,17 +92,24 @@ export function Shelf({ title, action = "Show all", onAction, children, style })
           </Button>
         ) : null}
       </div>
-      <div
-        style={{
-          display: "flex",
-          gap: "var(--sp-4)",
-          overflowX: "auto",
-          scrollbarWidth: "none",
-          margin: "0 calc(-1 * var(--sp-1))",
-          padding: "var(--sp-1)",
-        }}
-      >
-        {children}
+      <div style={{ position: "relative" }} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+        <div
+          ref={rowRef}
+          onScroll={sync}
+          style={{
+            display: "flex",
+            gap: "var(--sp-4)",
+            overflowX: "auto",
+            scrollbarWidth: "none",
+            scrollBehavior: "smooth",
+            margin: "0 calc(-1 * var(--sp-1))",
+            padding: "var(--sp-1)",
+          }}
+        >
+          {children}
+        </div>
+        {arrow(-1, atStart, prevLabel)}
+        {arrow(1, atEnd, nextLabel)}
       </div>
     </section>
   );
