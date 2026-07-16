@@ -388,13 +388,122 @@ function GrowthTab({ api }: { api: MuzaApi }) {
   );
 }
 
+/** Раскрываемая строка одной группы ошибок: шапка (класс · текст, счётчик,
+ *  дата) кликается и разворачивает детали + кнопку удаления группы. */
+function ErrorGroupRow({
+  group,
+  open,
+  onToggle,
+  onDelete,
+  busy,
+  kindName,
+  lang,
+}: {
+  group: AdminErrors["top"][number];
+  open: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  busy: boolean;
+  kindName: (k: string) => string;
+  lang: Lang;
+}) {
+  const { t } = useT();
+  const detailRow = (label: string, value: string, mono?: boolean) => (
+    <div style={{ display: "flex", gap: "var(--sp-3)", fontSize: "var(--fs-caption)" }}>
+      <span style={{ flex: "0 0 92px", color: "var(--text-3)" }}>{label}</span>
+      <span
+        style={{
+          flex: 1,
+          color: "var(--text-2)",
+          wordBreak: "break-word",
+          fontFamily: mono ? "var(--font-mono, monospace)" : undefined,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+  return (
+    <div style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--sp-3)",
+          width: "100%",
+          padding: "var(--sp-2) var(--sp-3)",
+          border: "none",
+          background: "transparent",
+          color: "var(--text-1)",
+          fontSize: "var(--fs-body)",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <Icon
+          name="chevron-right"
+          size={16}
+          color="var(--text-3)"
+          style={{ flex: "none", transform: open ? "rotate(90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out)" }}
+        />
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {kindName(group.kind)} · {group.message || "—"}
+        </span>
+        <span style={{ flex: "none", color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>{group.count}</span>
+        <span style={{ flex: "none", color: "var(--text-3)", fontSize: "var(--fs-caption)", whiteSpace: "nowrap" }}>
+          {dt(group.lastSeen, lang)}
+        </span>
+      </button>
+      {open ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", padding: "0 var(--sp-3) var(--sp-3)" }}>
+          {detailRow(t("views.admin.errors.detailMessage"), group.message || "—")}
+          {detailRow(t("views.admin.errors.detailVersions"), group.appVersions.join(", ") || "—")}
+          {detailRow(t("views.admin.errors.detailLast"), dt(group.lastSeen, lang))}
+          {detailRow(t("views.admin.errors.detailHash"), group.stackHash, true)}
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            style={{
+              alignSelf: "flex-start",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 2,
+              padding: "6px var(--sp-3)",
+              border: "1px solid var(--danger)",
+              borderRadius: "var(--r-sm)",
+              background: "transparent",
+              color: "var(--danger)",
+              fontSize: "var(--fs-caption)",
+              fontWeight: "var(--fw-medium)",
+              cursor: busy ? "default" : "pointer",
+              opacity: busy ? 0.5 : 1,
+            }}
+          >
+            <Icon name="trash-2" size={14} color="var(--danger)" />
+            {t("views.admin.errors.deleteOne")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры класс/версия.
- *  message приходит уже проскрабленным сервером; стеков нет — только хэш. */
+ *  message приходит уже проскрабленным сервером; стеков нет — только хэш.
+ *  Строки раскрываются в детали; группу или всё окно фильтров можно стереть. */
 function ErrorsTab({ api }: { api: MuzaApi }) {
   const { t, lang } = useT();
   const [days, setDays] = useState(7);
   const [kind, setKind] = useState("all");
   const [appVersion, setAppVersion] = useState("all");
+  const [reload, setReload] = useState(0);
+  const [openHash, setOpenHash] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [busy, setBusy] = useState(false);
   const { data, error } = useAdminData<AdminErrors>(
     () =>
       api.getAdminErrors({
@@ -402,8 +511,32 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
         kind: kind === "all" ? undefined : kind,
         appVersion: appVersion === "all" ? undefined : appVersion,
       }),
-    [api, days, kind, appVersion],
+    [api, days, kind, appVersion, reload],
   );
+  const filterArg = { kind: kind === "all" ? undefined : kind, appVersion: appVersion === "all" ? undefined : appVersion };
+  const refresh = () => {
+    setOpenHash(null);
+    setConfirmClear(false);
+    setReload((n) => n + 1);
+  };
+  const doClear = async () => {
+    setBusy(true);
+    try {
+      await api.clearAdminErrors(filterArg);
+      refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const doDeleteGroup = async (hash: string) => {
+    setBusy(true);
+    try {
+      await api.deleteAdminErrorGroup(hash);
+      refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
   const kindLabels: Record<string, string> = {
     error: t("views.admin.errors.kindError"),
     unhandledrejection: t("views.admin.errors.kindRejection"),
@@ -437,20 +570,80 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
         <Loading error={error} />
       ) : (
         <>
-          <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", alignItems: "flex-start" }}>
             <StatCard label={t("views.admin.errors.totalWindow")} value={data.totals.count} />
             <StatCard label={t("views.admin.errors.distinct")} value={data.totals.distinct} />
+            {data.totals.count > 0 ? (
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+                {confirmClear ? (
+                  <>
+                    <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
+                      {t("views.admin.errors.clearConfirm")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={doClear}
+                      disabled={busy}
+                      style={{
+                        padding: "8px var(--sp-4)",
+                        border: "none",
+                        borderRadius: "var(--r-sm)",
+                        background: "var(--danger)",
+                        color: "var(--text-on-accent, #fff)",
+                        fontSize: "var(--fs-caption)",
+                        fontWeight: "var(--fw-semibold)",
+                        cursor: busy ? "default" : "pointer",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      {t("views.admin.errors.clearYes")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClear(false)}
+                      disabled={busy}
+                      style={{
+                        padding: "8px var(--sp-4)",
+                        border: "1px solid var(--surface-4)",
+                        borderRadius: "var(--r-sm)",
+                        background: "transparent",
+                        color: "var(--text-2)",
+                        fontSize: "var(--fs-caption)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClear(true)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "8px var(--sp-4)",
+                      border: "1px solid var(--danger)",
+                      borderRadius: "var(--r-sm)",
+                      background: "transparent",
+                      color: "var(--danger)",
+                      fontSize: "var(--fs-caption)",
+                      fontWeight: "var(--fw-medium)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Icon name="trash-2" size={14} color="var(--danger)" />
+                    {t("views.admin.errors.clear")}
+                  </button>
+                )}
+              </div>
+            ) : null}
           </div>
           {data.byKind.length > 0 ? (
-            <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ flex: "1 1 320px", maxWidth: 520 }}>
-                <Tabs items={kindItems} value={kind} onChange={setKind} />
-              </div>
-              {data.byApp.length > 1 ? (
-                <div style={{ flex: "1 1 260px", maxWidth: 420 }}>
-                  <Tabs items={appItems} value={appVersion} onChange={setAppVersion} />
-                </div>
-              ) : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+              <Tabs items={kindItems} value={kind} onChange={setKind} wrap />
+              {data.byApp.length > 1 ? <Tabs items={appItems} value={appVersion} onChange={setAppVersion} wrap /> : null}
             </div>
           ) : null}
           <Section title={t("views.admin.errors.series")}>
@@ -468,24 +661,16 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <Row
-                  header
-                  cells={[
-                    t("views.admin.errors.colError"),
-                    t("views.admin.errors.colCount"),
-                    t("views.admin.errors.colLast"),
-                    t("views.admin.errors.colVersions"),
-                  ]}
-                />
                 {data.top.map((g) => (
-                  <Row
+                  <ErrorGroupRow
                     key={g.stackHash}
-                    cells={[
-                      `${kindName(g.kind)} · ${g.message || "—"}`,
-                      g.count,
-                      dt(g.lastSeen, lang),
-                      g.appVersions.join(", "),
-                    ]}
+                    group={g}
+                    open={openHash === g.stackHash}
+                    onToggle={() => setOpenHash((h) => (h === g.stackHash ? null : g.stackHash))}
+                    onDelete={() => doDeleteGroup(g.stackHash)}
+                    busy={busy}
+                    kindName={kindName}
+                    lang={lang}
                   />
                 ))}
               </div>

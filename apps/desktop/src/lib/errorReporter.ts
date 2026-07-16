@@ -17,6 +17,11 @@ export interface ClientErrorItem {
 const MAX_MESSAGE = 2000; // потолок приёма ClientErrorsDto на сервере
 const MAX_DISTINCT = 50; // разных ошибок в буфере; первые ценнее хвоста
 const MAX_BATCH = 20; // ArrayMaxSize серверного DTO
+// Потолок count в ClientErrorsDto: без клиентского клампа ошибка в горячем
+// цикле (raf/интервал) перерастает серверный Max за окно отправки — и 400
+// валидации ронял бы ВЕСЬ батч, включая другие ошибки. Точное число повторов
+// сверх тысячи диагностически не отличается от «очень много».
+const MAX_COUNT = 1000;
 
 /** FNV-1a 64 бита: детерминированный хэш без node:crypto — работает в webview. */
 export function stackHashOf(message: string, stack = ""): string {
@@ -58,7 +63,7 @@ export function createErrorReporter(opts: { maxDistinct?: number } = {}): ErrorR
     const key = stackHashOf(msg, stack ?? "");
     const known = buffer.get(key);
     if (known) {
-      known.count += 1;
+      known.count = Math.min(known.count + 1, MAX_COUNT);
       return;
     }
     if (buffer.size >= maxDistinct) return;

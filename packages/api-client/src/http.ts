@@ -138,6 +138,7 @@ interface PlaylistMetaWire {
   owner_username?: string;
   collaborators_count?: number;
   icon?: string | null;
+  icon_cover_url?: string | null;
 }
 
 function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
@@ -150,6 +151,7 @@ function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
     ownerUsername: w.owner_username ?? "",
     collaboratorsCount: w.collaborators_count ?? 0,
     icon: w.icon ?? null,
+    iconCoverUrl: w.icon_cover_url ?? null,
   });
 }
 
@@ -391,7 +393,12 @@ export class HttpMuzaApi implements MuzaApi {
     try {
       return await this.refreshPair(session.refreshToken);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 0) return session; // офлайн — не разлогиниваем
+      // Сессию стирает только ЯВНЫЙ отказ авторизации (401/403: токен отозван
+      // или протух по-настоящему). Всё остальное — временные беды, за которые
+      // пользователь не должен платить перелогином: офлайн (status 0), сервер
+      // перезапускается/лежит (5xx), троттлинг (429). Раньше любой не-0 статус
+      // разлогинивал — рестарт сервера в момент старта клиента ронял вход.
+      if (e instanceof ApiError && e.status !== 401 && e.status !== 403) return session;
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -611,6 +618,7 @@ export class HttpMuzaApi implements MuzaApi {
       collaborators?: { id: string; username: string }[];
       added_by?: Record<string, string>;
       icon?: string | null;
+      icon_cover_url?: string | null;
     }>(`/me/playlists/${encodeURIComponent(id)}`);
     return PlaylistDetailSchema.parse({
       id: p.id,
@@ -622,6 +630,7 @@ export class HttpMuzaApi implements MuzaApi {
       collaborators: p.collaborators ?? [],
       addedBy: p.added_by ?? {},
       icon: p.icon ?? null,
+      iconCoverUrl: p.icon_cover_url ?? null,
     });
   }
 
@@ -1303,6 +1312,20 @@ export class HttpMuzaApi implements MuzaApi {
       byKind: e.by_kind,
       byApp: e.by_app.map((a) => ({ appVersion: a.app_version, count: a.count })),
     };
+  }
+
+  async clearAdminErrors(opts?: { kind?: string; appVersion?: string }): Promise<{ deleted: number }> {
+    const params = new URLSearchParams();
+    if (opts?.kind) params.set("kind", opts.kind);
+    if (opts?.appVersion) params.set("app_version", opts.appVersion);
+    const q = params.toString();
+    return this.authedRequest<{ deleted: number }>(`/admin/errors${q ? `?${q}` : ""}`, { method: "DELETE" });
+  }
+
+  async deleteAdminErrorGroup(stackHash: string): Promise<{ deleted: number }> {
+    return this.authedRequest<{ deleted: number }>(`/admin/errors/${encodeURIComponent(stackHash)}`, {
+      method: "DELETE",
+    });
   }
 
   async sendTelemetry(stats: TelemetryStats): Promise<void> {

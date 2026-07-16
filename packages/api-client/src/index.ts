@@ -271,6 +271,10 @@ export interface MuzaApi {
   getAdminGrowth(days?: number): Promise<AdminGrowth>;
   /** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры kind/версия. */
   getAdminErrors(opts?: { days?: number; kind?: string; appVersion?: string }): Promise<AdminErrors>;
+  /** Очистка ошибок под текущими фильтрами (без фильтров = все). Возврат — сколько удалено. */
+  clearAdminErrors(opts?: { kind?: string; appVersion?: string }): Promise<{ deleted: number }>;
+  /** Удаление одной группы ошибок по stackHash. */
+  deleteAdminErrorGroup(stackHash: string): Promise<{ deleted: number }>;
 }
 
 // Мока api-клиента здесь СОЗНАТЕЛЬНО нет: MockMuzaApi реализовывал весь

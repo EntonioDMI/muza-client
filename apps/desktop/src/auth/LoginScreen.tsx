@@ -46,8 +46,22 @@ function Field({
 type Confirm = { pendingId: string; email: string; dead: string | null };
 
 /** Экран входа: вход/регистрация (email опционален — с ним verify-before-create),
- *  аноним = аккаунт-на-устройстве, честная модалка «синхронизации не будет» (№32). */
-export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession: (s: Session) => void; lang: Lang }) {
+ *  аноним = аккаунт-на-устройстве, честная модалка «синхронизации не будет» (№32).
+ *  onTelemetry — выбор «отправлять анонимную статистику» при СОЗДАНИИ аккаунта
+ *  (обычном или анонимном): раньше телеметрия включалась молча (жалоба
+ *  2026-07-16 «хочу честнее»); вход в существующий аккаунт выбор не трогает —
+ *  там уже действует галочка из настроек этого устройства. */
+export function LoginScreen({
+  api,
+  onSession,
+  lang,
+  onTelemetry,
+}: {
+  api: MuzaApi;
+  onSession: (s: Session) => void;
+  lang: Lang;
+  onTelemetry?: (enabled: boolean) => void;
+}) {
   // LoginScreen живёт ВНЕ <LanguageProvider> (показывается до сессии/Player), поэтому
   // язык приходит пропом (App.loadPrefs().language) и переводим через translate напрямую.
   const t = (key: TranslationKey, params?: TParams) => translate(lang, key, params);
@@ -59,6 +73,10 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
   // нейтральное сообщение (не ошибка) — например, статус восстановления
   const [notice, setNotice] = useState<string | null>(null);
   const [anonDialog, setAnonDialog] = useState(false);
+  // Согласие на анонимную статистику — видимой галочкой при создании аккаунта
+  // (снять можно; по умолчанию включено). telemetryInfo — диалог «что уходит».
+  const [telemetryOk, setTelemetryOk] = useState(true);
+  const [telemetryInfo, setTelemetryInfo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [resendNote, setResendNote] = useState<string | null>(null);
@@ -89,7 +107,10 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
         completingRef.current = true;
         try {
           const session = await api.registerComplete(confirm.pendingId);
-          if (!cancelled) onSession(session);
+          if (!cancelled) {
+            onTelemetry?.(telemetryOk); // выбор сделан на форме регистрации
+            onSession(session);
+          }
         } catch (e) {
           if (!cancelled) {
             const msg = e instanceof Error ? e.message : t("auth.errors.completeFailed");
@@ -153,7 +174,9 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
         setCooldown(30); // письмо только что ушло
         setConfirm({ pendingId: started.pendingId, email: started.email, dead: null });
       } else {
-        onSession(await api.register(parsed.data));
+        const session = await api.register(parsed.data);
+        onTelemetry?.(telemetryOk);
+        onSession(session);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("auth.errors.somethingWrong"));
@@ -188,7 +211,9 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
     setAnonDialog(false);
     setBusy(true);
     try {
-      onSession(await api.loginAnonymous());
+      const session = await api.loginAnonymous();
+      onTelemetry?.(telemetryOk); // аноним — тоже создание аккаунта, выбор честный
+      onSession(session);
     } finally {
       setBusy(false);
     }
@@ -341,6 +366,16 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
                   {notice}
                 </div>
               ) : null}
+              {/* Согласие на анонимную статистику — только там, где аккаунт
+                  СОЗДАЁТСЯ: раньше галочка включалась молча (жалоба 2026-07-16).
+                  marginTop добивает зазор полей (sp-3) до зазора карточки (sp-5):
+                  сверху и снизу строки одинаково — она пауза между формой и
+                  кнопкой, а не прилипший к полям хвост (правка 2026-07-16). */}
+              {mode === "register" ? (
+                <div style={{ marginTop: "var(--sp-2)" }}>
+                  <ConsentRow t={t} checked={telemetryOk} onToggle={() => setTelemetryOk((v) => !v)} onMore={() => setTelemetryInfo(true)} />
+                </div>
+              ) : null}
             </div>
             <Button variant="primary" size="lg" disabled={busy} onClick={submit} style={{ width: "100%" }}>
               {mode === "login" ? t("auth.submit.login") : mode === "register" ? t("auth.submit.register") : t("auth.submit.recover")}
@@ -385,7 +420,89 @@ export function LoginScreen({ api, onSession, lang }: { api: MuzaApi; onSession:
         <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
           {t("auth.anon.body")}
         </div>
+        {/* аноним — тоже создание аккаунта: тот же честный выбор */}
+        <div style={{ marginTop: "var(--sp-4)" }}>
+          <ConsentRow t={t} checked={telemetryOk} onToggle={() => setTelemetryOk((v) => !v)} onMore={() => setTelemetryInfo(true)} />
+        </div>
       </Dialog>
+
+      {/* «Подробнее»: что именно уходит в анонимную статистику — честный список */}
+      <Dialog open={telemetryInfo} title={t("auth.telemetry.title")} onClose={() => setTelemetryInfo(false)} width={440}>
+        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.6, display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+          <div>{t("auth.telemetry.intro")}</div>
+          <ul style={{ margin: 0, paddingLeft: "1.2em", display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+            <li>{t("auth.telemetry.item1")}</li>
+            <li>{t("auth.telemetry.item2")}</li>
+            <li>{t("auth.telemetry.item3")}</li>
+          </ul>
+          <div style={{ color: "var(--text-1)" }}>{t("auth.telemetry.never")}</div>
+          <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>{t("auth.telemetry.settingsNote")}</div>
+        </div>
+      </Dialog>
+    </div>
+  );
+}
+
+/** Строка согласия: квадратный чекбокс + подпись + «Подробнее». Свой чекбокс,
+ *  а не Switch ДС: согласие в форме привычнее галочкой, тумблер здесь читался
+ *  бы как настройка приложения, а не как выбор при создании аккаунта. */
+function ConsentRow({
+  t,
+  checked,
+  onToggle,
+  onMore,
+}: {
+  t: (key: TranslationKey, params?: TParams) => string;
+  checked: boolean;
+  onToggle: () => void;
+  onMore: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", fontFamily: "var(--font-ui)" }}>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={t("auth.telemetry.label")}
+        onClick={onToggle}
+        style={{
+          flex: "none",
+          width: 20,
+          height: 20,
+          display: "grid",
+          placeItems: "center",
+          padding: 0,
+          border: checked ? "none" : "2px solid var(--text-3)",
+          borderRadius: "var(--r-xs)",
+          background: checked ? "var(--accent)" : "transparent",
+          cursor: "pointer",
+          transition: "background var(--dur-fast) var(--ease-out)",
+        }}
+      >
+        {checked ? <Icon name="check" size={14} color="var(--text-on-accent, #fff)" strokeWidth={3} /> : null}
+      </button>
+      <span onClick={onToggle} style={{ color: "var(--text-2)", fontSize: "var(--fs-caption)", cursor: "pointer", lineHeight: 1.4 }}>
+        {t("auth.telemetry.label")}
+      </span>
+      <button
+        type="button"
+        onClick={onMore}
+        style={{
+          flex: "none",
+          marginLeft: "auto",
+          padding: 0,
+          border: "none",
+          background: "transparent",
+          color: "var(--accent-text)",
+          fontFamily: "var(--font-ui)",
+          fontSize: "var(--fs-caption)",
+          cursor: "pointer",
+          textDecoration: "underline",
+          textUnderlineOffset: 3,
+        }}
+      >
+        {t("auth.telemetry.more")}
+      </button>
     </div>
   );
 }

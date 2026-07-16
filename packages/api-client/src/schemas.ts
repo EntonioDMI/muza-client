@@ -175,9 +175,11 @@ export const PlaylistMetaSchema = z.object({
   role: z.enum(["owner", "collaborator"]).default("owner"),
   ownerUsername: z.string().default(""),
   collaboratorsCount: z.number().default(0),
-  /** T47: id иконки-обложки из манифеста @muza/core ("pi-01".."pi-38");
-   *  null — без иконки (клиент рисует фолбэк). */
+  /** T47: иконка — "pi-NN" из манифеста @muza/core ЛИБО "track:<id>"
+   *  (T47c: обложка трека); null — без иконки (клиент рисует фолбэк). */
   icon: z.string().nullable().default(null),
+  /** T47c: cover_url трека для icon="track:<id>"; иначе null. */
+  iconCoverUrl: z.string().nullable().default(null),
 });
 export type PlaylistMeta = z.infer<typeof PlaylistMetaSchema>;
 
@@ -193,9 +195,11 @@ export const PlaylistDetailSchema = z.object({
   collaborators: z.array(z.object({ id: z.string(), username: z.string() })).default([]),
   /** Кто добавил трек (совместным видно): trackId → username. */
   addedBy: z.record(z.string(), z.string()).default({}),
-  /** T47: id иконки-обложки из манифеста @muza/core ("pi-01".."pi-38");
-   *  null — без иконки (клиент рисует фолбэк). */
+  /** T47: иконка — "pi-NN" из манифеста @muza/core ЛИБО "track:<id>"
+   *  (T47c: обложка трека); null — без иконки (клиент рисует фолбэк). */
   icon: z.string().nullable().default(null),
+  /** T47c: cover_url трека для icon="track:<id>"; иначе null. */
+  iconCoverUrl: z.string().nullable().default(null),
 });
 export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>;
 
