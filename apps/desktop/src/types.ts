@@ -246,6 +246,11 @@ export interface Prefs {
   syncedLyrics: boolean;
   /** Автоследование за активной строкой текста (выкл = свободный скролл). */
   lyricsAutoScroll: boolean;
+  /** Эмбиент Wrapped «Итоги года»: громкость топ-трека, играющего фоном
+   *  оверлея, позиция слайдера 0–100 (кривая как у плеера — квадрат).
+   *  Регулятор — за иконкой в правом верхнем углу оверлея. Поведенческий
+   *  преф — НЕ THEME. */
+  wrappedAmbientVol: number;
   /** Качество стрима: auto = лестница рецепта, econom = меньший битрейт
    *  (движок ставит низкобитрейтные форматы в голову лестницы yt-dlp). */
   streamQuality: "auto" | "econom";
@@ -352,6 +357,7 @@ export const DEFAULT_PREFS: Prefs = {
   searchGrouping: true,
   syncedLyrics: true,
   lyricsAutoScroll: true,
+  wrappedAmbientVol: 20,
   streamQuality: "auto",
   sourcesEnabled: { youtube: true, soundcloud: true, bandcamp: true },
   sourcePolicy: "official",

@@ -2157,12 +2157,37 @@ function Player({
       {/* Шеринг-карточка (Stage 7): трек/плейлист/Wrapped */}
       <ShareDialog data={shareData} onClose={() => setShareData(null)} onNotify={showToast} />
 
-      {/* Wrapped «Итоги года» (Stage 7) */}
+      {/* Wrapped «Итоги года» (Stage 7; редизайн 2026-07-16 — эмбиент топ-трека).
+          Резолв эмбиента — тот же путь, что у плеера (политика источников +
+          resolvePlayable, общий кэш добычи); прямые googlevideo-URL в <audio>
+          запрещены (троттлинг без Range, notes 2026-07-15). Пауза/возврат
+          основного плеера — pb.pause/pb.toggle, канал сам проверяет, не
+          возобновили ли плеер медиа-клавишей раньше него. */}
       <WrappedOverlay
         api={api}
         open={wrappedOpen}
         onClose={() => setWrappedOpen(false)}
         onShare={setShareData}
+        ambient={{
+          resolveTrackUrl: async (trackId) => {
+            if (!engineAvailable()) {
+              throw new Error(t("media.player.errors.desktopOnly"));
+            }
+            const sources = await api.getTrackSources(trackId);
+            const resolved = await resolvePlayable(
+              trackId,
+              applySourcePolicy(sources, prefs),
+              prefs.streamQuality,
+              prefs.language,
+            );
+            return resolved.url;
+          },
+          playerPlaying: pb.playing,
+          pausePlayer: pb.pause,
+          resumePlayer: pb.toggle,
+          volume: prefs.wrappedAmbientVol,
+          onVolumeChange: (v) => setPrefs({ ...prefs, wrappedAmbientVol: v }),
+        }}
       />
 
       <Dialog

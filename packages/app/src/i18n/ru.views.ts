@@ -242,6 +242,11 @@ export const viewsRu: typeof viewsEn = {
       savePoster: "Сохрани свой музыкальный постер",
       clickHint: "Клик в любом месте или →",
     },
+    ambient: {
+      toggleLabel: "Звук года",
+      popoverTitle: "Твой трек года играет фоном",
+      sliderLabel: "Громкость звука года",
+    },
     errors: {
       fetchFailed: "Не удалось получить итоги",
     },
