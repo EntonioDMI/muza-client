@@ -267,6 +267,19 @@ export interface TelemetryStats {
   playsCompleted: number;
 }
 
+/** Батч клиентских ошибок (админ-панель, кусок A) — POST /telemetry/error.
+ *  Та же анонимность, что TelemetryStats: без идентификаторов; стек не уходит
+ *  с клиента вовсе — только его хэш для группировки. */
+export interface ClientErrorBatch {
+  appVersion: string;
+  errors: {
+    kind: "error" | "unhandledrejection" | "react";
+    message: string;
+    stackHash: string;
+    count: number;
+  }[];
+}
+
 /** Конверт горячего рецепта: recipe + Ed25519-подпись. Клиент (Stage 3)
  *  верифицирует вшитым pubkey и без валидной подписи не применяет. */
 export interface RecipeEnvelope {
@@ -495,4 +508,42 @@ export interface AdminUsers {
     plays30d: number;
     lastPlayAt: string | null;
   }[];
+}
+
+/** Точка дневной серии админ-метрик (кусок C): bucket — YYYY-MM-DD (UTC). */
+export interface AdminDayPoint {
+  bucket: string;
+  count: number;
+}
+
+/** Метрики роста (кусок C): GET /admin/growth. Скачивания — снапшоты
+ *  download_count из GitHub Releases, серия — дневной прирост. */
+export interface AdminGrowth {
+  days: number;
+  registrations: AdminDayPoint[];
+  visits: AdminDayPoint[];
+  downloads: {
+    total: number;
+    byAsset: { tag: string; asset: string; count: number }[];
+    series: AdminDayPoint[];
+  };
+}
+
+/** Ошибки клиентов (кусок C): GET /admin/errors. Серия и топ — под фильтрами;
+ *  byKind/byApp — всегда за всё окно (источник значений для фильтров UI).
+ *  message уже проскраблен сервером; стеков нет — только хэш группировки. */
+export interface AdminErrors {
+  days: number;
+  totals: { count: number; distinct: number };
+  series: AdminDayPoint[];
+  top: {
+    stackHash: string;
+    kind: string;
+    message: string;
+    count: number;
+    lastSeen: string;
+    appVersions: string[];
+  }[];
+  byKind: { kind: string; count: number }[];
+  byApp: { appVersion: string; count: number }[];
 }

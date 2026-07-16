@@ -5,10 +5,13 @@
 
 import type {
   AdminContent,
+  AdminErrors,
+  AdminGrowth,
   AdminHealth,
   AdminOverview,
   AdminUsers,
   Annotations,
+  ClientErrorBatch,
   Credentials,
   EmailChangeStartResult,
   GroupedSearchResult,
@@ -161,6 +164,12 @@ export interface MuzaApi {
 
   /** Анонимный агрегат телеметрии (Stage 3): без идентификаторов, best-effort. */
   sendTelemetry(stats: TelemetryStats): Promise<void>;
+  /** Батч клиентских ошибок (админ-панель): анонимный эндпоинт, БЕЗ Bearer —
+   *  падения до логина самые ценные. Best-effort, как sendTelemetry. */
+  sendClientErrors(batch: ClientErrorBatch): Promise<void>;
+  /** Visit-пинг (админ-панель): анонимный, максимум раз в день (дедуп на
+   *  клиенте — useVisitPing). Сервер хранит только дневные счётчики. */
+  sendVisit(input: { appVersion: string; platform?: string }): Promise<void>;
 
   // Рекомендации и лента (Stage 5). Персональные секции пусты у аккаунта
   // без истории — клиент показывает фолбэк.
@@ -258,6 +267,10 @@ export interface MuzaApi {
   getAdminContent(): Promise<AdminContent>;
   getAdminHealth(hours?: number): Promise<AdminHealth>;
   getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers>;
+  /** Кусок C: метрики роста (регистрации/посещения/скачивания по дням). */
+  getAdminGrowth(days?: number): Promise<AdminGrowth>;
+  /** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры kind/версия. */
+  getAdminErrors(opts?: { days?: number; kind?: string; appVersion?: string }): Promise<AdminErrors>;
 }
 
 // Мока api-клиента здесь СОЗНАТЕЛЬНО нет: MockMuzaApi реализовывал весь

@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react";
 import { Icon, Tabs } from "@muza/ui";
-import type { AdminContent, AdminHealth, AdminOverview, AdminUsers, MuzaApi } from "@muza/api-client";
+import type {
+  AdminContent,
+  AdminDayPoint,
+  AdminErrors,
+  AdminGrowth,
+  AdminHealth,
+  AdminOverview,
+  AdminUsers,
+  MuzaApi,
+} from "@muza/api-client";
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
+import { SeriesChart } from "./adminCharts";
 
 /** Админ-панель (Stage 5) — экраны из заметки «аналитика-и-админка»:
  *  Обзор / Контент / Здоровье добычи / Пользователи. Виден только админам
@@ -295,13 +305,208 @@ function UsersTab({ api }: { api: MuzaApi }) {
   );
 }
 
+/** Окно диапазона (кусок C): один контрол на вкладки «Рост» и «Ошибки». */
+function DaysTabs({ value, onChange }: { value: number; onChange: (d: number) => void }) {
+  const { t } = useT();
+  return (
+    <div style={{ maxWidth: 360 }}>
+      <Tabs
+        items={[
+          { key: "7", label: t("views.admin.growth.d7") },
+          { key: "30", label: t("views.admin.growth.d30") },
+          { key: "90", label: t("views.admin.growth.d90") },
+        ]}
+        value={String(value)}
+        onChange={(k: string) => onChange(Number(k))}
+      />
+    </div>
+  );
+}
+
+const sumOf = (pts: AdminDayPoint[]) => pts.reduce((s, p) => s + p.count, 0);
+
+function Note({ text }: { text: string }) {
+  return <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{text}</div>;
+}
+
+/** Кусок C: метрики роста — посещения/регистрации/скачивания, графики свои
+ *  (adminCharts, токены ДС, без чарт-библиотек — конвенция проекта). */
+function GrowthTab({ api }: { api: MuzaApi }) {
+  const { t } = useT();
+  const [days, setDays] = useState(30);
+  const { data, error } = useAdminData<AdminGrowth>(() => api.getAdminGrowth(days), [api, days]);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
+      <DaysTabs value={days} onChange={setDays} />
+      {!data ? (
+        <Loading error={error} />
+      ) : (
+        <>
+          <Section title={t("views.admin.growth.visits")}>
+            <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+              <StatCard
+                label={t("views.admin.growth.visitsWindow")}
+                value={sumOf(data.visits)}
+                hint={t("views.admin.growth.visitsHint")}
+              />
+            </div>
+            <SeriesChart points={data.visits} mode="line" ariaLabel={t("views.admin.growth.visits")} />
+            <Note text={t("views.admin.growth.visitsNote")} />
+          </Section>
+          <Section title={t("views.admin.growth.registrations")}>
+            <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+              <StatCard label={t("views.admin.growth.registrationsWindow")} value={sumOf(data.registrations)} />
+            </div>
+            <SeriesChart points={data.registrations} mode="bars" ariaLabel={t("views.admin.growth.registrations")} />
+          </Section>
+          <Section title={t("views.admin.growth.downloads")}>
+            <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+              <StatCard label={t("views.admin.growth.downloadsTotal")} value={data.downloads.total} />
+              <StatCard label={t("views.admin.growth.downloadsWindow")} value={sumOf(data.downloads.series)} />
+            </div>
+            <SeriesChart points={data.downloads.series} mode="bars" ariaLabel={t("views.admin.growth.downloads")} />
+            {data.downloads.byAsset.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <Row
+                  header
+                  cells={[
+                    t("views.admin.growth.assetCol"),
+                    t("views.admin.growth.tagCol"),
+                    t("views.admin.growth.countCol"),
+                  ]}
+                />
+                {data.downloads.byAsset.slice(0, 10).map((a) => (
+                  <Row key={`${a.tag}:${a.asset}`} cells={[a.asset, a.tag, a.count]} />
+                ))}
+              </div>
+            ) : null}
+            <Note text={t("views.admin.growth.downloadsNote")} />
+          </Section>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры класс/версия.
+ *  message приходит уже проскрабленным сервером; стеков нет — только хэш. */
+function ErrorsTab({ api }: { api: MuzaApi }) {
+  const { t, lang } = useT();
+  const [days, setDays] = useState(7);
+  const [kind, setKind] = useState("all");
+  const [appVersion, setAppVersion] = useState("all");
+  const { data, error } = useAdminData<AdminErrors>(
+    () =>
+      api.getAdminErrors({
+        days,
+        kind: kind === "all" ? undefined : kind,
+        appVersion: appVersion === "all" ? undefined : appVersion,
+      }),
+    [api, days, kind, appVersion],
+  );
+  const kindLabels: Record<string, string> = {
+    error: t("views.admin.errors.kindError"),
+    unhandledrejection: t("views.admin.errors.kindRejection"),
+    react: t("views.admin.errors.kindReact"),
+  };
+  const kindName = (k: string) => kindLabels[k] ?? k;
+  // выбранный фильтр мог пропасть из окна — оставляем его пунктом, чтобы Tabs
+  // не потерял значение, а юзер мог вернуться на «Все»
+  const kindItems = data
+    ? [
+        { key: "all", label: t("views.admin.errors.all") },
+        ...data.byKind.map((k) => ({ key: k.kind, label: `${kindName(k.kind)} · ${k.count}` })),
+        ...(kind !== "all" && !data.byKind.some((k) => k.kind === kind)
+          ? [{ key: kind, label: `${kindName(kind)} · 0` }]
+          : []),
+      ]
+    : [];
+  const appItems = data
+    ? [
+        { key: "all", label: t("views.admin.errors.all") },
+        ...data.byApp.slice(0, 5).map((a) => ({ key: a.appVersion, label: `${a.appVersion} · ${a.count}` })),
+        ...(appVersion !== "all" && !data.byApp.slice(0, 5).some((a) => a.appVersion === appVersion)
+          ? [{ key: appVersion, label: `${appVersion} · 0` }]
+          : []),
+      ]
+    : [];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
+      <DaysTabs value={days} onChange={setDays} />
+      {!data ? (
+        <Loading error={error} />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+            <StatCard label={t("views.admin.errors.totalWindow")} value={data.totals.count} />
+            <StatCard label={t("views.admin.errors.distinct")} value={data.totals.distinct} />
+          </div>
+          {data.byKind.length > 0 ? (
+            <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ flex: "1 1 320px", maxWidth: 520 }}>
+                <Tabs items={kindItems} value={kind} onChange={setKind} />
+              </div>
+              {data.byApp.length > 1 ? (
+                <div style={{ flex: "1 1 260px", maxWidth: 420 }}>
+                  <Tabs items={appItems} value={appVersion} onChange={setAppVersion} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <Section title={t("views.admin.errors.series")}>
+            <SeriesChart
+              points={data.series}
+              mode="bars"
+              color="var(--danger)"
+              ariaLabel={t("views.admin.errors.series")}
+            />
+          </Section>
+          <Section title={t("views.admin.errors.topTitle")}>
+            {data.top.length === 0 ? (
+              <div style={{ color: "var(--text-3)", fontSize: "var(--fs-body)" }}>
+                {t("views.admin.errors.emptyTop")}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <Row
+                  header
+                  cells={[
+                    t("views.admin.errors.colError"),
+                    t("views.admin.errors.colCount"),
+                    t("views.admin.errors.colLast"),
+                    t("views.admin.errors.colVersions"),
+                  ]}
+                />
+                {data.top.map((g) => (
+                  <Row
+                    key={g.stackHash}
+                    cells={[
+                      `${kindName(g.kind)} · ${g.message || "—"}`,
+                      g.count,
+                      dt(g.lastSeen, lang),
+                      g.appVersions.join(", "),
+                    ]}
+                  />
+                ))}
+              </div>
+            )}
+            <Note text={t("views.admin.errors.note")} />
+          </Section>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function AdminView({ api }: { api: MuzaApi }) {
   const { t } = useT();
   const [tab, setTab] = useState("overview");
   const tabs = [
     { key: "overview", label: t("views.admin.tabs.overview") },
+    { key: "growth", label: t("views.admin.tabs.growth") },
     { key: "content", label: t("views.admin.tabs.content") },
     { key: "health", label: t("views.admin.tabs.health") },
+    { key: "errors", label: t("views.admin.tabs.errors") },
     { key: "users", label: t("views.admin.tabs.users") },
   ];
   return (
@@ -325,10 +530,14 @@ export function AdminView({ api }: { api: MuzaApi }) {
       <div key={tab} className="muza-view">
         {tab === "overview" ? (
           <OverviewTab api={api} />
+        ) : tab === "growth" ? (
+          <GrowthTab api={api} />
         ) : tab === "content" ? (
           <ContentTab api={api} />
         ) : tab === "health" ? (
           <HealthTab api={api} />
+        ) : tab === "errors" ? (
+          <ErrorsTab api={api} />
         ) : (
           <UsersTab api={api} />
         )}
