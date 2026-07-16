@@ -173,6 +173,14 @@ export function usePlayback({
         onTime: (sec) => {
           const s = stateRef.current;
           if (!s.track) return;
+          // Старт нового трека в полёте (добыча — секунды на cache-miss):
+          // активный слот движка — всё ещё СТАРЫЙ трек, и его timeupdate не
+          // имеет права двигать полоску под UI нового (бар стоял на чужой
+          // минуте и «падал» в 0:00 после загрузки — жалоба 2026-07-16),
+          // писать чужую позицию в resumeStore под id нового и капать чужие
+          // секунды в его скробблинг. Ранний стык старого трека и так
+          // подавлен ниже (alreadyAdvanced учитывает startPending).
+          if (startPendingRef.current) return;
           setPos(sec);
           tickPlayed(sec);
           // «Продолжить с места»: троттленная запись позиции текущего трека
@@ -183,6 +191,7 @@ export function usePlayback({
           const plan = planAutoAdvance({
             remaining,
             crossfadeEnabled: prefsRef.current.crossfade,
+            crossfadeSec: prefsRef.current.crossfadeSec,
             gaplessEnabled: prefsRef.current.gapless,
             repeatOne: s.repeat === "one",
             hasNext: nextIndexFor(1, true) !== null,
@@ -520,6 +529,7 @@ export function usePlayback({
     const plan = planAutoAdvance({
       remaining,
       crossfadeEnabled: prefsRef.current.crossfade,
+      crossfadeSec: prefsRef.current.crossfadeSec,
       gaplessEnabled: prefsRef.current.gapless,
       repeatOne: s.repeat === "one",
       hasNext: nextIndexFor(1, true) !== null,

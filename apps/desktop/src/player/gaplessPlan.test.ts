@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   CROSSFADE_SEC,
+  CROSSFADE_SEC_MAX,
+  CROSSFADE_SEC_MIN,
+  clampCrossfadeSec,
   GAPLESS_LEAD_SEC,
   GAPLESS_XFADE_SEC,
   nextPollDelayMs,
@@ -145,5 +148,47 @@ describe("pickAutoFadeSec", () => {
 
   it("оба выключены — 0 (мгновенный переход, обратная совместимость)", () => {
     expect(pickAutoFadeSec({ crossfade: false, gapless: false })).toBe(0);
+  });
+
+  it("вход без crossfadeSec фолбэкает на дефолт CROSSFADE_SEC (обратная совместимость)", () => {
+    // Существующие сохранения/вызовы поля не знают — исход обязан остаться 4.
+    expect(pickAutoFadeSec({ crossfade: true, gapless: false })).toBe(CROSSFADE_SEC);
+  });
+
+  it("настроенная длительность прокидывается (crossfadeSec=8 → fadeSec 8, не константа 4)", () => {
+    expect(pickAutoFadeSec({ crossfade: true, gapless: true, crossfadeSec: 8 })).toBe(8);
+  });
+
+  it("значение вне диапазона зажимается в 1..12с (чужие/старые Prefs)", () => {
+    expect(pickAutoFadeSec({ crossfade: true, gapless: false, crossfadeSec: 100 })).toBe(CROSSFADE_SEC_MAX);
+    expect(pickAutoFadeSec({ crossfade: true, gapless: false, crossfadeSec: 0 })).toBe(CROSSFADE_SEC_MIN);
+  });
+});
+
+describe("clampCrossfadeSec — источник истины по диапазону ползунка", () => {
+  it("держит границы 1..12 и не трогает значения внутри", () => {
+    expect(clampCrossfadeSec(-5)).toBe(1);
+    expect(clampCrossfadeSec(1)).toBe(1);
+    expect(clampCrossfadeSec(7)).toBe(7);
+    expect(clampCrossfadeSec(12)).toBe(12);
+    expect(clampCrossfadeSec(999)).toBe(12);
+  });
+});
+
+describe("planAutoAdvance — настраиваемая длительность кроссфейда (prefs.crossfadeSec)", () => {
+  it("окно раннего триггера идёт по crossfadeSec: при 8с стык ловится за 6с до конца", () => {
+    // На старой константе 4 remaining=6 в окно не попадал бы — сторож того,
+    // что окно расширилось вместе с настройкой.
+    const plan = planAutoAdvance({ ...base, crossfadeEnabled: true, crossfadeSec: 8, remaining: 6 });
+    expect(plan).toEqual({ trigger: true, fadeSec: 8 });
+  });
+
+  it("за пределами настроенного окна не триггерит (remaining 10 > 8с)", () => {
+    expect(planAutoAdvance({ ...base, crossfadeEnabled: true, crossfadeSec: 8, remaining: 10 }).trigger).toBe(false);
+  });
+
+  it("вход без crossfadeSec — окно и fadeSec по дефолту CROSSFADE_SEC", () => {
+    const plan = planAutoAdvance({ ...base, crossfadeEnabled: true, remaining: CROSSFADE_SEC - 0.5 });
+    expect(plan).toEqual({ trigger: true, fadeSec: CROSSFADE_SEC });
   });
 });

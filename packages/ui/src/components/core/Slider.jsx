@@ -11,7 +11,11 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
   const [drag, setDrag] = useState(false);
   const [scrub, setScrub] = useState(null); // { pct, v } под курсором
 
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  // max=0 (прогресс-бар без трека: 0/0) или не-число давали pct=NaN — браузер
+  // молча игнорирует calc(NaN% - 6px), а css-парсер jsdom на нём ПАДАЕТ
+  // (уронил App-тесты 2026-07-16). Пустой слайдер честно стоит на нуле.
+  const ratio = max > 0 && Number.isFinite(value) ? (value / max) * 100 : 0;
+  const pct = Math.max(0, Math.min(100, ratio));
 
   const scrubFromEvent = (e) => {
     if (!hoverLabel || !ref.current) return;

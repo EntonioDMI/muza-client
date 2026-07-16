@@ -14,11 +14,23 @@
  *  Вынесено в чистую функцию без DOM/движка — юнит-тест без мока Audio API
  *  (gaplessPlan.test.ts). */
 
-/** Длительность кроссфейда при "Кроссфейд" (секунды) — как и раньше;
- *  вынесено сюда как единый источник истины (usePlayback импортирует). */
+/** Дефолт длительности кроссфейда (секунды) — фолбэк, когда prefs.crossfadeSec
+ *  не задан (старые сохранения, входы planAutoAdvance/pickAutoFadeSec без поля).
+ *  Сама длительность теперь настраивается ползунком (Prefs.crossfadeSec, 1–12с);
+ *  этот модуль — источник истины по её ДИАПАЗОНУ (clampCrossfadeSec ниже). */
 export const CROSSFADE_SEC = 4;
+/** Границы ползунка длительности кроссфейда (секунды). Держим их здесь, а не в
+ *  SettingsView: планировщик обязан кламповать значение сам — оно приходит и из
+ *  чужих/старых Prefs, где ползунка не было, а не только из живого UI. */
+export const CROSSFADE_SEC_MIN = 1;
+export const CROSSFADE_SEC_MAX = 12;
 /** Нижняя граница окна триггера — не стартуем длинный кроссфейд «в упор». */
 const CROSSFADE_TRIGGER_MARGIN_SEC = 0.5;
+
+/** Зажать длительность кроссфейда в допустимый диапазон 1..12с. */
+export function clampCrossfadeSec(sec: number): number {
+  return Math.min(CROSSFADE_SEC_MAX, Math.max(CROSSFADE_SEC_MIN, sec));
+}
 
 /** За сколько секунд до конца трека планировать gapless-стык.
  *
@@ -65,6 +77,10 @@ export interface AutoAdvanceInput {
   remaining: number;
   crossfadeEnabled: boolean;
   gaplessEnabled: boolean;
+  /** Настроенная длительность кроссфейда (prefs.crossfadeSec, 1..12с). Задаёт и
+   *  окно раннего триггера, и итоговый fadeSec. Необязательное: входы без поля
+   *  (старые вызовы/юнит-тесты) фолбэкают на CROSSFADE_SEC — см. planAutoAdvance. */
+  crossfadeSec?: number;
   /** repeat === "one" — трек повторяется сам на себя, авто-переход не нужен. */
   repeatOne: boolean;
   /** Есть куда переходить (см. usePlayback.nextIndexFor(1, true) !== null). */
@@ -86,8 +102,8 @@ export interface AutoAdvancePlan {
  *  триггер не сработал (трек закончился по обычному onEnded) и просит
  *  движок попробовать fade постфактум (engine.play молча откатится на
  *  мгновенный переход, если текущий слот уже не играет). */
-export function pickAutoFadeSec(prefs: { crossfade: boolean; gapless: boolean }): number {
-  if (prefs.crossfade) return CROSSFADE_SEC;
+export function pickAutoFadeSec(prefs: { crossfade: boolean; gapless: boolean; crossfadeSec?: number }): number {
+  if (prefs.crossfade) return clampCrossfadeSec(prefs.crossfadeSec ?? CROSSFADE_SEC);
   if (prefs.gapless) return GAPLESS_XFADE_SEC;
   return 0;
 }
@@ -97,12 +113,17 @@ export function planAutoAdvance(input: AutoAdvanceInput): AutoAdvancePlan {
   if (input.alreadyAdvanced || input.repeatOne || !input.hasNext) {
     return { trigger: false, fadeSec: 0 };
   }
+  // Длительность настраивается (prefs.crossfadeSec, 1..12с): и ОКНО раннего
+  // триггера, и сам fadeSec идут по ней, а не по константе 4 — иначе на длинном
+  // кроссфейде (напр. 10с) стык стартовал бы всего за 4с до конца и обрезал бы
+  // добрую половину кривой. Фолбэк на CROSSFADE_SEC — для входов без поля.
+  const crossfadeSec = clampCrossfadeSec(input.crossfadeSec ?? CROSSFADE_SEC);
   if (
     input.crossfadeEnabled &&
-    input.remaining <= CROSSFADE_SEC &&
+    input.remaining <= crossfadeSec &&
     input.remaining > CROSSFADE_TRIGGER_MARGIN_SEC
   ) {
-    return { trigger: true, fadeSec: CROSSFADE_SEC };
+    return { trigger: true, fadeSec: crossfadeSec };
   }
   if (
     !input.crossfadeEnabled &&

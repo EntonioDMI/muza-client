@@ -236,6 +236,28 @@ describe("usePlayback: старый трек и добыча нового", () =
     expect(h.engine.play).toHaveBeenLastCalledWith("b.webm", 1, 4);
   });
 
+  it("настроенная длительность кроссфейда (crossfadeSec=8) доезжает до engine.play, а не константа 4", async () => {
+    // Сторож всей цепочки prefs → planAutoAdvance → advance → engine.play:
+    // и окно раннего триггера, и fadeSec обязаны идти по настройке, не по 4.
+    const hook = mount({ crossfade: true, crossfadeSec: 8 });
+    await playA(hook);
+    act(() => {
+      hook.result.current.toggleShuffle(); // сосед не преднагружается — добыча живая
+    });
+    h.engine.pause.mockClear();
+
+    const releaseB = deferResolve("b.webm");
+    await act(async () => {
+      // remaining 6с (duration 200): ВНУТРИ настроенного окна 8с, но ВНЕ старого
+      // окна 4с — на константе ранний стык бы не запустился.
+      h.cb.current?.onTime(194);
+    });
+    await act(async () => {
+      releaseB();
+    });
+    expect(h.engine.play).toHaveBeenLastCalledWith("b.webm", 1, 8);
+  });
+
   it("предзагруженный трек стартует мгновенно — глушить нечего", async () => {
     const hook = mount();
     await playA(hook);
@@ -540,6 +562,36 @@ describe("usePlayback: граница трека — повтор и авто-п
       releaseB();
     });
     expect(h.engine.play).toHaveBeenLastCalledWith("b.webm", 1, 4);
+    expect(hook.result.current.track?.id).toBe("b");
+  });
+
+  it("timeupdate старого трека во время добычи не двигает полоску нового", async () => {
+    // Жалоба владельца 2026-07-16 (режим прослушивания, стык песен): бар
+    // нового трека стоял на чужой минуте, пока шла добыча, и «падал» в 0:00
+    // после загрузки. Часики двигал timeupdate ЕЩЁ звучащего старого трека —
+    // активный слот движка в окне добычи всё ещё его.
+    const hook = mount({ crossfade: true });
+    await playA(hook);
+    act(() => {
+      hook.result.current.toggleShuffle(); // сосед не преднагружается — добыча живая
+    });
+    const releaseB = deferResolve("b.webm");
+    await act(async () => {
+      h.cb.current?.onTime(197); // ранний стык → добыча B повисла
+    });
+    expect(hook.result.current.track?.id).toBe("b"); // UI уже показывает новый трек
+    expect(hook.result.current.pos).toBe(0);
+
+    // Старый трек продолжает звучать и тикать — полоска нового не шевелится
+    await act(async () => {
+      h.cb.current?.onTime(198.2);
+    });
+    expect(hook.result.current.pos).toBe(0);
+
+    await act(async () => {
+      releaseB();
+    });
+    expect(hook.result.current.pos).toBe(0); // новый честно начинается с нуля
     expect(hook.result.current.track?.id).toBe("b");
   });
 });
