@@ -47,6 +47,9 @@ import {
   tokensFromPrefs,
   type SavedTheme,
 } from "../lib/themes";
+// Редизайн раскладки (колонки во всю высоту зоны, текучие ширины) — перекрывает
+// габариты каркаса .muza-settings* из app.css; подробности в самом файле.
+import "./SettingsView.layout.css";
 
 /** Функция перевода — тип совпадает с useT().t; передаётся параметром в
  *  свободные (module-level) функции без доступа к React-контексту. */
@@ -710,6 +713,11 @@ const paneStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: "var(--sp-3)",
+  // Вертикальные отступы содержимого живут ВНУТРИ скроллера панели
+  // (.muza-settings__pane, SettingsView.layout.css), а не на .muza-settings:
+  // так они уезжают вместе с рядами при прокрутке, а рельс слева тянется на
+  // всю высоту зоны без «рамки» сверху.
+  paddingTop: "var(--sp-6)",
   paddingBottom: "var(--sp-6)",
 };
 
@@ -1694,6 +1702,14 @@ export function SettingsView({
   const switchedRef = useRef(false);
   if (paneKey !== initialPaneKey.current) switchedRef.current = true;
   const paneClass = switchedRef.current ? "muza-view" : undefined;
+  // Прокрутка живёт в самой панели (.muza-settings__pane — скроллер, см.
+  // SettingsView.layout.css), а не на <main>: при смене раздела/под-экрана
+  // возвращаем её к началу. Раньше скролл прошлого раздела протекал в
+  // следующий — key на <main> (App.tsx) стоит только на смене view, не вкладки.
+  const paneScrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (paneScrollRef.current) paneScrollRef.current.scrollTop = 0;
+  }, [paneKey]);
 
   const presets = [
     {
@@ -3382,14 +3398,11 @@ export function SettingsView({
     );
 
   return (
-    // maxWidth 920 = 220 (навигация) + 20 (гаттер) + 680 (панель): панель
-    // остаётся примерно той же ширины, что и прежняя одноколоночная (720),
-    // навигация приезжает сбоку, а не за её счёт. Класс muza-settings —
-    // container query для схлопывания навигации, см. app.css.
-    <div
-      className="muza-settings"
-      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0", maxWidth: 920, margin: "0 auto" }}
-    >
+    // Вся геометрия (высота во всю зону, текучие колонки, потолки ширины) —
+    // в SettingsView.layout.css; базовый каркас и схлопывание рельса — в
+    // app.css. Класс muza-settings — container query по ширине панели
+    // настроек (не по окну: боковые зоны пользователь тянет руками).
+    <div className="muza-settings">
       {/* Навигация слева вместо горизонтальных вкладок: список не зависит от
           длины подписей, поэтому раскладка не перестраивается при смене языка
           (у <Tabs wrap> точка переноса ехала: RU 5+5, EN 7+3).
@@ -3407,7 +3420,7 @@ export function SettingsView({
         {/* Под-экран (sub !== null) рендерится сюда же вместо содержимого
             раздела: навигация остаётся на месте с подсвеченным разделом,
             назад — кнопкой SubHeader. */}
-        <div className="muza-settings__pane" id={SETTINGS_PANE_ID} role="tabpanel" aria-labelledby={navItemId(tab)}>
+        <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="tabpanel" aria-labelledby={navItemId(tab)}>
           {pane}
         </div>
       </div>
