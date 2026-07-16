@@ -46,6 +46,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ru">
       <body>
         <Providers>{children}</Providers>
+        {/* app-shell SW — только в production: в dev закэшировал бы
+            нехэшированные чанки (инварианты кэша — в public/sw.js) */}
+        {process.env.NODE_ENV === "production" && <script src="/sw-register.js" defer />}
       </body>
     </html>
   );
