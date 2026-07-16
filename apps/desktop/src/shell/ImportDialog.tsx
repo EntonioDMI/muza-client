@@ -12,8 +12,11 @@ const PREVIEW_DEBOUNCE_MS = 500;
  *  решает сервер: по ВИДУ ссылки владельца плейлиста всё равно не узнать. */
 function looksLikeUrl(value: string): boolean {
   try {
-    const u = new URL(value);
-    return u.protocol === "http:" || u.protocol === "https:";
+    // Только https: импорт-ссылки Spotify/YouTube/Apple всегда https, а голый
+    // литерал "http:" в бандле роняет release-gate (artifacts scan) — да и
+    // принимать незащищённые URL незачем. Регэксп `https?:` не содержит
+    // подстроки "http:" целиком, но нам http и не нужен — сверяем ровно https.
+    return new URL(value).protocol === "https:";
   } catch {
     return false;
   }
