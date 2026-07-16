@@ -101,7 +101,6 @@ export const mediaEn = {
     top_artists: { label: "Top artists", hint: "By minutes played" },
     streaks: { label: "Streaks", hint: "Consecutive days with music" },
     likes: { label: "Likes", hint: "Added to Favorites in the period" },
-    wrapped: { label: "Wrapped", hint: "Entry to the story recap (Wrapped)" },
   },
   search: {
     variants: {

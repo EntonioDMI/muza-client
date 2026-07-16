@@ -13,6 +13,7 @@ import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine } from "./audioEngine";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
+import { getCachedSources, invalidateCachedSources, putCachedSources } from "./sourcesCache";
 import { shouldSilenceBeforeResolve } from "./startPlan";
 import type { PlayerTrack } from "./types";
 
@@ -33,6 +34,13 @@ const GAPLESS_ARM_LEAD_SEC = 2;
  *  и не лучше более крупного числа, но и не вредят (тот же самый setTimeout,
  *  просто редкий на практике). */
 const GAPLESS_POLL_STEP_MS = 20;
+
+/** Потолок ПОДРЯД идущих авто-скипов недобываемых треков на авто-переходе
+ *  (см. catch в startAt): радио/очередь не встают из-за одного мёртвого трека
+ *  (жалоба 2026-07-16 — «треки листаются и в какой-то момент ставятся на
+ *  паузу на 0:00»), но и не крутятся вечно, когда мертво всё (маленькая
+ *  очередь на repeat all). Успешный старт сбрасывает счётчик. */
+const MAX_AUTO_SKIPS = 3;
 
 export interface PlayEndInfo {
   track: PlayerTrack;
@@ -139,6 +147,16 @@ export function usePlayback({
   const playSeqRef = useRef(0);
   // Ранний стык (кроссфейд/gapless) на естественном переходе уже запущен для этого pos
   const autoAdvancedRef = useRef(false);
+  // Старт трека в полёте: между началом startAt и успешным engine().play()
+  // (добыча — секунды на cache-miss). В этом окне граница СТАРОГО трека уже
+  // «занята»: его 'ended'/'timeupdate' не должны запускать второй advance —
+  // иначе скип трека через один, а на конце очереди — стоп поверх живой
+  // добычи (гонка 2026-07-16). autoAdvancedRef тут не помощник: startAt
+  // сбрасывает его сразу (это флаг НОВОЙ позиции, не старой границы).
+  const startPendingRef = useRef(false);
+  // Сколько АВТО-переходов подряд упало добычей (catch в startAt); успешный
+  // старт сбрасывает. См. MAX_AUTO_SKIPS.
+  const autoSkipsRef = useRef(0);
   // T19 fast-follow: id таймера точного gapless-опроса (pollGapless ниже) —
   // один setTimeout в моменте, self-adjusting (перепланирует сам себя).
   const gaplessTimerRef = useRef<number | null>(null);
@@ -168,7 +186,10 @@ export function usePlayback({
             gaplessEnabled: prefsRef.current.gapless,
             repeatOne: s.repeat === "one",
             hasNext: nextIndexFor(1, true) !== null,
-            alreadyAdvanced: autoAdvancedRef.current,
+            // Пока следующий трек добывается (startPendingRef), timeupdate
+            // ещё звучащего СТАРОГО трека не имеет права запустить второй
+            // ранний стык — advance уже в полёте.
+            alreadyAdvanced: autoAdvancedRef.current || startPendingRef.current,
           });
           if (plan.trigger) {
             autoAdvancedRef.current = true;
@@ -177,6 +198,11 @@ export function usePlayback({
         },
         onEnded: () => {
           if (autoAdvancedRef.current) return; // ранний стык (кроссфейд/gapless) уже увёл дальше
+          // Старый трек доиграл, ПОКА добывается следующий (ранний стык или
+          // ручной next перед самым концом): это не новая граница — второй
+          // advance скипал бы трек через один, а на конце очереди глушил бы
+          // очередь, оставляя добычу доигрывать под паузной кнопкой.
+          if (startPendingRef.current) return;
           handleTrackEnd();
         },
         onError: (message) => {
@@ -233,15 +259,22 @@ export function usePlayback({
       if (!path) throw new Error(translate(prefsRef.current.language, "media.player.errors.localFileNotFound"));
       return { url: convertFileSrc(path), fromCache: true, provider: "local" };
     }
-    // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
-    // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
-    // движок с пустой лестницей отвечал безликим «нет живых источников».
-    let sources: TrackSource[] | null = null;
+    // Источники — сперва из кэша плеера (sourcesCache.ts): без него КАЖДЫЙ
+    // резолв — включая повторный клик по треку, чей файл давно в Rust-кэше —
+    // платил полный RTT до сервера. Кэшируется только УСПЕШНЫЙ ответ; отказ
+    // сервера не кэшируем — оффлайн-ветка ниже должна отработать заново.
+    let sources: TrackSource[] | null = getCachedSources(t.id);
     let sourcesError: unknown = null;
-    try {
-      sources = await api.getTrackSources(t.id);
-    } catch (e) {
-      sourcesError = e;
+    if (sources === null) {
+      // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
+      // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
+      // движок с пустой лестницей отвечал безликим «нет живых источников».
+      try {
+        sources = await api.getTrackSources(t.id);
+        putCachedSources(t.id, sources);
+      } catch (e) {
+        sourcesError = e;
+      }
     }
     const quality = prefsRef.current.streamQuality;
     if (sources === null) {
@@ -258,8 +291,17 @@ export function usePlayback({
         throw sourcesError instanceof Error ? sourcesError : new Error(String(sourcesError));
       }
     }
-    // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
-    return resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality, prefsRef.current.language);
+    try {
+      // клиентская политика: вкл/выкл провайдеров + порядок предпочтения
+      return await resolvePlayable(t.id, applySourcePolicy(sources, prefsRef.current), quality, prefsRef.current.language);
+    } catch (e) {
+      // Лестница целиком не заиграла — источники могли протухнуть (is_dead на
+      // сервере ставится позже, чем умирает сам источник). Сбрасываем запись,
+      // чтобы СЛЕДУЮЩАЯ попытка взяла свежие. Повторяем НЕ сами: семантика
+      // ошибок клика не меняется — честный тост, без ретраев внутри старта.
+      invalidateCachedSources(t.id);
+      throw e;
+    }
   };
 
   /** Запустить трек очереди по индексу. fadeSec>0 (кроссфейд/gapless) —
@@ -276,6 +318,10 @@ export function usePlayback({
     setIndex(i);
     setPos(0);
     setPlaying(true);
+    // advance/nextIndexFor могут читать stateRef ДО того, как React дольёт
+    // эти set'ы до рефа (авто-скип из catch ниже зовёт advance немедленно) —
+    // кладём свежие индекс/трек туда сразу, тем же приёмом, что playContext.
+    stateRef.current = { ...stateRef.current, index: i, track: t, pos: 0, playing: true };
     autoAdvancedRef.current = false;
     stopGaplessPoll(); // новый трек — старый прицел точного триггера уже неактуален
     rememberPlayed(t.id);
@@ -290,6 +336,7 @@ export function usePlayback({
       return;
     }
 
+    startPendingRef.current = true; // граница старого трека занята этим стартом
     try {
       const preloadedUrl = preloadedRef.current?.id === t.id ? preloadedRef.current.url : null;
       // Человек переключил трек, а добычи ждать секунды — глушим играющий
@@ -317,6 +364,7 @@ export function usePlayback({
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
       await engine().play(url, norm, opts?.fadeSec ?? 0);
       startedIdRef.current = t.id; // движок реально держит URL этого трека
+      autoSkipsRef.current = 0; // цепочка авто-скипов мёртвых треков прервана успехом
       pollGapless(); // T19 fast-follow: точный прицел на конец нового трека
       // «Продолжить с места»: если сохранена осмысленная позиция (не у начала
       // и не у конца) — досикиваем. Ручной старт с 0 через seek не трогаем.
@@ -329,10 +377,25 @@ export function usePlayback({
       }
     } catch (e) {
       if (playSeqRef.current !== seq) return;
+      const msg = e instanceof Error ? e.message : translate(prefsRef.current.language, "media.player.errors.trackFetchFailed");
+      // АВТО-переход (конец трека, радио-продолжение): недобываемый трек не
+      // должен глушить всю музыку — честный тост и скип дальше, ограниченно
+      // (MAX_AUTO_SKIPS подряд, иначе на всём мёртвом кружились бы вечно).
+      // Ручной клик сохраняет прежнюю семантику: тост и остановка, без
+      // самодеятельности (тест «ошибка резолва сбрасывает запись кэша»).
+      if (opts?.auto && autoSkipsRef.current < MAX_AUTO_SKIPS) {
+        autoSkipsRef.current++;
+        onErrorRef.current(msg);
+        void advance(1, true);
+        return;
+      }
       setPlaying(false);
-      onErrorRef.current(e instanceof Error ? e.message : translate(prefsRef.current.language, "media.player.errors.trackFetchFailed"));
+      onErrorRef.current(msg);
     } finally {
-      if (playSeqRef.current === seq) setBuffering(false);
+      if (playSeqRef.current === seq) {
+        setBuffering(false);
+        startPendingRef.current = false; // старт завершён (успех или отказ) — граница снова живая
+      }
     }
   };
 
@@ -362,8 +425,15 @@ export function usePlayback({
     const s = stateRef.current;
     if (!s.track) return; // пустая очередь — переходить не от чего и не к чему
     if (auto && s.repeat === "one") {
-      // повтор трека: с начала, без кроссфейда
+      // Повтор трека: с начала, без кроссфейда. Сюда приходим ТОЛЬКО с
+      // естественного конца (onEnded: planAutoAdvance при repeatOne ранний
+      // стык не запускает), а на конце HTML-спека СНАЧАЛА ставит элементу
+      // paused=true и лишь потом шлёт 'ended' («reaches the end»); seek
+      // паузу не снимает. Голый seek(0) оставлял тишину на 0:00 под
+      // «играющим» баром — повтор молча умирал на первой же границе
+      // (жалоба 2026-07-16). resume() = el.play() на том же src.
       engine().seek(0);
+      void engine().resume();
       setPos(0);
       return;
     }
@@ -411,6 +481,7 @@ export function usePlayback({
    *  в pollGapless ниже). */
   const cancelPendingStart = () => {
     playSeqRef.current++;
+    startPendingRef.current = false; // старта в полёте больше нет — граница снова живая
     setBuffering(false);
   };
 
@@ -452,7 +523,9 @@ export function usePlayback({
       gaplessEnabled: prefsRef.current.gapless,
       repeatOne: s.repeat === "one",
       hasNext: nextIndexFor(1, true) !== null,
-      alreadyAdvanced: autoAdvancedRef.current,
+      // startPendingRef — как в onTime: добыча следующего уже идёт, второй
+      // ранний стык по позиции ещё звучащего старого трека запрещён.
+      alreadyAdvanced: autoAdvancedRef.current || startPendingRef.current,
     });
     if (plan.trigger) {
       autoAdvancedRef.current = true;

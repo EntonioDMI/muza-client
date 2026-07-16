@@ -16,6 +16,7 @@ import {
   type VariantType,
   type HistoryItem,
   type HomeSection,
+  type ImportPreview,
   type ImportReport,
   type JamEvent,
   type JamSnapshot,
@@ -524,6 +525,24 @@ export class HttpMuzaApi implements MuzaApi {
         }),
       }),
     );
+  }
+
+  async previewImport(url: string): Promise<ImportPreview> {
+    const params = new URLSearchParams({ url });
+    const out = await this.authedRequest<{
+      previewable: boolean;
+      name: string | null;
+      owner: string | null;
+      track_count: number;
+      may_be_personalized: boolean;
+    }>(`/me/playlists/import/preview?${params}`);
+    return {
+      previewable: out.previewable,
+      name: out.name,
+      owner: out.owner,
+      trackCount: out.track_count,
+      mayBePersonalized: out.may_be_personalized,
+    };
   }
 
   async importPlaylist(url: string): Promise<ImportReport> {

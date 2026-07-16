@@ -97,11 +97,37 @@ function pointer(type: string, y: number): PointerEvent {
 }
 
 /** Жест: взять строку `from` и отпустить на высоте `y`. Подъём — рывком через
- *  DRAG_THRESHOLD (24px), чтобы не гонять таймер HOLD_MS. */
+ *  DRAG_THRESHOLD, одним pointermove. */
 function dragRow(container: HTMLElement, from: number, y: number): void {
   act(() => {
     rows(container)[from].dispatchEvent(pointer("pointerdown", from * ROW_H + 10));
   });
+  act(() => {
+    window.dispatchEvent(pointer("pointermove", y));
+  });
+  act(() => {
+    window.dispatchEvent(pointer("pointerup", y));
+  });
+}
+
+/** Тот же жест, но как его делает НАСТОЯЩАЯ мышь: pointermove летит каждые
+ *  ~8-16мс, и курсор проходит все промежуточные точки, а не телепортируется.
+ *
+ *  Разница не косметическая. `dragRow` прыгает к цели одним событием и потому
+ *  перескакивает полосу между slop'ом и порогом подъёма — а владелец в неё
+ *  попадает всегда, потому что тянет сразу. Ради этого хелпер и живёт отдельно:
+ *  любой порог, недостижимый при плавном движении, здесь падает. */
+function dragRowGradually(container: HTMLElement, from: number, y: number, step = 5): void {
+  const y0 = from * ROW_H + 10;
+  act(() => {
+    rows(container)[from].dispatchEvent(pointer("pointerdown", y0));
+  });
+  const dir = Math.sign(y - y0) || 1;
+  for (let cur = y0 + dir * step; dir * (y - cur) > 0; cur += dir * step) {
+    act(() => {
+      window.dispatchEvent(pointer("pointermove", cur));
+    });
+  }
   act(() => {
     window.dispatchEvent(pointer("pointermove", y));
   });
@@ -123,6 +149,44 @@ describe("Реордер плейлиста перетаскиванием", () 
 
     await waitFor(() => expect(reorderPlaylist).toHaveBeenCalledTimes(1));
     expect(reorderPlaylist).toHaveBeenCalledWith("pl1", ["t2", "t3", "t1"]);
+  });
+
+  it("тащим ПЛАВНО, как настоящей мышью — перенос обязан начаться", async () => {
+    const reorderPlaylist = vi.fn().mockResolvedValue(undefined);
+    const api = { getPlaylist: vi.fn().mockResolvedValue(detail), reorderPlaylist } as unknown as MuzaApi;
+    const { container } = renderView(api);
+    await waitFor(() => expect(screen.getByText("Первый")).toBeTruthy());
+    layout(container);
+
+    // Ровно то, что делает владелец: нажал и сразу потянул, без удержания.
+    dragRowGradually(container, 0, 105);
+
+    await waitFor(() => expect(reorderPlaylist).toHaveBeenCalledWith("pl1", ["t2", "t3", "t1"]));
+  });
+
+  /** Гонка, которую видно только на живой мыши: между pointermove и pointerup
+   *  React может не успеть перерисоваться, и dragRef — он обновляется В РЕНДЕРЕ —
+   *  на момент отпускания ещё пуст. Обработчик up на этом выходит вхолостую, а
+   *  назначенный рендер потом всё равно рисует карточку: снимать её уже некому.
+   *
+   *  Прежние тесты гонку не видели: каждое событие шло в своём act(), а act()
+   *  прогоняет рендер, так что dragRef всегда оказывался заполнен. Здесь все три
+   *  события — в одном act(), как их и получает приложение. */
+  it("отпустили сразу после рывка — карточка не залипает на курсоре", async () => {
+    const reorderPlaylist = vi.fn().mockResolvedValue(undefined);
+    const api = { getPlaylist: vi.fn().mockResolvedValue(detail), reorderPlaylist } as unknown as MuzaApi;
+    const { container } = renderView(api);
+    await waitFor(() => expect(screen.getByText("Первый")).toBeTruthy());
+    layout(container);
+
+    act(() => {
+      rows(container)[0].dispatchEvent(pointer("pointerdown", 10));
+      window.dispatchEvent(pointer("pointermove", 105));
+      window.dispatchEvent(pointer("pointerup", 105));
+    });
+
+    // Превью печатает название трека — залипшая карточка даёт второй «Первый».
+    expect(screen.getAllByText("Первый")).toHaveLength(1);
   });
 
   it("тащим последнюю строку вверх", async () => {

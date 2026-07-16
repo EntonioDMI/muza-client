@@ -30,6 +30,10 @@ audioEngine/usePlayback), `jam` (тосты `player/useJam.ts`), `nav` (дефо
 Английский вокабуляр сверен с главным `en.ts` (Home/Search/Favorites/
 Library/Stats/Shuffle/Repeat/Queue/Radio/Jam) — синонимы не вводились.
 
+2026-07-16: из `statsBlocks.*` удалён ключ `wrapped` (блок «Итоги года» убран
+со страницы статистики вместе с записью в `STATS_BLOCK_KEYS` — вход во Wrapped
+только с главной). RU-пара удалена синхронно.
+
 См. также `docs/knowledge/packages/app/src/i18n/ru.media.ts.md` (форма
 `typeof mediaEn` заставляет tsc ловить расхождение ключей) и шапку самого
 файла — там подробно описан подход к non-React потребителям (`translate(lang,

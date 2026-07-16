@@ -69,7 +69,6 @@ export const mediaRu: typeof mediaEn = {
     top_artists: { label: "Топ артистов", hint: "По наигранным минутам" },
     streaks: { label: "Серии", hint: "Дни с музыкой подряд" },
     likes: { label: "Лайки", hint: "Добавлено в любимое за период" },
-    wrapped: { label: "Итоги года", hint: "Вход в story-итоги (Wrapped)" },
   },
   search: {
     variants: {

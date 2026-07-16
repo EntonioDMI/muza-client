@@ -14,6 +14,7 @@ import type {
   GroupedSearchResult,
   HistoryItem,
   HomeSection,
+  ImportPreview,
   ImportReport,
   JamEvent,
   JamSnapshot,
@@ -112,6 +113,11 @@ export interface MuzaApi {
   addLocalTrack(input: { artist: string; title: string; durationSec: number; hash: string }): Promise<Track>;
   /** Импорт плейлиста по ссылке (Spotify/YT/Apple) через матчинг в каталог. */
   importPlaylist(url: string): Promise<ImportReport>;
+  /** Что лежит по ссылке — ДО импорта: название, число позиций и может ли
+   *  плейлист подстраиваться под слушателя. Зовётся на вставку ссылки, поэтому
+   *  дёшево (Spotify/Apple — одна страница; YouTube не превьюится вовсе).
+   *  Нечего сказать → previewable=false, а не ошибка. */
+  previewImport(url: string): Promise<ImportPreview>;
 
   // Личное (Stage 2, слайс 4): избранное, плейлисты, история. Серверная сессия.
   getFavorites(): Promise<Track[]>;

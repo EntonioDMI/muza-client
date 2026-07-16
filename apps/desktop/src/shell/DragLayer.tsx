@@ -4,7 +4,6 @@ import {
   DRAG_THRESHOLD,
   DROP_ATTR,
   HOLD_MS,
-  MOVE_SLOP,
   dist,
   dropTargetAt,
   shouldStart,
@@ -55,8 +54,18 @@ export function DragLayer({ children }: { children: ReactNode }) {
   /** Состояние жеста ДО подъёма — в ref, чтобы не гонять ререндер на каждый
    *  pointermove: пока карточка не поднята, перерисовывать нечего. */
   const pending = useRef<{ payload: DragPayload; x0: number; y0: number; timer: number; pointerId: number } | null>(null);
-  const dragRef = useRef<DragState | null>(null);
-  dragRef.current = drag;
+  /** Идёт ли перенос ПРЯМО СЕЙЧАС, с точки зрения обработчиков указателя.
+   *
+   *  Ref, а не `drag`, и заполняется СИНХРОННО в lift/up — не рендером. Раньше
+   *  здесь стояло `dragRef.current = drag` в теле компонента, то есть признак
+   *  появлялся только после перерисовки. Между pointermove и pointerup её может
+   *  не быть вовсе: React назначает рендер, а события идут дальше в том же кадре.
+   *  Тогда up видел пустоту, выходил вхолостую и не снимал перенос — а рендер
+   *  потом всё равно рисовал карточку, и она залипала на курсоре навсегда.
+   *  Симптом владельца 16.07.2026: «перестал удерживать мышку, а она до сих пор
+   *  на мышке». Держим только payload: координаты обработчики берут из события,
+   *  а состояние для отрисовки живёт в `drag`. */
+  const dragging = useRef<DragPayload | null>(null);
 
   const registerDrop = useCallback((id: string, onDrop: (p: DragPayload) => void) => {
     drops.current.set(id, onDrop);
@@ -76,8 +85,16 @@ export function DragLayer({ children }: { children: ReactNode }) {
     const p = pending.current;
     if (!p) return;
     clearTimeout(p.timer);
-    // курсор «взял» карточку — системное выделение текста при этом мешает
-    document.body.style.userSelect = "none";
+    // Ожидание закончено — карточка поднята. Оба перехода СИНХРОННЫ и не ждут
+    // рендера: pending гасим, чтобы следующий pointermove не поднял ту же
+    // карточку второй раз, а dragging поднимаем, чтобы pointerup в том же кадре
+    // увидел живой перенос и смог его завершить.
+    pending.current = null;
+    dragging.current = p.payload;
+    // Выделение текста здесь не гасим: оно выключено на :root в app.css. Ставить
+    // user-select на body при подъёме было бесполезно — браузер начинает
+    // выделять на pointerdown, до подъёма, а начатое выделение этот запрет уже
+    // не отменяет.
     setDrag({ payload: p.payload, x, y, over: dropTargetAt(x, y)?.id ?? null });
   }, []);
 
@@ -111,18 +128,16 @@ export function DragLayer({ children }: { children: ReactNode }) {
   useEffect(() => {
     const move = (e: PointerEvent) => {
       const p = pending.current;
-      if (p && !dragRef.current) {
+      if (p && !dragging.current) {
         const d = dist(p.x0, p.y0, e.clientX, e.clientY);
-        // Осознанный рывок — поднимаем не дожидаясь таймера…
-        if (d >= DRAG_THRESHOLD) {
-          lift(e.clientX, e.clientY);
-          return;
-        }
-        // …а мелкий сдвиг до таймера означает клик/скролл, а не перенос
-        if (d > MOVE_SLOP) cancelPending();
+        // Курсор поехал — это перенос, а не клик; таймер ждать незачем. Ниже
+        // порога не делаем НИЧЕГО: жест ещё жив, решит либо следующий сдвиг,
+        // либо HOLD_MS, либо pointerup (тогда это был клик). Отменять здесь
+        // нельзя — именно отмена и убивала любой перенос живой мышью.
+        if (d >= DRAG_THRESHOLD) lift(e.clientX, e.clientY);
         return;
       }
-      if (!dragRef.current) return;
+      if (!dragging.current) return;
       e.preventDefault();
       const over = dropTargetAt(e.clientX, e.clientY)?.id ?? null;
       setDrag((s) => (s ? { ...s, x: e.clientX, y: e.clientY, over } : s));
@@ -130,22 +145,22 @@ export function DragLayer({ children }: { children: ReactNode }) {
 
     const up = (e: PointerEvent) => {
       cancelPending();
-      const s = dragRef.current;
-      if (!s) return;
-      document.body.style.userSelect = "";
+      const payload = dragging.current;
+      if (!payload) return;
+      dragging.current = null;
       const hit = dropTargetAt(e.clientX, e.clientY);
       const cb = hit ? drops.current.get(hit.id) : undefined;
       setDrag(null);
       // после setDrag(null): обработчик может открыть диалог/тост, и делать это
       // при живом состоянии переноса — значит показать их поверх превью
-      if (cb) cb(s.payload);
+      if (cb) cb(payload);
     };
 
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       cancelPending();
-      if (!dragRef.current) return;
-      document.body.style.userSelect = "";
+      if (!dragging.current) return;
+      dragging.current = null;
       setDrag(null); // Esc отменяет перенос — как в любом менеджере файлов
     };
 
@@ -181,7 +196,20 @@ export function DragLayer({ children }: { children: ReactNode }) {
 
 /** Карточка под курсором. Держится на transform (композитится GPU, не вызывает
  *  layout на каждый кадр) и слегка наклонена — чтобы читалась как «поднятая»,
- *  а не как часть списка. */
+ *  а не как часть списка.
+ *
+ *  ⚠️ Материал — ТОЛЬКО размытие. `tokens/effects.css` запрещает прямым текстом:
+ *  «NO box-shadows. NO glows. NO gradients. Blur is the only material». Здесь
+ *  раньше были и рамка `1px solid var(--accent)` на принятии, и тень
+ *  `0 12px 32px` — единственные во всём десктопе (проверено grep'ом), потому
+ *  владелец их и заметил сразу, едва перенос начал работать. Приём показываем
+ *  тем же языком, что и вся ДС: сменой иконки и масштабом («Press feedback —
+ *  scale, no color flash»), не линией.
+ *
+ *  Фон — `--surface-4`, а не `--glass-panel`: последний завязан на ползунок
+ *  прозрачности (App.tsx: `--glass-panel` из `prefs.glassOpacity`), и на нуле
+ *  карточка стала бы невидимой. Зона может себе это позволить, движущийся
+ *  объект — нет. */
 function DragPreview({ state }: { state: DragState }) {
   const accepted = state.over !== null;
   return (
@@ -192,7 +220,7 @@ function DragPreview({ state }: { state: DragState }) {
         top: 0,
         left: 0,
         // -50%/-50% по Y даёт ощущение «схватил за то место, где держал»
-        transform: `translate3d(${state.x + 14}px, ${state.y - 18}px, 0) rotate(${accepted ? -1.5 : -3}deg) scale(${accepted ? 1.02 : 1})`,
+        transform: `translate3d(${state.x + 14}px, ${state.y - 18}px, 0) rotate(${accepted ? -1.5 : -3}deg) scale(${accepted ? 1.06 : 1})`,
         zIndex: 300,
         pointerEvents: "none",
         display: "flex",
@@ -202,9 +230,9 @@ function DragPreview({ state }: { state: DragState }) {
         padding: "var(--sp-2) var(--sp-3)",
         borderRadius: "var(--r-md)",
         background: "var(--surface-4)",
-        border: `1px solid ${accepted ? "var(--accent)" : "transparent"}`,
-        boxShadow: "0 12px 32px rgba(0,0,0,.45)",
-        transition: "transform 90ms var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
+        backdropFilter: "blur(var(--blur-glass))",
+        WebkitBackdropFilter: "blur(var(--blur-glass))",
+        transition: "transform 90ms var(--ease-out)",
         willChange: "transform",
       }}
     >

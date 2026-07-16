@@ -980,6 +980,8 @@ export const en = {
   // ── ListeningMode.tsx (T31, строки помимо переиспользованных player.*) ─
   listeningMode: {
     minimize: "Minimize",
+    hideLyrics: "Hide lyrics",
+    showLyrics: "Show lyrics",
   },
 
   // ── Зоны-фрагменты (параллельное извлечение) ──
@@ -1159,6 +1161,16 @@ export const en = {
       hint:
         "YouTube / YouTube Music, Spotify, Apple Music. The playlist must be public. Tracks are matched to the catalog — anything missing, we'll look for in sources.",
       matching: "Matching tracks — large playlists take up to a couple of minutes…",
+      preview: {
+        trackCount: "{count} tr.",
+        // Не «предупреждение об опасности»: импорт исправен и идёт как шёл.
+        // Говорим ЧТО произойдёт и что это нормально — иначе человек примет
+        // расхождение за баг (15.07 владелец потерял на этом полдня и подал
+        // два ложных баг-репорта). Без «algotorial» и прочей кухни Spotify:
+        // термин ничего не объясняет тому, кто просто импортирует плейлист.
+        personalized:
+          "Spotify tailors its own playlists to each listener. Muza imports the version everyone gets, so a few tracks may differ from what you see in Spotify. That's normal.",
+      },
     },
     addLink: {
       failed: "Couldn't add by link",

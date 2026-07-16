@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { GroupedSearchResult, Track } from "@muza/api-client";
-import { flattenGroupedResults, GROUP_LIMIT_STEPS, nextGroupLimit, pluralVersions, variantLabel } from "./searchGrouping";
+import {
+  flattenGroupedResults,
+  GROUP_LIMIT_MAX,
+  GROUP_LIMIT_STEP,
+  loadMoreScope,
+  nextGroupLimit,
+  pluralVersions,
+  variantLabel,
+} from "./searchGrouping";
 
 function track(id: string): Track {
   return {
@@ -112,21 +120,45 @@ describe("flattenGroupedResults (T37)", () => {
   });
 });
 
-describe("nextGroupLimit / GROUP_LIMIT_STEPS (T37 — «Загрузить ещё» в grouped-режиме)", () => {
-  it("лестница — 30 → 60 → 90, как лимиты сервера (SearchQueryDto: min 10, max 90)", () => {
-    expect(GROUP_LIMIT_STEPS).toEqual([30, 60, 90]);
-  });
-
-  it("30 → 60, 60 → 90", () => {
+describe("nextGroupLimit (T37 — «Загрузить ещё» в grouped-режиме)", () => {
+  // ⚠️ Лестница была ЖЁСТКОЙ: [30, 60, 90], и nextGroupLimit(90) === null.
+  // Это и прятало кнопку «Загрузить ещё» на широком запросе («фонк»): треки в
+  // источниках не кончались — просто на третьем шаге расти было некуда, и
+  // выдача упиралась в ~40 треков навсегда. Тест, требовавший ровно этого,
+  // переписан осознанно (замеры — docs/notes/2026-07-15-поиск-потолок-пагинации.md).
+  it("шаг 30: 30 → 60 → 90 → 120 — за прежним потолком лестница не кончается", () => {
     expect(nextGroupLimit(30)).toBe(60);
     expect(nextGroupLimit(60)).toBe(90);
+    expect(nextGroupLimit(90)).toBe(120); // раньше здесь был null — и кнопка исчезала
+    expect(nextGroupLimit(120)).toBe(150);
   });
 
-  it("90 → null (максимум сервера — дальше расти некуда, кнопка прячется)", () => {
-    expect(nextGroupLimit(90)).toBeNull();
+  it("потолок — максимум сервера (SearchQueryDto @Max = SEARCH_MAX_POOL)", () => {
+    expect(GROUP_LIMIT_MAX).toBe(300);
+    expect(nextGroupLimit(GROUP_LIMIT_MAX - GROUP_LIMIT_STEP)).toBe(GROUP_LIMIT_MAX);
   });
 
-  it("значение вне лестницы → null (защита от рассинхрона состояния)", () => {
-    expect(nextGroupLimit(45)).toBeNull();
+  it("на потолке — null: дальше сервер всё равно клампит пул, кнопку прячем", () => {
+    expect(nextGroupLimit(GROUP_LIMIT_MAX)).toBeNull();
+    expect(nextGroupLimit(GROUP_LIMIT_MAX + 30)).toBeNull();
+  });
+
+  it("значение вне шага не ломает лестницу — просто следующий шаг от него", () => {
+    expect(nextGroupLimit(45)).toBe(75);
+  });
+});
+
+describe("loadMoreScope — куда идёт «Загрузить ещё»", () => {
+  // Мгновенный ввод ищет scope=catalog (быстро, без провайдеров), и «Загрузить
+  // ещё» повторял ИМЕННО его — то есть листал накопленный каталог и в источники
+  // за добавкой не ходил никогда. На широком запросе это тупик: в каталоге по
+  // «фонк» pg_trgm отдаёт 11 строк из 1968 (замер 15.07), прирост нулевой —
+  // и кнопка пропадала, хотя в источниках треков тысячи.
+  it("«где искать: каталог + источники» — «ещё» идёт в источники, а не листает каталог", () => {
+    expect(loadMoreScope("all")).toBe("full");
+  });
+
+  it("«где искать: только каталог» — выбор пользователя уважаем, в источники не лезем", () => {
+    expect(loadMoreScope("catalog")).toBe("catalog");
   });
 });

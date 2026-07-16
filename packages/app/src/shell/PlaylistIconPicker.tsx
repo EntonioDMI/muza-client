@@ -83,6 +83,12 @@ export function PlaylistIconPicker({ open, currentIcon, onClose, onPick, busy = 
           maxHeight: "min(60vh, 420px)",
           overflowY: "auto",
           overflowX: "hidden",
+          // Без этого сетка — единственный скролл в приложении с системным
+          // «толстым» скроллбаром. thin — тот же паттерн, что у выпадающей
+          // панели Select (@muza/ui); остальные скроллы ДС прячут полосу
+          // совсем ("none"), но у сетки в диалоге полоса — единственный
+          // намёк, что иконок больше, чем видно.
+          scrollbarWidth: "thin",
           paddingRight: 2,
         }}
       >

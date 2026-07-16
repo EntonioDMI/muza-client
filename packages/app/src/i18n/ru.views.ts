@@ -154,9 +154,17 @@ export const viewsRu: typeof viewsEn = {
       longest: "рекордная серия",
       activeDays: "дней с музыкой за период",
       daysSuffix: "дн.",
+      toRecord: "до рекорда",
+      atRecord: "это рекорд",
     },
     likes: {
       addedThisPeriod: "в любимое за период",
+      avgLabel: "в среднем",
+      avgPerDay: "{value} в день",
+      avgPerMonth: "{value} в месяц",
+      shareLabel: "доля прослушиваний",
+      shareValue: "1 из {n}",
+      emptyPeriod: "За этот период в любимое ничего не попало — жми сердечко на треке, который зашёл.",
     },
     customizeBlocksTooltip: "Настроить блоки",
     customizeBlocksLabel: "Настроить блоки статистики",
@@ -168,10 +176,6 @@ export const viewsRu: typeof viewsEn = {
       refresh: "Обновить",
       emptyText: "За этот период прослушиваний не было. Включи что-нибудь — статистика начнёт собираться.",
       updateFailedText: "Не удалось обновить — показаны прежние данные.",
-    },
-    wrappedPanel: {
-      title: "Итоги {year}",
-      hint: "Story-слайды года: минуты, треки, артисты — и карточка на поделиться",
     },
   },
 

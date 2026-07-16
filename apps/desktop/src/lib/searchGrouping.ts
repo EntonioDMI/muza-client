@@ -45,15 +45,39 @@ export function flattenGroupedResults(results: GroupedSearchResult[]): Track[] {
   return list;
 }
 
-/** Лестница limit для «Загрузить ещё» в grouped-режиме (T36 сервера:
- *  group=1 поддерживает только offset=0 — «ещё» растит limit целиком
- *  пересобирая группировку, а не наращивает offset). Потолок 90 — Max()
- *  в SearchQueryDto сервера. */
-export const GROUP_LIMIT_STEPS = [30, 60, 90] as const;
+/** Шаг «Загрузить ещё» в grouped-режиме (T36 сервера: group=1 поддерживает
+ *  только offset=0 — «ещё» растит limit целиком, пересобирая группировку над
+ *  бóльшим пулом, а не наращивает offset). */
+export const GROUP_LIMIT_STEP = 30;
 
-/** Следующая ступень лестницы; null — уже на максимуме (90, дальше некуда). */
+/** Потолок лестницы = @Max(limit) в SearchQueryDto сервера, он же дефолт
+ *  SEARCH_MAX_POOL: глубже сервер всё равно клампит пул, и просить больше —
+ *  значит получить 400 вместо выдачи.
+ *
+ *  ⚠️ Раньше потолком было 90, и лестница была жёстким списком [30, 60, 90].
+ *  На широком запросе («фонк») это упирало выдачу в ~40 треков и НАВСЕГДА
+ *  прятало кнопку — при том, что в источниках треков тысячи: обе youtube-ветки
+ *  брали одну страницу InnerTube и не ходили за continuation-токеном (разбор и
+ *  замеры — docs/notes/2026-07-15-поиск-потолок-пагинации.md). */
+export const GROUP_LIMIT_MAX = 300;
+
+/** Следующая ступень лестницы; null — дальше сервер не пустит (потолок). */
 export function nextGroupLimit(current: number): number | null {
-  const idx = GROUP_LIMIT_STEPS.indexOf(current as (typeof GROUP_LIMIT_STEPS)[number]);
-  if (idx === -1 || idx === GROUP_LIMIT_STEPS.length - 1) return null;
-  return GROUP_LIMIT_STEPS[idx + 1];
+  const next = current + GROUP_LIMIT_STEP;
+  return next <= GROUP_LIMIT_MAX ? next : null;
+}
+
+/** Куда идёт «Загрузить ещё» при настройке «Где искать» = `searchScope`.
+ *
+ *  Мгновенный ввод намеренно ищет по каталогу (`scope:"catalog"` — быстро, без
+ *  провайдеров), и «Загрузить ещё» повторял ровно его: листал накопленный
+ *  каталог и в источники за добавкой не ходил НИКОГДА. Для широкого запроса это
+ *  тупик — по «фонк» каталог отдаёт 11 строк из 1968 (pg_trgm сравнивает
+ *  короткий запрос с длинным search_text), прирост нулевой, кнопка исчезает.
+ *  «Ещё» означает «дай ещё» — значит, идём в источники. Это by-demand: провайдеры
+ *  дёргаются только по клику, живой ввод остаётся каталожным и быстрым.
+ *
+ *  Явный выбор «только каталог» уважаем — это настройка пользователя. */
+export function loadMoreScope(searchScope: "all" | "catalog"): "catalog" | "full" {
+  return searchScope === "catalog" ? "catalog" : "full";
 }

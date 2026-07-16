@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   DRAG_THRESHOLD,
   HOLD_MS,
-  MOVE_SLOP,
   dist,
   insertionIndex,
   moveItem,
@@ -36,8 +35,14 @@ describe("пороги", () => {
     expect(HOLD_MS).toBeGreaterThan(150);
     expect(HOLD_MS).toBeLessThan(400);
   });
-  it("порог мгновенного старта строго больше slop — иначе дрожь руки поднимала бы карточку", () => {
-    expect(DRAG_THRESHOLD).toBeGreaterThan(MOVE_SLOP);
+  /** Порог ОДИН, и это не вкусовщина. Пока их было два (slop отменял жест,
+   *  порог поднимал), полоса между ними съедала любой перенос живой мышью:
+   *  pointermove идёт каждые ~8-16мс, и дистанция от точки нажатия проходит все
+   *  промежуточные значения. Прежний инвариант «DRAG_THRESHOLD > MOVE_SLOP»
+   *  требовал эту полосу — то есть закреплял дефект. Второй порог не возвращать. */
+  it("порог подъёма в пределах системного slop: тянут сразу, а дрожь не поднимает", () => {
+    expect(DRAG_THRESHOLD).toBeGreaterThanOrEqual(4); // Windows SM_CXDRAG
+    expect(DRAG_THRESHOLD).toBeLessThanOrEqual(10);
   });
   it("dist — обычная евклидова", () => {
     expect(dist(0, 0, 3, 4)).toBe(5);

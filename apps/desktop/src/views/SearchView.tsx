@@ -4,7 +4,7 @@ import type { GroupedSearchResult, MuzaApi, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
-import { flattenGroupedResults, nextGroupLimit } from "../lib/searchGrouping";
+import { flattenGroupedResults, loadMoreScope, nextGroupLimit } from "../lib/searchGrouping";
 import { SearchGroupCard, type VersionsSlot } from "./SearchGroupCard";
 import { useT } from "../i18n";
 
@@ -65,10 +65,9 @@ export function SearchView({
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Track[] | null>(null); // null — запроса ещё не было (плоский режим)
   const [groupedResults, setGroupedResults] = useState<GroupedSearchResult[] | null>(null); // grouped-режим
-  // «Загрузить ещё» в grouped-режиме: лестница limit 30→60→90 (group=1
+  // «Загрузить ещё» в grouped-режиме: лестница limit шагом 30 (group=1
   // сервера поддерживает только offset=0 — см. lib/searchGrouping.ts).
   const [groupLimit, setGroupLimit] = useState(30);
-  const [groupScope, setGroupScope] = useState<"catalog" | "full">("catalog");
   const [groupExhausted, setGroupExhausted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
@@ -99,7 +98,6 @@ export function SearchView({
     const seq = ++seqRef.current;
     const t = setTimeout(() => {
       if (searchGrouping) {
-        setGroupScope("catalog");
         setGroupLimit(30);
         setGroupExhausted(false);
         api
@@ -133,7 +131,6 @@ export function SearchView({
     setError(null);
     try {
       if (searchGrouping) {
-        setGroupScope(scope);
         setGroupLimit(30);
         setGroupExhausted(false);
         const found = await api.searchGrouped(query, { scope, limit: 30 });
@@ -158,17 +155,21 @@ export function SearchView({
   const fullSearch = () => runSearch(searchScope === "catalog" ? "catalog" : "full");
 
   /** «Загрузить ещё» (grouped-режим): group=1 сервера поддерживает только
-   *  offset=0 — «ещё» растит limit целиком (30→60→90), группировка
+   *  offset=0 — «ещё» растит limit целиком (шаг 30), группировка
    *  пересобирается заново над бОльшим пулом (task-T37-brief.md п.3). Если
-   *  рост limit не добавил ни одного трека в плоский счёт — каталог
-   *  исчерпан (кнопка прячется), это отдельно от достижения потолка 90. */
+   *  рост limit не добавил ни одного трека в плоский счёт — источники
+   *  исчерпаны (кнопка прячется), это отдельно от достижения потолка лестницы.
+   *
+   *  Scope берётся из настройки «Где искать», а НЕ из того, чем искали в
+   *  прошлый раз: живой ввод ищет по каталогу, и «ещё» повторял именно его —
+   *  листал каталог и в источники не ходил никогда (см. loadMoreScope). */
   const loadMoreGrouped = async () => {
     const next = nextGroupLimit(groupLimit);
     if (!canSearch || query.length < 2 || moreBusy || next === null) return;
     const seq = ++seqRef.current;
     setMoreBusy(true);
     try {
-      const found = await api.searchGrouped(query, { scope: groupScope, limit: next });
+      const found = await api.searchGrouped(query, { scope: loadMoreScope(searchScope), limit: next });
       if (seqRef.current === seq) {
         const prevCount = groupedFlat.length;
         const nextCount = flattenGroupedResults(found).length;

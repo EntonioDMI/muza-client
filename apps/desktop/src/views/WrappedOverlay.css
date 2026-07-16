@@ -128,14 +128,14 @@
   align-items: baseline;
   gap: 10px;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   letter-spacing: 0.08em;
 }
 
 .wrapped__brand b {
   color: var(--text-1);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   letter-spacing: var(--ls-display);
 }
 
@@ -218,7 +218,7 @@
   grid-template-columns: auto 1fr;
   gap: var(--sp-5);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   letter-spacing: 0.04em;
 }
 
@@ -327,13 +327,12 @@
   width: min(100%, 430px);
   margin-top: 28px;
   padding-top: 16px;
-  border-top: 1px solid var(--surface-4);
 }
 
 .wrapped__first-track span {
   margin-bottom: 7px;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -351,7 +350,7 @@
   margin-top: 3px;
   overflow: hidden;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -364,25 +363,29 @@
   justify-self: center;
 }
 
+/* Винил читается кругом и центральным отверстием, а не волосяными кольцами.
+   Бороздки были тремя `outline: 1px` — владелец 16.07.2026 назвал их ровно тем,
+   чем они выглядели: «линии, напоминающие обводку». Приложение уже рисует винил
+   без единого кольца (фон «Анимированный», `.muza-orb-spin` в app.css крутит
+   диски-обложки), а `effects.css` запрещает всё, чем бороздку можно было бы
+   подделать: тени, свечения, градиенты. Глубина осталась на поверхностях —
+   диск темнее фона, внутренний круг на тон светлее. */
 .wrapped__record {
   position: absolute;
   inset: 8%;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.76);
-  outline: 1px solid var(--surface-4);
   transform: translate(24%, 1%);
 }
 
-.wrapped__record::before,
-.wrapped__record::after {
+.wrapped__record::before {
   content: "";
   position: absolute;
   border-radius: 50%;
-  outline: 1px solid rgba(244, 243, 241, 0.09);
+  background: var(--surface-1);
 }
 
 .wrapped__record::before { inset: 16%; }
-.wrapped__record::after { inset: 33%; }
 
 .wrapped__record span {
   position: absolute;
@@ -400,7 +403,6 @@
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: var(--r-md);
-  outline: 1px solid rgba(244, 243, 241, 0.12);
 }
 
 .wrapped__stack-cover--1 {
@@ -467,7 +469,7 @@
 .wrapped__metric span {
   padding-bottom: 8px;
   color: var(--text-1);
-  font-size: 20px;
+  font-size: var(--fs-title);
   font-weight: var(--fw-semibold);
 }
 
@@ -485,7 +487,6 @@
   gap: 34px;
   margin-top: 28px;
   padding-top: 16px;
-  border-top: 1px solid var(--surface-4);
 }
 
 .wrapped__supporting-stats div {
@@ -501,7 +502,7 @@
 
 .wrapped__supporting-stats span {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-caption);
 }
 
 .wrapped__disc-stage {
@@ -516,7 +517,6 @@
   overflow: hidden;
   border-radius: 50%;
   background: var(--bg-1);
-  outline: 1px solid var(--surface-4);
   transform: rotate(8deg);
 }
 
@@ -528,14 +528,25 @@
   filter: saturate(0.88) brightness(0.72);
 }
 
+/* Кольца диска были двумя `outline: 1px` поверх обложки — те самые «линии,
+   напоминающие обводку». Теперь бороздку держит поверхность, а не штрих:
+   внешнее кольцо — полупрозрачная затемняющая шайба, внутреннее — плотный
+   центр пластинки, из которого растёт лейбл. Тот же язык, что у `.muza-orb-spin`
+   в app.css: винил = круг обложки, а не набор колец. */
 .wrapped__disc-ring {
   position: absolute;
   border-radius: 50%;
-  outline: 1px solid rgba(244, 243, 241, 0.22);
 }
 
-.wrapped__disc-ring--outer { inset: 10%; }
-.wrapped__disc-ring--inner { inset: 27%; }
+.wrapped__disc-ring--outer {
+  inset: 10%;
+  background: rgba(18, 17, 16, 0.28);
+}
+
+.wrapped__disc-ring--inner {
+  inset: 27%;
+  background: var(--bg-0);
+}
 
 .wrapped__disc-label {
   position: absolute;
@@ -571,7 +582,6 @@
   height: 100%;
   object-fit: cover;
   border-radius: var(--r-md);
-  outline: 1px solid rgba(244, 243, 241, 0.14);
 }
 
 .wrapped__poster-rank {
@@ -608,7 +618,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--text-2);
-  font-size: 19px;
+  font-size: var(--fs-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -616,12 +626,12 @@
 .wrapped__track-plays {
   margin: 12px 0 18px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-caption);
 }
 
 .wrapped__track-plays b {
   color: var(--accent-text);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .wrapped__track-list,
@@ -632,7 +642,6 @@
 }
 
 .wrapped__track-list {
-  border-top: 1px solid var(--surface-4);
 }
 
 .wrapped__track-list li {
@@ -641,7 +650,6 @@
   gap: 10px;
   align-items: center;
   min-height: 42px;
-  border-bottom: 1px solid var(--surface-2);
   animation: wrappedListIn 520ms var(--ease-out) both;
 }
 
@@ -658,7 +666,7 @@
 
 .wrapped__list-rank {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
 }
@@ -684,7 +692,7 @@
 .wrapped__list-title small,
 .wrapped__list-count {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .wrapped__list-count {
@@ -728,17 +736,16 @@
 .wrapped__artist-headline p {
   margin: 0 0 0 25px;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .wrapped__artist-headline p b {
   color: var(--text-1);
-  font-size: 18px;
+  font-size: var(--fs-strong);
   font-variant-numeric: tabular-nums;
 }
 
 .wrapped__artist-list {
-  border-top: 1px solid var(--surface-4);
 }
 
 .wrapped__artist-list li {
@@ -748,7 +755,6 @@
   gap: 12px;
   align-items: center;
   min-height: 58px;
-  border-bottom: 1px solid var(--surface-2);
   animation: wrappedListIn 520ms var(--ease-out) both;
 }
 
@@ -759,7 +765,7 @@
 .wrapped__artist-name {
   overflow: hidden;
   color: var(--text-1);
-  font-size: 16px;
+  font-size: var(--fs-body);
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -767,7 +773,7 @@
 
 .wrapped__artist-time {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -862,7 +868,7 @@
   justify-content: space-between;
   margin-top: 11px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
 }
@@ -902,7 +908,7 @@
 
 .wrapped__rhythm-facts span {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-caption);
 }
 
 /* ── Final ───────────────────────────────────────────────────── */
@@ -938,7 +944,7 @@
   max-width: 46ch;
   margin: 0;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.45;
 }
 
@@ -947,7 +953,6 @@
   gap: 28px;
   margin-top: 20px;
   padding-top: 15px;
-  border-top: 1px solid var(--surface-4);
 }
 
 .wrapped__final-stats div {
@@ -957,13 +962,13 @@
 
 .wrapped__final-stats strong {
   color: var(--text-1);
-  font-size: 19px;
+  font-size: var(--fs-strong);
   font-variant-numeric: tabular-nums;
 }
 
 .wrapped__final-stats span {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 
 .wrapped__final-artist {
@@ -972,13 +977,13 @@
   gap: 9px;
   margin-top: 15px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-caption);
 }
 
 .wrapped__final-artist strong {
   overflow: hidden;
   color: var(--text-1);
-  font-size: 16px;
+  font-size: var(--fs-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1013,7 +1018,6 @@
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: var(--r-md);
-  outline: 1px solid rgba(244, 243, 241, 0.14);
 }
 
 .wrapped__final-cover--1 {
@@ -1052,7 +1056,7 @@
   background: var(--accent);
   color: var(--text-on-accent);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   transform: rotate(-9deg);
 }

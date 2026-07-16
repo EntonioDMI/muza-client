@@ -54,6 +54,24 @@ describe("searchGrouping pref (T37)", () => {
   });
 });
 
+describe("listeningLyricsShown pref (скрытие текста в режиме прослушивания)", () => {
+  it("текст показан по умолчанию", () => {
+    expect(DEFAULT_PREFS.listeningLyricsShown).toBe(true);
+  });
+
+  it("не входит в THEME_KEYS — поведенческий преф, не оформление", () => {
+    expect((THEME_KEYS as readonly string[]).includes("listeningLyricsShown")).toBe(false);
+  });
+
+  it("мигрирует через обычный DEFAULT_PREFS-мердж без спец-миграции", () => {
+    // Старое сохранение без ключа (пользователь с прежней версии) → дефолт true.
+    const stored = { ...DEFAULT_PREFS } as Partial<typeof DEFAULT_PREFS>;
+    delete stored.listeningLyricsShown;
+    const merged = { ...DEFAULT_PREFS, ...stored };
+    expect(merged.listeningLyricsShown).toBe(true);
+  });
+});
+
 describe("bgType=animated + bgAnimatedInvert (T15)", () => {
   it("bgType допускает 'animated', bgAnimatedInvert выключен по умолчанию", () => {
     expect(DEFAULT_PREFS.bgType).toBe("none");

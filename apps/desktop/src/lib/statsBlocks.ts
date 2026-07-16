@@ -2,8 +2,12 @@
  *  (prefs.statsBlocks) и подписи блоков для страницы и настроек.
  *
  *  i18n (эпик W5, T-media): та же схема, что у NAV_ITEM_META (см.
- *  lib/navItems.ts) — потребители (views/StatsView.tsx, views/SettingsView.tsx)
- *  вне зоны этой правки, дефолты вычислены через `translate(DEFAULT_LANG, key)`. */
+ *  lib/navItems.ts); живые потребители (views/StatsView.tsx,
+ *  views/SettingsView.tsx) зовут statsBlockLabel(key, lang) — STATS_BLOCK_META
+ *  остаётся статическим EN-снимком без потребителей в desktop-коде.
+ *
+ *  Блок «wrapped» удалён 2026-07-16 (вход во Wrapped — только с главной):
+ *  ключ из старых сохранений отфильтровывает normalizeStatsBlocks. */
 
 import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { STATS_BLOCK_KEYS, type StatsBlockKey } from "../types";
@@ -38,7 +42,6 @@ export const STATS_BLOCK_META: Record<StatsBlockKey, { label: string; hint: stri
   top_artists: { label: translate(DEFAULT_LANG, "media.statsBlocks.top_artists.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.top_artists.hint") },
   streaks: { label: translate(DEFAULT_LANG, "media.statsBlocks.streaks.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.streaks.hint") },
   likes: { label: translate(DEFAULT_LANG, "media.statsBlocks.likes.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.likes.hint") },
-  wrapped: { label: translate(DEFAULT_LANG, "media.statsBlocks.wrapped.label"), hint: translate(DEFAULT_LANG, "media.statsBlocks.wrapped.hint") },
 };
 
 /** Локализованная метка/подсказка блока — для будущей правки потребителя

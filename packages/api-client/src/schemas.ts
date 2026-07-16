@@ -87,6 +87,20 @@ export interface ImportReport {
   unmatched: { artist: string; title: string }[];
 }
 
+/** Что лежит по ссылке — ДО импорта (диалог импорта дёргает это на вставку). */
+export interface ImportPreview {
+  /** false — сказать нечего (не тот источник, ссылка ещё не дописана, Spotify
+   *  не отдался). Диалог просто ничего не рисует: импорт от превью не зависит. */
+  previewable: boolean;
+  name: string | null;
+  /** Владелец плейлиста у источника; null — источник его не отдаёт. */
+  owner: string | null;
+  trackCount: number;
+  /** Плейлист может подстраиваться под конкретного слушателя: человек у себя
+   *  видит свою версию, импортируется общая. Не ошибка — предупреждение. */
+  mayBePersonalized: boolean;
+}
+
 /** full — каталог + внешние провайдеры (медленно, rate-limit);
  *  catalog — мгновенно, только по накопленной базе (живой ввод). */
 export type SearchScope = "full" | "catalog";

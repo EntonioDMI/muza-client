@@ -166,9 +166,17 @@ export const viewsEn = {
       longest: "longest streak",
       activeDays: "days with music this period",
       daysSuffix: "d.",
+      toRecord: "toward the record",
+      atRecord: "that's the record",
     },
     likes: {
       addedThisPeriod: "added to Favorites this period",
+      avgLabel: "on average",
+      avgPerDay: "{value} a day",
+      avgPerMonth: "{value} a month",
+      shareLabel: "share of plays",
+      shareValue: "1 in {n}",
+      emptyPeriod: "Nothing went to Favorites this period — tap the heart on a track you love.",
     },
     customizeBlocksTooltip: "Customize blocks",
     customizeBlocksLabel: "Customize statistics blocks",
@@ -181,10 +189,6 @@ export const viewsEn = {
       refresh: "Refresh",
       emptyText: "No plays in this period yet. Play something and statistics will start building.",
       updateFailedText: "Couldn't refresh — showing the previous data.",
-    },
-    wrappedPanel: {
-      title: "{year} Wrapped",
-      hint: "Story slides for your year: minutes, tracks, artists — and a shareable card",
     },
   },
 

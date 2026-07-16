@@ -1,6 +1,6 @@
 # apps/desktop/src/lib/statsBlocks.ts
 
-Конфиг блоков страницы «Статистика»: нормализация `prefs.statsBlocks` + `STATS_BLOCK_META` — дефолтные метки+хинты (summary/activity/rhythm/top_tracks/top_artists/streaks/likes/wrapped).
+Конфиг блоков страницы «Статистика»: нормализация `prefs.statsBlocks` + `STATS_BLOCK_META` — дефолтные метки+хинты (summary/activity/rhythm/top_tracks/top_artists/streaks/likes). Обновлено: 2026-07-16 — блок `wrapped` УДАЛЁН (вход во Wrapped только с главной, решение владельца); legacy-ключ из старых prefs вычищает `normalizeStatsBlocks` (тест в `statsBlocks.test.ts`).
 
 ---
 

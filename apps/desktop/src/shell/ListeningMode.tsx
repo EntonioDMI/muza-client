@@ -7,9 +7,9 @@ import { Visualizer } from "./Visualizer";
 import { useT } from "../i18n";
 
 /** OS-уровень «уменьшить анимацию» — жёсткий выключатель качания независимо
- *  от пользовательского прefa bassShake (как и общий anims). Без
- *  window.matchMedia (jsdom-тесты, старый WebView) — считаем, что предпочтения
- *  нет, вызывающий код всё равно доходит сюда только когда bassShake=true. */
+ *  от пользовательского прefa bassShake (как и общий anims); им же гасится
+ *  транзишен схлопывания колонки текста. Без window.matchMedia (jsdom-тесты,
+ *  старый WebView) — считаем, что предпочтения нет. */
 function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   try {
@@ -52,6 +52,8 @@ export function ListeningMode({
   onSeekLine,
   onExplain,
   onClose,
+  lyricsShown = true,
+  onToggleLyrics,
   visualizer = "off",
   getAnalyser,
   visualizerBars = 56,
@@ -80,6 +82,14 @@ export function ListeningMode({
   /** Открыть общую модалку смысла для выделенной строки. */
   onExplain: (index: number) => void;
   onClose: () => void;
+  /** Текст показан (преф listeningLyricsShown). false — «только обложка/
+   *  визуализатор»: блок текста плавно гаснет, его колонка схлопывается
+   *  (0fr), обложка занимает центр сцены. Плашки «Ищем текст…»/«Текст не
+   *  найден» прячутся тем же тумблером — они живут в той же колонке. */
+  lyricsShown?: boolean;
+  /** Тумблер текста: кнопка mic-vocal в слое авто-прячущихся контролов
+   *  (правый верхний угол, рядом со «Свернуть») и клавиша T. */
+  onToggleLyrics?: () => void;
   /** Визуализатор (Stage 6): бары/волна поверх сцены, за контентом. */
   visualizer?: "bars" | "wave" | "off";
   getAnalyser?: () => AnalyserNode | null;
@@ -97,6 +107,10 @@ export function ListeningMode({
   anims?: boolean;
 }) {
   const { t } = useT();
+  // OS «уменьшить анимацию» для схлопывания колонки текста. Не state: пока
+  // оверлей открыт, пользователь системные настройки не крутит, а на
+  // следующий рендер (тумблер и есть рендер) значение перечитается.
+  const reducedMotion = prefersReducedMotion();
   const [calm, setCalm] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shakeRef = useRef<HTMLDivElement | null>(null);
@@ -117,6 +131,14 @@ export function ListeningMode({
   useEffect(() => {
     strengthRef.current = bassShakeStrength;
   }, [bassShakeStrength]);
+  // Колбэк тумблера текста — через ref: keydown-эффект ниже пересоздаётся
+  // только по [open], а App передаёт новую стрелку (с новыми prefs) на каждый
+  // рендер. Без ref второе нажатие T работало бы со stale-префами и «отменяло»
+  // первое (onClose такой защиты не требует — там внутри только setState).
+  const onToggleLyricsRef = useRef(onToggleLyrics);
+  useEffect(() => {
+    onToggleLyricsRef.current = onToggleLyrics;
+  }, [onToggleLyrics]);
 
   useEffect(() => {
     const node = shakeRef.current;
@@ -170,7 +192,7 @@ export function ListeningMode({
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
-  // на входе показать управление, Escape — выход
+  // на входе показать управление, Escape — выход, T — тумблер текста
   useEffect(() => {
     if (!open) return;
     wake();
@@ -178,6 +200,19 @@ export function ListeningMode({
       // Модалка смысла живёт поверх режима прослушивания и сама обрабатывает
       // Escape. Пока dialog открыт, нижний оверлей не должен закрываться следом.
       if (e.key === "Escape" && !document.querySelector('[role="dialog"]')) onClose();
+      // T (физическая клавиша, layout-независимо, как lib/hotkeys) — скрыть/
+      // показать текст. Только «голая»: с модификаторами это чужие комбо; в
+      // lib/hotkeys KeyT не занят. Поверх диалога — не срабатывает (там могут
+      // печатать), в полях ввода — тоже.
+      if (
+        e.code === "KeyT" &&
+        !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey &&
+        !document.querySelector('[role="dialog"]')
+      ) {
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        onToggleLyricsRef.current?.();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -255,17 +290,28 @@ export function ListeningMode({
         </div>
       ) : null}
 
+      {/* Сцена: обложка + колонка текста. Скрытие текста (lyricsShown=false)
+          не выкидывает колонку из DOM, а схлопывает её в 0fr (у обёртки ниже
+          minWidth:0 + overflow:hidden, иначе 0fr не сожмётся меньше контента) и
+          центрирует оставшуюся обложку justifyContent'ом — возврат текста
+          такой же плавный, без ремоунта Lyrics и потери скролла. Транзишен
+          grid-template-columns анимируем: WebView2 = Chromium ≥117. */}
       <div
         style={{
           position: "absolute",
           inset: 0,
           display: "grid",
-          gridTemplateColumns: "minmax(300px, 420px) 1fr",
-          gap: "var(--sp-9)",
+          gridTemplateColumns: lyricsShown ? "minmax(300px, 420px) 1fr" : "minmax(300px, 420px) 0fr",
+          justifyContent: lyricsShown ? undefined : "center",
+          gap: lyricsShown ? "var(--sp-9)" : "0px",
           alignItems: "center",
           padding: "0 var(--sp-10)",
           transform: open ? "translateY(0) scale(1)" : "translateY(24px) scale(0.985)",
-          transition: "transform var(--dur-slow) var(--ease-out)",
+          // reduced-motion: схлопывание колонки мгновенно (anims=false и так
+          // даёт --dur-slow: 1ms токеном App'а — отдельно не проверяем)
+          transition: reducedMotion
+            ? "transform var(--dur-slow) var(--ease-out)"
+            : "transform var(--dur-slow) var(--ease-out), grid-template-columns var(--dur-slow) var(--ease-out), gap var(--dur-slow) var(--ease-out)",
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
@@ -287,22 +333,37 @@ export function ListeningMode({
             </div>
           </div>
         </div>
-        {lyrics.length > 0 ? (
-          <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" autoScroll={lyricsAutoScroll} onSeek={onSeekLine} onExplain={onExplain} style={{ height: "100%" }} />
-        ) : (
-          <div
-            style={{
-              height: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "var(--text-3)",
-              fontSize: "var(--fs-strong)",
-            }}
-          >
-            {lyricsLoading ? t("player.lyricsSearching") : t("player.lyricsNotFound")}
-          </div>
-        )}
+        {/* Обёртка колонки текста: гасится и для Lyrics, и для плашек
+            «Ищем текст…»/«Текст не найден» — тумблер один на всё. */}
+        <div
+          data-testid="lm-lyrics"
+          aria-hidden={lyricsShown ? undefined : true}
+          style={{
+            height: "100%",
+            minWidth: 0,
+            overflow: "hidden",
+            opacity: lyricsShown ? 1 : 0,
+            pointerEvents: lyricsShown ? "auto" : "none",
+            transition: reducedMotion ? undefined : "opacity var(--dur-slow) var(--ease-out)",
+          }}
+        >
+          {lyrics.length > 0 ? (
+            <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" autoScroll={lyricsAutoScroll} onSeek={onSeekLine} onExplain={onExplain} style={{ height: "100%" }} />
+          ) : (
+            <div
+              style={{
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "var(--text-3)",
+                fontSize: "var(--fs-strong)",
+              }}
+            >
+              {lyricsLoading ? t("player.lyricsSearching") : t("player.lyricsNotFound")}
+            </div>
+          )}
+        </div>
       </div>
 
       <div
@@ -310,11 +371,22 @@ export function ListeningMode({
           position: "absolute",
           top: "var(--sp-6)",
           right: "var(--sp-6)",
+          display: "flex",
+          gap: "var(--sp-3)",
           opacity: calm ? 0 : 1,
           transition: "opacity var(--dur-slow) var(--ease-out)",
           pointerEvents: calm ? "none" : "auto",
         }}
       >
+        {/* Тумблер текста — та же иконка mic-vocal и та же семантика active,
+            что у кнопки «Текст» в PlayerBar; хоткей T (см. keydown выше). */}
+        <IconButton
+          icon="mic-vocal"
+          variant="surface"
+          active={lyricsShown}
+          label={lyricsShown ? t("listeningMode.hideLyrics") : t("listeningMode.showLyrics")}
+          onClick={onToggleLyrics}
+        />
         <IconButton icon="minimize-2" variant="surface" label={t("listeningMode.minimize")} onClick={onClose} />
       </div>
 

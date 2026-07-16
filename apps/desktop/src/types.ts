@@ -6,7 +6,10 @@ export type View = "home" | "search" | "favorites" | "library" | "stats" | "play
 /** Режим повтора: выкл → вся очередь → один трек. */
 export type RepeatMode = "off" | "all" | "one";
 
-/** Блоки страницы «Статистика»: канонический порядок = дефолтный. */
+/** Блоки страницы «Статистика»: канонический порядок = дефолтный.
+ *  «wrapped» удалён 2026-07-16 (вход во Wrapped — только с главной, решение
+ *  владельца): ключ в старых сохранениях молча выбрасывает
+ *  normalizeStatsBlocks (lib/statsBlocks.ts). */
 export const STATS_BLOCK_KEYS = [
   "summary",
   "activity",
@@ -15,7 +18,6 @@ export const STATS_BLOCK_KEYS = [
   "top_artists",
   "streaks",
   "likes",
-  "wrapped",
 ] as const;
 export type StatsBlockKey = (typeof STATS_BLOCK_KEYS)[number];
 
@@ -246,6 +248,11 @@ export interface Prefs {
   syncedLyrics: boolean;
   /** Автоследование за активной строкой текста (выкл = свободный скролл). */
   lyricsAutoScroll: boolean;
+  /** Текст в режиме прослушивания показан (кнопка mic-vocal в слое
+   *  авто-прячущихся контролов оверлея + клавиша T). false — «только
+   *  обложка/визуализатор»: блок текста плавно скрыт, обложка по центру.
+   *  Запоминается между сессиями. Поведенческий преф — НЕ в THEME_KEYS. */
+  listeningLyricsShown: boolean;
   /** Качество стрима: auto = лестница рецепта, econom = меньший битрейт
    *  (движок ставит низкобитрейтные форматы в голову лестницы yt-dlp). */
   streamQuality: "auto" | "econom";
@@ -352,6 +359,7 @@ export const DEFAULT_PREFS: Prefs = {
   searchGrouping: true,
   syncedLyrics: true,
   lyricsAutoScroll: true,
+  listeningLyricsShown: true,
   streamQuality: "auto",
   sourcesEnabled: { youtube: true, soundcloud: true, bandcamp: true },
   sourcePolicy: "official",

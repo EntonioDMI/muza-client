@@ -3,6 +3,7 @@ import { Button, Dialog, Icon } from "@muza/ui";
 import type { MuzaApi, Track, TrackSource } from "@muza/api-client";
 import { cacheRemove } from "../lib/engine";
 import { fmtTime, providerLabel } from "../lib/format";
+import { invalidateCachedSources } from "../player/sourcesCache";
 import { useT } from "../i18n";
 
 /** Разворот «Версии и источники» (Stage 4): опциональный выбор конкретного
@@ -57,6 +58,7 @@ export function VersionsDialog({
     try {
       await api.chooseTrackSource(track.id, s.id);
       await cacheRemove(track.id); // старый файл кэша — от прежней версии
+      invalidateCachedSources(track.id); // и источники в кэше плеера — тоже от прежней
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: x.id === s.id })));
       onNotify(t("dialogs.versions.nowPlaying", { provider: providerLabel(s.provider, lang) }), "check");
     } catch (e) {
@@ -72,6 +74,7 @@ export function VersionsDialog({
     try {
       await api.resetTrackSource(track.id);
       await cacheRemove(track.id);
+      invalidateCachedSources(track.id); // сброс выбора тоже меняет порядок источников
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: false })));
       onNotify(t("dialogs.versions.resetDone"), "check");
     } catch (e) {

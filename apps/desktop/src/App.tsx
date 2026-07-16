@@ -249,6 +249,10 @@ function Player({
   const [lyricsOn, setLyricsOn] = useState(true);
   const [queueOn, setQueueOn] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Для mouseup-слушателя боковых кнопок мыши (висит с маунта, deps []):
+  // expanded из его замыкания навсегда остался бы false — только через ref.
+  const expandedRef = useRef(false);
+  expandedRef.current = expanded;
   const [meaningLine, setMeaningLine] = useState<number | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [plName, setPlName] = useState("");
@@ -1034,10 +1038,19 @@ function Player({
         break;
       case "navBack":
         e.preventDefault();
+        // В режиме прослушивания «назад» — выход ИЗ режима, а не невидимое
+        // листание вкладок под оверлеем: иначе пользователь щёлкал «назад» до
+        // дна истории (дно — всегда стартовая главная) и, выйдя по Esc,
+        // «оказывался на главной» (жалоба владельца 2026-07-16).
+        if (expanded) {
+          setExpanded(false);
+          break;
+        }
         navBack();
         break;
       case "navForward":
         e.preventDefault();
+        if (expanded) break; // вкладки под оверлеем вслепую не листаем
         navForward();
         break;
     }
@@ -1266,9 +1279,16 @@ function Player({
     const onMouseUp = (e: MouseEvent) => {
       if (e.button === 3) {
         e.preventDefault();
+        // Тот же принцип, что у Alt+← в хоткеях: «назад» в режиме
+        // прослушивания закрывает оверлей, а не листает вкладки под ним.
+        if (expandedRef.current) {
+          setExpanded(false);
+          return;
+        }
         navBack();
       } else if (e.button === 4) {
         e.preventDefault();
+        if (expandedRef.current) return;
         navForward();
       }
     };
@@ -1753,7 +1773,6 @@ function Player({
                 onPlayCatalog={playCatalog}
                 onLike={toggleLike}
                 onCatalogMenu={openCatalogMenu}
-                onOpenWrapped={() => setWrappedOpen(true)}
                 onCustomize={() => {
                   navigate("settings");
                   setSettingsIntent({ sub: "stats", nonce: Date.now() });
@@ -2261,6 +2280,8 @@ function Player({
         onSeekLine={seekLine}
         onExplain={setMeaningLine}
         onClose={() => setExpanded(false)}
+        lyricsShown={prefs.listeningLyricsShown}
+        onToggleLyrics={() => setPrefs({ ...prefs, listeningLyricsShown: !prefs.listeningLyricsShown })}
         visualizer={prefs.visualizer}
         getAnalyser={pb.getAnalyser}
         visualizerBars={prefs.visualizerBars}

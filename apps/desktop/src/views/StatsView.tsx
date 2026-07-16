@@ -5,15 +5,15 @@
  *
  *  Композиция (T11): центрированная колонка, каждый блок — тихая панель
  *  (surface-1, r-md) с заголовком, чтобы страница читалась собранной сеткой,
- *  а не текстом от левого края. «Итоги года» — панель того же корпуса с
- *  акцентной подложкой (без чужеродного градиента), вписанная в ряд блоков. */
+ *  а не текстом от левого края. Блока «Итоги года» здесь больше нет — вход
+ *  во Wrapped остаётся только с главной (решение владельца, 2026-07-16). */
 
 import { useEffect, useState } from "react";
 import { Button, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muza/ui";
 import type { MuzaApi, StatsOverview, StatsPeriod, Track } from "@muza/api-client";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
+import { BAR_MAX_WIDTH, barSpecs } from "../lib/statsBars";
 import { hourLabel } from "../lib/hourLabel";
-import { wrappedSeason } from "../lib/wrappedSeason";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import type { Prefs, StatsBlockKey } from "../types";
 import { useT } from "../i18n";
@@ -88,9 +88,16 @@ function BigStat({ value, label, accent }: { value: string; label: string; accen
   );
 }
 
-/** Бар-график на div'ах: высоты от максимума, тултип браузерным title.
- *  Нулевые вёдра — тонкая подложка, чтобы ряд читался как ось. */
-function Bars({
+/** Бар-график на div'ах: высоты — barSpecs (чистая геометрия, под тестами),
+ *  тултип браузерным title. Нулевые вёдра — тонкая подложка (ось ряда).
+ *
+ *  Фикс «сплошной плашки» (2026-07-16): ширина бара ограничена BAR_MAX_WIDTH,
+ *  ряд раскладывается space-between — короткая серия (одно ведро «Всё» у
+ *  молодой истории, семь недельных) остаётся стройными колонками, а не
+ *  плитами во всю панель. Единственное ведро центрируется. Анимацию высоты
+ *  глушит reduced-motion глобально (base.css ДС: 1ms).
+ *  Экспорт — для юнит-тестов формы. */
+export function Bars({
   values,
   titles,
   height,
@@ -101,23 +108,31 @@ function Bars({
   height: number;
   ariaLabel: string;
 }) {
-  const max = Math.max(...values, 1);
+  const specs = barSpecs(values);
   return (
     <div
       role="img"
       aria-label={ariaLabel}
-      style={{ display: "flex", alignItems: "flex-end", gap: 3, height, width: "100%" }}
+      style={{
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: values.length === 1 ? "center" : "space-between",
+        gap: 3,
+        height,
+        width: "100%",
+      }}
     >
-      {values.map((v, i) => (
+      {specs.map((pct, i) => (
         <div
           key={i}
           title={titles[i]}
           style={{
             flex: 1,
             minWidth: 2,
-            height: v > 0 ? `${Math.max((v / max) * 100, 4)}%` : 2,
+            maxWidth: BAR_MAX_WIDTH,
+            height: pct !== null ? `${pct}%` : 2,
             borderRadius: 3,
-            background: v > 0 ? "var(--accent)" : "var(--surface-3)",
+            background: pct !== null ? "var(--accent)" : "var(--surface-3)",
             transition: "height var(--dur-base) var(--ease-out)",
           }}
         />
@@ -126,67 +141,58 @@ function Bars({
   );
 }
 
-/** Вход в «Итоги года»: панель того же корпуса, что и блоки (surface-1) —
- *  вписана в ряд, а не чужеродный градиент-баннер. Кликабельность несут
- *  акцентная плитка года, шеврон и акцентный ховер, а не крикливая подложка;
- *  подпись читается ровно как во всех остальных блоках (тот же контраст). */
-function WrappedPanel({ year, onOpen }: { year: number; onOpen: () => void }) {
-  const { t } = useT();
-  const [hover, setHover] = useState(false);
+/** Крупное «геройское» число плитки: типографический якорь (56px,
+ *  tabular-nums), суффикс тише и мельче, подпись — caption снизу. */
+function Hero({ value, suffix, label, accent }: { value: string; suffix?: string; label: string; accent?: boolean }) {
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-2)" }}>
+        <span
+          style={{
+            fontSize: 56,
+            fontWeight: 800,
+            lineHeight: 1,
+            color: accent ? "var(--accent-text)" : "var(--text-1)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {value}
+        </span>
+        {suffix ? (
+          <span style={{ fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-3)" }}>{suffix}</span>
+        ) : null}
+      </div>
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: "var(--sp-2)" }}>{label}</div>
+    </div>
+  );
+}
+
+/** Строка «подпись слева — значение справа» (язык слайда «Твой ритм», §2
+ *  спеки статистики): без иконок, значение крупным табличным числом. */
+function StatRow({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div
       style={{
         display: "flex",
-        alignItems: "center",
-        gap: "var(--sp-5)",
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "var(--sp-5)",
-        border: "none",
-        borderRadius: "var(--r-md)",
-        background: hover
-          ? "color-mix(in srgb, var(--accent) 14%, var(--surface-1))"
-          : "var(--surface-1)",
-        cursor: "pointer",
-        textAlign: "left",
-        fontFamily: "var(--font-ui)",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: "var(--sp-4)",
+        padding: "var(--sp-3) 0",
       }}
     >
+      <span style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{label}</span>
       <span
-        aria-hidden="true"
         style={{
-          display: "grid",
-          placeItems: "center",
-          width: 60,
-          height: 60,
-          flex: "none",
-          borderRadius: "var(--r-sm)",
-          background: "var(--accent)",
-          color: "var(--text-on-accent)",
-          fontFamily: "var(--font-display)",
-          fontSize: 15,
+          fontSize: "var(--fs-title)",
           fontWeight: 700,
-          letterSpacing: "var(--ls-display)",
-          lineHeight: 1,
+          color: accent ? "var(--accent-text)" : "var(--text-1)",
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
         }}
       >
-        {year}
+        {value}
       </span>
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: "var(--fs-strong)", fontWeight: 700, color: "var(--text-1)" }}>
-          {t("views.stats.wrappedPanel.title", { year })}
-        </span>
-        <span style={{ display: "block", marginTop: 2, fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.45 }}>
-          {t("views.stats.wrappedPanel.hint")}
-        </span>
-      </span>
-      <Icon name="chevron-right" size={20} color={hover ? "var(--accent-text)" : "var(--text-3)"} />
-    </button>
+    </div>
   );
 }
 
@@ -243,7 +249,6 @@ export function StatsView({
   onPlayCatalog,
   onLike,
   onCatalogMenu,
-  onOpenWrapped,
   onCustomize,
 }: {
   api: MuzaApi;
@@ -257,7 +262,6 @@ export function StatsView({
   onPlayCatalog: (tracks: Track[], id: string) => void;
   onLike: (id: string) => void;
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
-  onOpenWrapped: () => void;
   /** Открыть под-экран настроек «Статистика» (кнопка «Настроить»). */
   onCustomize: () => void;
 }) {
@@ -292,7 +296,6 @@ export function StatsView({
 
   const d = state.data;
   const blocks = normalizeStatsBlocks(prefs.statsBlocks).filter((b) => b.on);
-  const season = wrappedSeason();
   // Тот же словарь, что у пресета периода в настройках (settings.stats.period.*) —
   // одно и то же понятие «период статистики», не вводим синоним.
   const periodTabs = [
@@ -329,14 +332,15 @@ export function StatsView({
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
+                // одно ведро — один центрированный ярлык (не дублируем дату по краям)
+                justifyContent: d.series.length === 1 ? "center" : "space-between",
                 marginTop: 6,
                 fontSize: "var(--fs-caption)",
                 color: "var(--text-3)",
               }}
             >
               <span>{bucketLabel(d.series[0]?.bucket ?? "", lang)}</span>
-              <span>{bucketLabel(d.series[d.series.length - 1]?.bucket ?? "", lang)}</span>
+              {d.series.length > 1 ? <span>{bucketLabel(d.series[d.series.length - 1]?.bucket ?? "", lang)}</span> : null}
             </div>
           </Panel>
         );
@@ -442,28 +446,98 @@ export function StatsView({
           </Panel>
         );
       }
-      case "streaks":
+      case "streaks": {
+        // Плитка в две зоны: слева герой-число текущей серии (+ полоса «до
+        // рекорда» в языке баров топ-артистов), справа — строки «подпись —
+        // табличное значение» с тонкими разделителями (§2, без иконок).
+        const cur = d.currentStreakDays;
+        const rec = d.longestStreakDays;
+        const days = t("views.stats.streaks.daysSuffix");
         return (
           <Panel key={key} title={statsBlockLabel("streaks", lang).label}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-4)" }}>
-              <BigStat
-                value={`${d.currentStreakDays} ${t("views.stats.streaks.daysSuffix")}`}
-                label={t("views.stats.streaks.current")}
-                accent={d.currentStreakDays > 0}
-              />
-              <BigStat value={`${d.longestStreakDays} ${t("views.stats.streaks.daysSuffix")}`} label={t("views.stats.streaks.longest")} />
-              <BigStat value={String(d.activeDays)} label={t("views.stats.streaks.activeDays")} />
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--sp-6)", rowGap: "var(--sp-5)" }}>
+              <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+                <Hero value={String(cur)} suffix={days} label={t("views.stats.streaks.current")} accent={cur > 0} />
+                {rec > 0 && cur < rec ? (
+                  <div style={{ marginTop: "var(--sp-4)" }}>
+                    <div aria-hidden="true" style={{ height: 8, borderRadius: 4, background: "var(--surface-2)", overflow: "hidden" }}>
+                      <div
+                        style={{
+                          width: `${Math.min((cur / rec) * 100, 100)}%`,
+                          height: "100%",
+                          borderRadius: 4,
+                          background: "var(--accent)",
+                          transition: "width var(--dur-base) var(--ease-out)",
+                        }}
+                      />
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+                      {t("views.stats.streaks.toRecord")} · {cur}/{rec}
+                    </div>
+                  </div>
+                ) : cur > 0 && cur === rec ? (
+                  <div style={{ marginTop: "var(--sp-4)", fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--accent-text)" }}>
+                    {t("views.stats.streaks.atRecord")}
+                  </div>
+                ) : null}
+              </div>
+              <div style={{ flex: "1 1 280px", minWidth: 240 }}>
+                <StatRow label={t("views.stats.streaks.longest")} value={`${rec} ${days}`} accent={cur > 0 && cur === rec} />
+                <div style={{ borderTop: "1px solid var(--surface-2)" }}>
+                  <StatRow label={t("views.stats.streaks.activeDays")} value={String(d.activeDays)} />
+                </div>
+              </div>
             </div>
           </Panel>
         );
-      case "likes":
+      }
+      case "likes": {
+        // Герой «+N» слева; справа — производные от периода: средний темп
+        // (по гранулярности вёдер серии) и доля прослушиваний, ушедших в
+        // лайки. Пустой период — честная тихая строка вместо голого нуля.
+        const n = d.favoritesAdded;
+        const daily = d.series.length > 0 && d.series[0].bucket.length === 10;
+        const avg = d.series.length > 0 ? n / d.series.length : 0;
+        const avgStr =
+          avg > 0 && avg < 0.1
+            ? `< ${(0.1).toLocaleString(lang)}`
+            : avg.toLocaleString(lang, { maximumFractionDigits: 1 });
+        const every = n > 0 && d.totalPlays >= n ? Math.round(d.totalPlays / n) : null;
         return (
           <Panel key={key} title={statsBlockLabel("likes", lang).label}>
-            <BigStat value={`+${d.favoritesAdded}`} label={t("views.stats.likes.addedThisPeriod")} />
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "var(--sp-6)", rowGap: "var(--sp-5)" }}>
+              <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+                <Hero
+                  value={n > 0 ? `+${n.toLocaleString(lang)}` : "0"}
+                  label={t("views.stats.likes.addedThisPeriod")}
+                  accent={n > 0}
+                />
+              </div>
+              <div style={{ flex: "1 1 280px", minWidth: 240 }}>
+                {n === 0 ? (
+                  <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
+                    {t("views.stats.likes.emptyPeriod")}
+                  </div>
+                ) : (
+                  <>
+                    {d.series.length > 0 ? (
+                      <StatRow
+                        label={t("views.stats.likes.avgLabel")}
+                        value={t(daily ? "views.stats.likes.avgPerDay" : "views.stats.likes.avgPerMonth", { value: avgStr })}
+                      />
+                    ) : null}
+                    {every !== null ? (
+                      <div style={{ borderTop: "1px solid var(--surface-2)" }}>
+                        <StatRow label={t("views.stats.likes.shareLabel")} value={t("views.stats.likes.shareValue", { n: every })} />
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </div>
           </Panel>
         );
-      case "wrapped":
-        return <WrappedPanel key={key} year={season.year} onOpen={onOpenWrapped} />;
+      }
     }
   };
 
