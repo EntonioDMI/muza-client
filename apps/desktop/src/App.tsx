@@ -2163,6 +2163,10 @@ function Player({
           запрещены (троттлинг без Range, notes 2026-07-15). Пауза/возврат
           основного плеера — pb.pause/pb.toggle, канал сам проверяет, не
           возобновили ли плеер медиа-клавишей раньше него. */}
+      {/* Условный монтаж (не open-проп на вечно живом компоненте): между
+          открытиями стейт прошлого прогона (wrapped/slide) не должен ни
+          мелькать кадром до сброса, ни дёргать лишний резолв эмбиента. */}
+      {wrappedOpen ? (
       <WrappedOverlay
         api={api}
         open={wrappedOpen}
@@ -2189,6 +2193,7 @@ function Player({
           onVolumeChange: (v) => setPrefs({ ...prefs, wrappedAmbientVol: v }),
         }}
       />
+      ) : null}
 
       <Dialog
         open={dialogOpen}

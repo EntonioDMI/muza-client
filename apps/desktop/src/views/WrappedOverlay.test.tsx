@@ -139,10 +139,13 @@ describe("WrappedOverlay × эмбиент", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sound of the year" }));
     const slider = await screen.findByRole("slider", { name: "Sound of the year volume" });
     slider.focus();
-    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    fireEvent.keyDown(slider, { key: "ArrowRight", code: "ArrowRight" });
 
     expect(h.setVolume).toHaveBeenCalledWith(21);
     expect(ambient.onVolumeChange).toHaveBeenCalledWith(21);
+    // Стрелка в слайдере НЕ листает историю: window-слушатель оверлея capture
+    // и получает keydown раньше stopPropagation слайдера (живой репро 16.07)
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
   });
 });
 

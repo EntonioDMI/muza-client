@@ -78,7 +78,12 @@ export class WrappedAmbient {
     if (this.wasPlaying) this.deps.pausePlayer();
     this.deps.resolve().then(
       (url) => {
-        if (this.session !== session || !this.active) return; // уже закрыли/перезапустили
+        if (this.session !== session || !this.active) {
+          // уже закрыли/перезапустили — молча, но в dev след оставляем:
+          // «эмбиент не заиграл» без этого лога не расследуется (репро 16.07)
+          if (import.meta.env?.DEV) console.debug("[wrapped ambient] резолв отброшен: сессия устарела");
+          return;
+        }
         const el = (this.el ??= (this.deps.createAudio ?? defaultCreateAudio)());
         el.loop = true; // история может длиться дольше трека — фон не обрывается
         el.src = url;
@@ -89,7 +94,10 @@ export class WrappedAmbient {
         void el.play().catch(() => undefined);
         this.fadeTo(1, AMBIENT_FADE_IN_MS);
       },
-      () => undefined, // ошибка резолва — оверлей живёт без звука
+      (e) => {
+        // ошибка резолва — оверлей живёт без звука; в dev причину видно
+        if (import.meta.env?.DEV) console.debug("[wrapped ambient] резолв не удался:", e);
+      },
     );
   }
 

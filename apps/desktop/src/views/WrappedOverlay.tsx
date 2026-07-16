@@ -262,6 +262,15 @@ export function WrappedOverlay({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
+      // Клавиши из регулятора громкости не листают историю: слайдер ДС сам
+      // ходит стрелками по ARIA-контракту и зовёт stopPropagation, но наш
+      // window-слушатель capture получает событие РАНЬШЕ него (живой репро
+      // 16.07: 10×ArrowRight в слайдере умчали историю на финал). Esc из
+      // слайдера при этом закрыть поповер обязан.
+      if (event.target instanceof HTMLElement && event.target.closest(".wrapped__sound")) {
+        if (event.code === "Escape") setSoundOpen(false);
+        return;
+      }
       if (event.code === "Escape") {
         // Первый Esc закрывает поповер громкости, второй — оверлей
         if (soundOpenRef.current) setSoundOpen(false);
