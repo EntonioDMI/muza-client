@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Icon, IconButton } from "@muza/ui";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
+import { useCoverArt } from "../lib/coverArt";
+import { insertionIndex } from "../lib/dragEngine";
+import { useLocalReorder } from "../lib/useLocalReorder";
 import { useDropZone } from "./DragLayer";
 import { isFillableNavIcon, NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import { isPluginKey } from "../lib/pluginSlots";
@@ -26,6 +29,10 @@ export interface SidebarPlaylist {
   cover?: string;
   /** Stage 7: совместный плейлист — иконка «люди» вместо нот. */
   shared?: boolean;
+  /** 2026-07-17: подписка (follower) — в реордер не входит. */
+  fixed?: boolean;
+  /** 2026-07-17: скрытая владельцем подписка — строка гаснет. */
+  dimmed?: boolean;
 }
 
 const NAV_H = 48;
@@ -107,6 +114,13 @@ function PlaylistRow({
   onClick,
   onMenu,
   onDropTrack,
+  grip,
+  rowRef,
+  shift,
+  dragged = false,
+  settling = false,
+  reordering = false,
+  dimmed = false,
 }: {
   playlistId: string;
   cover?: string;
@@ -118,21 +132,53 @@ function PlaylistRow({
   onMenu?: (e: React.MouseEvent) => void;
   /** Дроп перетаскиваемого трека на этот плейлист (undefined = не таргет). */
   onDropTrack?: (trackId: string) => void;
+  /** Реордер (useLocalReorder, живёт в Sidebar): пропсы ручки-⠿; нет — ручки нет. */
+  grip?: { onPointerDown: (e: React.PointerEvent<HTMLElement>) => void };
+  rowRef?: (el: HTMLElement | null) => void;
+  /** Transform строки во время реордера (сама или сосед); null — покой. */
+  shift?: { x: number; y: number } | null;
+  /** Тащат ИМЕННО эту строку: едет за курсором, без transition, поверх соседей. */
+  dragged?: boolean;
+  /** Строку отпустили — она доезжает до слота, transition нужен и ей. */
+  settling?: boolean;
+  /** Идёт реордер списка — ручки видны на всех строках (читаются цели). */
+  reordering?: boolean;
+  /** 2026-07-17: скрытая владельцем подписка — строка гаснет. */
+  dimmed?: boolean;
 }) {
   const [hover, setHover] = useState(false);
+  const { t } = useT();
+  // Track-иконка плейлиста — сырой ytimg-URL: срезаем вшитые поля тем же
+  // canvas-кропом, что у плеера (локальные/не-ytimg проходят как есть).
+  const cleanCover = useCoverArt(cover ?? null);
   // id зоны с префиксом места: тот же плейлист бывает целью и здесь, и плиткой
   // медиатеки, и своей страницей — а реестр зон в DragLayer это плоская Map,
-  // и одинаковые id затирали бы колбэк друг друга.
+  // и одинаковые id затирали бы колбэк друг друга. Зона принимает ТОЛЬКО треки:
+  // реордер плейлистов — локальный жест, между областями не ходит (2026-07-16).
   const { over: dropLit, props: dropProps } = useDropZone(
     onDropTrack ? `sidebar-playlist:${playlistId}` : null,
     (p) => onDropTrack?.(p.id),
   );
   return (
+    <div
+      {...dropProps}
+      ref={rowRef}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        position: "relative",
+        opacity: dimmed ? 0.45 : undefined,
+        transform: shift ? `translate(${shift.x}px, ${shift.y}px)` : undefined,
+        // тащимая строка липнет к курсору без сглаживания; соседи разъезжаются
+        // мягко; при посадке transition получает и она — доезжает до слота.
+        // Вне реордера transition не держим — не мешать layout'у списка.
+        transition: shift && (!dragged || settling) ? "transform 160ms var(--ease-out)" : undefined,
+        zIndex: dragged ? 2 : undefined,
+      }}
+    >
     <button
       type="button"
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       onContextMenu={
         onMenu
           ? (e) => {
@@ -141,12 +187,15 @@ function PlaylistRow({
             }
           : undefined
       }
-      {...dropProps}
       style={{
         display: "flex",
         alignItems: "center",
+        width: "100%",
+        boxSizing: "border-box",
         gap: "var(--sp-3)",
         padding: "var(--sp-2)",
+        // не дать длинному имени лечь под ручку-⠿
+        paddingRight: grip ? 30 : "var(--sp-2)",
         border: "none",
         borderRadius: "var(--r-sm)",
         background: dropLit ? "var(--accent-soft)" : hover ? "var(--surface-2)" : "transparent",
@@ -157,12 +206,12 @@ function PlaylistRow({
         transition: "background var(--dur-fast) var(--ease-out)",
       }}
     >
-      {cover ? (
+      {cleanCover ? (
         // objectFit обязателен: без него дефолтный fill плющил неквадратную
         // обложку. Не Cover — у пустой ветки ниже свой осмысленный плейсхолдер
         // (совместный плейлист vs обычный), а не общий значок ноты.
         <img
-          src={cover}
+          src={cleanCover}
           alt=""
           style={{ width: 40, height: 40, borderRadius: "var(--r-xs)", flex: "none", objectFit: "cover" }}
         />
@@ -203,6 +252,35 @@ function PlaylistRow({
         </span>
       </span>
     </button>
+    {grip ? (
+      // Появляется на hover строки (в узком сайдбаре постоянные точки на каждой
+      // строке — шум); пока список реордерится — видна везде (читается механика).
+      <span
+        {...grip}
+        role="button"
+        aria-label={t("views.library.reorderHandle")}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "absolute",
+          top: "50%",
+          right: 4,
+          transform: "translateY(-50%)",
+          display: "grid",
+          placeItems: "center",
+          width: 26,
+          height: 30,
+          color: "var(--text-3)",
+          cursor: dragged ? "grabbing" : "grab",
+          opacity: hover || reordering ? 1 : 0,
+          pointerEvents: hover || reordering ? "auto" : "none",
+          transition: "opacity var(--dur-fast) var(--ease-out)",
+          touchAction: "none",
+        }}
+      >
+        <Icon name="grip-vertical" size={16} />
+      </span>
+    ) : null}
+    </div>
   );
 }
 
@@ -285,6 +363,7 @@ export function Sidebar({
   onOpenPlaylist,
   onPlaylistMenu,
   onDropTrack,
+  onReorderPlaylists,
   isAdmin = false,
   navItems,
   pluginNav = [],
@@ -305,6 +384,9 @@ export function Sidebar({
   onPlaylistMenu?: (p: SidebarPlaylist, e: React.MouseEvent) => void;
   /** DnD: трек уронили на плейлист (только серверные списки). */
   onDropTrack?: (playlistId: string, trackId: string) => void;
+  /** Реордер за ручку-⠿ (локальный, только внутри сайдбара): id встаёт на
+   *  toIndex (splice-индекс) — тот же контракт, что в Библиотеке. */
+  onReorderPlaylists?: (draggedId: string, toIndex: number) => void;
   /** Показывает пункт «Админка» (Stage 5); true только после adminPing. */
   isAdmin?: boolean;
   /** Компоновка (настройки → «Вкладки сайдбара»): состав/порядок/имена. */
@@ -321,6 +403,15 @@ export function Sidebar({
   onOpenHotkeys: () => void;
 }) {
   const { t, lang } = useT();
+  // Реордер плейлистов — локальный жест столбца: строка следует за курсором в
+  // пределах списка, соседи разъезжаются (useLocalReorder). «Любимое» закреплено
+  // и в ids не входит — на его место ничего не встанет.
+  const reorder = useLocalReorder({
+    // fixed (подписки, 2026-07-17) в реордер не входят — их позиций на сервере нет
+    ids: playlists.filter((p) => !p.fixed).map((p) => p.id),
+    resolveTo: (rects, from, _x, y) => insertionIndex(rects, from, y),
+    onCommit: (id, to) => onReorderPlaylists?.(id, to),
+  });
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
   // индикатор гаснет, контент остаётся доступен), label — своё имя.
   // T44: плагинные вкладки живут в том же списке под ключами plugin:<id>:<tab>.
@@ -433,9 +524,16 @@ export function Sidebar({
             name={p.name}
             meta={p.meta}
             shared={p.shared}
+            dimmed={p.dimmed}
             onClick={() => onOpenPlaylist(p.id)}
             onMenu={onPlaylistMenu ? (e) => onPlaylistMenu(p, e) : undefined}
-            onDropTrack={onDropTrack ? (trackId) => onDropTrack(p.id, trackId) : undefined}
+            onDropTrack={onDropTrack && !p.fixed ? (trackId) => onDropTrack(p.id, trackId) : undefined}
+            grip={onReorderPlaylists && !p.fixed ? reorder.grip(p.id) : undefined}
+            rowRef={p.fixed ? undefined : reorder.itemRef(p.id)}
+            shift={p.fixed ? null : reorder.shiftFor(p.id)}
+            dragged={!p.fixed && reorder.draggingId === p.id}
+            settling={reorder.settling}
+            reordering={reorder.draggingId !== null}
           />
         ))}
       </div>
