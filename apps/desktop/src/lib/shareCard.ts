@@ -4,6 +4,7 @@
  *  (глассморфизм бренда), обложка с закруглением, глиф+wordmark Muza. */
 
 import glyphUrl from "@muza/ui/assets/logo/glyph.svg";
+import { findContentBox } from "./coverArt";
 import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 
 export type ShareData =
@@ -43,11 +44,36 @@ function roundedPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.closePath();
 }
 
-/** Кроп-квадрат картинки в скруглённый бокс (cover-fit по центру). */
+/** Границы контента без вшитых полей источника (letterbox/pillarbox) — та же
+ *  эвристика, что у обложек плеера (lib/coverArt.findContentBox). null — полей
+ *  нет либо канва «испорчена» CORS'ом: рисуем картинку как есть. */
+function contentBoxOf(img: HTMLImageElement): { left: number; top: number; w: number; h: number } | null {
+  try {
+    const probe = document.createElement("canvas");
+    probe.width = img.naturalWidth;
+    probe.height = img.naturalHeight;
+    const ctx = probe.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    const box = findContentBox(ctx.getImageData(0, 0, probe.width, probe.height).data, probe.width, probe.height);
+    if (!box) return null;
+    return { left: box.left, top: box.top, w: box.right - box.left + 1, h: box.bottom - box.top + 1 };
+  } catch {
+    return null;
+  }
+}
+
+/** Кроп-квадрат картинки в скруглённый бокс (cover-fit по центру контента).
+ *  Центр считается ПОСЛЕ среза вшитых полей источника — иначе серые/чёрные
+ *  рамки ytimg попадали в карточку (жалоба 2026-07-16, тот же класс бага,
+ *  что в «Итогах года»). */
 function drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, size: number, r: number) {
-  const side = Math.min(img.naturalWidth, img.naturalHeight);
-  const sx = (img.naturalWidth - side) / 2;
-  const sy = (img.naturalHeight - side) / 2;
+  const box = contentBoxOf(img);
+  const bw = box?.w ?? img.naturalWidth;
+  const bh = box?.h ?? img.naturalHeight;
+  const side = Math.min(bw, bh);
+  const sx = (box?.left ?? 0) + (bw - side) / 2;
+  const sy = (box?.top ?? 0) + (bh - side) / 2;
   ctx.save();
   roundedPath(ctx, x, y, size, size, r);
   ctx.clip();
@@ -86,21 +112,12 @@ function drawCoverFallback(
   ctx.restore();
 }
 
-/** Фон: тёмная база + два акцентных блоба (как blob'ы бренда на лендинге). */
-function drawBackdrop(ctx: CanvasRenderingContext2D, accent: string) {
+/** Фон: сплошной цвет окна приложения (--bg-0). Никаких блобов/градиентов —
+ *  ДС плоская (tokens/effects.css), и карточка обязана выглядеть как «кадр из
+ *  приложения», а не как нейро-постер (жалоба владельца 2026-07-17). */
+function drawBase(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "#121110";
   ctx.fillRect(0, 0, SIZE, SIZE);
-  const blob = (cx: number, cy: number, radius: number, alpha: number) => {
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-    g.addColorStop(0, accent);
-    g.addColorStop(1, "#12111000");
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, SIZE, SIZE);
-    ctx.globalAlpha = 1;
-  };
-  blob(SIZE * 0.85, SIZE * 0.1, SIZE * 0.75, 0.22);
-  blob(SIZE * 0.05, SIZE * 0.95, SIZE * 0.65, 0.16);
 }
 
 /** Глиф + «Muza» по центру снизу. */
@@ -153,7 +170,7 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
   await document.fonts.ready; // Unbounded/Golos уже подключены приложением
   const ctx = makeCanvas();
   const glyph = await loadImage(glyphUrl);
-  drawBackdrop(ctx, accent);
+  drawBase(ctx);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -162,13 +179,9 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
     const cs = 560;
     const cx = (SIZE - cs) / 2;
     const cy = 128;
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.55)";
-    ctx.shadowBlur = 64;
-    ctx.shadowOffsetY = 20;
+    // без теней: ДС плоская, обложка лежит на базе как плитка в приложении
     if (cover) drawCover(ctx, cover, cx, cy, cs, 44);
     else drawCoverFallback(ctx, accent, glyph, cx, cy, cs, 44);
-    ctx.restore();
     ctx.font = "700 58px 'Golos Text', sans-serif";
     ctx.fillStyle = "#f4f3f1";
     ctx.fillText(ellipsize(ctx, data.title, SIZE - 160), SIZE / 2, 796);
@@ -184,13 +197,9 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
     const cs = 560;
     const cx = (SIZE - cs) / 2;
     const cy = 128;
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.55)";
-    ctx.shadowBlur = 64;
-    ctx.shadowOffsetY = 20;
+    // без теней: ДС плоская, сетка обложек лежит на базе как плитки
     if (covers.length >= 4) {
       const half = cs / 2 - 6;
-      ctx.shadowColor = "transparent";
       roundedPath(ctx, cx, cy, cs, cs, 44);
       ctx.save();
       ctx.clip();
@@ -204,7 +213,6 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
     } else {
       drawCoverFallback(ctx, accent, glyph, cx, cy, cs, 44);
     }
-    ctx.restore();
     ctx.font = "700 58px 'Golos Text', sans-serif";
     ctx.fillStyle = "#f4f3f1";
     ctx.fillText(ellipsize(ctx, data.name, SIZE - 160), SIZE / 2, 796);
@@ -216,81 +224,71 @@ export async function renderShareCard(data: ShareData, accent: string, lang: Lan
     ctx.fillText(ellipsize(ctx, meta, SIZE - 200), SIZE / 2, 862);
     drawBranding(ctx, glyph, 984);
   } else {
-    // Wrapped «афиша года» — редизайн 2026-07-16 (жалоба владельца: «много
-    // еле заметного текста, для карточки лучше графика, а не куча подписей»).
-    // Дистилляция: один герой-результат (минуты), два имени-брага БЕЗ бледных
-    // «label: value», графика вместо текста. Ушли: титр, серые подписи «артист
-    // года / трек года», бледная строка «прослушиваний · артистов». Год теперь
-    // не текст-подпись, а крупный графический водяной знак.
+    // Wrapped — редизайн 2026-07-17 (жалоба владельца: свечения и блобы —
+    // «полнейший нейрослоп», ДС плоская). Карточка теперь «кадр из приложения»:
+    // плоская панель-зона на цвете окна, типографика и цвета — токены ДС,
+    // герой-минуты акцентом БЕЗ свечения, разделитель — как в панелях
+    // статистики, пары «значение + тихая подпись» — язык BigStat.
     const locale = lang === "ru" ? "ru" : "en";
-    const left = 100;
-    const maxW = SIZE - left - 250; // справа живёт вертикальный год-водяной знак
 
-    // ГРАФИКА 1 — гигантский вертикальный год акцентом (главный визуальный
-    // объект справа, а не подпись). rotate(90°) вместо writing-mode для canvas.
-    ctx.save();
-    ctx.translate(SIZE - 40, 60);
-    ctx.rotate(Math.PI / 2);
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.font = "700 320px Unbounded, sans-serif";
-    ctx.globalAlpha = 0.16;
-    ctx.fillStyle = accent;
-    ctx.fillText(String(data.year), 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    // Панель-зона: surface-1 на bg-0, скругление как у зон приложения.
+    const px = 64;
+    const pw = SIZE - px * 2;
+    roundedPath(ctx, px, px, pw, pw, 56);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+    ctx.fill();
+    const left = 160; // внутренний отступ контента
+    const right = SIZE - 160;
+    const maxW = right - left;
 
-    ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
 
-    // ГЕРОЙ — минуты: огромные, акцентом, с мягким акцентным свечением.
-    ctx.save();
-    ctx.shadowColor = accent;
-    ctx.shadowBlur = 72;
-    ctx.font = "700 232px Unbounded, sans-serif";
-    ctx.fillStyle = accent;
-    ctx.fillText(ellipsize(ctx, data.minutes.toLocaleString(locale), maxW + 120), left, 456);
-    ctx.restore();
-    // единственная подпись — читаемая, не бледный шёпот
-    ctx.font = "500 46px 'Golos Text', sans-serif";
-    ctx.fillStyle = "rgba(244, 243, 241, 0.74)";
-    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), left, 528);
+    // Шапка: глиф + Muza слева, «Итоги <год>» справа — как заголовок зоны.
+    ctx.textAlign = "left";
+    if (glyph) ctx.drawImage(glyph, left, 148, 44, 50);
+    ctx.font = "600 44px Unbounded, sans-serif";
+    ctx.fillStyle = "#f4f3f1";
+    ctx.fillText("Muza", left + 64, 190);
+    ctx.textAlign = "right";
+    ctx.font = "500 36px 'Golos Text', sans-serif";
+    ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
+    ctx.fillText(translate(lang, "media.shareCard.wrappedTitle", { year: data.year }), right, 188);
 
-    // ГРАФИКА 2 — короткий акцентный делитель, отбивает героя от имён.
-    roundedPath(ctx, left, 604, 104, 6, 3);
+    // Герой — минуты: плоский акцент, без свечения; подпись — text-2.
+    ctx.textAlign = "left";
+    ctx.font = "700 248px Unbounded, sans-serif";
     ctx.fillStyle = accent;
-    ctx.fill();
+    ctx.fillText(ellipsize(ctx, data.minutes.toLocaleString(locale), maxW), left, 560);
+    ctx.font = "500 48px 'Golos Text', sans-serif";
+    ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
+    ctx.fillText(translate(lang, "media.shareCard.minutesOfMusic"), left, 642);
 
-    // Имена-браги БЕЗ подписей: маркер-графика слева (у артиста — заливка,
-    // у трека — кольцо), дальше имя. Размер сам задаёт иерархию.
-    const nameRow = (marker: "dot" | "ring", value: string, size: number, alpha: number, y: number) => {
-      const cx = left + 13;
-      const cy = y - Math.round(size * 0.32);
-      ctx.beginPath();
-      ctx.arc(cx, cy, 13, 0, Math.PI * 2);
-      if (marker === "dot") {
-        ctx.fillStyle = accent;
-        ctx.fill();
-      } else {
-        ctx.lineWidth = 5;
-        ctx.strokeStyle = accent;
-        ctx.stroke();
-      }
-      ctx.font = `700 ${size}px 'Golos Text', sans-serif`;
-      ctx.fillStyle = `rgba(244, 243, 241, ${alpha})`;
-      ctx.fillText(ellipsize(ctx, value, maxW - 52), left + 52, y);
-    };
-    let y = 712;
+    // Разделитель — 2px surface-2, как между блоками панелей статистики.
+    ctx.fillStyle = "rgba(255, 255, 255, 0.07)";
+    ctx.fillRect(left, 716, maxW, 2);
+
+    // Топ-пары в языке BigStat: тихая подпись text-3 над значением text-1.
+    let y = 796;
     if (data.topArtist) {
-      nameRow("dot", data.topArtist, 60, 1, y);
-      y += 108;
+      ctx.font = "400 34px 'Golos Text', sans-serif";
+      ctx.fillStyle = "rgba(244, 243, 241, 0.38)";
+      ctx.fillText(translate(lang, "media.shareCard.artistOfYear"), left, y);
+      ctx.font = "700 68px 'Golos Text', sans-serif";
+      ctx.fillStyle = "#f4f3f1";
+      ctx.fillText(ellipsize(ctx, data.topArtist, maxW), left, y + 78);
+      y += 138;
     }
     if (data.topTrack) {
-      nameRow("ring", data.topTrack, 46, 0.82, y);
+      ctx.font = "500 42px 'Golos Text', sans-serif";
+      ctx.fillStyle = "rgba(244, 243, 241, 0.62)";
+      ctx.fillText(ellipsize(ctx, data.topTrack, maxW), left, y);
     }
 
-    ctx.textAlign = "center";
-    drawBranding(ctx, glyph, 984);
+    // Низ: адрес — тихо, по правому краю (бренд уже в шапке).
+    ctx.textAlign = "right";
+    ctx.font = "400 30px 'Golos Text', sans-serif";
+    ctx.fillStyle = "rgba(244, 243, 241, 0.38)";
+    ctx.fillText("muza.lol", right, 964);
   }
 
   return toBlob(ctx.canvas);
