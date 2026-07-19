@@ -136,6 +136,8 @@ export const mediaEn = {
     // героем-минутами. artistOfYear/trackOfYear/myYearRecap/playsAndArtists
     // удалены как мёртвые (карточка была единственным их потребителем).
     minutesOfMusic: "minutes of music",
+    wrappedTitle: "Wrapped {year}",
+    artistOfYear: "Artist of the year",
     trackCount: "{count} tr.",
     fromOwner: " · from {owner}",
     errors: {

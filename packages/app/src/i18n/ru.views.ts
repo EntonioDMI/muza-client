@@ -56,6 +56,21 @@ export const viewsRu: typeof viewsEn = {
       collapse: "свернуть",
       noOriginal: "Оригинал не найден в выдаче — показан лучший вариант ({label})",
     },
+    // Публичные плейлисты (2026-07-17): код PL_… и выдача
+    publicPlaylist: {
+      kind: "Плейлист",
+      by: "от {owner}",
+      trackCount: "{count} тр.",
+      followerCount: "{count} слуш.",
+      open: "Открыть",
+      addToLibrary: "В библиотеку",
+      inLibrary: "В библиотеке",
+      added: "Плейлист добавлен в библиотеку",
+      removed: "Плейлист убран из библиотеки",
+      topResult: "Лучший результат",
+      shelf: "Плейлисты от слушателей",
+      codeSearching: "Ищем плейлист по коду…",
+    },
   },
 
   library: {
@@ -69,6 +84,10 @@ export const viewsRu: typeof viewsEn = {
     addLink: "По ссылке",
     importPlaylist: "Импорт плейлиста",
     byCode: "По коду",
+    // Публичные плейлисты (2026-07-17): живые подписки в общем списке
+    followedSubtitle: "{count} тр. · от {owner}",
+    followedHidden: "владелец скрыл",
+    followedHiddenToast: "Владелец скрыл этот плейлист",
     artistsPlaceholder: "Здесь появятся артисты, на которых ты подпишешься.",
     albumsPlaceholder: "Здесь появятся альбомы треков, которые ты сохранишь.",
     anon: {
@@ -116,6 +135,12 @@ export const viewsRu: typeof viewsEn = {
     empty: "Пусто. Добавляй треки из поиска: «⋯ → В плейлист».",
     changePlaylistIcon: "Сменить иконку плейлиста",
     removeFromPlaylist: "Убрать из плейлиста",
+    // Публичные плейлисты (2026-07-17): просмотр чужого (role viewer)
+    publicFrom: "публичный · от {owner}",
+    publicAccess: "Поделиться плейлистом",
+    followerCount: "{count} слуш.",
+    followAdd: "В библиотеку",
+    followRemove: "Убрать из библиотеки",
   },
 
   favorites: {
@@ -167,7 +192,6 @@ export const viewsRu: typeof viewsEn = {
       shareValue: "1 из {n}",
       emptyPeriod: "За этот период в любимое ничего не попало — жми сердечко на треке, который зашёл.",
     },
-    customizeBlocksTooltip: "Настроить блоки",
     customizeBlocksLabel: "Настроить блоки статистики",
     notice: {
       needsAccount: "Статистика считается на сервере по истории аккаунта. Войди с аккаунтом — и здесь появятся минуты, топы и серии.",
@@ -282,6 +306,14 @@ export const viewsRu: typeof viewsEn = {
       errorsByClass: "Ошибки по классам (KPI SABR/403)",
       byRecipeVersion: "По версии рецепта",
       byAppVersion: "По версии приложения",
+    },
+    // Публичные плейлисты (2026-07-17): рубильник
+    publicPlaylists: {
+      title: "Публичные плейлисты",
+      empty: "Сейчас ничего не опубликовано",
+      banToggle: "Заодно запретить публиковать этот плейлист снова",
+      unpublish: "Снять с публикации",
+      meta: "{tracks} тр. · {followers} слуш.",
     },
     stats: {
       dauHint: "слушали за сутки",

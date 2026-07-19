@@ -66,6 +66,21 @@ export const viewsEn = {
       collapse: "collapse",
       noOriginal: "Original not found in the results — showing the best match ({label})",
     },
+    // Публичные плейлисты (2026-07-17): код PL_… и выдача
+    publicPlaylist: {
+      kind: "Playlist",
+      by: "by {owner}",
+      trackCount: "{count} tracks",
+      followerCount: "{count} listeners",
+      open: "Open",
+      addToLibrary: "Add to library",
+      inLibrary: "In your library",
+      added: "Playlist added to your library",
+      removed: "Playlist removed from your library",
+      topResult: "Top result",
+      shelf: "Playlists from listeners",
+      codeSearching: "Looking up the playlist code…",
+    },
   },
 
   library: {
@@ -99,6 +114,10 @@ export const viewsEn = {
     localFilesEmpty:
       "Nothing here yet. Add files or a folder of music — they'll play alongside catalog tracks, including in the same playlist.",
     playlistSubtitle: "{count} tr. · syncing",
+    // Публичные плейлисты (2026-07-17): живые подписки в общем списке
+    followedSubtitle: "{count} tr. · by {owner}",
+    followedHidden: "hidden by the owner",
+    followedHiddenToast: "The owner hid this playlist",
     reorderHandle: "Drag to reorder",
     playlistsEmpty:
       'No playlists yet. Create your first one with the "+" button in the sidebar, import from Spotify/YouTube/Apple Music, or add tracks by link.',
@@ -128,6 +147,12 @@ export const viewsEn = {
     empty: 'Empty. Add tracks from Search: "⋯ → Add to playlist".',
     changePlaylistIcon: "Change playlist icon",
     removeFromPlaylist: "Remove from playlist",
+    // Публичные плейлисты (2026-07-17): просмотр чужого (role viewer)
+    publicFrom: "public · by {owner}",
+    publicAccess: "Share playlist",
+    followerCount: "{count} listeners",
+    followAdd: "Add to library",
+    followRemove: "Remove from library",
   },
 
   favorites: {
@@ -179,7 +204,6 @@ export const viewsEn = {
       shareValue: "1 in {n}",
       emptyPeriod: "Nothing went to Favorites this period — tap the heart on a track you love.",
     },
-    customizeBlocksTooltip: "Customize blocks",
     customizeBlocksLabel: "Customize statistics blocks",
     notice: {
       needsAccount:
@@ -295,6 +319,14 @@ export const viewsEn = {
       errorsByClass: "Errors by class (KPI SABR/403)",
       byRecipeVersion: "By recipe version",
       byAppVersion: "By app version",
+    },
+    // Публичные плейлисты (2026-07-17): рубильник
+    publicPlaylists: {
+      title: "Public playlists",
+      empty: "Nothing is published right now",
+      banToggle: "Also ban this playlist from being published again",
+      unpublish: "Unpublish",
+      meta: "{tracks} tr. · {followers} listeners",
     },
     stats: {
       dauHint: "listened in the last day",

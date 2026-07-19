@@ -28,6 +28,8 @@ export const en = {
     save: "Save",
     apply: "Apply",
     back: "Back",
+    forward: "Forward",
+    more: "More",
     install: "Install",
     connect: "Connect",
     disconnect: "Disconnect",
@@ -857,6 +859,8 @@ export const en = {
       addToJam: "Add to Jam",
       share: "Share",
       versions: "Sources",
+      // «Заменить версию» (2026-07-18): плейлисты + Любимое, НЕ Поиск/Хоум
+      replaceVersion: "Replace version",
       saveOffline: "Save offline",
       removeOffline: "Remove from offline",
     },
@@ -865,6 +869,8 @@ export const en = {
       rename: "Rename",
       changeIcon: "Change icon",
       delete: "Delete playlist",
+      // Публичные плейлисты (2026-07-17): подписка follower-а
+      unfollow: "Remove from library",
     },
   },
 
@@ -913,6 +919,7 @@ export const en = {
       added: "Added to Favorites",
       removed: "Removed from Favorites",
       syncFailed: "Couldn't sync the like",
+      versionReplaced: "Version replaced in Favorites",
     },
     playlist: {
       renamed: "Playlist renamed",
@@ -927,6 +934,7 @@ export const en = {
       addedTrack: "Added to \"{name}\"",
       addFailed: "Couldn't add",
       joined: "You're in the playlist \"{name}\" (from {owner})",
+      versionReplaced: "Version replaced",
     },
     link: {
       trackAdded: "\"{title}\" added",
@@ -988,6 +996,9 @@ export const en = {
       collabFrom: "{count} tr. · from {owner}",
       shared: "{count} tr. · shared",
       trackCount: "{count} tr.",
+      // Публичные плейлисты (2026-07-17): живая подписка / скрыт владельцем
+      followedFrom: "{count} tr. · by {owner}",
+      hiddenByOwner: "hidden by the owner",
     },
   },
 
@@ -1071,6 +1082,33 @@ export const en = {
     // Dev build only: codes live in one server's database and don't cross
     // between localhost and prod (docs/notes/2026-07-15-кросс-бэкенд-ловушка-коды.md)
     devBackend: "Dev build: only codes from {host} will work",
+    // Публичные плейлисты (2026-07-17): лесенка видимости + код PL_…
+    shareVisibility: {
+      title: "Share playlist",
+      done: "Done",
+      stepPrivate: "Private",
+      stepPrivateHint: "only you (and co-authors) can see it",
+      stepCode: "By code",
+      stepCodeHint: "open to anyone you send the code to",
+      stepPublic: "Public",
+      stepPublicHint: "visible to everyone in Muza search, the code works too",
+      codeLabel: "Access code",
+      codeInactive: "the code is inactive while the playlist is private",
+      codeHint: "The code goes right into the search bar",
+      copy: "Copy code",
+      copied: "Code copied",
+      followers: "Listeners: {count}",
+      changeFailed: "Couldn't change visibility",
+      // @Адрес (2026-07-17): уникальное имя публичного плейлиста
+      handleLabel: "@Address",
+      handlePlaceholder: "e.g. fonk_v_tachku",
+      handleSave: "Save",
+      handleHint: "Unique name: tell a friend — they type @name into search",
+      handleFormat: "Only latin letters, digits and _ (3–32 chars)",
+      handleFrozen: "the address is frozen while the playlist isn't public",
+      handleSaved: "Address saved",
+      handleCopied: "Address copied",
+    },
     collab: {
       title: "Shared access",
       done: "Done",
@@ -1140,6 +1178,21 @@ export const en = {
       noSources: "No live sources — the track can't play yet.",
       footerHint:
         "These are places the SAME song is fetched from — remixes and sped-up edits are separate tracks, look for them in search. Your choice is remembered and won't be overridden by auto-matching. Likes and lyrics stay on the track itself.",
+    },
+    // «Заменить версию» (2026-07-18): подмена трека на другую загрузку той же
+    // песни (отдельный трек каталога) — не путать с versions (источники).
+    replaceVersion: {
+      titleWithTrack: "\"{title}\" — replace version",
+      loading: "Looking for other uploads…",
+      loadingHint: "Searching providers — up to ~10 seconds",
+      loadFailed: "Couldn't find candidates",
+      empty: "No other uploads of this song found.",
+      matched: "likely the same song",
+      replaceFailed: "Couldn't replace",
+      preview: "Preview",
+      secondsShort: "s",
+      footerHint:
+        "The same song uploaded by other channels — often under someone else's name. Length difference vs the current version is in brackets; use ▶ to check by ear. Replacing applies only here; likes and history stay with the old track.",
     },
     queue: {
       playAria: "Play: {artist} — {title}",
