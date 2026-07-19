@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
 import { Cover } from "./Cover.jsx";
+import { Tooltip } from "../feedback/Tooltip.jsx";
 
 /** Track list row — no dividers; hover is a surface layer, active is accent title.
  *  Keyboard-reachable: the index cell is a real play button (number → play icon
@@ -126,10 +127,11 @@ export function TrackRow({
         </div>
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{artist}</div>
       </div>
-      {/* Источник трека — тихий информ-бейдж (всегда виден, не по ховеру): откуда добывается */}
+      {/* Источник трека — тихий информ-бейдж (всегда виден, не по ховеру): откуда
+          добывается. Нативного title нет: он дублировал видимый текст стоковой
+          плашкой WebView2 (жалоба 2026-07-16). */}
       {source ? (
         <span
-          title={`Источник: ${source}`}
           style={{
             flex: "none",
             maxWidth: 132,
@@ -157,12 +159,12 @@ export function TrackRow({
             поэтому правый кластер стоит на одном месте у всех. */}
         {showVersions ? (
           versionCount ? (
+            <Tooltip label={versionsLabel} style={{ flex: "none" }}>
             <button
               type="button"
               onClick={onVersions}
               aria-expanded={versionsExpanded}
               aria-label={versionsLabel}
-              title={versionsLabel}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -191,6 +193,7 @@ export function TrackRow({
                 style={{ transform: versionsExpanded ? "rotate(180deg)" : undefined, transition: "transform var(--dur-fast) var(--ease-out)" }}
               />
             </button>
+            </Tooltip>
           ) : (
             <span style={{ width: VERSIONS_SLOT, flex: "none" }}></span>
           )

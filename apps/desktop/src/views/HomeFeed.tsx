@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Button, EmptyState, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
-import { WRAPPED_BANNER_PREVIEW, wrappedSeason } from "../lib/wrappedSeason";
+import { WRAPPED_BANNER_PREVIEW, WRAPPED_ENABLED, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
+import { shelfL10n, tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { useT } from "../i18n";
 import type { TParams, TranslationKey } from "../i18n";
 import type { View } from "../types";
@@ -119,7 +120,9 @@ export function HomeFeed({
   // сортировка стабильная: внутри группы порядок сервера сохраняется
   const sections = [...feed.sections].sort((a, b) => sectionRank(a.key) - sectionRank(b.key));
   const season = wrappedSeason();
-  const wrappedBanner = canSearch && !!onOpenWrapped && (WRAPPED_BANNER_PREVIEW || season.inSeason);
+  // WRAPPED_ENABLED — мастер-выключатель: фича спрятана до релиза (2026-07-17)
+  const wrappedBanner =
+    WRAPPED_ENABLED && canSearch && !!onOpenWrapped && (WRAPPED_BANNER_PREVIEW || season.inSeason);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding: "var(--sp-6) var(--sp-6) 0" }}>
@@ -231,6 +234,7 @@ export function HomeFeed({
                       {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
                     >
                       <TrackRow
+                        {...trackRowL10n(t)}
                         index={i + 1}
                         cover={tr.coverUrl}
                         showCover={rowShow?.cover !== false}
@@ -253,7 +257,7 @@ export function HomeFeed({
             ) : (
               // остальные секции — карусели (T17: ПКМ по плитке = меню «⋯»;
               // T18: плитка тоже draggable — у свежей ленты бывают только карусели)
-              <Shelf key={s.key} title={s.title}>
+              <Shelf key={s.key} title={s.title} {...shelfL10n(t)}>
                 {s.tracks.map((tr) => (
                   <div
                     key={tr.id}
@@ -268,6 +272,7 @@ export function HomeFeed({
                     style={{ flex: "none" }}
                   >
                     <Tile
+                      {...tileL10n(t)}
                       // Нет обложки → плейсхолдер рисует Cover внутри Tile.
                       // Здесь лежал свой data:svg-градиент: плитка без арта
                       // выглядела иначе, чем строка без арта, хотя состояние
