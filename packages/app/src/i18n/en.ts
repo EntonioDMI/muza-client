@@ -42,6 +42,15 @@ export const en = {
   },
   settings: {
     title: "Settings",
+    // Поиск по настройкам (спека 19.07 §4.2) + общие строки рядов-пресетов (§4.1).
+    search: {
+      placeholder: "Search settings",
+      empty: "Nothing found. Try other words: \"background\", \"font\", \"hotkeys\".",
+    },
+    presetRow: {
+      customChip: "Custom",
+      tune: "Tune",
+    },
     tabs: {
       account: "Account",
       appearance: "Appearance",
@@ -197,6 +206,7 @@ export const en = {
     // ── Кастомизация (под-экран) ─────────────────────────────────────
     customize: {
       title: "Customize",
+      units: { seconds: "{n} s" },
       glass: {
         groupTitle: "Glass and effects",
         panelBlur: { title: "Panel blur", hint: "How blurred things look through the frosted panels." },
@@ -232,6 +242,9 @@ export const en = {
         fields: { title: "Input fields", hint: "How round the corners of search, lists and text fields are." },
         panels: { title: "Panels and zones", hint: "How round the corners of the large panels are — sidebar, player, dialogs." },
         density: { title: "Interface density", hint: "Left — the interface gets tighter, right — roomier." },
+        tileSize: { title: "Tile size", hint: "How large the album and playlist tiles are. Where tiles stretch to fit, this sets the column width." },
+        padTile: { title: "Tile padding", hint: "The air between a tile's edge and the cover inside it." },
+        gapZone: { title: "Zone gap", hint: "The distance between the window's zones — sidebar, main area and player." },
         sidebarWidth: { title: "Sidebar width", hint: "How wide the left panel is. On a narrow window it still shrinks." },
         nowPlayingWidth: { title: "\"Now Playing\" width", hint: "How wide the right panel with lyrics is." },
         pill: "pill",
@@ -239,14 +252,30 @@ export const en = {
       },
       typography: {
         groupTitle: "Typography",
+        fontUi: { title: "Text font", hint: "The typeface of all interface text. Every name in the list is drawn in its own font." },
+        fontDisplay: { title: "Heading font", hint: "The typeface of large titles — like the greeting on the home screen." },
         fontScale: { title: "Text size", hint: "Changes only the text size. \"Interface scale\" enlarges the whole interface instead." },
+        headingScale: { title: "Heading size", hint: "Makes titles bigger or smaller. Regular text stays as is." },
         lineSpacing: { title: "Line spacing", hint: "The distance between lines of text in the interface." },
+        spaceScale: { title: "Interface air", hint: "All the spacing at once: left — everything sits tighter, right — roomier." },
         karaokeSize: { title: "Karaoke text size", hint: "Size of the lyrics line in listening mode." },
       },
       motion: {
         groupTitle: "Motion",
         anims: { title: "Animations", hint: "The interface moves smoothly. Turn this off and everything switches instantly." },
         animSpeed: { title: "Animation speed", hint: "Left — animations get faster, right — slower and softer." },
+        durMenu: { title: "Responses", hint: "How long menus, tooltips and small touches take to appear. Left — snappier." },
+        durDialog: { title: "Windows", hint: "How long dialogs and panels take to open. Left — snappier." },
+        durPage: { title: "Screen changes", hint: "How long switching between screens takes. Left — snappier." },
+        ease: {
+          title: "Motion character",
+          hint: "How movement feels: \"Soft\" glides to a stop, \"Crisp\" lands quickly, \"Even\" moves at one pace.",
+          soft: "Soft",
+          crisp: "Crisp",
+          linear: "Even",
+        },
+        scrollSpeed: { title: "Scroll speed", hint: "How far a list moves per mouse-wheel notch." },
+        scrollSmooth: { title: "Smooth scrolling", hint: "The list glides with the wheel instead of jumping in steps." },
       },
       layout: {
         groupTitle: "Layout and elements",
@@ -254,6 +283,8 @@ export const en = {
         navTabs: { title: "Sidebar tabs", hint: "Which tabs show in the sidebar, their order and custom names." },
         rowCover: { title: "Track row: cover", hint: "Show a small cover on the left in track lists." },
         rowDuration: { title: "Track row: duration", hint: "Show the track duration on the right in lists." },
+        playerHeight: { title: "Player bar height", hint: "How tall the player bar at the bottom is." },
+        playerCover: { title: "Player cover", hint: "The size of the track cover in the player bar." },
       },
       background: {
         groupTitle: "Background",
@@ -267,6 +298,16 @@ export const en = {
           animated: "Animated",
         },
         invert: { title: "Invert direction", hint: "The left and right background circles swap their spin direction.", ariaLabel: "Invert rotation direction" },
+        anim: {
+          title: "Animated background",
+          hint: "Two circles in the cover's colors slowly spin behind the interface.",
+          disabledHint: "Turns on when the background is \"Animated\".",
+          presets: { calm: "Calm", lively: "Lively", bright: "Vivid" },
+        },
+        animSpeed: { title: "Spin speed", hint: "How many seconds one full turn takes. Further right — the circles turn more slowly." },
+        animOpacity: { title: "Visibility", hint: "How noticeable the circles are: lower — barely there, higher — brighter." },
+        animScale: { title: "Circle size", hint: "How large the circles are compared to the window." },
+        animEdge: { title: "Behind the edge", hint: "How far the circles hide behind the window edge." },
         color: {
           title: "Background color",
           gradientTitle: "Gradient colors",
@@ -567,6 +608,19 @@ export const en = {
         econom: "Economy",
       },
       sleepTimer: { title: "Sleep timer", hint: "The moon button in the player cycles through: off, these minutes, end of track.", minSuffix: "min" },
+      units: { seconds: "{n} s", tracks: "{n} tr." },
+      queuePrep: {
+        title: "Queue preparation",
+        hint: "How many upcoming tracks get ready before their turn. More — instant starts, but more traffic.",
+        presets: { eco: "Economy", normal: "Normal", max: "Maximum" },
+        warm: { title: "Tracks made ready", hint: "How many next tracks in the queue are prepared ahead of time." },
+        preload: { title: "Next track prep", hint: "How many seconds before a track ends the next one starts loading." },
+      },
+      seekStep: {
+        title: "Seek step",
+        hint: "How far one press of the arrow keys jumps through the track.",
+        fine: { title: "Own step", hint: "Any value from 1 to 60 seconds." },
+      },
     },
 
     // ── Источники ────────────────────────────────────────────────────
@@ -672,6 +726,8 @@ export const en = {
       visualizerOpacity: { title: "Intensity", hint: "How noticeable the visualizer is: lower — ambient, higher — vivid." },
       bassShake: { title: "Bass shake", hint: "In the fullscreen player, the screen gently pulses in time with the bass." },
       bassShakeStrength: { title: "Shake strength", hint: "At 100% — a gentle pulse, higher — a real shake, at 0% — no shaking." },
+      bassSharp: { title: "Response sharpness", hint: "Left — the pulse swells gently, right — it snaps to every bass hit." },
+      bassReach: { title: "Sway reach", hint: "How far the picture moves with the bass." },
       externalGroup: "External plugins",
       appOnly: "Only in the app (not in the browser)",
       installFromFile: {
