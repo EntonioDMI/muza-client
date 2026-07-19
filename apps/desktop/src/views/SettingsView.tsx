@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs, Tooltip } from "@muza/ui";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, SearchInput, Select, Slider, Switch, Tabs, Tooltip } from "@muza/ui";
 import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { useT, type TParams, type TranslationKey } from "../i18n";
@@ -49,6 +49,9 @@ import {
   tokensFromPrefs,
   type SavedTheme,
 } from "../lib/themes";
+import { matchPreset, PRESETS_BG, PRESETS_WARM } from "../lib/presets";
+import { searchSettings, type SettingsSearchHit } from "../lib/settingsIndex";
+import { availableFonts } from "../lib/fonts";
 // Редизайн раскладки (колонки во всю высоту зоны, текучие ширины) — перекрывает
 // габариты каркаса .muza-settings* из app.css; подробности в самом файле.
 import "./SettingsView.layout.css";
@@ -111,6 +114,9 @@ function SettingRow({
   return (
     <Tag
       type={onClick ? "button" : undefined}
+      // Якорь поиска по настройкам: searchSettings ведёт к ряду по видимому
+      // названию (data-rowtitle + CSS.escape) — ручной разметки ~150 рядов нет.
+      data-rowtitle={title}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -230,6 +236,68 @@ function LiveSlider({
         {suffix}
       </span>
     </div>
+  );
+}
+
+/** Ряд «пресеты + Настроить» (спека 19.07 §4.1): чипы именованных состояний
+ *  функции + стрелка, раскрывающая дочерние ползунки тонкой подстройки.
+ *
+ *  Инвариант пресетов: активный пресет НЕ хранится полем Prefs — он
+ *  ВЫЧИСЛЯЕТСЯ (matchPreset) сравнением текущих значений с наборами. Чип
+ *  «Своё» — индикатор, а не значение: появляется только когда значения не
+ *  совпали ни с одним пресетом, и по нему нельзя кликнуть «в никуда». */
+function PresetRow({
+  title,
+  hint,
+  chips,
+  active,
+  disabled,
+  onPick,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  chips: { key: string; label: string }[];
+  /** Результат matchPreset: ключ пресета либо "custom". */
+  active: string;
+  /** Функция сейчас недоступна (например, фон не «Анимированный»). */
+  disabled?: boolean;
+  onPick: (key: string) => void;
+  children?: React.ReactNode;
+}) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const items = active === "custom" ? [...chips, { key: "custom", label: t("settings.presetRow.customChip") }] : chips;
+  return (
+    <>
+      <SettingRow title={title} hint={hint}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--sp-2)",
+            ...(disabled ? { pointerEvents: "none", opacity: 0.4 } : null),
+          }}
+        >
+          <ChipGroup
+            items={items}
+            value={active}
+            onChange={(k: string) => {
+              // «Своё» — индикатор текущего состояния, не команда
+              if (k !== "custom") onPick(k);
+            }}
+          />
+          <IconButton
+            icon={open ? "chevron-up" : "chevron-down"}
+            size="sm"
+            label={t("settings.presetRow.tune")}
+            disabled={disabled}
+            onClick={() => setOpen((v) => !v)}
+          />
+        </div>
+      </SettingRow>
+      {open && !disabled ? children : null}
+    </>
   );
 }
 
@@ -992,6 +1060,14 @@ const EQ_PRESETS: Record<string, number[]> = {
   Рок: [5, 4, 2, 0, -1, 0, 2, 3, 4, 4],
   Поп: [-1, 0, 2, 4, 5, 4, 2, 0, -1, -1],
   Вокал: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1],
+};
+
+/** Шаг перемотки (зона 3): чипы 5/10/30 с — та же конвенция «пресеты поверх
+ *  обычного поля», что PRESETS_BG/PRESETS_WARM, набор локальный (одно поле). */
+const SEEK_PRESETS: Record<string, Partial<Prefs>> = {
+  s5: { seekStepSec: 5 },
+  s10: { seekStepSec: 10 },
+  s30: { seekStepSec: 30 },
 };
 
 export function SettingsView({
@@ -1794,6 +1870,37 @@ export function SettingsView({
     if (paneScrollRef.current) paneScrollRef.current.scrollTop = 0;
   }, [paneKey]);
 
+  // ── Поиск по настройкам (спека 19.07 §4.2) ───────────────────────
+  const [searchQ, setSearchQ] = useState("");
+  // Название ряда, к которому надо прокрутить и подсветить после перехода
+  // из результатов поиска. Ставится вместе с setTab/setSub — эффект ниже
+  // срабатывает уже ПОСЛЕ рендера целевой панели.
+  const [flashTitle, setFlashTitle] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flashTitle) return;
+    setFlashTitle(null);
+    const row = paneScrollRef.current?.querySelector<HTMLElement>(`[data-rowtitle="${CSS.escape(flashTitle)}"]`);
+    // Ряда может не быть: он спрятан за выключенным тумблером или свёрнутым
+    // «Настроить» — тогда просто открыли нужный раздел, без подсветки.
+    if (!row) return;
+    row.scrollIntoView?.({ block: "center" });
+    row.classList.add("muza-settings-row--flash");
+    // Таймер без cleanup нарочно: setFlashTitle(null) выше перезапускает
+    // эффект, и cleanup снял бы класс мгновенно, не дав подсветке пожить.
+    setTimeout(() => row.classList.remove("muza-settings-row--flash"), 2000);
+  }, [flashTitle]);
+  const goToHit = (hit: SettingsSearchHit) => {
+    setSearchQ("");
+    setSub(hit.sub as Sub);
+    setTab(hit.tab as SettingsTabKey);
+    setFlashTitle(hit.title);
+  };
+  const searchHits = searchQ.trim() ? searchSettings(searchQ, (key) => t(key as TranslationKey)) : [];
+
+  // Шрифты для двух Select типографики: канвас-детект системных — один раз
+  // на маунт (список не меняется, пока открыты настройки).
+  const fonts = useMemo(() => availableFonts(), []);
+
   const presets = [
     {
       key: "muza",
@@ -2019,6 +2126,36 @@ export function SettingsView({
           onChange={(v) => set({ density: Math.round(v) })}
         />
       </SettingRow>
+      {/* Зона 4 спеки 19.07: размер плитки (фиксированная ширина Tile и
+          минимум колонки текучих сеток — одна --w-tile на оба случая),
+          внутренний отступ плитки и зазор между зонами окна. */}
+      <SettingRow title={t("settings.customize.shape.tileSize.title")} hint={t("settings.customize.shape.tileSize.hint")}>
+        <LiveSlider
+          value={prefs.tileSize - 140}
+          max={100}
+          label={t("settings.customize.shape.tileSize.title")}
+          suffix={`${prefs.tileSize} px`}
+          onChange={(v) => set({ tileSize: 140 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.shape.padTile.title")} hint={t("settings.customize.shape.padTile.hint")}>
+        <LiveSlider
+          value={prefs.padTile - 8}
+          max={16}
+          label={t("settings.customize.shape.padTile.title")}
+          suffix={`${prefs.padTile} px`}
+          onChange={(v) => set({ padTile: 8 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.shape.gapZone.title")} hint={t("settings.customize.shape.gapZone.hint")}>
+        <LiveSlider
+          value={prefs.gapZone - 4}
+          max={16}
+          label={t("settings.customize.shape.gapZone.title")}
+          suffix={`${prefs.gapZone} px`}
+          onChange={(v) => set({ gapZone: 4 + Math.round(v) })}
+        />
+      </SettingRow>
       <SettingRow title={t("settings.customize.shape.sidebarWidth.title")} hint={t("settings.customize.shape.sidebarWidth.hint")}>
         <LiveSlider
           value={prefs.wSidebar - 240}
@@ -2039,6 +2176,25 @@ export function SettingsView({
       </SettingRow>
 
       <GroupTitle>{t("settings.customize.typography.groupTitle")}</GroupTitle>
+      {/* Зона 5 спеки 19.07: выбор шрифта — впервые (до этого Golos/Unbounded
+          были зашиты в токенах). Каждое название в списке нарисовано СВОИМ
+          шрифтом — живое превью вместо слепого выбора по имени. */}
+      <SettingRow title={t("settings.customize.typography.fontUi.title")} hint={t("settings.customize.typography.fontUi.hint")}>
+        <Select
+          ariaLabel={t("settings.customize.typography.fontUi.title")}
+          items={fonts.map((f) => ({ key: f.key, label: <span style={{ fontFamily: f.family }}>{f.label}</span> }))}
+          value={prefs.fontUi}
+          onChange={(fontUi: string) => set({ fontUi })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.typography.fontDisplay.title")} hint={t("settings.customize.typography.fontDisplay.hint")}>
+        <Select
+          ariaLabel={t("settings.customize.typography.fontDisplay.title")}
+          items={fonts.map((f) => ({ key: f.key, label: <span style={{ fontFamily: f.family }}>{f.label}</span> }))}
+          value={prefs.fontDisplay}
+          onChange={(fontDisplay: string) => set({ fontDisplay })}
+        />
+      </SettingRow>
       <SettingRow title={t("settings.customize.typography.fontScale.title")} hint={t("settings.customize.typography.fontScale.hint")}>
         <LiveSlider
           value={prefs.fontScale - 85}
@@ -2048,6 +2204,15 @@ export function SettingsView({
           onChange={(v) => set({ fontScale: 85 + Math.round(v) })}
         />
       </SettingRow>
+      <SettingRow title={t("settings.customize.typography.headingScale.title")} hint={t("settings.customize.typography.headingScale.hint")}>
+        <LiveSlider
+          value={prefs.headingScale - 85}
+          max={35}
+          label={t("settings.customize.typography.headingScale.title")}
+          suffix={`${prefs.headingScale} %`}
+          onChange={(v) => set({ headingScale: 85 + Math.round(v) })}
+        />
+      </SettingRow>
       <SettingRow title={t("settings.customize.typography.lineSpacing.title")} hint={t("settings.customize.typography.lineSpacing.hint")}>
         <LiveSlider
           value={prefs.lineSpacing - 125}
@@ -2055,6 +2220,15 @@ export function SettingsView({
           label={t("settings.customize.typography.lineSpacing.title")}
           suffix={(prefs.lineSpacing / 100).toFixed(2).replace(".", lang === "ru" ? "," : ".")}
           onChange={(v) => set({ lineSpacing: 125 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.typography.spaceScale.title")} hint={t("settings.customize.typography.spaceScale.hint")}>
+        <LiveSlider
+          value={prefs.spaceScale - 85}
+          max={40}
+          label={t("settings.customize.typography.spaceScale.title")}
+          suffix={`${prefs.spaceScale} %`}
+          onChange={(v) => set({ spaceScale: 85 + Math.round(v) })}
         />
       </SettingRow>
       <SettingRow title={t("settings.customize.typography.karaokeSize.title")} hint={t("settings.customize.typography.karaokeSize.hint")}>
@@ -2082,6 +2256,71 @@ export function SettingsView({
           />
         </div>
       </SettingRow>
+      {/* Зона 2 спеки 19.07: раздельные длительности по группам (множители
+          поверх общей скорости выше) + характер кривой. Гаснут вместе с
+          выключателем анимаций — как общая скорость. */}
+      <SettingRow title={t("settings.customize.motion.durMenu.title")} hint={t("settings.customize.motion.durMenu.hint")}>
+        <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          <LiveSlider
+            value={prefs.durMenuMult - 60}
+            max={110}
+            label={t("settings.customize.motion.durMenu.title")}
+            suffix={`${prefs.durMenuMult} %`}
+            onChange={(v) => set({ durMenuMult: 60 + Math.round(v) })}
+          />
+        </div>
+      </SettingRow>
+      <SettingRow title={t("settings.customize.motion.durDialog.title")} hint={t("settings.customize.motion.durDialog.hint")}>
+        <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          <LiveSlider
+            value={prefs.durDialogMult - 60}
+            max={110}
+            label={t("settings.customize.motion.durDialog.title")}
+            suffix={`${prefs.durDialogMult} %`}
+            onChange={(v) => set({ durDialogMult: 60 + Math.round(v) })}
+          />
+        </div>
+      </SettingRow>
+      <SettingRow title={t("settings.customize.motion.durPage.title")} hint={t("settings.customize.motion.durPage.hint")}>
+        <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          <LiveSlider
+            value={prefs.durPageMult - 60}
+            max={110}
+            label={t("settings.customize.motion.durPage.title")}
+            suffix={`${prefs.durPageMult} %`}
+            onChange={(v) => set({ durPageMult: 60 + Math.round(v) })}
+          />
+        </div>
+      </SettingRow>
+      <SettingRow title={t("settings.customize.motion.ease.title")} hint={t("settings.customize.motion.ease.hint")}>
+        <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          <Tabs
+            items={[
+              { key: "soft", label: t("settings.customize.motion.ease.soft") },
+              { key: "crisp", label: t("settings.customize.motion.ease.crisp") },
+              { key: "linear", label: t("settings.customize.motion.ease.linear") },
+            ]}
+            value={prefs.easeStyle}
+            onChange={(k: string) => set({ easeStyle: k as Prefs["easeStyle"] })}
+          />
+        </div>
+      </SettingRow>
+      <SettingRow title={t("settings.customize.motion.scrollSpeed.title")} hint={t("settings.customize.motion.scrollSpeed.hint")}>
+        <LiveSlider
+          value={prefs.scrollSpeed - 50}
+          max={250}
+          label={t("settings.customize.motion.scrollSpeed.title")}
+          suffix={`${prefs.scrollSpeed} %`}
+          onChange={(v) => set({ scrollSpeed: 50 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.motion.scrollSmooth.title")} hint={t("settings.customize.motion.scrollSmooth.hint")}>
+        <Switch
+          checked={prefs.scrollSmooth}
+          onChange={(scrollSmooth: boolean) => set({ scrollSmooth })}
+          label={t("settings.customize.motion.scrollSmooth.title")}
+        />
+      </SettingRow>
 
       <GroupTitle>{t("settings.customize.layout.groupTitle")}</GroupTitle>
       <SettingRow title={t("settings.customize.layout.barButtons.title")} hint={t("settings.customize.layout.barButtons.hint")} onClick={() => setSub("bar")} chevron></SettingRow>
@@ -2098,6 +2337,26 @@ export function SettingsView({
           checked={prefs.rowShow.duration}
           onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, duration: on } })}
           label={t("settings.customize.layout.rowDuration.title")}
+        />
+      </SettingRow>
+      {/* Зона 3 спеки 19.07: габариты полосы плеера — раньше были зашиты
+          в токенах (--h-playerbar 92, --size-cover-bar 60). */}
+      <SettingRow title={t("settings.customize.layout.playerHeight.title")} hint={t("settings.customize.layout.playerHeight.hint")}>
+        <LiveSlider
+          value={prefs.hPlayerBar - 72}
+          max={48}
+          label={t("settings.customize.layout.playerHeight.title")}
+          suffix={`${prefs.hPlayerBar} px`}
+          onChange={(v) => set({ hPlayerBar: 72 + Math.round(v) })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.layout.playerCover.title")} hint={t("settings.customize.layout.playerCover.hint")}>
+        <LiveSlider
+          value={prefs.coverBarSize - 44}
+          max={36}
+          label={t("settings.customize.layout.playerCover.title")}
+          suffix={`${prefs.coverBarSize} px`}
+          onChange={(v) => set({ coverBarSize: 44 + Math.round(v) })}
         />
       </SettingRow>
 
@@ -2126,6 +2385,62 @@ export function SettingsView({
           />
         </SettingRow>
       ) : null}
+      {/* Зона 1 спеки 19.07: пресеты анимированного фона + четыре ползунка
+          под «Настроить». Ряд виден всегда (находимость поиском), но при
+          другом типе фона гаснет с честной подсказкой почему. */}
+      <PresetRow
+        title={t("settings.customize.background.anim.title")}
+        hint={
+          prefs.bgType === "animated"
+            ? t("settings.customize.background.anim.hint")
+            : t("settings.customize.background.anim.disabledHint")
+        }
+        chips={[
+          { key: "calm", label: t("settings.customize.background.anim.presets.calm") },
+          { key: "lively", label: t("settings.customize.background.anim.presets.lively") },
+          { key: "bright", label: t("settings.customize.background.anim.presets.bright") },
+        ]}
+        active={matchPreset(PRESETS_BG, prefs)}
+        disabled={prefs.bgType !== "animated"}
+        onPick={(k) => set(PRESETS_BG[k])}
+      >
+        <SettingRow title={t("settings.customize.background.animSpeed.title")} hint={t("settings.customize.background.animSpeed.hint")}>
+          <LiveSlider
+            value={prefs.bgAnimSpeedSec - 16}
+            max={164}
+            label={t("settings.customize.background.animSpeed.title")}
+            suffix={t("settings.customize.units.seconds", { n: prefs.bgAnimSpeedSec })}
+            onChange={(v) => set({ bgAnimSpeedSec: 16 + Math.round(v) })}
+          />
+        </SettingRow>
+        <SettingRow title={t("settings.customize.background.animOpacity.title")} hint={t("settings.customize.background.animOpacity.hint")}>
+          <LiveSlider
+            value={prefs.bgAnimOpacity - 5}
+            max={55}
+            label={t("settings.customize.background.animOpacity.title")}
+            suffix={`${prefs.bgAnimOpacity} %`}
+            onChange={(v) => set({ bgAnimOpacity: 5 + Math.round(v) })}
+          />
+        </SettingRow>
+        <SettingRow title={t("settings.customize.background.animScale.title")} hint={t("settings.customize.background.animScale.hint")}>
+          <LiveSlider
+            value={prefs.bgAnimScale - 100}
+            max={100}
+            label={t("settings.customize.background.animScale.title")}
+            suffix={`${prefs.bgAnimScale} %`}
+            onChange={(v) => set({ bgAnimScale: 100 + Math.round(v) })}
+          />
+        </SettingRow>
+        <SettingRow title={t("settings.customize.background.animEdge.title")} hint={t("settings.customize.background.animEdge.hint")}>
+          <LiveSlider
+            value={prefs.bgAnimEdge}
+            max={40}
+            label={t("settings.customize.background.animEdge.title")}
+            suffix={`${prefs.bgAnimEdge} %`}
+            onChange={(v) => set({ bgAnimEdge: Math.round(v) })}
+          />
+        </SettingRow>
+      </PresetRow>
       {prefs.bgType === "color" || prefs.bgType === "gradient" ? (
         <SettingRow
           title={prefs.bgType === "gradient" ? t("settings.customize.background.color.gradientTitle") : t("settings.customize.background.color.title")}
@@ -3021,6 +3336,61 @@ export function SettingsView({
             onChange={(k: string) => set({ streamQuality: k as Prefs["streamQuality"] })}
           />
         </SettingRow>
+        {/* Зона 3 спеки 19.07: подготовка очереди — прогрев + преднагрузка
+            одной строкой пресетов (Экономно/Обычно/Максимум), тонкая
+            подстройка под «Настроить». */}
+        <PresetRow
+          title={t("settings.playback.queuePrep.title")}
+          hint={t("settings.playback.queuePrep.hint")}
+          chips={[
+            { key: "eco", label: t("settings.playback.queuePrep.presets.eco") },
+            { key: "normal", label: t("settings.playback.queuePrep.presets.normal") },
+            { key: "max", label: t("settings.playback.queuePrep.presets.max") },
+          ]}
+          active={matchPreset(PRESETS_WARM, prefs)}
+          onPick={(k) => set(PRESETS_WARM[k])}
+        >
+          <SettingRow title={t("settings.playback.queuePrep.warm.title")} hint={t("settings.playback.queuePrep.warm.hint")}>
+            <LiveSlider
+              value={prefs.warmAhead}
+              max={30}
+              label={t("settings.playback.queuePrep.warm.title")}
+              suffix={t("settings.playback.units.tracks", { n: prefs.warmAhead })}
+              onChange={(v) => set({ warmAhead: Math.round(v) })}
+            />
+          </SettingRow>
+          <SettingRow title={t("settings.playback.queuePrep.preload.title")} hint={t("settings.playback.queuePrep.preload.hint")}>
+            <LiveSlider
+              value={prefs.preloadAheadSec - 5}
+              max={55}
+              label={t("settings.playback.queuePrep.preload.title")}
+              suffix={t("settings.playback.units.seconds", { n: prefs.preloadAheadSec })}
+              onChange={(v) => set({ preloadAheadSec: 5 + Math.round(v) })}
+            />
+          </SettingRow>
+        </PresetRow>
+        {/* Шаг перемотки: чипы 5/10/30 с, своё значение — под «Настроить». */}
+        <PresetRow
+          title={t("settings.playback.seekStep.title")}
+          hint={t("settings.playback.seekStep.hint")}
+          chips={[
+            { key: "s5", label: t("settings.playback.units.seconds", { n: 5 }) },
+            { key: "s10", label: t("settings.playback.units.seconds", { n: 10 }) },
+            { key: "s30", label: t("settings.playback.units.seconds", { n: 30 }) },
+          ]}
+          active={matchPreset(SEEK_PRESETS, prefs)}
+          onPick={(k) => set(SEEK_PRESETS[k])}
+        >
+          <SettingRow title={t("settings.playback.seekStep.fine.title")} hint={t("settings.playback.seekStep.fine.hint")}>
+            <LiveSlider
+              value={prefs.seekStepSec - 1}
+              max={59}
+              label={t("settings.playback.seekStep.fine.title")}
+              suffix={t("settings.playback.units.seconds", { n: prefs.seekStepSec })}
+              onChange={(v) => set({ seekStepSec: 1 + Math.round(v) })}
+            />
+          </SettingRow>
+        </PresetRow>
         <SettingRow title={t("settings.playback.sleepTimer.title")} hint={t("settings.playback.sleepTimer.hint")}>
           <StepsEditor
             values={prefs.sleepPresets}
@@ -3400,15 +3770,38 @@ export function SettingsView({
           <Switch checked={prefs.bassShake} onChange={(on: boolean) => set({ bassShake: on })} label={t("settings.extensions.bassShake.title")} />
         </SettingRow>
         {prefs.bassShake ? (
-          <SettingRow title={t("settings.extensions.bassShakeStrength.title")} hint={t("settings.extensions.bassShakeStrength.hint")}>
-            <LiveSlider
-              value={prefs.bassShakeStrength}
-              max={BASS_STRENGTH_MAX}
-              label={t("settings.extensions.bassShakeStrength.title")}
-              suffix={`${prefs.bassShakeStrength} %`}
-              onChange={(v) => set({ bassShakeStrength: Math.round(v) })}
-            />
-          </SettingRow>
+          <>
+            <SettingRow title={t("settings.extensions.bassShakeStrength.title")} hint={t("settings.extensions.bassShakeStrength.hint")}>
+              <LiveSlider
+                value={prefs.bassShakeStrength}
+                max={BASS_STRENGTH_MAX}
+                label={t("settings.extensions.bassShakeStrength.title")}
+                suffix={`${prefs.bassShakeStrength} %`}
+                onChange={(v) => set({ bassShakeStrength: Math.round(v) })}
+              />
+            </SettingRow>
+            {/* Зона 3 спеки 19.07: раскрытые тайминги отклика на бас — два
+                ползунка вместо четырёх зашитых чисел (атака/спад → резкость,
+                масштаб/подъём → размах); 50 = прежнее поведение. */}
+            <SettingRow title={t("settings.extensions.bassSharp.title")} hint={t("settings.extensions.bassSharp.hint")}>
+              <LiveSlider
+                value={prefs.bassSharp}
+                max={100}
+                label={t("settings.extensions.bassSharp.title")}
+                suffix={`${prefs.bassSharp} %`}
+                onChange={(v) => set({ bassSharp: Math.round(v) })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.extensions.bassReach.title")} hint={t("settings.extensions.bassReach.hint")}>
+              <LiveSlider
+                value={prefs.bassReach}
+                max={100}
+                label={t("settings.extensions.bassReach.title")}
+                suffix={`${prefs.bassReach} %`}
+                onChange={(v) => set({ bassReach: Math.round(v) })}
+              />
+            </SettingRow>
+          </>
         ) : null}
         <GroupTitle>{t("settings.extensions.externalGroup")}</GroupTitle>
         <SettingRow
@@ -3592,7 +3985,34 @@ export function SettingsView({
             раздела: навигация остаётся на месте с подсвеченным разделом,
             назад — кнопкой SubHeader. */}
         <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="tabpanel" aria-labelledby={navItemId(tab)}>
-          {pane}
+          {/* Поиск — первый элемент панели: живёт над содержимым любого
+              раздела. Непустой запрос подменяет содержимое списком найденных
+              рядов; клик по результату ведёт в раздел с подсветкой ряда. */}
+          <SearchInput
+            value={searchQ}
+            onChange={setSearchQ}
+            placeholder={t("settings.search.placeholder")}
+            style={{ marginTop: "var(--sp-6)" }}
+          />
+          {searchQ.trim() ? (
+            <div key="search-results" style={paneStyle}>
+              {searchHits.length === 0 ? (
+                <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.search.empty")}</div>
+              ) : (
+                searchHits.map((hit) => (
+                  <SettingRow
+                    key={`${hit.tab}·${hit.sub ?? ""}·${hit.titleKey}`}
+                    title={hit.title}
+                    hint={t(`settings.tabs.${hit.tab}` as TranslationKey)}
+                    chevron
+                    onClick={() => goToHit(hit)}
+                  ></SettingRow>
+                ))
+              )}
+            </div>
+          ) : (
+            pane
+          )}
         </div>
       </div>
 

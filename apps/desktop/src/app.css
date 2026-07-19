@@ -322,6 +322,17 @@ textarea,
   }
 }
 
+/* Подсветка ряда, к которому привёл поиск по настройкам (SettingsView вешает
+   класс на 2 с после прокрутки к ряду). !important — фон ряда задан
+   inline-стилем SettingRow. Появление НАРОЧНО мгновенное (transition: none):
+   подсветка — суть фичи и обязана быть видимой даже там, где переходы
+   заморожены (свёрнутое окно). Плавное затухание даёт собственный
+   inline-transition ряда ПОСЛЕ снятия класса. */
+.muza-settings-row--flash {
+  background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
+  transition: none !important;
+}
+
 /* ⚠ Редизайн раскладки настроек (2026-07-16): ГАБАРИТЫ каркаса выше — ширины
    колонок .muza-settings__cols, max-width панели, высота/радиус рельса —
    перекрыты более специфичными правилами из views/SettingsView.layout.css
