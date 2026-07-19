@@ -85,6 +85,10 @@ export const THEME_KEYS = [
   "tileSize",
   "padTile",
   "gapZone",
+  "fontUi",
+  "fontDisplay",
+  "headingScale",
+  "spaceScale",
 ] as const satisfies readonly (keyof Prefs)[];
 
 /** Ключи Prefs, ОСОЗНАННО не переносимые темой: поведение, приватное,

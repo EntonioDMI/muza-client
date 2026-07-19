@@ -16,6 +16,11 @@
   },
   "dependencies": {
     "@fontsource/golos-text": "^5.2.8",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/manrope": "^5.2.8",
+    "@fontsource/montserrat": "^5.2.8",
+    "@fontsource/rubik": "^5.2.8",
     "@fontsource/unbounded": "^5.2.8",
     "lucide-react": "^1.23.0"
   }

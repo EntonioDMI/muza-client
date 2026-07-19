@@ -10,3 +10,28 @@
 @import "@fontsource/unbounded/500.css";
 @import "@fontsource/unbounded/600.css";
 @import "@fontsource/unbounded/700.css";
+
+/* Сменные шрифты интерфейса (настройка «Шрифт», зона 5 спеки настроек 19.07).
+   Все — с кириллицей, те же веса 400-700, тем же локальным механизмом:
+   оффлайн-работа десктопа сохраняется. Реестр выбора — apps/desktop
+   lib/fonts.ts; применение — var(--font-ui)/var(--font-display) из zoneVars. */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/manrope/400.css";
+@import "@fontsource/manrope/500.css";
+@import "@fontsource/manrope/600.css";
+@import "@fontsource/manrope/700.css";
+@import "@fontsource/rubik/400.css";
+@import "@fontsource/rubik/500.css";
+@import "@fontsource/rubik/600.css";
+@import "@fontsource/rubik/700.css";
+@import "@fontsource/montserrat/400.css";
+@import "@fontsource/montserrat/500.css";
+@import "@fontsource/montserrat/600.css";
+@import "@fontsource/montserrat/700.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";

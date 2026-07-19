@@ -47,6 +47,7 @@ import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } f
 import { usePlayback } from "./player/usePlayback";
 import { useWarmer, WarmerProvider } from "./player/useWarmer";
 import { useWheelScroll } from "./lib/useWheelScroll";
+import { fontFamily } from "./lib/fonts";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
@@ -1559,6 +1560,26 @@ function Player({
     "--w-tile": `${prefs.tileSize}px`,
     "--pad-tile": `${prefs.padTile}px`,
     "--gap-zone": `${prefs.gapZone}px`,
+    // Шрифт и текст (зона 5): family из реестра lib/fonts.ts; заголовки и
+    // шкала отступов — множителями. При дефолтах переменные не ставятся —
+    // работают родные токены ДС.
+    ...(prefs.fontUi !== "golos" ? { "--font-ui": fontFamily(prefs.fontUi) } : {}),
+    ...(prefs.fontDisplay !== "unbounded" ? { "--font-display": fontFamily(prefs.fontDisplay) } : {}),
+    ...(prefs.headingScale !== 100
+      ? {
+          "--fs-title": `${((1.375 * prefs.headingScale) / 100).toFixed(4)}rem`,
+          "--fs-h1": `${((1.75 * prefs.headingScale) / 100).toFixed(4)}rem`,
+          "--fs-greet": `${((2.25 * prefs.headingScale) / 100).toFixed(4)}rem`,
+        }
+      : {}),
+    ...(prefs.spaceScale !== 100
+      ? Object.fromEntries(
+          [4, 8, 12, 16, 20, 24, 32, 40, 56, 80].map((base, i) => [
+            `--sp-${i + 1}`,
+            `${Math.round((base * prefs.spaceScale) / 100)}px`,
+          ]),
+        )
+      : {}),
     "--fs-karaoke": `${prefs.karaokeSize}px`,
     "--w-nowplaying": `${prefs.wNowPlaying}px`,
     // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ

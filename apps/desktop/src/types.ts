@@ -163,6 +163,14 @@ export interface Prefs {
   padTile: number;
   /** Зазор между зонами окна, px (4–20; --gap-zone, было 12). */
   gapZone: number;
+  /** Зона 5 спеки 19.07 (шрифт и текст) — до 19.07 шрифт не менялся вообще.
+   *  Ключи реестра lib/fonts.ts; family уезжает в --font-ui/--font-display. */
+  fontUi: string;
+  fontDisplay: string;
+  /** Размер заголовков, % (85–120; масштабирует --fs-title/h1/greet). */
+  headingScale: number;
+  /** Простор интерфейса, % (85–125; множитель всей шкалы --sp-1..10). */
+  spaceScale: number;
   /** Размер караоке-строки, px (--fs-karaoke). */
   karaokeSize: number;
   /** Ширины зон, px (узкое окно всё равно пережимает сайдбар). */
@@ -413,6 +421,10 @@ export const DEFAULT_PREFS: Prefs = {
   tileSize: 176,
   padTile: 16,
   gapZone: 12,
+  fontUi: "golos",
+  fontDisplay: "unbounded",
+  headingScale: 100,
+  spaceScale: 100,
   karaokeSize: 56,
   wSidebar: 280,
   wNowPlaying: 340,
