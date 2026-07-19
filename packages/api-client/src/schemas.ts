@@ -79,6 +79,17 @@ export const TrackSourceSchema = z.object({
 });
 export type TrackSource = z.infer<typeof TrackSourceSchema>;
 
+/** Кандидат на замену трека («Заменить версию», ПКМ в плейлисте/Любимом):
+ *  другая загрузка той же песни, живущая ОТДЕЛЬНЫМ каноническим треком.
+ *  Не путать с TrackSource — источниками того же трека. */
+export interface TrackAlternative {
+  track: Track;
+  /** Серверный importMatchScore подписи кандидата против текущей (0..3). */
+  score: number;
+  /** score прошёл порог импорта — «по документам» это та самая песня. */
+  matched: boolean;
+}
+
 /** Отчёт импорта плейлиста (Stage 4): что нашли в каталоге, что — нет. */
 export interface ImportReport {
   playlist: PlaylistMeta;
@@ -172,9 +183,12 @@ export const PlaylistMetaSchema = z.object({
   name: z.string(),
   trackCount: z.number(),
   createdAt: z.string(),
-  role: z.enum(["owner", "collaborator"]).default("owner"),
+  /** follower (2026-07-17) — живая подписка на чужой открытый плейлист. */
+  role: z.enum(["owner", "collaborator", "follower"]).default("owner"),
   ownerUsername: z.string().default(""),
   collaboratorsCount: z.number().default(0),
+  /** false только у follower-а, чей плейлист владелец скрыл: карточка гаснет. */
+  available: z.boolean().default(true),
   /** T47: иконка — "pi-NN" из манифеста @muza/core ЛИБО "track:<id>"
    *  (T47c: обложка трека); null — без иконки (клиент рисует фолбэк). */
   icon: z.string().nullable().default(null),
@@ -189,9 +203,20 @@ export const PlaylistDetailSchema = z.object({
   tracks: z.array(TrackSchema),
   // Stage 7: совместный доступ
   isOwner: z.boolean().default(true),
+  /** 2026-07-17: viewer — чужой открытый плейлист, read-only (клиент прячет правки). */
+  role: z.enum(["owner", "collaborator", "viewer"]).default("owner"),
   ownerUsername: z.string().default(""),
   /** Инвайт-код приходит только владельцу; null = кода нет / не владелец. */
   inviteCode: z.string().nullable().default(null),
+  /** Публичный код PL_… — только владельцу (2026-07-17). */
+  publicCode: z.string().nullable().default(null),
+  /** @Адрес (2026-07-17) — всем: публичная витрина. */
+  handle: z.string().nullable().default(null),
+  /** Лесенка видимости (2026-07-17). */
+  visibility: z.enum(["private", "code", "public"]).default("private"),
+  followersCount: z.number().default(0),
+  /** Подписан ли текущий пользователь (кнопка «В библиотеку»). */
+  isFollowing: z.boolean().default(false),
   collaborators: z.array(z.object({ id: z.string(), username: z.string() })).default([]),
   /** Кто добавил трек (совместным видно): trackId → username. */
   addedBy: z.record(z.string(), z.string()).default({}),
@@ -202,6 +227,42 @@ export const PlaylistDetailSchema = z.object({
   iconCoverUrl: z.string().nullable().default(null),
 });
 export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>;
+
+/** Лесенка видимости плейлиста (2026-07-17): private → code → public. */
+export type PlaylistVisibility = "private" | "code" | "public";
+
+/** Публичный плейлист — карточка discovery (по коду / в поиске). Треки
+ *  приходят обычным getPlaylist(id): сервер пускает viewer-ом. */
+export const PublicPlaylistSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  ownerUsername: z.string().default(""),
+  trackCount: z.number(),
+  followersCount: z.number().default(0),
+  /** @Адрес (2026-07-17): уникальный хэндл публичного плейлиста. */
+  handle: z.string().nullable().default(null),
+  icon: z.string().nullable().default(null),
+  iconCoverUrl: z.string().nullable().default(null),
+});
+export type PublicPlaylist = z.infer<typeof PublicPlaylistSchema>;
+
+/** Хит поиска: nameMatched=true — совпало НАЗВАНИЕ (кандидат в плашку
+ *  «Лучший результат»); false — совпали только артисты внутри (витрина). */
+export const PublicPlaylistHitSchema = PublicPlaylistSchema.extend({
+  nameMatched: z.boolean().default(false),
+});
+export type PublicPlaylistHit = z.infer<typeof PublicPlaylistHitSchema>;
+
+/** Строка админ-обзора публичных плейлистов (рубильник). */
+export interface AdminPublicPlaylist {
+  id: string;
+  name: string;
+  ownerUsername: string;
+  trackCount: number;
+  followersCount: number;
+  handle: string | null;
+  publishedAt: string | null;
+}
 
 export const HistoryItemSchema = z.object({
   track: TrackSchema,

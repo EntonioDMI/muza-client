@@ -24,8 +24,12 @@ import type {
   Lyrics,
   MarketTheme,
   MarketPlugin,
+  AdminPublicPlaylist,
   PlaylistDetail,
   PlaylistMeta,
+  PlaylistVisibility,
+  PublicPlaylist,
+  PublicPlaylistHit,
   RecipeEnvelope,
   RecsSettings,
   RegisterStatus,
@@ -37,6 +41,7 @@ import type {
   StatsPeriod,
   TelemetryStats,
   Track,
+  TrackAlternative,
   TrackSource,
   Wrapped,
 } from "./schemas";
@@ -98,6 +103,15 @@ export interface MuzaApi {
   /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
    *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */
   getTrackSources(id: string): Promise<TrackSource[]>;
+  /** Кандидаты на ЗАМЕНУ трека («Заменить версию»): другие загрузки той же
+   *  песни отдельными треками, ранжированы серверным скорингом. Медленно
+   *  (провайдеры под капотом) и rate-limit'ится как полный поиск. */
+  getTrackAlternatives(id: string): Promise<TrackAlternative[]>;
+  /** Рантайм-петля DRM: добыча упала с «This video is DRM protected» —
+   *  попросить сервер перепроверить SC-источники трека (сервер сверяет признак
+   *  сам и хоронит только подтверждённые; ложный вызов ничего не ломает).
+   *  marked — сколько источников похоронено. */
+  drmRecheck(trackId: string): Promise<{ marked: number }>;
   /** Стрим-ссылка серверного резолвера (Stage 8, веб): подписанный URL с TTL —
    *  его можно отдавать прямо в `<audio src>`. Десктоп добывает сам и этим
    *  не пользуется (серверный путь — фолбэк, architecture.md). */
@@ -126,6 +140,9 @@ export interface MuzaApi {
   getFavorites(): Promise<Track[]>;
   addFavorite(trackId: string): Promise<void>;
   removeFavorite(trackId: string): Promise<void>;
+  /** «Заменить версию» в Любимом: атомарно снять лайк со старого и поставить
+   *  новому, сохранив место в списке (createdAt наследуется). */
+  replaceFavorite(oldTrackId: string, newTrackId: string): Promise<void>;
   getPlaylists(): Promise<PlaylistMeta[]>;
   /** icon — id из манифеста @muza/core ("pi-01".."pi-38"); клиент обычно
    *  подбирает случайный сам (T47) и передаёт сюда, но поле опционально. */
@@ -137,6 +154,9 @@ export interface MuzaApi {
   deletePlaylist(id: string): Promise<void>;
   addPlaylistTrack(playlistId: string, trackId: string): Promise<void>;
   removePlaylistTrack(playlistId: string, trackId: string): Promise<void>;
+  /** «Заменить версию»: атомарно подменить трек в ЭТОМ плейлисте другим,
+   *  сохранив позицию и кто/когда добавил. Локально плейлисту. */
+  replacePlaylistTrack(playlistId: string, oldTrackId: string, newTrackId: string): Promise<void>;
   /** Переупорядочить треки: `trackIds` — ВЕСЬ список в новом порядке. */
   reorderPlaylist(playlistId: string, trackIds: string[]): Promise<void>;
   /** Новый порядок плейлистов пользователя (drag-drop в Библиотеке). */
@@ -228,6 +248,30 @@ export interface MuzaApi {
   joinPlaylist(code: string): Promise<PlaylistMeta>;
   /** Убрать участника: владелец — любого; участник — себя (выход). */
   removePlaylistMember(playlistId: string, userId: string): Promise<void>;
+
+  // Публичные плейлисты (2026-07-17): лесенка видимости private→code→public,
+  // код PL_… для друзей, публикация в поиск, живая read-only подписка.
+  // Треки чужого — обычным getPlaylist(id): сервер пускает ролью viewer.
+  /** Сменить видимость (владелец). Код рождается при первом подъёме из private. */
+  setPlaylistVisibility(
+    playlistId: string,
+    visibility: PlaylistVisibility,
+  ): Promise<{ visibility: PlaylistVisibility; publicCode: string | null }>;
+  /** Плейлист по коду PL_… из строки поиска (rate-limit на сервере). */
+  getPublicPlaylistByCode(code: string): Promise<PublicPlaylist>;
+  /** @Адрес (2026-07-17): задать/сменить (только public; null — отказ);
+   *  занят → 409 «Адрес занят»; лимит смен 5/час. */
+  setPlaylistHandle(playlistId: string, handle: string | null): Promise<{ handle: string | null }>;
+  /** Плейлист по @адресу из строки поиска (только public; заморожен = 404). */
+  getPublicPlaylistByHandle(handle: string): Promise<PublicPlaylist>;
+  /** Подписаться — живая «ссылка» в библиотеке (идемпотентно). */
+  followPlaylist(playlistId: string): Promise<PlaylistMeta>;
+  unfollowPlaylist(playlistId: string): Promise<void>;
+  /** Поиск публичных: топ-10 по скору (название сильнее артистов внутри). */
+  searchPublicPlaylists(q: string): Promise<PublicPlaylistHit[]>;
+  /** Админ-рубильник: обзор публичных + снятие с публикации (ban — навсегда). */
+  getAdminPublicPlaylists(): Promise<AdminPublicPlaylist[]>;
+  unpublishAdminPlaylist(playlistId: string, ban?: boolean): Promise<void>;
 
   // Jam — слушать вместе (Stage 7). Хост управляет, гости следуют и
   // докидывают треки; каждый добывает аудио сам (клиент-«мускулы»).

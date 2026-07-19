@@ -30,6 +30,12 @@ import {
   PlaylistDetailSchema,
   type PlaylistMeta,
   PlaylistMetaSchema,
+  type AdminPublicPlaylist,
+  type PlaylistVisibility,
+  type PublicPlaylist,
+  PublicPlaylistSchema,
+  type PublicPlaylistHit,
+  PublicPlaylistHitSchema,
   type RecipeEnvelope,
   type RecsSettings,
   type RegisterStatus,
@@ -42,6 +48,7 @@ import {
   type StatsPeriod,
   type TelemetryStats,
   type Track,
+  type TrackAlternative,
   TrackSchema,
   type TrackSource,
   TrackSourceSchema,
@@ -128,15 +135,17 @@ function groupedResultFromWire(wire: GroupedResultWire): GroupedSearchResult {
   });
 }
 
-/** Проводной формат плейлиста (Stage 7: роль/владелец/участники; T47: icon). */
+/** Проводной формат плейлиста (Stage 7: роль/владелец/участники; T47: icon;
+ *  2026-07-17: follower/available — живые подписки). */
 interface PlaylistMetaWire {
   id: string;
   name: string;
   track_count: number;
   created_at: string;
-  role?: "owner" | "collaborator";
+  role?: "owner" | "collaborator" | "follower";
   owner_username?: string;
   collaborators_count?: number;
+  available?: boolean;
   icon?: string | null;
   icon_cover_url?: string | null;
 }
@@ -150,6 +159,33 @@ function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
     role: w.role ?? "owner",
     ownerUsername: w.owner_username ?? "",
     collaboratorsCount: w.collaborators_count ?? 0,
+    available: w.available ?? true,
+    icon: w.icon ?? null,
+    iconCoverUrl: w.icon_cover_url ?? null,
+  });
+}
+
+/** Проводной формат публичного плейлиста (2026-07-17, discovery). */
+interface PublicPlaylistWire {
+  id: string;
+  name: string;
+  owner_username?: string;
+  track_count: number;
+  followers_count?: number;
+  handle?: string | null;
+  icon?: string | null;
+  icon_cover_url?: string | null;
+  name_matched?: boolean;
+}
+
+function publicPlaylistFromWire(w: PublicPlaylistWire): PublicPlaylist {
+  return PublicPlaylistSchema.parse({
+    id: w.id,
+    name: w.name,
+    ownerUsername: w.owner_username ?? "",
+    trackCount: w.track_count,
+    followersCount: w.followers_count ?? 0,
+    handle: w.handle ?? null,
     icon: w.icon ?? null,
     iconCoverUrl: w.icon_cover_url ?? null,
   });
@@ -464,6 +500,13 @@ export class HttpMuzaApi implements MuzaApi {
     return trackFromWire(await this.authedRequest<TrackWire>(`/tracks/${encodeURIComponent(id)}`));
   }
 
+  async drmRecheck(trackId: string): Promise<{ marked: number }> {
+    return this.authedRequest<{ marked: number }>(
+      `/tracks/${encodeURIComponent(trackId)}/drm-recheck`,
+      { method: "POST" },
+    );
+  }
+
   async getStreamUrl(trackId: string): Promise<{ url: string; expiresAt: number }> {
     const out = await this.authedRequest<{ st: string; expires_at: number }>(
       `/tracks/${encodeURIComponent(trackId)}/stream-url`,
@@ -500,6 +543,16 @@ export class HttpMuzaApi implements MuzaApi {
         isChosen: s.is_chosen,
       }),
     );
+  }
+
+  /** Кандидаты на ЗАМЕНУ трека («Заменить версию») — другие загрузки той же
+   *  песни отдельными треками. Под капотом сервер ходит к провайдерам:
+   *  медленно (секунды) и лимитируется как полный поиск (429). */
+  async getTrackAlternatives(id: string): Promise<TrackAlternative[]> {
+    const out = await this.authedRequest<{
+      alternatives: { track: TrackWire; score: number; matched: boolean }[];
+    }>(`/tracks/${encodeURIComponent(id)}/alternatives`);
+    return out.alternatives.map((a) => ({ track: trackFromWire(a.track), score: a.score, matched: a.matched }));
   }
 
   // ---------- Источники и версии (Stage 4) ----------
@@ -586,6 +639,14 @@ export class HttpMuzaApi implements MuzaApi {
     await this.authedRequest(`/me/favorites/${encodeURIComponent(trackId)}`, { method: "DELETE" });
   }
 
+  /** «Заменить версию» в Любимом: атомарно, место в списке сохраняется. */
+  async replaceFavorite(oldTrackId: string, newTrackId: string): Promise<void> {
+    await this.authedRequest(`/me/favorites/${encodeURIComponent(oldTrackId)}/replace`, {
+      method: "PUT",
+      body: JSON.stringify({ new_track_id: newTrackId }),
+    });
+  }
+
   async getPlaylists(): Promise<PlaylistMeta[]> {
     const rows = await this.authedRequest<PlaylistMetaWire[]>("/me/playlists");
     return rows.map(playlistMetaFromWire);
@@ -613,8 +674,14 @@ export class HttpMuzaApi implements MuzaApi {
       name: string;
       tracks: TrackWire[];
       is_owner?: boolean;
+      role?: "owner" | "collaborator" | "viewer";
       owner_username?: string;
       invite_code?: string | null;
+      public_code?: string | null;
+      handle?: string | null;
+      visibility?: "private" | "code" | "public";
+      followers_count?: number;
+      is_following?: boolean;
       collaborators?: { id: string; username: string }[];
       added_by?: Record<string, string>;
       icon?: string | null;
@@ -625,8 +692,14 @@ export class HttpMuzaApi implements MuzaApi {
       name: p.name,
       tracks: p.tracks.map(trackFromWire),
       isOwner: p.is_owner ?? true,
+      role: p.role ?? "owner",
       ownerUsername: p.owner_username ?? "",
       inviteCode: p.invite_code ?? null,
+      publicCode: p.public_code ?? null,
+      handle: p.handle ?? null,
+      visibility: p.visibility ?? "private",
+      followersCount: p.followers_count ?? 0,
+      isFollowing: p.is_following ?? false,
       collaborators: p.collaborators ?? [],
       addedBy: p.added_by ?? {},
       icon: p.icon ?? null,
@@ -662,6 +735,92 @@ export class HttpMuzaApi implements MuzaApi {
     );
   }
 
+  // ---------- Публичные плейлисты (2026-07-17) ----------
+
+  async setPlaylistVisibility(
+    playlistId: string,
+    visibility: PlaylistVisibility,
+  ): Promise<{ visibility: PlaylistVisibility; publicCode: string | null }> {
+    const out = await this.authedRequest<{ visibility: PlaylistVisibility; public_code: string | null }>(
+      `/me/playlists/${encodeURIComponent(playlistId)}/visibility`,
+      { method: "PATCH", body: JSON.stringify({ visibility }) },
+    );
+    return { visibility: out.visibility, publicCode: out.public_code ?? null };
+  }
+
+  async getPublicPlaylistByCode(code: string): Promise<PublicPlaylist> {
+    const w = await this.authedRequest<PublicPlaylistWire>(
+      `/public-playlists/by-code/${encodeURIComponent(code)}`,
+    );
+    return publicPlaylistFromWire(w);
+  }
+
+  async setPlaylistHandle(playlistId: string, handle: string | null): Promise<{ handle: string | null }> {
+    const out = await this.authedRequest<{ handle: string | null }>(
+      `/me/playlists/${encodeURIComponent(playlistId)}/handle`,
+      { method: "PATCH", body: JSON.stringify({ handle }) },
+    );
+    return { handle: out.handle ?? null };
+  }
+
+  async getPublicPlaylistByHandle(handle: string): Promise<PublicPlaylist> {
+    const w = await this.authedRequest<PublicPlaylistWire>(
+      `/public-playlists/by-handle/${encodeURIComponent(handle)}`,
+    );
+    return publicPlaylistFromWire(w);
+  }
+
+  async followPlaylist(playlistId: string): Promise<PlaylistMeta> {
+    const p = await this.authedRequest<PlaylistMetaWire>(
+      `/public-playlists/${encodeURIComponent(playlistId)}/follow`,
+      { method: "POST" },
+    );
+    return playlistMetaFromWire(p);
+  }
+
+  async unfollowPlaylist(playlistId: string): Promise<void> {
+    await this.authedRequest(`/public-playlists/${encodeURIComponent(playlistId)}/follow`, { method: "DELETE" });
+  }
+
+  async searchPublicPlaylists(q: string): Promise<PublicPlaylistHit[]> {
+    const out = await this.authedRequest<{ playlists: PublicPlaylistWire[] }>(
+      `/public-playlists/search?q=${encodeURIComponent(q)}`,
+    );
+    return out.playlists.map((w) =>
+      PublicPlaylistHitSchema.parse({ ...publicPlaylistFromWire(w), nameMatched: w.name_matched ?? false }),
+    );
+  }
+
+  async getAdminPublicPlaylists(): Promise<AdminPublicPlaylist[]> {
+    const out = await this.authedRequest<{
+      playlists: {
+        id: string;
+        name: string;
+        owner_username: string;
+        track_count: number;
+        followers_count: number;
+        handle?: string | null;
+        published_at: string | null;
+      }[];
+    }>("/admin/public-playlists");
+    return out.playlists.map((p) => ({
+      id: p.id,
+      name: p.name,
+      ownerUsername: p.owner_username,
+      trackCount: p.track_count,
+      followersCount: p.followers_count,
+      handle: p.handle ?? null,
+      publishedAt: p.published_at,
+    }));
+  }
+
+  async unpublishAdminPlaylist(playlistId: string, ban?: boolean): Promise<void> {
+    await this.authedRequest(`/admin/public-playlists/${encodeURIComponent(playlistId)}/unpublish`, {
+      method: "POST",
+      body: JSON.stringify(ban ? { ban: true } : {}),
+    });
+  }
+
   async renamePlaylist(id: string, name: string): Promise<void> {
     await this.authedRequest(`/me/playlists/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -684,6 +843,15 @@ export class HttpMuzaApi implements MuzaApi {
     await this.authedRequest(
       `/me/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(trackId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  /** «Заменить версию»: атомарная подмена трека в ЭТОМ плейлисте с
+   *  сохранением позиции и кто/когда добавил. */
+  async replacePlaylistTrack(playlistId: string, oldTrackId: string, newTrackId: string): Promise<void> {
+    await this.authedRequest(
+      `/me/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(oldTrackId)}/replace`,
+      { method: "PUT", body: JSON.stringify({ new_track_id: newTrackId }) },
     );
   }
 
