@@ -323,6 +323,8 @@ export function PlayerBar({
             value={pos}
             max={track?.duration ?? 0}
             onChange={onSeek}
+            // буферизация — звук стоит, полоске ехать не за чем
+            rate={playing && !buffering ? speed : 0}
             ariaLabel={t("player.progress")}
             valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track?.duration ?? 0) })}
             style={{ flex: 1 }}

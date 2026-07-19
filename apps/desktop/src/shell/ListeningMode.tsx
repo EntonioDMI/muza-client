@@ -44,6 +44,7 @@ export function ListeningMode({
   lyricsLoading = false,
   playing,
   pos,
+  speed = 1,
   activeLine,
   lyricsAutoScroll = true,
   lyricsEndNote = true,
@@ -71,6 +72,8 @@ export function ListeningMode({
   lyricsLoading?: boolean;
   playing: boolean;
   pos: number;
+  /** Скорость воспроизведения — темп дорисовки прогресса между timeupdate. */
+  speed?: number;
   activeLine: number;
   /** Настройка «Автоскролл» (Тексты): следовать ли за активной строкой. */
   lyricsAutoScroll?: boolean;
@@ -411,7 +414,14 @@ export function ListeningMode({
         />
         <IconButton icon="skip-forward" label={t("player.next")} onClick={onNext} />
         <span style={{ fontSize: 13, color: "var(--text-2)", fontVariantNumeric: "tabular-nums", paddingLeft: 6 }}>{fmtTime(pos)}</span>
-        <Slider value={pos} max={track.duration} onChange={onSeek} ariaLabel={t("player.progress")} style={{ width: 220 }} />
+        <Slider
+          value={pos}
+          max={track.duration}
+          onChange={onSeek}
+          rate={playing ? speed : 0}
+          ariaLabel={t("player.progress")}
+          style={{ width: 220 }}
+        />
         <span style={{ fontSize: 13, color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>{fmtTime(track.duration)}</span>
       </div>
     </div>

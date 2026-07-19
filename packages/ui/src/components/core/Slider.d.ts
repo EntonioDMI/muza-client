@@ -12,5 +12,10 @@ export interface SliderProps {
   /** Enables the scrub-preview bubble over the cursor; return the label for
    *  a hovered value, e.g. (v) => fmtTime(v). Progress bars pass this. */
   hoverLabel?: (value: number) => string;
+  /** Единиц value в секунду реального времени; 0 (дефолт) — выключено.
+   *  Прогресс-бары передают `playing ? speed : 0`: между рваными приходами
+   *  value заливка дорисовывается кадрами rAF, без этого она идёт ступеньками.
+   *  Слайдерам громкости/настроек не нужно — их value не течёт само. */
+  rate?: number;
   style?: React.CSSProperties;
 }

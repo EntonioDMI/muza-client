@@ -134,6 +134,7 @@ export function PlayerBar({
               value={position}
               max={Math.max(duration, 1)}
               onChange={p.seek}
+              rate={p.playing ? 1 : 0}
               ariaLabel="Позиция"
               valueText={`${fmtTime(position)} из ${fmtTime(duration)}`}
               hoverLabel={fmtTime}
