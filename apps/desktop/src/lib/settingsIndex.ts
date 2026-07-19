@@ -91,7 +91,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.typography.headingScale", ["размер заголовков", "заголовки", "headings"]),
   e("appearance", "customize", "settings.customize.typography.lineSpacing", ["межстрочный", "интервал"]),
   e("appearance", "customize", "settings.customize.typography.spaceScale", ["простор", "отступы", "воздух", "плотность", "spacing"]),
-  e("appearance", "customize", "settings.customize.typography.karaokeSize", ["караоке", "текст песни"]),
+  // Дубль karaokeSize из Типографики удалён 19.07 (спека §7) — единственный
+  // ряд остался в «Текстах песен» (запись settings.lyrics.karaokeSize ниже).
   e("appearance", "customize", "settings.customize.motion.anims", ["анимации", "движение", "animations"]),
   e("appearance", "customize", "settings.customize.motion.animSpeed", ["скорость анимаций", "speed"]),
   e("appearance", "customize", "settings.customize.motion.durMenu", ["отклики", "меню", "подсказки", "скорость", "responses"]),
@@ -116,6 +117,15 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.background.imageUrl", ["картинка", "изображение", "ссылка"]),
   e("appearance", "customize", "settings.customize.background.dim", ["затемнение", "dim"]),
   e("appearance", "customize", "settings.customize.background.tint", ["оттенок", "tint"]),
+  // Визуализатор и отклик на бас переехали из «Расширений» 19.07 (спека §7):
+  // ключи остались settings.extensions.*, место рендера — Кастомизация.
+  e("appearance", "customize", "settings.extensions.visualizer", ["визуализатор", "волна", "бары", "visualizer"]),
+  e("appearance", "customize", "settings.extensions.visualizerKind", ["визуализатор", "вид"]),
+  e("appearance", "customize", "settings.extensions.visualizerMirror", ["зеркало", "визуализатор"]),
+  e("appearance", "customize", "settings.extensions.bassShake", ["бас", "тряска", "пульсация", "bass"]),
+  e("appearance", "customize", "settings.extensions.bassShakeStrength", ["бас", "сила"]),
+  e("appearance", "customize", "settings.extensions.bassSharp", ["бас", "резкость", "атака", "bass"]),
+  e("appearance", "customize", "settings.extensions.bassReach", ["бас", "размах", "качание", "bass"]),
   e("appearance", "customize", "settings.customize.behavior.doubleClick", ["двойной клик", "дабл-клик"]),
   e("appearance", "customize", "settings.customize.behavior.startView", ["стартовый экран", "запуск"]),
   e("appearance", "customize", "settings.customize.themes.saveAs", ["тема", "сохранить тему", "theme"]),
@@ -176,13 +186,9 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   // ── Горячие клавиши ───────────────────────────────────────────────────
   e("hotkeys", null, "settings.hotkeys.help", ["горячие клавиши", "хоткеи", "shortcuts", "hotkeys"]),
   // ── Расширения ────────────────────────────────────────────────────────
-  e("extensions", null, "settings.extensions.visualizer", ["визуализатор", "волна", "бары", "visualizer"]),
-  e("extensions", null, "settings.extensions.visualizerKind", ["визуализатор", "вид"]),
-  e("extensions", null, "settings.extensions.visualizerMirror", ["зеркало", "визуализатор"]),
-  e("extensions", null, "settings.extensions.bassShake", ["бас", "тряска", "пульсация", "bass"]),
-  e("extensions", null, "settings.extensions.bassShakeStrength", ["бас", "сила"]),
-  e("extensions", null, "settings.extensions.bassSharp", ["бас", "резкость", "атака", "bass"]),
-  e("extensions", null, "settings.extensions.bassReach", ["бас", "размах", "качание", "bass"]),
+  // Ряды визуализатора/баса уехали в appearance/customize (см. выше); здесь
+  // осталась строка-указатель на новое место.
+  e("extensions", null, "settings.extensions.visualizerMoved", ["визуализатор", "бас", "visualizer", "bass"]),
   e("extensions", null, "settings.extensions.installFromFile", ["установить плагин", "файл"]),
   e("extensions", null, "settings.extensions.installed", ["плагины", "установленные", "plugins"]),
   e("extensions", null, "settings.extensions.errorLog", ["ошибки плагинов", "журнал"]),

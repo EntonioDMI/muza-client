@@ -258,8 +258,10 @@ export const en = {
         headingScale: { title: "Heading size", hint: "Makes titles bigger or smaller. Regular text stays as is." },
         lineSpacing: { title: "Line spacing", hint: "The distance between lines of text in the interface." },
         spaceScale: { title: "Interface air", hint: "All the spacing at once: left — everything sits tighter, right — roomier." },
-        karaokeSize: { title: "Karaoke text size", hint: "Size of the lyrics line in listening mode." },
       },
+      // Заголовок группы визуализатора: ряды переехали сюда из «Расширений»
+      // 19.07 (спека §7), их ключи остались в settings.extensions.*.
+      visualizerGroup: "Visualizer",
       motion: {
         groupTitle: "Motion",
         anims: { title: "Animations", hint: "The interface moves smoothly. Turn this off and everything switches instantly." },
@@ -660,7 +662,7 @@ export const en = {
       synced: { title: "Synced lyrics", hint: "Lines light up in time with the music. Turn this off and the lyrics become a plain list." },
       autoScroll: { title: "Auto-scroll", hint: "The lyrics follow the current line on their own. Turn this off to scroll freely." },
       endNote: { title: "End note", hint: "A decorative music note at the very bottom of the lyrics." },
-      karaokeSize: { title: "Karaoke text size", hint: "Size of the line in listening mode. The same slider lives in Customize." },
+      karaokeSize: { title: "Karaoke text size", hint: "Size of the lyrics line in listening mode." },
       understandingGroup: "Understanding",
       translation: { title: "Translation", hint: "Translates lines into a chosen language. Coming later." },
       meaningMode: { title: "Meaning mode", hint: "Lines with explanations get a dotted underline — a click opens the meaning card." },
@@ -701,6 +703,12 @@ export const en = {
     // ── Расширения ───────────────────────────────────────────────────
     extensions: {
       builtInGroup: "Built-in",
+      // Строка-указатель: сами ряды переехали во Внешний вид → Кастомизация
+      // (19.07, спека §7); подсказка говорит, где они теперь, а не почему.
+      visualizerMoved: {
+        title: "Visualizer and bass response",
+        hint: "These settings now live in Appearance → Customize. This row takes you there.",
+      },
       visualizer: { title: "Visualizer", hint: "A picture moving in time with the music, in listening mode." },
       visualizerKind: { title: "Visualizer style", hint: "Bars jump with the sound's frequencies, the wave follows its shape.", bars: "Bars", wave: "Wave" },
       visualizerStyle: {
