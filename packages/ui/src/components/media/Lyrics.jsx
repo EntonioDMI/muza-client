@@ -3,8 +3,14 @@ import { Icon } from "../core/Icon.jsx";
 
 /** Synced lyrics — the product's signature. Full, uncensored, and NEVER blurred.
  *
- *  Активная строка всегда ПО ЦЕНТРУ (спека владельца, 2026-07-10). Ручной
- *  скролл приостанавливает следование, через 2.5с бездействия оно возвращается.
+ *  Активная строка центрируется В СЕРЕДИНЕ трека; у краёв (первые/последние
+ *  строки) садится к верху/низу, а не в центр. Раньше центрировались и края —
+ *  ценой ОТБИВКИ 50% высоты сверху и снизу, и это читалось как «стена пустоты»
+ *  над первой строкой и под последней/ноткой (жалоба владельца 19.07: пустота
+ *  «из ниоткуда», не на всех треках — только на synced, plain её не имел).
+ *  Теперь краевая отбивка скромная (edgePad ниже), а центрирование середины
+ *  доигрывает centerActive: scrollTo у краёв клампится сам. Ручной скролл
+ *  приостанавливает следование, через 2.5с бездействия оно возвращается.
  *
  *  Сколько строк видно — у режимов РАЗНО (спека владельца, 2026-07-15):
  *  - karaoke: окно вокруг активной, видно 5 строк (radius 2), масштаб по
@@ -30,6 +36,13 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
   // один freeScroll: показать весь текст в панели можно было, только перестав
   // следить за активной строкой. Развязано — окно осталось только у караоке.
   const windowed = karaoke && !freeScroll;
+  // Краевая отбивка synced-текста. Была 50% высоты (первая/последняя строка
+  // вставали ровно в центр) — но при статичном взгляде это «стена пустоты»
+  // сверху и снизу (жалоба 19.07). Теперь скромная: первая строка у верха,
+  // последняя у низа (как Spotify/Apple Music), центр трека доигрывает
+  // centerActive (scrollTo клампится у краёв сам). Караоке — процент: полный
+  // экран, активная всплывает в верхнюю треть, а не жмётся к самому краю.
+  const edgePad = karaoke ? "22%" : "var(--sp-8)";
 
   const centerActive = (behavior) => {
     const wrap = wrapRef.current;
@@ -69,8 +82,8 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
         ...style,
       }}
     >
-      {/* спейсеры: первая/последняя строка тоже могут встать в центр */}
-      {synced ? <div aria-hidden style={{ flex: "none", height: "50%" }} /> : null}
+      {/* краевая отбивка: у краёв центрирование клампится, стены пустоты нет */}
+      {synced ? <div aria-hidden data-testid="lyrics-edge-pad" style={{ flex: "none", height: edgePad }} /> : null}
       {lines.map((line, i) => {
         const d = synced ? Math.abs(i - activeIndex) : 1;
         const isActive = synced && i === activeIndex;
@@ -85,6 +98,9 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
         // самую, из-за которой правка) и молча ужимает prefs.fontScale.
         const scale = isActive ? 1 : karaoke ? (d === 1 ? 0.9 : 0.8) : 0.9;
         const hidden = synced && windowed && d > radius;
+        // Нативного title на аннотированной строке больше нет: стоковая плашка
+        // WebView2 выбивалась из языка ДС (жалоба 2026-07-16); о «смысле по
+        // двойному клику» говорит звёздочка-метка ниже, aria-label — скринридеру.
         // Прозрачность. В панели иерархию несёт ТОЛЬКО color: --accent-text →
         // --text-2 (0.62α) → --text-3 (0.38α). Множитель opacity здесь дал бы
         // двойное затемнение: --text-3 ×0.5 = 0.19α — это 1.8:1 к фону панели,
@@ -100,7 +116,6 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
             role={hasNote ? "button" : undefined}
             tabIndex={hasNote ? 0 : undefined}
             aria-label={hasNote ? `Смысл строки: ${line.text}` : undefined}
-            title={hasNote ? "Двойной клик — смысл строки" : undefined}
             onClick={() => {
               // Одиночный клик — ВСЕГДА перемотка (жалоба 2026-07-16: строка с
               // аннотацией перехватывала клик, и на неё нельзя было перемотать).
@@ -187,7 +202,7 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
           );
         })()
       ) : null}
-      {synced ? <div aria-hidden style={{ flex: "none", height: "50%" }} /> : null}
+      {synced ? <div aria-hidden data-testid="lyrics-edge-pad" style={{ flex: "none", height: edgePad }} /> : null}
     </div>
   );
 }

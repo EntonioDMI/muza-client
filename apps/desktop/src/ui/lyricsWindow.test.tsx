@@ -84,6 +84,32 @@ describe("Lyrics, режим panel: виден весь текст", () => {
   });
 });
 
+describe("Lyrics: краевая отбивка synced-текста — не стена пустоты (жалоба 19.07)", () => {
+  // jsdom не считает layout, но инлайновую height спейсера читает: 50% высоты
+  // сверху и снизу давали полэкрана пустоты над первой строкой и под последней.
+  it("panel synced: две отбивки, и они больше НЕ 50% высоты", () => {
+    render(<Lyrics lines={LINES} activeIndex={4} />);
+
+    const pads = screen.getAllByTestId("lyrics-edge-pad");
+    expect(pads).toHaveLength(2); // сверху и снизу
+    for (const p of pads) expect(p.style.height).not.toBe("50%");
+  });
+
+  it("karaoke synced: отбивка 22% (верхняя треть), а не центр", () => {
+    render(<Lyrics lines={LINES} activeIndex={4} mode="karaoke" />);
+
+    const pads = screen.getAllByTestId("lyrics-edge-pad");
+    expect(pads.length).toBeGreaterThan(0);
+    for (const p of pads) expect(p.style.height).toBe("22%");
+  });
+
+  it("plain-текст (activeIndex -1): краевых отбивок нет вовсе", () => {
+    render(<Lyrics lines={LINES} activeIndex={-1} />);
+
+    expect(screen.queryAllByTestId("lyrics-edge-pad")).toHaveLength(0);
+  });
+});
+
 describe("Lyrics, режим karaoke: окно на месте (границу не трогали)", () => {
   it("прячет строки за окном radius 2 и держит лесенку прозрачности", () => {
     render(<Lyrics lines={LINES} activeIndex={4} mode="karaoke" />);
