@@ -40,11 +40,13 @@ textarea,
 .muza-orb-spin--ccw {
   will-change: transform;
 }
+/* Скорость — var(--orb-dur) из zoneVars (prefs.bgAnimSpeedSec, зона 1 спеки
+   настроек 19.07); фолбэк 64s = прежней зашитой скорости. */
 .muza-orb-spin--cw {
-  animation: muzaOrbCW 64s linear infinite;
+  animation: muzaOrbCW var(--orb-dur, 64s) linear infinite;
 }
 .muza-orb-spin--ccw {
-  animation: muzaOrbCCW 64s linear infinite;
+  animation: muzaOrbCCW var(--orb-dur, 64s) linear infinite;
 }
 @keyframes muzaOrbCW {
   to {

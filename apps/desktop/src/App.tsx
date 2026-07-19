@@ -1533,6 +1533,9 @@ function Player({
     "--text-2": `rgba(${textBase}, ${(prefs.textDim / 100).toFixed(2)})`,
     "--text-3": `rgba(${textBase}, ${Math.max(0.2, prefs.textDim / 100 - 0.24).toFixed(2)})`,
     "--blur-scenery": `${prefs.blurScenery}px`,
+    // Скорость орбит анимированного фона (зона 1 спеки 19.07): app.css читает
+    // var(--orb-dur, 64s) — дефолт токена = прежней зашитой скорости.
+    "--orb-dur": `${prefs.bgAnimSpeedSec}s`,
     "--fs-karaoke": `${prefs.karaokeSize}px`,
     "--w-nowplaying": `${prefs.wNowPlaying}px`,
     // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ
@@ -1596,21 +1599,23 @@ function Player({
       // ⇒ диск сам по себе перекрывает всю ширину контейнера с запасом) И
       // diameter ≥ 140% высоты (та же вертикальная маржа, что была раньше)
       // — при ЛЮБОМ соотношении сторон окна, не только при height ≥ width.
+      // Ручки раскрыты (спека настроек 19.07, зона 1): прозрачность, диаметр
+      // и заход за край — из prefs; дефолты .22/140/−20 = прежним зашитым.
       <div
         style={{
           position: "absolute",
           inset: 0,
           overflow: "hidden",
           filter: "blur(var(--blur-scenery))",
-          opacity: 0.22,
+          opacity: prefs.bgAnimOpacity / 100,
         }}
       >
         <div
           style={{
             position: "absolute",
             top: "50%",
-            left: "-20%",
-            height: "max(140vw, 140vh)",
+            left: `-${prefs.bgAnimEdge}%`,
+            height: `max(${prefs.bgAnimScale}vw, ${prefs.bgAnimScale}vh)`,
             aspectRatio: "1",
             transform: "translateY(-50%)",
             borderRadius: "50%",
@@ -1636,8 +1641,8 @@ function Player({
           style={{
             position: "absolute",
             top: "50%",
-            right: "-20%",
-            height: "max(140vw, 140vh)",
+            right: `-${prefs.bgAnimEdge}%`,
+            height: `max(${prefs.bgAnimScale}vw, ${prefs.bgAnimScale}vh)`,
             aspectRatio: "1",
             transform: "translateY(-50%)",
             borderRadius: "50%",

@@ -22,3 +22,12 @@ export function matchPreset(presets: Record<string, Partial<Prefs>>, prefs: Pref
   }
   return "custom";
 }
+
+/** Зона 1 — анимированный фон. «lively» РАВЕН дефолтам полей (сторож в
+ *  тесте): существующий пользователь после обновления видит чип «Живо»
+ *  и ровно тот же фон, что вчера. */
+export const PRESETS_BG: Record<string, Partial<Prefs>> = {
+  calm: { bgAnimSpeedSec: 96, bgAnimOpacity: 14, bgAnimScale: 150, bgAnimEdge: 25 },
+  lively: { bgAnimSpeedSec: 64, bgAnimOpacity: 22, bgAnimScale: 140, bgAnimEdge: 20 },
+  bright: { bgAnimSpeedSec: 40, bgAnimOpacity: 32, bgAnimScale: 130, bgAnimEdge: 12 },
+};
