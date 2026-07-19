@@ -18,7 +18,9 @@ pub struct TrayState {
     close_to_tray: AtomicBool,
 }
 
-fn show_main(app: &AppHandle) {
+/** pub(crate): та же «показать и сфокусировать» нужна single-instance
+ *  (lib.rs) — второй запуск ярлыком поднимает уже живое окно из трея. */
+pub(crate) fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();

@@ -15,6 +15,15 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // ПЕРВЫМ из плагинов (они исполняются в порядке регистрации — README
+        // single-instance это требует явно): второй запуск Музы не создаёт
+        // новый процесс, а показывает окно уже живого (жалоба владельца 19.07:
+        // «закрыл в трей → ярлык открыл вторую, копии копятся»). Свернувшаяся
+        // в трей Муза по ярлыку разворачивается — тем же show_main, что и ЛКМ
+        // по иконке трея.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_main(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
