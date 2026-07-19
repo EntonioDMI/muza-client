@@ -82,6 +82,9 @@ export const THEME_KEYS = [
   "durDialogMult",
   "durPageMult",
   "easeStyle",
+  "tileSize",
+  "padTile",
+  "gapZone",
 ] as const satisfies readonly (keyof Prefs)[];
 
 /** Ключи Prefs, ОСОЗНАННО не переносимые темой: поведение, приватное,

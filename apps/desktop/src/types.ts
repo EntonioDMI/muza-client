@@ -155,6 +155,14 @@ export interface Prefs {
   bassSharp: number;
   /** Отклик на бас, «размах» 0–100 (50 = прежние scale 0.02/подъём 1.5px). */
   bassReach: number;
+  /** Зона 4 спеки 19.07 (списки) — дефолты = прежним токенам ДС. */
+  /** Размер плитки, px (140–240; было 176 — дефолт Tile И minmax сеток:
+   *  оба места читают одну --w-tile). */
+  tileSize: number;
+  /** Внутренний отступ плитки, px (8–24; --pad-tile, было 16). */
+  padTile: number;
+  /** Зазор между зонами окна, px (4–20; --gap-zone, было 12). */
+  gapZone: number;
   /** Размер караоке-строки, px (--fs-karaoke). */
   karaokeSize: number;
   /** Ширины зон, px (узкое окно всё равно пережимает сайдбар). */
@@ -402,6 +410,9 @@ export const DEFAULT_PREFS: Prefs = {
   preloadAheadSec: 20,
   bassSharp: 50,
   bassReach: 50,
+  tileSize: 176,
+  padTile: 16,
+  gapZone: 12,
   karaokeSize: 56,
   wSidebar: 280,
   wNowPlaying: 340,

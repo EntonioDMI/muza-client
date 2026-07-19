@@ -314,7 +314,10 @@ export function LibraryView({
   const serverIds = loadServerIds();
   const grid: React.CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(176px, 1fr))",
+    // Минимум колонки = настройка «Размер плитки» (--w-tile, зона 4 спеки
+    // 19.07): в текучей сетке ручка задаёт нижнюю границу, тянуться дальше
+    // колонкам никто не мешает.
+    gridTemplateColumns: "repeat(auto-fill, minmax(var(--w-tile, 176px), 1fr))",
     gap: "var(--sp-4)",
     paddingBottom: "var(--sp-6)",
   };

@@ -5,8 +5,11 @@ import { Cover } from "./Cover.jsx";
 /** Media tile — soft rounded card with square cover; play pill appears on
  *  hover AND keyboard focus. The tile itself is a keyboard target
  *  (role=button, Enter/Space = onClick).
- *  Обложка — через Cover: нет картинки → плейсхолдер, а не дыра в плитке. */
-export function Tile({ cover, title, subtitle, width = 176, playing = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
+ *  Обложка — через Cover: нет картинки → плейсхолдер, а не дыра в плитке.
+ *  width: дефолт — var(--w-tile, 176px), а не число: приложение крутит размер
+ *  плиток одной переменной (настройка «Размер плитки», зона 4 спеки 19.07);
+ *  явный width ("auto" в сетках) по-прежнему сильнее. */
+export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", playing = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
   const lit = hover || focused;

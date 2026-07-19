@@ -1554,6 +1554,11 @@ function Player({
     // (PlayerBar height/Cover size, отступы зон в App и PluginFrames).
     "--h-playerbar": `${prefs.hPlayerBar}px`,
     "--size-cover-bar": `${prefs.coverBarSize}px`,
+    // Списки (зона 4): --w-tile читают и дефолт Tile, и minmax сеток —
+    // фиксированные ленты и текучие сетки крутятся одной ручкой.
+    "--w-tile": `${prefs.tileSize}px`,
+    "--pad-tile": `${prefs.padTile}px`,
+    "--gap-zone": `${prefs.gapZone}px`,
     "--fs-karaoke": `${prefs.karaokeSize}px`,
     "--w-nowplaying": `${prefs.wNowPlaying}px`,
     // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ
