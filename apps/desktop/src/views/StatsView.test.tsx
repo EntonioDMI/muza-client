@@ -13,13 +13,16 @@ beforeEach(() => localStorage.clear());
 
 const noop = () => undefined;
 
-/** Дети контейнера role="img" — сами бары. */
+/** Дети контейнера role="img" — Tooltip-обёртки колонок (несут геометрию:
+ *  flex/min/maxWidth/height:100%), сам бар — их первый ребёнок (высота
+ *  значения). Обёртки появились с заменой нативного title на Tooltip ДС. */
 function renderBars(values: number[]) {
   const { container } = render(
     <Bars values={values} titles={values.map((v) => String(v))} height={120} ariaLabel="bars" />,
   );
   const row = container.querySelector('[role="img"]') as HTMLElement;
-  return { row, bars: Array.from(row.children) as HTMLElement[] };
+  const cols = Array.from(row.children) as HTMLElement[];
+  return { row, cols, bars: cols.map((c) => c.firstElementChild as HTMLElement) };
 }
 
 /** Фикс «сплошной плашки» (2026-07-16): ширина бара обязана быть ограничена,
@@ -27,20 +30,20 @@ function renderBars(values: number[]) {
  *  → один месяц) в сплошную плиту на всю панель, а неделю — в семь плит. */
 describe("Bars — геометрия бар-графика", () => {
   it("одно ведро (реальный кейс владельца, «Всё» = [35]): бар с кэпом ширины, ряд центрирован", () => {
-    const { row, bars } = renderBars([35]);
+    const { row, cols, bars } = renderBars([35]);
     expect(bars).toHaveLength(1);
-    expect(bars[0].style.maxWidth).toBe(`${BAR_MAX_WIDTH}px`); // не плита во всю панель
+    expect(cols[0].style.maxWidth).toBe(`${BAR_MAX_WIDTH}px`); // не плита во всю панель
     expect(bars[0].style.height).toBe("100%");
     expect(row.style.justifyContent).toBe("center");
   });
 
   it("неделя владельца [1,8,0,3,21,2,0]: высоты пропорциональны, нули — 2px-штрихи, раскладка space-between", () => {
-    const { row, bars } = renderBars([1, 8, 0, 3, 21, 2, 0]);
+    const { row, cols, bars } = renderBars([1, 8, 0, 3, 21, 2, 0]);
     expect(row.style.justifyContent).toBe("space-between");
     expect(bars[4].style.height).toBe("100%"); // максимум
     expect(parseFloat(bars[1].style.height)).toBeCloseTo((8 / 21) * 100);
     expect(bars[2].style.height).toBe("2px"); // ноль — штрих подложки, не бар
-    for (const b of bars) expect(b.style.maxWidth).toBe(`${BAR_MAX_WIDTH}px`);
+    for (const c of cols) expect(c.style.maxWidth).toBe(`${BAR_MAX_WIDTH}px`);
   });
 });
 

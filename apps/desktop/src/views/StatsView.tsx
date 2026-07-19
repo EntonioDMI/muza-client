@@ -15,6 +15,7 @@ import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
 import { BAR_MAX_WIDTH, barSpecs } from "../lib/statsBars";
 import { hourLabel } from "../lib/hourLabel";
 import { withSnapshot } from "../lib/offlineSnapshot";
+import { trackRowL10n } from "../lib/dsLabels";
 import type { Prefs, StatsBlockKey } from "../types";
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
@@ -89,7 +90,9 @@ function BigStat({ value, label, accent }: { value: string; label: string; accen
 }
 
 /** Бар-график на div'ах: высоты — barSpecs (чистая геометрия, под тестами),
- *  тултип браузерным title. Нулевые вёдра — тонкая подложка (ось ряда).
+ *  тултип — <Tooltip> ДС (был браузерный title: стоковая плашка WebView2
+ *  выбивалась из языка приложения — жалоба 2026-07-16). Нулевые вёдра —
+ *  тонкая подложка (ось ряда).
  *
  *  Фикс «сплошной плашки» (2026-07-16): ширина бара ограничена BAR_MAX_WIDTH,
  *  ряд раскладывается space-between — короткая серия (одно ведро «Всё» у
@@ -123,19 +126,23 @@ export function Bars({
       }}
     >
       {specs.map((pct, i) => (
-        <div
+        // Обёртка-Tooltip тянется на всю высоту ряда: ховер ловится по колонке,
+        // а не по узкому столбику, и подсказка не прыгает по вертикали.
+        <Tooltip
           key={i}
-          title={titles[i]}
-          style={{
-            flex: 1,
-            minWidth: 2,
-            maxWidth: BAR_MAX_WIDTH,
-            height: pct !== null ? `${pct}%` : 2,
-            borderRadius: 3,
-            background: pct !== null ? "var(--accent)" : "var(--surface-3)",
-            transition: "height var(--dur-base) var(--ease-out)",
-          }}
-        />
+          label={titles[i]}
+          style={{ flex: 1, minWidth: 2, maxWidth: BAR_MAX_WIDTH, height: "100%", alignItems: "flex-end" }}
+        >
+          <div
+            style={{
+              width: "100%",
+              height: pct !== null ? `${pct}%` : 2,
+              borderRadius: 3,
+              background: pct !== null ? "var(--accent)" : "var(--surface-3)",
+              transition: "height var(--dur-base) var(--ease-out)",
+            }}
+          />
+        </Tooltip>
       ))}
     </div>
   );
@@ -367,6 +374,7 @@ export function StatsView({
             <div style={{ display: "flex", flexDirection: "column" }}>
               {d.topTracks.map((entry, i) => (
                 <TrackRow
+                  {...trackRowL10n(t)}
                   key={entry.track.id}
                   index={i + 1}
                   cover={entry.track.coverUrl ?? undefined}
@@ -578,12 +586,16 @@ export function StatsView({
         </h1>
         {canSearch ? (
           <>
-            {/* тонкий индикатор обновления — контент при этом остаётся на месте */}
-            {state.status === "loading" && d ? <Spinner size={16} color="var(--text-3)" /> : null}
+            {/* тонкий индикатор обновления — контент при этом остаётся на месте.
+                Слот ФИКСИРОВАННОЙ ширины: появление спиннера не сдвигает табы
+                (сдвиг шапки на каждую смену периода читался как «дёргание»). */}
+            <span aria-hidden style={{ width: 16, height: 16, flex: "none", display: "grid", placeItems: "center" }}>
+              {state.status === "loading" && d ? <Spinner size={16} color="var(--text-3)" /> : null}
+            </span>
             <Tabs items={periodTabs} value={period} onChange={(k: string) => setPeriod(k as StatsPeriod)} />
-            <Tooltip label={t("views.stats.customizeBlocksTooltip")}>
-              <IconButton icon="settings-2" label={t("views.stats.customizeBlocksLabel")} onClick={onCustomize} />
-            </Tooltip>
+            {/* Без внешнего <Tooltip>: IconButton сам тултипит label — обёртка
+                давала две подсказки разом (косяк волны 0.1.4). */}
+            <IconButton icon="settings-2" label={t("views.stats.customizeBlocksLabel")} onClick={onCustomize} />
           </>
         ) : null}
       </div>
