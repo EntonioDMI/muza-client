@@ -69,7 +69,7 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
   const warmer = useMemo<Warmer>(() => {
     if (!engineAvailable() || typeof IntersectionObserver === "undefined") return NOOP_WARMER;
 
-    const queue = new WarmQueue(async (id): Promise<WarmOutcome> => {
+    const queue = new WarmQueue(async (id, signal): Promise<WarmOutcome> => {
       let sources = getCachedSources(id);
       if (sources === null) {
         sources = await apiRef.current.getTrackSources(id);
@@ -80,7 +80,9 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
       // сыграет с диска (local первым — так решит и resolvePlayable) или
       // греть нечего — помечаем как готовое, не дёргаем повторно
       if (remotes.length === 0 || policy[0]?.provider === "local") return "cached";
-      const out = await engineWarm(id, remotes, prefsRef.current.streamQuality);
+      // сигнал уезжает в Rust: в кулдауне circuit-breaker'а visible-прогрев
+      // не доваливается в yt-dlp simulate (CPU-лавина 2026-07-19)
+      const out = await engineWarm(id, remotes, prefsRef.current.streamQuality, signal);
       return out.cached ? "cached" : "warmed";
     });
 

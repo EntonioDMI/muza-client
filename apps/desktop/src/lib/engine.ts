@@ -135,21 +135,28 @@ export interface WarmResult {
   cached: boolean;
 }
 
-/** Прогреть резолв трека (Фаза 1, спека 2026-07-16): yt-dlp --simulate
- *  разрешает метаданные (прямой CDN-URL + размер) за 0 байт трафика; клик по
- *  прогретому треку скачает файл одним GET вместо полного процесса yt-dlp
- *  (~4.5с → ~1.2с). Ошибка прогрева не фатальна по определению — трек
- *  добудется обычной лестницей; вызывающий (useWarmer) её глотает в кулдаун. */
+/** Прогреть резолв трека (Фаза 1, спека 2026-07-16): ступень 0 InnerTube или
+ *  yt-dlp --simulate разрешают метаданные (прямой CDN-URL + размер) за 0 байт
+ *  трафика; клик по прогретому треку скачает файл одним GET вместо полного
+ *  процесса yt-dlp (~4.5с → ~1.2с). Ошибка прогрева не фатальна по
+ *  определению — трек добудется обычной лестницей; вызывающий (useWarmer) её
+ *  глотает в кулдаун.
+ *
+ *  signal — источник заявки (2026-07-19): в кулдауне circuit-breaker'а Rust
+ *  глушит yt-dlp-фолбэк ТОЛЬКО для массового "visible" (CPU-лавина: каждая
+ *  видимая строка × 2 процесса), hover/queue — единичные намерения. */
 export async function engineWarm(
   trackId: string,
   sources: TrackSource[],
   quality: StreamQuality = "auto",
+  signal?: "hover" | "visible" | "queue",
 ): Promise<WarmResult> {
   const out = await invoke<{ warm: boolean; cached: boolean }>("engine_warm", {
     trackId,
     sources: toNativeSourceRefs(sources),
     quality,
     cacheNs: CACHE_NS,
+    signal,
   }).catch((e: unknown) => {
     // та же граница IPC, что у resolveTrack: Tauri реджектит голой строкой
     throw e instanceof Error ? e : new Error(typeof e === "string" ? e : String(e));

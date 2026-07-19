@@ -89,6 +89,29 @@ describe("WarmQueue: приоритет", () => {
   });
 });
 
+describe("WarmQueue: сигнал доезжает до прогрева", () => {
+  /** Rust (engine_warm) различает сигналы: в кулдауне circuit-breaker'а
+   *  visible-прогрев не имеет права доваливаться в yt-dlp simulate
+   *  (CPU-лавина 2026-07-19), hover/queue — можно. Поэтому run обязан
+   *  получать сигнал ПОБЕДИВШЕЙ заявки, включая hover-апгрейд ждущей. */
+  it("run получает сигнал заявки; hover-апгрейд меняет и сигнал", async () => {
+    const t = testRuns();
+    const q = new WarmQueue(t.run, { parallelism: 1 });
+    q.request("block", "queue");
+    await vi.advanceTimersByTimeAsync(0);
+    q.request("видимый", "visible");
+    q.request("апгрейд", "visible");
+    q.request("апгрейд", "hover"); // курсор пришёл на ждущую строку
+    await t.finish("block");
+    await t.finish("апгрейд");
+    await t.finish("видимый");
+    expect(t.run).toHaveBeenCalledWith("block", "queue");
+    expect(t.run).toHaveBeenCalledWith("апгрейд", "hover");
+    expect(t.run).toHaveBeenCalledWith("видимый", "visible");
+    q.dispose();
+  });
+});
+
 describe("WarmQueue: лимиты (жёсткий режим — решение владельца)", () => {
   it("параллелизм ≤ 2 по умолчанию", async () => {
     const t = testRuns();

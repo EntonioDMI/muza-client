@@ -31,9 +31,13 @@ export const WARM_FAIL_COOLDOWN_MS = 60_000;
 export const WARM_DONE_TTL_MS = 30 * 60_000;
 
 const PRIORITY: Record<WarmSignal, number> = { hover: 0, visible: 1, queue: 2 };
+/** Обратное соответствие приоритет → сигнал: run получает сигнал ПОБЕДИВШЕЙ
+ *  заявки (Rust в кулдауне breaker'а глушит yt-dlp-фолбэк только для visible —
+ *  массового сигнала; hover/queue — единичные намерения). */
+const SIGNAL_BY_PRIORITY: WarmSignal[] = ["hover", "visible", "queue"];
 
 export class WarmQueue {
-  private run: (id: string) => Promise<WarmOutcome>;
+  private run: (id: string, signal: WarmSignal) => Promise<WarmOutcome>;
   private parallelism: number;
   private ratePerMinute: number;
   /** Ждущие заявки в порядке поступления; выбор — по приоритету, внутри
@@ -49,7 +53,7 @@ export class WarmQueue {
   private disposed = false;
 
   constructor(
-    run: (id: string) => Promise<WarmOutcome>,
+    run: (id: string, signal: WarmSignal) => Promise<WarmOutcome>,
     opts?: { parallelism?: number; ratePerMinute?: number },
   ) {
     this.run = run;
@@ -106,7 +110,7 @@ export class WarmQueue {
       if (!next) return;
       this.starts.push(now);
       this.inflight.add(next.id);
-      this.run(next.id)
+      this.run(next.id, SIGNAL_BY_PRIORITY[next.priority])
         .then((outcome) => this.settle(next.id, outcome))
         .catch(() => this.settle(next.id, "failed"));
     }

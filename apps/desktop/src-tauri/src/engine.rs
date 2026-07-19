@@ -119,6 +119,9 @@ pub struct EngineState {
     /// памяти провал оплачивался бы дважды (до 4 POST / 2 таймаута до
     /// лестницы, корень жалобы «стало медленнее» 2026-07-19).
     stage0_recent_fail: Mutex<HashMap<String, SystemTime>>,
+    /// Circuit-breaker ступени 0: глобальные провалы подряд → кулдаун
+    /// (см. блок «Circuit-breaker ступени 0» у хелперов).
+    stage0_breaker: Mutex<Stage0Breaker>,
 }
 
 impl Default for EngineState {
@@ -136,6 +139,7 @@ impl Default for EngineState {
             streams: Mutex::new(HashMap::new()),
             youtube_visitor: Mutex::new(None),
             stage0_recent_fail: Mutex::new(HashMap::new()),
+            stage0_breaker: Mutex::new(Stage0Breaker::default()),
         }
     }
 }
@@ -1667,10 +1671,14 @@ struct InnertubeConfig {
 /// Провал ступени 0: LoginRequired лечится свежим visitorData (один повтор),
 /// остальное — сразу фолбэк на лестницу. Классы — ещё и маркеры KPI
 /// (fail_sabr/fail_login): по ним видно, что android_vr начал деградировать.
+/// Network (транспорт: сеть/таймаут/не-200) отделён от Other потому, что
+/// circuit-breaker считает только ГЛОБАЛЬНЫЕ провалы (Login/Sabr/Network) —
+/// пер-видео UNPLAYABLE в Other не должен глушить ступень 0 всем.
 #[derive(Debug, PartialEq)]
 enum InnertubeFail {
     LoginRequired(String),
     Sabr(String),
+    Network(String),
     Other(String),
 }
 
@@ -1830,8 +1838,63 @@ fn classify_innertube_failure(stats: &mut EngineStats, fail: &InnertubeFail) {
     match fail {
         InnertubeFail::Sabr(_) => stats.fail_sabr += 1,
         InnertubeFail::LoginRequired(_) => stats.fail_login += 1,
-        InnertubeFail::Other(_) => stats.fail_other += 1,
+        // сеть считается в fail_other: отдельный KPI не нужен, класс
+        // существует ради circuit-breaker'а
+        InnertubeFail::Network(_) | InnertubeFail::Other(_) => stats.fail_other += 1,
     }
+}
+
+// ── Circuit-breaker ступени 0 ─────────────────────────────────────
+// Бот-гейт YouTube бьёт по IP: продолжать долбить POST /player — усиливать
+// блок, а каждый провал прогрева доваливается в yt-dlp simulate (CPU-лавина:
+// 118 результатов поиска → 18 спавнов, 2026-07-19). Поэтому 3 глобальных
+// провала подряд глушат ступень 0 во всех трёх командах на STAGE0_COOLDOWN;
+// на время кулдауна visible-прогрев не фолбэчится в yt-dlp (см. engine_warm).
+// Успех — полный сброс. Единственный ДРУГОЙ рубильник — горячий рецепт
+// (enabled:false), но он требует деплоя сервера; breaker — автоматика.
+
+/// Глобальных провалов подряд до кулдауна.
+const STAGE0_BREAKER_THRESHOLD: u32 = 3;
+/// Длина кулдауна: бот-гейт за минуты не рассасывается, а дольше держать
+/// ступень 0 выключенной — терять скорость на здоровой сети зря.
+const STAGE0_COOLDOWN: Duration = Duration::from_secs(300);
+
+#[derive(Default)]
+struct Stage0Breaker {
+    consecutive_fails: u32,
+    cooldown_until: Option<SystemTime>,
+}
+
+fn stage0_in_cooldown(state: &EngineState, now: SystemTime) -> bool {
+    state
+        .stage0_breaker
+        .lock()
+        .unwrap()
+        .cooldown_until
+        .map(|until| now < until)
+        .unwrap_or(false)
+}
+
+/// Провал в счёт breaker'а. Other (UNPLAYABLE и прочее пер-видео) нейтрален:
+/// не считается и не сбрасывает — он доказывает, что API вообще-то отвечает.
+fn stage0_breaker_note_fail(state: &EngineState, fail: &InnertubeFail, now: SystemTime) {
+    if matches!(fail, InnertubeFail::Other(_)) {
+        return;
+    }
+    let mut b = state.stage0_breaker.lock().unwrap();
+    b.consecutive_fails += 1;
+    if b.consecutive_fails >= STAGE0_BREAKER_THRESHOLD {
+        b.cooldown_until = Some(now + STAGE0_COOLDOWN);
+        // после истечения кулдауна счёт начинается заново — один свежий
+        // провал не захлопывает ступень 0 обратно
+        b.consecutive_fails = 0;
+    }
+}
+
+fn stage0_breaker_note_success(state: &EngineState) {
+    let mut b = state.stage0_breaker.lock().unwrap();
+    b.consecutive_fails = 0;
+    b.cooldown_until = None;
 }
 
 /// TTL негативного кэша ступени 0: покрывает окно «stream_start → resolve»
@@ -1928,7 +1991,7 @@ where
             })
             .map(|v| v.value.clone())
     };
-    let resp = call(visitor.clone()).await.map_err(InnertubeFail::Other)?;
+    let resp = call(visitor.clone()).await.map_err(InnertubeFail::Network)?;
     let fresh = innertube_visitor(&resp);
     if let Some(v) = &fresh {
         *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
@@ -1946,7 +2009,7 @@ where
             };
             let resp2 = call(Some(retry_visitor))
                 .await
-                .map_err(InnertubeFail::Other)?;
+                .map_err(InnertubeFail::Network)?;
             if let Some(v2) = innertube_visitor(&resp2) {
                 *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
                     value: v2,
@@ -2086,6 +2149,7 @@ pub async fn engine_warm(
     sources: Vec<SourceRef>,
     quality: Option<String>,
     cache_ns: String,
+    signal: Option<String>,
 ) -> Result<WarmOut, String> {
     validate_track_id(&track_id)?;
     let dir = cache_dir(&app, &cache_ns)?;
@@ -2118,12 +2182,25 @@ pub async fn engine_warm(
     // ~171 мс вместо ~2–4 с процесса yt-dlp (дешёвый прогрев = можно греть
     // смелее). Провал молча уступает yt-dlp --simulate ниже; счётчики KPI
     // прогрев не трогает (см. док-коммент команды).
+    let cooling = stage0_in_cooldown(&state, SystemTime::now());
+    if cooling && signal.as_deref() == Some("visible") {
+        // Кулдаун breaker'а = бот-гейт/сеть лежит. Массовый visible-прогрев
+        // (каждая видимая строка списка) не имеет права доваливаться в
+        // yt-dlp simulate: 2 параллельных процесса непрерывно, пока
+        // скроллится список, — CPU-лавина, из-за которой «тормозит всё»
+        // (2026-07-19). hover/queue — единичные сигналы намерения, им
+        // simulate ниже разрешён.
+        return Ok(WarmOut {
+            warm: false,
+            cached: false,
+        });
+    }
     let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
     if let Some(cfg) = innertube_cfg {
         if let Some(video_id) = stage0_youtube_id(&sources) {
-            if stage0_recently_failed(&state, &video_id, SystemTime::now()) {
-                // свежий провал (клик/стрим/прошлый прогрев) — не дёргаем
-                // POST заново, сразу simulate-ветка ниже
+            if cooling || stage0_recently_failed(&state, &video_id, SystemTime::now()) {
+                // кулдаун или свежий провал — не дёргаем POST,
+                // сразу simulate-ветка ниже
             } else {
                 let itags = if quality.as_deref() == Some("econom") {
                     INNERTUBE_ITAGS_ECONOM
@@ -2133,6 +2210,7 @@ pub async fn engine_warm(
                 match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
                     Ok(entry) => {
                         stage0_note_success(&state, &video_id);
+                        stage0_breaker_note_success(&state);
                         store_warm_entry(&state, &cache_ns, &track_id, entry);
                         return Ok(WarmOut {
                             warm: true,
@@ -2140,9 +2218,12 @@ pub async fn engine_warm(
                         });
                     }
                     // счётчики KPI прогрев не трогает (см. док-коммент
-                    // команды) — но негативный кэш общий: клик после
-                    // неудачного прогрева не должен платить тот же POST
-                    Err(_) => stage0_note_fail(&state, &video_id, SystemTime::now()),
+                    // команды) — но негативный кэш и breaker общие: лавина
+                    // идёт именно из прогрева
+                    Err(fail) => {
+                        stage0_note_fail(&state, &video_id, SystemTime::now());
+                        stage0_breaker_note_fail(&state, &fail, SystemTime::now());
+                    }
                 }
             }
         }
@@ -2286,8 +2367,10 @@ pub async fn engine_stream_start(
                 let (Some(cfg), Some(video_id)) = (cfg, stage0_youtube_id(&sources)) else {
                     return no_stream;
                 };
-                if stage0_recently_failed(&state, &video_id, SystemTime::now()) {
-                    return no_stream; // провал уже оплачен — сразу лестница
+                let now = SystemTime::now();
+                if stage0_recently_failed(&state, &video_id, now) || stage0_in_cooldown(&state, now)
+                {
+                    return no_stream; // провал уже оплачен / бот-гейт лежит — лестница
                 }
                 let itags = if quality.as_deref() == Some("econom") {
                     INNERTUBE_ITAGS_ECONOM
@@ -2297,11 +2380,13 @@ pub async fn engine_stream_start(
                 match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
                     Ok(entry) => {
                         stage0_note_success(&state, &video_id);
+                        stage0_breaker_note_success(&state);
                         entry
                     }
                     Err(fail) => {
                         classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
                         stage0_note_fail(&state, &video_id, SystemTime::now());
+                        stage0_breaker_note_fail(&state, &fail, SystemTime::now());
                         return no_stream;
                     }
                 }
@@ -2726,9 +2811,10 @@ pub async fn engine_resolve(
     if let Some(cfg) = innertube_cfg {
         if let Some(video_id) = stage0_youtube_id(&sources) {
             // Свежий провал (обычно — engine_stream_start ЭТОГО ЖЕ клика
-            // секунду назад) — не платим за тот же POST/таймаут второй раз,
-            // сразу лестница ниже.
-            if stage0_recently_failed(&state, &video_id, SystemTime::now()) {
+            // секунду назад) или кулдаун breaker'а — не платим за тот же
+            // POST/таймаут второй раз, сразу лестница ниже.
+            let now = SystemTime::now();
+            if stage0_recently_failed(&state, &video_id, now) || stage0_in_cooldown(&state, now) {
                 // ничего: проваливаемся в лестницу
             } else {
                 let itags = if quality.as_deref() == Some("econom") {
@@ -2739,6 +2825,7 @@ pub async fn engine_resolve(
                 match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
                     Ok(entry) => {
                         stage0_note_success(&state, &video_id);
+                        stage0_breaker_note_success(&state);
                         match fetch_to_cache(&dir, &track_id, &entry).await {
                             Ok(path) => {
                                 let limit = *state.cache_limit_bytes.lock().unwrap();
@@ -2761,6 +2848,7 @@ pub async fn engine_resolve(
                     Err(fail) => {
                         classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
                         stage0_note_fail(&state, &video_id, SystemTime::now());
+                        stage0_breaker_note_fail(&state, &fail, SystemTime::now());
                     }
                 }
             }
@@ -5155,15 +5243,91 @@ mod innertube_tests {
     }
 
     /// Маркеры KPI прямого пути: по ним видно деградацию android_vr.
+    /// Network считается в fail_other — отдельный KPI сети не нужен, класс
+    /// существует ради breaker'а (глобальный провал ≠ пер-видео UNPLAYABLE).
     #[test]
     fn classify_innertube_counters() {
         let mut stats = EngineStats::default();
         classify_innertube_failure(&mut stats, &InnertubeFail::Sabr("нет url".into()));
         classify_innertube_failure(&mut stats, &InnertubeFail::LoginRequired("бот-гейт".into()));
         classify_innertube_failure(&mut stats, &InnertubeFail::Other("UNPLAYABLE".into()));
+        classify_innertube_failure(&mut stats, &InnertubeFail::Network("сеть упала".into()));
         assert_eq!(stats.fail_sabr, 1);
         assert_eq!(stats.fail_login, 1);
-        assert_eq!(stats.fail_other, 1);
+        assert_eq!(stats.fail_other, 2);
+    }
+
+    // ── Circuit-breaker ступени 0 ──────────────────────────────────
+    // Бот-гейт YouTube бьёт по IP: продолжать долбить POST /player — усиливать
+    // блок и кормить CPU-лавину yt-dlp-фолбэков прогрева (2026-07-19: 118
+    // результатов поиска → 18 спавнов yt-dlp). 3 глобальных провала подряд →
+    // кулдаун, успех — полный сброс. UNPLAYABLE (Other) — пер-видео провал,
+    // breaker не трогает: плейлист заблокированных треков не имеет права
+    // глушить ступень 0 всем остальным.
+
+    /// 3 глобальных провала (любой микс Login/Network/Sabr) открывают кулдаун;
+    /// кулдаун истекает по STAGE0_COOLDOWN.
+    #[test]
+    fn breaker_opens_after_three_global_fails() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!stage0_in_cooldown(&state, t0));
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("бот".into()), t0);
+        stage0_breaker_note_fail(&state, &InnertubeFail::Network("сеть".into()), t0);
+        assert!(!stage0_in_cooldown(&state, t0), "двух провалов мало");
+        stage0_breaker_note_fail(&state, &InnertubeFail::Sabr("sabr".into()), t0);
+        assert!(stage0_in_cooldown(&state, t0));
+        assert!(stage0_in_cooldown(
+            &state,
+            t0 + STAGE0_COOLDOWN - Duration::from_secs(1)
+        ));
+        assert!(!stage0_in_cooldown(&state, t0 + STAGE0_COOLDOWN), "кулдаун истёк");
+    }
+
+    /// UNPLAYABLE и прочие пер-видео Other не считаются и не сбивают счёт
+    /// глобальных провалов (нейтральны).
+    #[test]
+    fn breaker_ignores_per_video_other() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for _ in 0..5 {
+            stage0_breaker_note_fail(&state, &InnertubeFail::Other("UNPLAYABLE".into()), t0);
+        }
+        assert!(!stage0_in_cooldown(&state, t0), "Other не открывает кулдаун");
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        stage0_breaker_note_fail(&state, &InnertubeFail::Other("UNPLAYABLE".into()), t0);
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        assert!(!stage0_in_cooldown(&state, t0), "Other нейтрален для счёта");
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        assert!(stage0_in_cooldown(&state, t0), "3-й глобальный — кулдаун");
+    }
+
+    /// Успех сбрасывает счёт: «подряд» значит подряд.
+    #[test]
+    fn breaker_resets_on_success() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        stage0_breaker_note_success(&state);
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
+        assert!(!stage0_in_cooldown(&state, t0), "после успеха счёт с нуля");
+    }
+
+    /// После истечения кулдауна счёт начинается заново — один свежий провал
+    /// не захлопывает ступень 0 обратно.
+    #[test]
+    fn breaker_counts_fresh_after_cooldown() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for _ in 0..3 {
+            stage0_breaker_note_fail(&state, &InnertubeFail::Network("сеть".into()), t0);
+        }
+        let after = t0 + STAGE0_COOLDOWN + Duration::from_secs(1);
+        assert!(!stage0_in_cooldown(&state, after));
+        stage0_breaker_note_fail(&state, &InnertubeFail::Network("сеть".into()), after);
+        assert!(!stage0_in_cooldown(&state, after), "один провал — ещё не кулдаун");
     }
 
     // ── Оркестрация visitorData (инъекция транспорта) ──────────────
@@ -5284,13 +5448,14 @@ mod innertube_tests {
         assert_eq!(calls.len(), 1);
     }
 
-    /// Сеть/таймаут — Other без повтора: ступень 0 либо быстрая, либо сразу
-    /// уступает лестнице.
+    /// Сеть/таймаут — Network без повтора: ступень 0 либо быстрая, либо
+    /// сразу уступает лестнице. Класс отдельный от Other: только глобальные
+    /// провалы (сеть/бот-гейт/SABR) взводят circuit-breaker.
     #[test]
-    fn orchestration_network_error_is_other() {
+    fn orchestration_network_error_is_network() {
         let state = EngineState::default();
         let (result, calls) = run_orchestration(&state, vec![Err("сеть упала".into())]);
-        assert!(matches!(result, Err(InnertubeFail::Other(_))));
+        assert!(matches!(result, Err(InnertubeFail::Network(_))));
         assert_eq!(calls.len(), 1);
     }
 
