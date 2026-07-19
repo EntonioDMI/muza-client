@@ -350,21 +350,21 @@ export const en = {
       discord: {
         title: "Discord Rich Presence",
         rowTitle: "Discord Rich Presence",
-        rowHint: "Status, button, cover and line templates (needs an Application ID from the Dev Portal)",
+        rowHint: "Your Discord friends will see what you're listening to: status, cover and a button.",
         enable: {
           title: "Show in Discord",
           ariaLabel: "Discord RPC",
-          hint: "\"Listening to Muza\" status; needs Discord running and a registered app (client id)",
-          hintNoAppId: "Needs a Discord Application ID — RPC stays off until it's added; the setting will start working on its own once the owner supplies it",
+          hint: "A \"Listening to Muza\" status appears in your Discord profile. Discord needs to be running.",
+          hintNoAppId: "Doesn't work yet — a setting on our side is missing. Your choice is saved and will start working on its own once we add it.",
         },
         whatToShow: "What to show",
-        cover: { title: "Track cover", hint: "Discord fetches the cover via https itself", ariaLabel: "Cover" },
-        line1: { title: "First line", hint: "Placeholders: {track}, {artist}, {album}; catalog tracks don't have an album yet" },
-        line2: { title: "Second line", hint: "Empty placeholders get cleaned up along with their separators" },
+        cover: { title: "Track cover", hint: "The playing track's cover shows next to the status.", ariaLabel: "Cover" },
+        line1: { title: "First line", hint: "Template for the first status line. Placeholders: {track}, {artist}, {album}." },
+        line2: { title: "Second line", hint: "Empty placeholders disappear along with their separators." },
         buttonGroup: "Activity button",
-        btnOn: { title: "Show button", hint: "Button under the status in the Discord profile; works together with RPC", ariaLabel: "Activity button" },
-        btnLabel: { title: "Button text", hint: "Up to 32 characters — Discord's limit", placeholder: "Open in Muza" },
-        btnUrl: { title: "Button link", hint: "Where the click leads: website, profile, track" },
+        btnOn: { title: "Show button", hint: "A link button appears under the status in your profile.", ariaLabel: "Activity button" },
+        btnLabel: { title: "Button text", hint: "The label on the button. Discord limits it to 32 characters.", placeholder: "Open in Muza" },
+        btnUrl: { title: "Button link", hint: "Where the button takes people — for example, to the Muza website." },
         previewGroup: "Preview",
         preview: {
           listeningTo: "Listening to Muza",
@@ -379,7 +379,7 @@ export const en = {
         allowInBrowser: "Allow access in the browser — waiting for confirmation",
         connectedAs: "Connected as {username} — plays sync automatically",
         willSync: "Plays will sync to your Last.fm profile",
-        noApiKeys: "The server has no Last.fm API keys — add LASTFM_API_KEY and LASTFM_API_SECRET to .env (last.fm/api)",
+        noApiKeys: "Last.fm scrobbling isn't set up on this build of Muza: we haven't been given access keys (last.fm/api).",
         waitingBrowser: "Waiting for browser…",
         disconnected: "Last.fm disconnected",
         connected: "Last.fm connected: {username}",
@@ -408,7 +408,7 @@ export const en = {
       },
       mediaKeys: {
         title: "Media keys",
-        hint: "Play/Pause/Next from the keyboard and the system media overlay (SMTC)",
+        hint: "The play, pause and next keys on your keyboard control Muza. The Windows system playback panel works too.",
       },
     },
 
@@ -449,7 +449,7 @@ export const en = {
       },
       cssWarnDialog: {
         title: "Theme includes custom CSS",
-        body: "The author's CSS can override any part of the interface's look. It's safe for your data, but if the look breaks — turn off \"Custom CSS\" in Customize or press \"Reset appearance\".",
+        body: "The author's styles can change the interface's look in any way. It's safe for your data, but if the look breaks — turn off \"Custom CSS\" in Customize or press \"Reset appearance\".",
         installAnyway: "Install anyway",
       },
       errors: {
@@ -457,7 +457,7 @@ export const en = {
         reportFailed: "Couldn't send the report",
         nameTooShort: "Name — at least 2 characters",
         publishFailed: "Couldn't publish",
-        corruptPayload: "Corrupt plugin payload — try reinstalling later",
+        corruptPayload: "The plugin file is damaged — try installing later",
         installPluginFailed: "Couldn't install the plugin",
         unpublishPluginFailed: "Couldn't unpublish the plugin",
         visibilityFailed: "Couldn't change visibility",
@@ -498,7 +498,7 @@ export const en = {
     // ── Компоновка плеер-бара (под-экран) ─────────────────────────────
     bar: {
       title: "Player bar buttons",
-      hint: "Order affects the right side of the bar; \"Shuffle\" and \"Repeat\" live around the transport. Cover, like, prev/play/next and the progress bar are fixed.",
+      hint: "The order affects the right side of the player bar, while \"Shuffle\" and \"Repeat\" sit around the playback buttons. The cover, like, track switching and the progress bar are fixed — they can't be removed.",
       moveUp: "Move up: {name}",
       moveDown: "Move down: {name}",
       reset: "Reset bar layout",
@@ -507,7 +507,7 @@ export const en = {
     // ── Вкладки сайдбара (под-экран) ──────────────────────────────────
     nav: {
       title: "Sidebar tabs",
-      hint: "Hiding a tab doesn't remove it from the app — its screen stays reachable (start screen, hotkeys). An empty name restores the default. \"Settings\" and \"Admin\" live separately, at the bottom.",
+      hint: "Hiding a tab doesn't remove it from the app — its screen still opens from the start screen and with hotkeys. An empty name restores the default. \"Settings\" and \"Admin\" live separately, at the bottom.",
       homeCannotDisable: "Home can't be turned off",
       reset: "Reset tabs",
     },
@@ -638,17 +638,17 @@ export const en = {
 
     // ── Хоткеи ───────────────────────────────────────────────────────
     hotkeys: {
-      conflictHint: "⚠ conflict: this combination is already taken by another action",
+      conflictHint: "⚠ This combination is already taken by another action.",
       pressKey: "Press a key…",
-      help: { title: "Help / close", hint: "Fixed — can't be reassigned" },
+      help: { title: "Help / close", hint: "These keys are fixed and can't be reassigned." },
       resetAll: "Reset all",
     },
 
     // ── Расширения ───────────────────────────────────────────────────
     extensions: {
       builtInGroup: "Built-in",
-      visualizer: { title: "Visualizer", hint: "Spectrum or waveform in time with the music, in listening mode (catalog tracks)" },
-      visualizerKind: { title: "Visualizer style", hint: "Bars — frequency spectrum, wave — signal shape", bars: "Bars", wave: "Wave" },
+      visualizer: { title: "Visualizer", hint: "A picture moving in time with the music, in listening mode." },
+      visualizerKind: { title: "Visualizer style", hint: "Bars jump with the sound's frequencies, the wave follows its shape.", bars: "Bars", wave: "Wave" },
       visualizerStyle: {
         custom: "Custom",
         waveSoft: "Soft",
@@ -659,24 +659,24 @@ export const en = {
         barsDense: "Dense",
         barsAiry: "Airy",
       },
-      visualizerBars: { title: "Bar density", hint: "Fewer bars — chunkier and calmer, more — finer detail" },
-      visualizerBarFill: { title: "Bar width", hint: "How much of its row each bar takes: less — airier, 100% — a solid strip" },
-      visualizerBarRound: { title: "Bar rounding", hint: "0% — rectangles, 100% — pills" },
-      visualizerBarCalm: { title: "Fall smoothness", hint: "Hits land instantly, bars sink gently: higher — slower" },
-      visualizerMirror: { title: "Mirrored spectrum", hint: "Bass in the centre, highs at the edges — symmetric both ways" },
-      visualizerWaveSmooth: { title: "Wave softness", hint: "Smooths the line: 0% — a hard sample-by-sample saw, higher — softer" },
-      visualizerWaveThick: { title: "Wave thickness", hint: "From a thin stroke to a dense ribbon" },
-      visualizerWaveCalm: { title: "Motion smoothness", hint: "Shape inertia between frames: 0% — instant and sharp, higher — languid" },
-      visualizerWaveFill: { title: "Fill", hint: "A translucent body under the line — the wave gains mass" },
-      visualizerWaveAmp: { title: "Swing", hint: "Wave height inside its band" },
-      visualizerOpacity: { title: "Intensity", hint: "How present the visualizer is on stage: lower — ambient, higher — vivid" },
-      bassShake: { title: "Bass shake", hint: "The screen gently pulses to the bass in fullscreen player" },
-      bassShakeStrength: { title: "Shake strength", hint: "100% — a gentle pulse, higher — a real shake, 0% — no shake" },
+      visualizerBars: { title: "Bar density", hint: "Fewer bars — chunkier and calmer, more — finer detail." },
+      visualizerBarFill: { title: "Bar width", hint: "How much of its row each bar takes: less — airier, 100% — a solid strip." },
+      visualizerBarRound: { title: "Bar rounding", hint: "At 0% the bars are rectangles, at 100% — round like pills." },
+      visualizerBarCalm: { title: "Fall smoothness", hint: "Hits land instantly, while the bars sink gently: the higher, the slower." },
+      visualizerMirror: { title: "Mirrored spectrum", hint: "Bass in the centre, highs at the edges — symmetric both ways." },
+      visualizerWaveSmooth: { title: "Wave softness", hint: "Smooths the line: at 0% it's sharp and jagged, higher — softer." },
+      visualizerWaveThick: { title: "Wave thickness", hint: "From a thin stroke to a dense ribbon." },
+      visualizerWaveCalm: { title: "Motion smoothness", hint: "At 0% the wave changes shape instantly, higher — it moves lazily, with inertia." },
+      visualizerWaveFill: { title: "Fill", hint: "A translucent fill appears under the line — the wave looks denser." },
+      visualizerWaveAmp: { title: "Swing", hint: "How high the wave rises." },
+      visualizerOpacity: { title: "Intensity", hint: "How noticeable the visualizer is: lower — ambient, higher — vivid." },
+      bassShake: { title: "Bass shake", hint: "In the fullscreen player, the screen gently pulses in time with the bass." },
+      bassShakeStrength: { title: "Shake strength", hint: "At 100% — a gentle pulse, higher — a real shake, at 0% — no shaking." },
       externalGroup: "External plugins",
       appOnly: "Only in the app (not in the browser)",
       installFromFile: {
         title: "Install from file",
-        hint: "A .muzaplugin package — you'll be asked to approve its permissions during install",
+        hint: "Choose a .muzaplugin file. Before installing, we'll show which permissions the plugin asks for.",
         button: "Choose file",
       },
       installed: {
@@ -689,9 +689,9 @@ export const en = {
       },
       fullAccessBadge: "Full access",
       errorsGroup: "Full access errors",
-      errorLog: { title: "Error log", hint: "{n} entr(ies) — from try/catch in full-access plugins", clear: "Clear" },
-      pluginMarket: { title: "Plugin marketplace", hint: "Catalog of extensions — live" },
-      themeMarket: { title: "Theme marketplace", hint: "Install and share themes — live" },
+      errorLog: { title: "Error log", hint: "{n} entr(ies) — errors from full-access plugins.", clear: "Clear" },
+      pluginMarket: { title: "Plugin marketplace", hint: "A catalog of ready-made plugins — installed in one click." },
+      themeMarket: { title: "Theme marketplace", hint: "Install other people's themes, or publish your own." },
       pluginInstalled: "Plugin \"{name}\" installed",
       pluginRemoved: "Plugin \"{name}\" removed",
       installDialog: {
@@ -699,7 +699,7 @@ export const en = {
         titleGeneric: "Install plugin",
         wait: "Wait {n}s…",
         fullAccessWarning:
-          "This plugin is requesting FULL ACCESS: it will be able to do ANYTHING in the app — read and change any data, including your session. Its code runs as part of Muza itself, with no sandbox. Only install it if you fully trust the author \"{author}\".",
+          "This plugin is requesting FULL ACCESS: it will be able to do anything in the app — read and change any data, including your session. It runs as part of Muza itself, with no limits. Only install it if you fully trust the author \"{author}\".",
         trustAuthor: "I understand the risk and trust the author",
         noPermissions: "This plugin doesn't request any special permissions.",
         permissionsAsk: "This plugin requests permissions:",
@@ -709,7 +709,7 @@ export const en = {
         title: "Restart Muza?",
         later: "Later",
         restart: "Restart",
-        body: "\"{name}\" was turned off, but its full-access code is still running in this window and can't be unloaded on the fly — it stays active until the app restarts.",
+        body: "\"{name}\" was turned off, but a full-access plugin keeps running until the app restarts.",
       },
       errors: {
         readFailed: "Couldn't read the plugin",
@@ -722,18 +722,18 @@ export const en = {
     // ── Система ──────────────────────────────────────────────────────
     system: {
       appOnly: "Only works in the app (not in the browser)",
-      autostart: { title: "Launch at Windows startup", hint: "Muza starts together with the system" },
-      tray: { title: "Tray icon", hint: "Muza in the notification area: click opens the window" },
+      autostart: { title: "Launch at Windows startup", hint: "Muza opens on its own when the computer starts." },
+      tray: { title: "Tray icon", hint: "A Muza icon appears in the notification area — clicking it opens the window." },
       closeAction: {
         title: "On window close",
-        hintTray: "\"Minimize\" hides to the tray — music keeps playing",
-        hintNoTray: "Without a tray icon, the window always closes and exits",
+        hintTray: "\"Minimize\" hides the window to the tray — the music keeps playing.",
+        hintNoTray: "While there's no tray icon, closing the window always exits the app.",
         minimize: "Minimize",
         exit: "Exit",
       },
       update: {
         title: "Auto-update",
-        hint: "GitHub Releases: signed builds, stable channel",
+        hint: "Muza checks for new versions and updates itself.",
         checking: "Checking…",
         upToDate: "Up to date",
         available: "{version} available",
@@ -744,7 +744,7 @@ export const en = {
         check: "Check",
         errors: { installFailed: "Couldn't install the update" },
       },
-      miniPlayer: { title: "Mini player", hint: "A compact always-on-top window: cover, transport, like; follows the background" },
+      miniPlayer: { title: "Mini player", hint: "A small window on top of the others: cover, playback buttons and like. Drag it by the background." },
       aboutGroup: "About",
       version: { title: "Version", hint: "Muza · development build" },
       licenses: {
@@ -769,7 +769,7 @@ export const en = {
           vitest: "vitest",
         },
       },
-      website: { title: "Website", hint: "muza.lol — landing page and web player" },
+      website: { title: "Website", hint: "muza.lol — the Muza website and web player." },
       sourceCode: { title: "Client source code", hint: "github.com/EntonioDMI/muza-client" },
     },
 
