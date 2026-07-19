@@ -157,17 +157,29 @@ export async function engineWarm(
   return out;
 }
 
-/** Стрим с первых килобайт (Фаза 2): если файл НЕ в кэше, а warm-запись
- *  жива, Rust начинает закачку в кэш и подтверждает первые байты — тогда
- *  трек играется прямо из наполняющегося .part через протокол muza-stream
- *  (handler отвечает 206-чанками, дожидаясь нужных байт). true даёт Rust
- *  ТОЛЬКО когда первые килобайты уже на диске: провал закачки схлопывается
- *  в false ДО того, как <audio> закоммитится на stream-URL, — «молча упасть
- *  на обычную лестницу» соблюдается по построению. */
-export async function engineStreamStart(trackId: string): Promise<boolean> {
+/** Стрим с первых килобайт (Фаза 2): если файл НЕ в кэше, Rust начинает
+ *  закачку в кэш и подтверждает первые байты — тогда трек играется прямо из
+ *  наполняющегося .part через протокол muza-stream (handler отвечает
+ *  206-чанками, дожидаясь нужных байт). true даёт Rust ТОЛЬКО когда первые
+ *  килобайты уже на диске: провал закачки схлопывается в false ДО того, как
+ *  <audio> закоммитится на stream-URL, — «молча упасть на обычную лестницу»
+ *  соблюдается по построению.
+ *
+ *  sources нужны с 2026-07-19: метаданные берутся из прогрева ЛИБО ступени 0
+ *  (прямой InnerTube) прямо в Rust. До этого стрим работал только у
+ *  прогретых треков, а обычный клик ждал ПОЛНУЮ закачку — из-за чего
+ *  ускорение резолва не чувствовалось (замер и разбор — docs/notes,
+ *  2026-07-19). */
+export async function engineStreamStart(
+  trackId: string,
+  sources: TrackSource[],
+  quality: StreamQuality = "auto",
+): Promise<boolean> {
   if (!isTauri()) return false;
   const out = await invoke<{ stream: boolean }>("engine_stream_start", {
     trackId,
+    sources: toNativeSourceRefs(sources),
+    quality,
     cacheNs: CACHE_NS,
   }).catch(() => ({ stream: false })); // стрим — best-effort по определению
   return out.stream;

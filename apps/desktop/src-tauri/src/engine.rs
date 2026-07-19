@@ -2185,14 +2185,24 @@ pub struct StreamStartOut {
     pub stream: bool,
 }
 
-/// Начать (или подхватить) стрим прогретого трека. Подтверждает готовность
-/// только когда первый чанк уже в .part — провалы схлопываются в
-/// {stream:false} ДО того, как <audio> закоммитится на stream-URL.
+/// Начать (или подхватить) стрим трека. Подтверждает готовность только когда
+/// первый чанк уже в .part — провалы схлопываются в {stream:false} ДО того,
+/// как <audio> закоммитится на stream-URL.
+///
+/// Источник метаданных — прогрев ЛИБО ступень 0 прямо здесь (2026-07-19).
+/// Почему второе добавлено: прогрев покрывает только то, на что навели мышь
+/// или что стоит в очереди, а обычный клик по холодному треку шёл мимо
+/// стрима — ждал ПОЛНУЮ закачку (замер 19.07: резолв 0.75с + байты 0.9–1.4с
+/// ≈ 2.5–3с до звука; жалоба владельца «ускорения не чувствуется»). Ступень 0
+/// стоит те же ~0.75с, что и в лестнице, но после неё звук идёт с первых
+/// 128 КиБ вместо ожидания всех мегабайт — это и есть выигрыш.
 #[tauri::command]
 pub async fn engine_stream_start(
     app: AppHandle,
     state: State<'_, EngineState>,
     track_id: String,
+    sources: Vec<SourceRef>,
+    quality: Option<String>,
     cache_ns: String,
 ) -> Result<StreamStartOut, String> {
     validate_track_id(&track_id)?;
@@ -2208,9 +2218,33 @@ pub async fn engine_stream_start(
         if find_cached(&dir, &track_id).is_some() {
             return no_stream; // кэш-хит быстрее обычным путём
         }
-        let Some(entry) = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now())
-        else {
-            return no_stream; // не прогрет — обычная лестница
+        // Прогрет — метаданные уже есть. Нет — добываем их ступенью 0 прямо
+        // здесь: она быстрая (~0.75с) и не требует yt-dlp, а дальше звук идёт
+        // с первых килобайт. Провал ступени 0 (SABR/бот-гейт/UNPLAYABLE/не
+        // youtube) — молча no_stream: фронт уйдёт обычной лестницей, как
+        // раньше. Единственная дисциплина стрима: он не имеет права сделать
+        // трек неиграбельным.
+        let warm = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now());
+        let entry = match warm {
+            Some(entry) => entry,
+            None => {
+                let cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
+                let (Some(cfg), Some(video_id)) = (cfg, stage0_youtube_id(&sources)) else {
+                    return no_stream;
+                };
+                let itags = if quality.as_deref() == Some("econom") {
+                    INNERTUBE_ITAGS_ECONOM
+                } else {
+                    INNERTUBE_ITAGS_DEFAULT
+                };
+                match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                    Ok(entry) => entry,
+                    Err(fail) => {
+                        classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
+                        return no_stream;
+                    }
+                }
+            }
         };
         let part = dir.join(format!("{track_id}.{}.part", entry.ext));
         let final_path = dir.join(format!("{track_id}.{}", entry.ext));

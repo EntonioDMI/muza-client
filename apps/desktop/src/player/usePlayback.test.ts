@@ -17,6 +17,7 @@ import type { MuzaApi, TrackSource } from "@muza/api-client";
 import { DEFAULT_PREFS, type Prefs } from "../types";
 import type { EngineCallbacks } from "./audioEngine";
 import type { PlayerTrack } from "./types";
+import { invalidateCachedSources } from "./sourcesCache";
 import { usePlayback } from "./usePlayback";
 
 const h = vi.hoisted(() => ({
@@ -141,6 +142,11 @@ beforeEach(() => {
   h.engineStreamStart.mockResolvedValue(false);
   h.getTrackSources.mockImplementation(async () => []);
   h.cb.current = null;
+  // sourcesCache — модульный синглтон и переживает тесты: без сброса трек
+  // получал источники, закэшированные предыдущим кейсом (поймано 19.07 на
+  // тесте передачи источников в стрим).
+  invalidateCachedSources("a");
+  invalidateCachedSources("b");
 });
 
 describe("usePlayback: старый трек и добыча нового", () => {
@@ -785,7 +791,7 @@ describe("стрим с первых килобайт (Фаза 2, muza-stream)"
     await act(async () => {
       hook.result.current.playContext([A, B], "a");
     });
-    expect(h.engineStreamStart).toHaveBeenCalledWith("a");
+    expect(h.engineStreamStart).toHaveBeenCalledWith("a", expect.anything(), expect.anything());
     expect(h.engine.play).toHaveBeenCalledWith(
       expect.stringContaining("muza-stream"),
       expect.anything(),
@@ -802,5 +808,25 @@ describe("стрим с первых килобайт (Фаза 2, muza-stream)"
       hook.result.current.playContext([A, B], "a");
     });
     expect(h.engine.play).toHaveBeenCalledWith("a.webm", expect.anything(), expect.anything());
+  });
+
+  /** Регрессия 2026-07-19 («ускорения не чувствуется»): стрим брал ТОЛЬКО
+   *  прогретые треки, а обычный клик по холодному шёл мимо него и ждал
+   *  ПОЛНУЮ закачку (резолв 0.75с + байты 0.9–1.4с). Метаданные холодному
+   *  треку теперь добывает ступень 0 внутри Rust, поэтому стриму нужны
+   *  ИСТОЧНИКИ — без них он не может её позвать. */
+  it("холодному треку источники передаются в стрим — ступени 0 есть с чем работать", async () => {
+    const ytSource = [{ provider: "youtube", sourceId: "dQw4w9WgXcQ", priority: 100 }];
+    h.getTrackSources.mockImplementation(async () => ytSource);
+    h.engineStreamStart.mockResolvedValueOnce(true);
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([A, B], "a");
+    });
+    expect(h.engineStreamStart).toHaveBeenCalledWith(
+      "a",
+      expect.arrayContaining([expect.objectContaining({ sourceId: "dQw4w9WgXcQ" })]),
+      expect.anything(),
+    );
   });
 });

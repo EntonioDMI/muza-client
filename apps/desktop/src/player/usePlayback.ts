@@ -290,6 +290,24 @@ export function usePlayback({
   /** Резолв играбельного URL: локальный файл (kind=local или источник
    *  provider=local, Stage 4) → диск; каталожный — движок добычи.
    *  Сервер недоступен → локальный файл или кэш добычи ещё могут спасти. */
+  /** Источники трека: кэш плеера → сервер (без повторного RTT — putCachedSources).
+   *  Нужны стриму с 2026-07-19: если трек не прогрет, метаданные добывает
+   *  ступень 0 в Rust, а ей нужен список источников. Отказ сервера здесь НЕ
+   *  фатален — стрим просто не заведётся, и resolveForTrack отработает свою
+   *  оффлайн-ветку как раньше. */
+  const streamSourcesFor = async (t: PlayerTrack): Promise<TrackSource[]> => {
+    let sources: TrackSource[] | null = getCachedSources(t.id);
+    if (sources === null) {
+      try {
+        sources = await api.getTrackSources(t.id);
+        putCachedSources(t.id, sources);
+      } catch {
+        return [];
+      }
+    }
+    return applySourcePolicy(sources, prefsRef.current);
+  };
+
   const resolveForTrack = async (t: PlayerTrack): Promise<ResolveResult> => {
     if (t.kind === "local") {
       // анонимный локальный трек: серверных источников нет в принципе
@@ -391,12 +409,19 @@ export function usePlayback({
         url = preloadedUrl;
       } else {
         setBuffering(true);
-        // Стрим с первых килобайт (Фаза 2): у прогретого некэшированного
-        // трека резолв уже сделан (WarmEntry), Rust начал закачку и
-        // подтвердил первые байты — играем прямо из наполняющегося кэша
-        // (~0.5с до звука вместо ожидания всего файла). false — обычная
-        // добыча: кэш-хит, warm-fetch или полная лестница.
-        if (t.kind === "catalog" && (await engineStreamStart(t.id))) {
+        // Стрим с первых килобайт (Фаза 2): Rust берёт метаданные из прогрева
+        // ЛИБО добывает их ступенью 0 (прямой InnerTube ~0.75с), начинает
+        // закачку и подтверждает первые байты — играем прямо из
+        // наполняющегося кэша, не дожидаясь всего файла. false — обычная
+        // добыча: кэш-хит, не-youtube источник, провал ступени 0 или полная
+        // лестница. Источники передаём всегда: у прогретого трека они не
+        // понадобятся (warm-запись важнее), у холодного — это и есть вход
+        // ступени 0. До 19.07 стрим брал только прогретые, и обычный клик
+        // ждал ПОЛНУЮ закачку — из-за чего ускорение не чувствовалось.
+        if (
+          t.kind === "catalog" &&
+          (await engineStreamStart(t.id, await streamSourcesFor(t), prefsRef.current.streamQuality))
+        ) {
           url = engineStreamUrl(t.id);
         } else {
           const resolved = await resolveForTrack(t);
