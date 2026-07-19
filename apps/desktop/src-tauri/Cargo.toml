@@ -22,8 +22,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 ed25519-dalek = "2"
 base64 = "0.22"
 # time — таймауты ожидания байт в протоколе muza-stream (Фаза 2); фича и так
-# активна в графе через tauri, запись здесь лишь делает зависимость честной
-tokio = { version = "1", features = ["sync", "net", "time"] }
+# активна в графе через tauri, запись здесь лишь делает зависимость честной.
+# macros — select! в отменяемой закачке стрима (снос неподтверждённой, К4).
+tokio = { version = "1", features = ["sync", "net", "time", "macros"] }
 filetime = "0.2"
 # Канонический разбор provider URL на нативной SSRF-границе.
 url = "2"

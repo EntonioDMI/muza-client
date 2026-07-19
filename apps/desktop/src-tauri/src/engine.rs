@@ -1176,6 +1176,11 @@ struct StreamHandle {
     part: PathBuf,
     final_path: PathBuf,
     progress: tokio::sync::watch::Receiver<StreamProgress>,
+    /// Снос НЕподтверждённой закачки (первый чанк не пришёл за
+    /// STREAM_START_TIMEOUT): notify_one хранит разрешение, поэтому отмена
+    /// не теряется, даже если закачка в этот момент не ждёт (между чанками).
+    /// После stream:true никто её не дёргает — играющий стрим неприкосновенен.
+    cancel: Arc<tokio::sync::Notify>,
 }
 
 /// argv прогрева — ОТДЕЛЬНАЯ функция, а не правка build_ytdlp_args: боевой
@@ -1505,27 +1510,36 @@ fn warm_http_client() -> &'static reqwest::Client {
 ///   `.part` не может стать кэш-хитом (find_cached, тест part_file_is_not_a_cache_hit);
 /// - `validate_ytdlp_output` на финальном пути — буквально та же функция.
 async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result<PathBuf, String> {
-    fetch_to_cache_with_progress(dir, track_id, entry, None).await
+    fetch_to_cache_with_progress(dir, track_id, entry, None, None).await
 }
 
 /// То же скачивание, но с публикацией прогресса для протокола muza-stream
-/// (Фаза 2): стрим и заполнение кэша — ОДНА закачка, не две.
+/// (Фаза 2): стрим и заполнение кэша — ОДНА закачка, не две. cancel — снос
+/// НЕподтверждённой закачки из ветки таймаута engine_stream_start (К4):
+/// срабатывает и когда CDN молчит (select оборачивает сам await сети).
 async fn fetch_to_cache_with_progress(
     dir: &Path,
     track_id: &str,
     entry: &WarmEntry,
     progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+    cancel: Option<&tokio::sync::Notify>,
 ) -> Result<PathBuf, String> {
     if !content_length_ok(entry.size) {
         return Err(format!("warm-размер вне лимита: {}", entry.size));
     }
-    let resp = warm_http_client()
+    let send = warm_http_client()
         .get(entry.url.clone())
         .header("Range", format!("bytes=0-{}", entry.size - 1))
         .timeout(RESOLVE_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| format!("warm GET не ушёл: {e}"))?;
+        .send();
+    let resp = match cancel {
+        Some(n) => tokio::select! {
+            _ = n.notified() => return Err("стрим отменён до ответа CDN".into()),
+            r = send => r,
+        },
+        None => send.await,
+    }
+    .map_err(|e| format!("warm GET не ушёл: {e}"))?;
 
     let status = resp.status();
     // total — сколько байт СУЩЕСТВУЕТ у CDN: у 206 — из Content-Range (наш
@@ -1565,7 +1579,7 @@ async fn fetch_to_cache_with_progress(
 
     let part = dir.join(format!("{track_id}.{}.part", entry.ext));
     let final_path = dir.join(format!("{track_id}.{}", entry.ext));
-    let written = write_body_to_part(resp, &part, total, progress).await;
+    let written = write_body_to_part(resp, &part, total, progress, cancel).await;
     match written {
         Ok(()) => {}
         Err(e) => {
@@ -1592,15 +1606,21 @@ async fn write_body_to_part(
     part: &Path,
     total: u64,
     progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+    cancel: Option<&tokio::sync::Notify>,
 ) -> Result<(), String> {
     use std::io::Write as _;
     let mut file = fs::File::create(part).map_err(|e| format!("не создался .part: {e}"))?;
     let mut written: u64 = 0;
     loop {
-        let chunk = resp
-            .chunk()
-            .await
-            .map_err(|e| format!("обрыв warm-скачивания: {e}"))?;
+        let chunk = match cancel {
+            // notify_one хранит разрешение: отмена между чанками не теряется
+            Some(n) => tokio::select! {
+                _ = n.notified() => return Err("стрим отменён (первый чанк не подтвердился)".into()),
+                c = resp.chunk() => c,
+            },
+            None => resp.chunk().await,
+        }
+        .map_err(|e| format!("обрыв warm-скачивания: {e}"))?;
         let Some(bytes) = chunk else { break };
         written += bytes.len() as u64;
         if written > total {
@@ -2304,8 +2324,9 @@ pub async fn engine_warm(
 
 /// Сколько ждать ПЕРВЫЕ байты в engine_stream_start: протухший warm-URL
 /// отваливается за секунды, а дольше ждать нет смысла — обычная лестница
-/// на фронте не медленнее.
-const STREAM_START_TIMEOUT: Duration = Duration::from_secs(15);
+/// на фронте не медленнее. Было 15с (2026-07-19 → 8с): первые 128 КиБ дольше
+/// 8с = CDN нездоров, лестница выгоднее, чем ожидание.
+const STREAM_START_TIMEOUT: Duration = Duration::from_secs(8);
 /// Сколько handler ждёт байты одного чанка (закачка обычно опережает
 /// playback на порядок; ожидание дольше значит закачка умерла).
 const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
@@ -2404,6 +2425,7 @@ pub async fn engine_stream_start(
             part,
             final_path,
             progress: rx,
+            cancel: Arc::new(tokio::sync::Notify::new()),
         };
         state.streams.lock().unwrap().insert(key.clone(), handle.clone());
 
@@ -2411,10 +2433,18 @@ pub async fn engine_stream_start(
         let ns_task = cache_ns.clone();
         let id_task = track_id.clone();
         let key_task = key.clone();
+        let cancel_task = handle.cancel.clone();
         tauri::async_runtime::spawn(async move {
             let result = match cache_dir(&app_task, &ns_task) {
                 Ok(dir) => {
-                    fetch_to_cache_with_progress(&dir, &id_task, &entry, Some(&tx)).await
+                    fetch_to_cache_with_progress(
+                        &dir,
+                        &id_task,
+                        &entry,
+                        Some(&tx),
+                        Some(&cancel_task),
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             };
@@ -2460,26 +2490,48 @@ pub async fn engine_stream_start(
     };
 
     // добро фронту — только с первыми килобайтами на диске
-    let mut rx = handle.progress.clone();
-    let wait = async {
-        loop {
-            let p = *rx.borrow();
-            if p.failed {
-                return false;
-            }
-            if p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1)) {
-                return true;
-            }
-            if rx.changed().await.is_err() {
-                // sender умер без финального сигнала — считаем провалом
-                let p = *rx.borrow();
-                return p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1));
-            }
-        }
-    };
-    match tokio::time::timeout(STREAM_START_TIMEOUT, wait).await {
+    match tokio::time::timeout(
+        STREAM_START_TIMEOUT,
+        stream_wait_first_chunk(handle.progress.clone()),
+    )
+    .await
+    {
         Ok(true) => Ok(StreamStartOut { stream: true }),
-        _ => no_stream,
+        _ => {
+            // Первый чанк не подтвердился (таймаут или провал): сносим
+            // НЕподтверждённую закачку, иначе она жила бы до RESOLVE_TIMEOUT
+            // (180с), а engine_resolve ЭТОГО ЖЕ клика ждал бы её хвост вместо
+            // ухода в лестницу — «клик висит минуты» (2026-07-19). Из реестра
+            // удаляем ДО notify: resolve не должен подцепить умирающий handle.
+            // Играющие стримы в эту ветку не попадают: stream:true сюда не
+            // доходит, а повторный клик по живому стриму подтверждается
+            // мгновенно (первый чанк уже на диске).
+            state.streams.lock().unwrap().remove(&key);
+            handle.cancel.notify_one();
+            no_stream
+        }
+    }
+}
+
+/// Ожидание подтверждения стрима: первые STREAM_FIRST_CHUNK (или весь файл,
+/// если он меньше) на диске → true; провал закачки → false. Потолок времени —
+/// у вызывающего (tokio::time::timeout), поэтому хелпер честно ждёт вечно.
+async fn stream_wait_first_chunk(
+    mut rx: tokio::sync::watch::Receiver<StreamProgress>,
+) -> bool {
+    loop {
+        let p = *rx.borrow();
+        if p.failed {
+            return false;
+        }
+        if p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1)) {
+            return true;
+        }
+        if rx.changed().await.is_err() {
+            // sender умер без финального сигнала — считаем провалом
+            let p = *rx.borrow();
+            return p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1));
+        }
     }
 }
 
@@ -4402,6 +4454,76 @@ mod sidecar_policy_tests {
 #[cfg(test)]
 mod warm_tests {
     use super::*;
+
+    // ── Ожидание первого чанка стрима (К4, 2026-07-19) ─────────────
+    // Раньше таймаут первого чанка просто возвращал no_stream, а закачка
+    // ЖИЛА в реестре до 180с — и engine_resolve этого же клика ждал её
+    // вместо ухода в лестницу («клик висит минуты»). Теперь ожидание —
+    // отдельный хелпер, а ветка таймаута сносит закачку (реестр → cancel).
+
+    fn progress_channel(
+        total: u64,
+    ) -> (
+        tokio::sync::watch::Sender<StreamProgress>,
+        tokio::sync::watch::Receiver<StreamProgress>,
+    ) {
+        tokio::sync::watch::channel(StreamProgress {
+            written: 0,
+            total,
+            finalized: false,
+            failed: false,
+        })
+    }
+
+    /// Первые STREAM_FIRST_CHUNK на диске — подтверждение.
+    #[test]
+    fn stream_wait_confirms_on_first_chunk() {
+        let (tx, rx) = progress_channel(10 * STREAM_FIRST_CHUNK);
+        tx.send_replace(StreamProgress {
+            written: STREAM_FIRST_CHUNK,
+            total: 10 * STREAM_FIRST_CHUNK,
+            finalized: false,
+            failed: false,
+        });
+        assert!(tauri::async_runtime::block_on(stream_wait_first_chunk(rx)));
+    }
+
+    /// Файл меньше первого чанка — подтверждение по written >= total.
+    #[test]
+    fn stream_wait_confirms_small_file() {
+        let (tx, rx) = progress_channel(1000);
+        tx.send_replace(StreamProgress {
+            written: 1000,
+            total: 1000,
+            finalized: false,
+            failed: false,
+        });
+        assert!(tauri::async_runtime::block_on(stream_wait_first_chunk(rx)));
+    }
+
+    /// Провал закачки — false (фронт уходит лестницей).
+    #[test]
+    fn stream_wait_false_on_failure() {
+        let (tx, rx) = progress_channel(10 * STREAM_FIRST_CHUNK);
+        tx.send_replace(StreamProgress {
+            written: 0,
+            total: 10 * STREAM_FIRST_CHUNK,
+            finalized: false,
+            failed: true,
+        });
+        assert!(!tauri::async_runtime::block_on(stream_wait_first_chunk(rx)));
+    }
+
+    /// Молчащий CDN — таймаут у вызывающего срабатывает, хелпер не зависает
+    /// сам по себе (ожидание отменяемо снаружи).
+    #[test]
+    fn stream_wait_times_out_when_sender_silent() {
+        let (_tx, rx) = progress_channel(10 * STREAM_FIRST_CHUNK);
+        let out = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_millis(50), stream_wait_first_chunk(rx)).await
+        });
+        assert!(out.is_err(), "молчание — таймаут, не подтверждение");
+    }
 
     fn yt_attempt() -> Attempt {
         Attempt {
