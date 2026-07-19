@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Разломанный винил для крашскрина. Рукописный SVG вместо генерации:
+       ДС Muza плоская — ТОЛЬКО залитые формы, никаких обводок/контуров/линий
+       (жалоба владельца 2026-07-17 на line-art из Recraft). Разлом проходит
+       правее лейбла: большая часть с целым лейблом + отколовшийся серп.
+       Дырка лейбла залита цветом фона крашскрина (surface-0 #171614). -->
+  <defs>
+    <clipPath id="mainPart"><rect x="-400" y="-400" width="466" height="800" transform="rotate(10)"/></clipPath>
+    <clipPath id="shardPart"><rect x="76" y="-400" width="340" height="800" transform="rotate(10)"/></clipPath>
+  </defs>
+
+  <!-- основная часть: диск с целым лейблом, чуть завалена влево -->
+  <g transform="translate(236 272) rotate(-5)">
+    <g clip-path="url(#mainPart)">
+      <circle r="172" fill="#26241F"/>
+      <path fill-rule="evenodd" fill="#2E2B26" d="M0-150A150 150 0 1 0 0 150A150 150 0 1 0 0-150ZM0-106A106 106 0 1 1 0 106A106 106 0 1 1 0-106Z"/>
+      <circle r="60" fill="#F76967"/>
+      <circle r="10" fill="#171614"/>
+    </g>
+  </g>
+
+  <!-- отколовшийся серп: отъехал вправо-вверх и повернулся -->
+  <g transform="translate(300 236) rotate(9)">
+    <g clip-path="url(#shardPart)">
+      <circle r="172" fill="#26241F"/>
+      <path fill-rule="evenodd" fill="#2E2B26" d="M0-150A150 150 0 1 0 0 150A150 150 0 1 0 0-150ZM0-106A106 106 0 1 1 0 106A106 106 0 1 1 0-106Z"/>
+    </g>
+  </g>
+
+  <!-- осколки у разлома (заметно светлее диска, иначе тонут в фоне) -->
+  <path d="M338 118 l10 -18 l8 16 z" fill="#4A463F"/>
+  <path d="M360 96 l8 -14 l7 13 z" fill="#403C36"/>
+  <circle cx="330" cy="78" r="5" fill="#4A463F"/>
+
+  <!-- улетающие ноты: плоские заливки, коралл + приглушённый серый -->
+  <g fill="#F76967" transform="translate(392 60) rotate(12)">
+    <ellipse cx="0" cy="26" rx="11" ry="8"/>
+    <rect x="8" y="-26" width="5" height="53" rx="2.5"/>
+    <path d="M13 -26 q20 4 22 20 q-6 -8 -22 -9 z"/>
+  </g>
+  <g fill="#5E5B55" transform="translate(150 78) rotate(-14) scale(0.82)">
+    <ellipse cx="0" cy="26" rx="11" ry="8"/>
+    <rect x="8" y="-26" width="5" height="53" rx="2.5"/>
+    <path d="M13 -26 q20 4 22 20 q-6 -8 -22 -9 z"/>
+  </g>
+</svg>
