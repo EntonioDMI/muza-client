@@ -26,9 +26,10 @@ export interface DragPayload {
    *  писали `?? undefined` в каждом вызове. */
   cover?: string | null;
   /** "track" — откуда угодно; "playlist-track" — строка внутри плейлиста
-   *  (может быть переупорядочена), `fromPlaylistId` тогда обязателен;
-   *  "playlist" — сам плейлист тащат за ручку-⠿ для реордера в Библиотеке. */
-  kind: "track" | "playlist-track" | "playlist";
+   *  (может быть переупорядочена), `fromPlaylistId` тогда обязателен.
+   *  Плейлисты сюда НЕ попадают: их реордер — локальный (useLocalReorder),
+   *  без глобального слоя и переносов между областями (решение 2026-07-16). */
+  kind: "track" | "playlist-track";
   fromPlaylistId?: string;
 }
 
@@ -119,6 +120,79 @@ export function reorderShift(
   // тащат вверх мимо i → i опускается
   if (to <= i && i < from) return h;
   return 0;
+}
+
+/** Прямоугольник элемента для локального реордера (см. useLocalReorder). */
+export interface Box {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+}
+
+/** Splice-индекс вставки в СЕТКЕ по позиции курсора: ближайший центр ячейки.
+ *
+ *  Возвращает индекс в терминах массива ПОСЛЕ удаления тащимого элемента —
+ *  готов для splice/moveItem, как и insertionIndex. Арифметика сходится без
+ *  поправок: ближайшая ячейка i левее тащимого (i < from) — встать на её место
+ *  = splice(i); правее (i > from) — после удаления всё правее from съехало на
+ *  единицу, и «место ячейки i» = splice(i); сама from — без перестановки.
+ *  Евклидово расстояние, а не «пересёк середину»: у сетки две оси, и полосы
+ *  Вороного вокруг центров дают именно то поведение, что ждёт глаз. */
+export function gridInsertionIndex(rects: readonly Box[], x: number, y: number): number {
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < rects.length; i++) {
+    const cx = (rects[i].left + rects[i].right) / 2;
+    const cy = (rects[i].top + rects[i].bottom) / 2;
+    const d = (x - cx) ** 2 + (y - cy) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** Сдвиг СОСЕДА i, пока элемент from тащат в позицию to: сосед едет на
+ *  прямоугольник своей новой позиции (2D — работает и в столбце, и в сетке).
+ *  Тащимый элемент сюда не ходит — он следует за курсором (useLocalReorder). */
+export function reorderOffset(rects: readonly Box[], from: number, to: number, i: number): { x: number; y: number } {
+  if (from === to || i === from || from < 0 || to < 0) return { x: 0, y: 0 };
+  if (from >= rects.length || to >= rects.length || i >= rects.length) return { x: 0, y: 0 };
+  let j = i;
+  if (from < i && i <= to) j = i - 1; // тащат вправо/вниз мимо i → i отступает назад
+  else if (to <= i && i < from) j = i + 1; // тащат влево/вверх мимо i → i съезжает вперёд
+  if (j === i) return { x: 0, y: 0 };
+  return { x: rects[j].left - rects[i].left, y: rects[j].top - rects[i].top };
+}
+
+/** Кламп сдвига (dx,dy) так, чтобы прямоугольник r не вышел за bounds —
+ *  «следует за мышкой настолько, насколько может в рамках своей области». */
+export function clampShift(
+  r: Box,
+  bounds: Box,
+  dx: number,
+  dy: number,
+): { x: number; y: number } {
+  const x = Math.max(bounds.left - r.left, Math.min(bounds.right - r.right, dx));
+  const y = Math.max(bounds.top - r.top, Math.min(bounds.bottom - r.bottom, dy));
+  return { x, y };
+}
+
+/** Габарит области реордера: объединение прямоугольников всех элементов. */
+export function unionBox(rects: readonly Box[]): Box {
+  let top = Infinity;
+  let left = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const r of rects) {
+    if (r.top < top) top = r.top;
+    if (r.left < left) left = r.left;
+    if (r.right > right) right = r.right;
+    if (r.bottom > bottom) bottom = r.bottom;
+  }
+  return { top, left, right, bottom };
 }
 
 /** Перестановка элемента: from → to. Чистая, не мутирует. */

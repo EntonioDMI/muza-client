@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   DRAG_THRESHOLD,
   HOLD_MS,
+  clampShift,
   dist,
+  gridInsertionIndex,
   insertionIndex,
   moveItem,
+  reorderOffset,
   reorderShift,
   shouldStart,
+  unionBox,
 } from "./dragEngine";
 
 /** Строки высотой 40 подряд от y=0: середины 20, 60, 100, 140, 180. */
@@ -158,5 +162,71 @@ describe("reorderShift: соседи разъезжаются, тащимая е
     expect(reorderShift(r, 9, 0, 0)).toBe(0);
     expect(reorderShift(r, 0, 9, 0)).toBe(0);
     expect(reorderShift([], 0, 1, 0)).toBe(0);
+  });
+});
+
+/** Сетка 2×2 плиток 100×100 с гэпом 10: центры (50,50) (160,50) (50,160) (160,160). */
+const grid22 = [
+  { top: 0, left: 0, right: 100, bottom: 100 },
+  { top: 0, left: 110, right: 210, bottom: 100 },
+  { top: 110, left: 0, right: 100, bottom: 210 },
+  { top: 110, left: 110, right: 210, bottom: 210 },
+];
+
+describe("gridInsertionIndex: слот сетки по ближайшему центру", () => {
+  it("курсор в ячейке — её индекс (splice-семантика: без поправок на from)", () => {
+    expect(gridInsertionIndex(grid22, 50, 50)).toBe(0);
+    expect(gridInsertionIndex(grid22, 160, 50)).toBe(1);
+    expect(gridInsertionIndex(grid22, 60, 170)).toBe(2);
+    expect(gridInsertionIndex(grid22, 200, 200)).toBe(3);
+  });
+
+  it("курсор за пределами сетки — ближайшая крайняя ячейка (кламп смыслом)", () => {
+    expect(gridInsertionIndex(grid22, -50, -50)).toBe(0);
+    expect(gridInsertionIndex(grid22, 500, 500)).toBe(3);
+  });
+
+  it("moveItem с этим индексом ставит плитку в конец без спец-случая «после последней»", () => {
+    // тащим 0 на место 3: ближайший центр 3 → splice(3) → [B,C,D,A]
+    const to = gridInsertionIndex(grid22, 160, 160);
+    expect(moveItem(["A", "B", "C", "D"], 0, to)).toEqual(["B", "C", "D", "A"]);
+  });
+});
+
+describe("reorderOffset: соседи съезжают на прямоугольник будущей позиции (2D)", () => {
+  it("тащим 0 → 3: все прочие сдвигаются на одну позицию назад", () => {
+    // 1 едет на место 0 (влево), 2 — на место 1 (вправо-вверх), 3 — на место 2 (влево-вниз)
+    expect(reorderOffset(grid22, 0, 3, 1)).toEqual({ x: -110, y: 0 });
+    expect(reorderOffset(grid22, 0, 3, 2)).toEqual({ x: 110, y: -110 });
+    expect(reorderOffset(grid22, 0, 3, 3)).toEqual({ x: -110, y: 0 });
+  });
+
+  it("тащим 3 → 0: все прочие сдвигаются вперёд", () => {
+    expect(reorderOffset(grid22, 3, 0, 0)).toEqual({ x: 110, y: 0 });
+    expect(reorderOffset(grid22, 3, 0, 1)).toEqual({ x: -110, y: 110 });
+    expect(reorderOffset(grid22, 3, 0, 2)).toEqual({ x: 110, y: 0 });
+  });
+
+  it("вне диапазона from..to — нули; сам тащимый — нуль (им правит курсор)", () => {
+    expect(reorderOffset(grid22, 1, 2, 0)).toEqual({ x: 0, y: 0 });
+    expect(reorderOffset(grid22, 1, 2, 3)).toEqual({ x: 0, y: 0 });
+    expect(reorderOffset(grid22, 1, 2, 1)).toEqual({ x: 0, y: 0 });
+    expect(reorderOffset(grid22, 2, 2, 3)).toEqual({ x: 0, y: 0 });
+  });
+
+  it("в столбце (сайдбар) вырождается в вертикальный сдвиг", () => {
+    const col = rows(3).map((r) => ({ ...r, left: 0, right: 200 }));
+    expect(reorderOffset(col, 0, 2, 1)).toEqual({ x: 0, y: -40 });
+    expect(reorderOffset(col, 2, 0, 1)).toEqual({ x: 0, y: 40 });
+  });
+});
+
+describe("clampShift/unionBox: плашка не выходит за габарит области", () => {
+  it("дельта внутри области проходит как есть, наружу — обрезается", () => {
+    const bounds = unionBox(grid22);
+    expect(bounds).toEqual({ top: 0, left: 0, right: 210, bottom: 210 });
+    // плитка 0 (0..100): вниз на 500 — упрётся в 110 (210-100); влево — в 0
+    expect(clampShift(grid22[0], bounds, 30, 500)).toEqual({ x: 30, y: 110 });
+    expect(clampShift(grid22[0], bounds, -50, -50)).toEqual({ x: 0, y: 0 });
   });
 });

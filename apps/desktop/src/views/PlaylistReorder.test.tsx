@@ -42,8 +42,14 @@ const detail: PlaylistDetail = {
   name: "Мой микс",
   tracks: [track("t1", "Первый"), track("t2", "Второй"), track("t3", "Третий")],
   isOwner: true,
+  role: "owner",
   ownerUsername: "",
   inviteCode: null,
+  publicCode: null,
+  handle: null,
+  visibility: "private",
+  followersCount: 0,
+  isFollowing: false,
   collaborators: [],
   addedBy: {},
   icon: null,
@@ -67,6 +73,7 @@ function renderView(api: MuzaApi, onNotify: (t: string, i?: string) => void = no
         onLike={noop}
         onNotify={onNotify}
         onVersions={noop}
+        onReplaceVersion={noop}
         onShare={noop}
         onSaveOffline={noop}
         onChanged={noop}
