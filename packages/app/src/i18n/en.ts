@@ -63,7 +63,7 @@ export const en = {
       },
       email: {
         title: "Email",
-        hint: "For password recovery; changing it is confirmed by an email to the new address",
+        hint: "Needed to recover your password. A change is confirmed by an email to the new address.",
         dialogTitle: "Change email",
         passwordPlaceholder: "Account password",
         newEmailPlaceholder: "New email",
@@ -82,7 +82,7 @@ export const en = {
       },
       password: {
         title: "Change password",
-        hint: "Old → new; other devices will be signed out",
+        hint: "After the change, every other device gets signed out.",
         dialogTitle: "Change password",
         currentPlaceholder: "Current password",
         newPlaceholder: "New password (8+ characters)",
@@ -99,7 +99,7 @@ export const en = {
       },
       sessions: {
         rowTitle: "Sessions and devices",
-        rowHint: "Where you're signed in; you can sign out other devices",
+        rowHint: "A list of devices signed into your account. You can sign out any device you don't recognize.",
         title: "Sessions and devices",
         hint: "Each row is a device signed into your account. The date is its last activity. Don't recognize a device — sign it out and change your password.",
         loadFailed: "Couldn't load the session list.",
@@ -118,20 +118,20 @@ export const en = {
       privacyGroup: "Privacy",
       telemetry: {
         title: "Anonymous statistics",
-        hint: "Anonymized extraction and playback aggregates — used to fix extraction issues; no username, id, or track names",
+        hint: "Helps us notice tracks that stopped playing and fix them faster. Your name, email and the list of what you listen to are never sent.",
       },
       dataDoc: {
         title: "Data document",
-        hint: "What stays on the device, what the server stores, and what goes into statistics",
+        hint: "What stays on the device, what we store, and what goes into statistics.",
       },
       exportOrDelete: {
         title: "Export or delete data",
-        hint: "JSON export of everything, or full account deletion",
+        hint: "Download all your data as one file, or delete the account entirely.",
       },
       needsAccount: "Needs an account — anonymous users don't have email",
       needsAccountPassword: "Needs an account — anonymous users don't have a password",
       needsAccountShort: "Needs an account",
-      needsAccountServer: "Needs an account — anonymous users have nothing stored on the server",
+      needsAccountServer: "Needs an account — nothing of an anonymous user is stored with us",
     },
 
     // ── Внешний вид ──────────────────────────────────────────────────
@@ -470,29 +470,29 @@ export const en = {
       title: "Data: what lives where",
       deviceOnly: {
         title: "Stays only on this device",
-        item1: "— Audio cache of what you've played, and offline downloads (the actual music bytes never touch the server: the client fetches them itself).",
+        item1: "— Music saved while listening, and offline downloads. The audio files themselves never reach us: the app downloads them directly.",
         item2: "— Local files and their paths on disk.",
         item3: "— Settings, theme, current session keys.",
       },
       serverStored: {
-        title: "Stored on the server — for your own features, visible only to you",
-        item1: "— Account: username and password hash; email only if you provided one (for password recovery).",
+        title: "Stored with us — needed for your own features, visible only to you",
+        item1: "— Account: username and an encrypted password; email only if you provided one (for password recovery).",
         item2: "— Likes, dislikes, playlists, chosen track versions.",
         item3: "— Listening history — your statistics (and later recommendations) are built from it.",
-        item4: "— For local files — only the title, artist and a file fingerprint (hash), not the file itself or its path.",
+        item4: "— For local files — only the title, artist and a file fingerprint, not the file itself or its path.",
       },
       anonymousStats: {
         title: "Anonymous statistics (checkbox in \"Account\")",
-        item1: "— Roughly every 10 minutes, aggregate counters go out: how many extractions succeeded and with what errors (used to fix extraction without an app update), and how many plays happened.",
-        item2: "— Not tied to your account: no username, id, or track names are in these counters.",
+        item1: "— Every few minutes, summary counters go out: how many tracks started playing, how many couldn't, and how many plays happened. They let us fix playback without waiting for an app update.",
+        item2: "— Not tied to your account: no username or track names are in these counters.",
       },
       whatWeDontDo: {
         title: "What we don't do",
         item1: "— We don't sell or share your data.",
-        item2: "— We don't collect a named history for analytics — aggregates are anonymized.",
-        item3: "— We don't send emails without a reason: only verification and password recovery.",
+        item2: "— We don't collect a listening history with names attached — only anonymized summary numbers.",
+        item3: "— We don't send emails without a reason: only address confirmation and password recovery.",
       },
-      deletionNote: "Deleting your account removes everything server-side. A button will appear closer to release — for now it's done on request.",
+      deletionNote: "Deleting your account removes everything stored with us. The button is in \"Account\" → \"Export or delete data\".",
     },
 
     // ── Компоновка плеер-бара (под-экран) ─────────────────────────────
@@ -519,7 +519,7 @@ export const en = {
       periodGroup: "Default period",
       period: {
         title: "Period",
-        hint: "Which period the page opens with",
+        hint: "Which period the statistics page opens with.",
         week: "Week",
         month: "Month",
         year: "Year",
@@ -603,33 +603,33 @@ export const en = {
     // ── Тексты ───────────────────────────────────────────────────────
     lyrics: {
       displayGroup: "Display",
-      synced: { title: "Synced lyrics", hint: "Karaoke-style lines in time with the music; off — a plain list without highlighting" },
-      autoScroll: { title: "Auto-scroll", hint: "Follow the current line; off — free scrolling through the whole text" },
-      endNote: { title: "End note", hint: "A decorative music note at the very bottom of the lyrics" },
-      karaokeSize: { title: "Karaoke text size", hint: "Line shown in listening mode (same slider as in Customize)" },
+      synced: { title: "Synced lyrics", hint: "Lines light up in time with the music. Turn this off and the lyrics become a plain list." },
+      autoScroll: { title: "Auto-scroll", hint: "The lyrics follow the current line on their own. Turn this off to scroll freely." },
+      endNote: { title: "End note", hint: "A decorative music note at the very bottom of the lyrics." },
+      karaokeSize: { title: "Karaoke text size", hint: "Size of the line in listening mode. The same slider lives in Customize." },
       understandingGroup: "Understanding",
-      translation: { title: "Translation", hint: "Translate lines into a chosen language (coming later)" },
-      meaningMode: { title: "Meaning mode", hint: "Dotted lines with Genius explanations — click opens a card" },
+      translation: { title: "Translation", hint: "Translates lines into a chosen language. Coming later." },
+      meaningMode: { title: "Meaning mode", hint: "Lines with explanations get a dotted underline — a click opens the meaning card." },
     },
 
     // ── Библиотека ───────────────────────────────────────────────────
     library: {
-      localFiles: { title: "Local files", hint: "Add files and folders in Library, \"Local\" tab", value: "Library → Local" },
+      localFiles: { title: "Local files", hint: "Files and folders are added in the Library, on the \"Local\" tab.", value: "Library → Local" },
       cache: {
-        title: "Playback cache",
-        hintFilled: "Using {size} · {files} file(s); clearing doesn't touch offline downloads",
-        hintEmpty: "LRU cache of fetched audio — live, evicted by limit",
-        limitLabel: "Cache limit",
+        title: "Saved while listening",
+        hintFilled: "Using {size} — {files} file(s). Clearing doesn't touch offline downloads.",
+        hintEmpty: "Tracks are saved to disk as you listen and later play without loading. When space runs out, the oldest are removed automatically.",
+        limitLabel: "Space limit",
         clear: "Clear",
       },
       offline: {
         title: "Offline downloads",
-        hint: "\"Save offline\" on a track or playlist; never evicted, survives clearing",
+        hint: "Tracks saved with the \"Save offline\" button. They stay until you remove them yourself, and survive clearing.",
         value: "{n} tr. · {size}",
         empty: "0 tracks",
       },
-      importPlaylists: { title: "Import playlists", hint: "Spotify, YouTube / YT Music, Apple Music — button in Library", value: "Library → Import" },
-      stats: { title: "Statistics", hint: "Page blocks, their order, and the default period" },
+      importPlaylists: { title: "Import playlists", hint: "Playlists from Spotify, YouTube Music and Apple Music are brought over with a button in the Library.", value: "Library → Import" },
+      stats: { title: "Statistics", hint: "Which blocks show on the statistics page, their order, and the default period." },
       units: { gb: "{n} GB", mb: "{n} MB" },
     },
 
@@ -778,24 +778,24 @@ export const en = {
       title: "Account data",
       export: {
         title: "Export data",
-        hint: "Profile, likes, history, playlists — one JSON, no passwords or tokens",
+        hint: "Profile, likes, history and playlists download as one file. No passwords in it.",
         busy: "Gathering…",
-        button: "Export JSON",
+        button: "Export file",
       },
       exported: "Data exported",
       deleteAccount: {
         title: "Delete account",
-        hint: "Permanent: likes, playlists, history and shared access. Local files and the on-device cache stay",
+        hint: "Permanently deletes likes, playlists, history and shared access. Local files and downloaded music stay on the device.",
         button: "Delete…",
       },
       accountDeleted: "Account deleted",
       privacyDoc: {
         title: "How Muza uses data",
-        hint: "In plain terms: what we collect, why, and how to delete it",
+        hint: "In plain terms: what we collect, why, and how to delete it.",
       },
       deleteDialog: {
         title: "Delete your account for good?",
-        body: "The server will delete everything: likes, playlists, history, shared access and published themes. This can't be undone. Local files and the on-device cache stay.",
+        body: "We will delete everything: likes, playlists, history, shared access and published themes. This can't be undone. Local files and downloaded music stay on the device.",
         passwordPlaceholder: "Password to confirm",
         deleting: "Deleting…",
         confirm: "Delete forever",
