@@ -78,8 +78,6 @@ const KNOWN_DEBT: string[] = [
   "en:settings.privacy.deleteAccount.hint [кэш]",
   "en:settings.privacy.deleteDialog.body [кэш]",
   "en:settings.privacy.export.hint [токен]",
-  "en:settings.sources.searchScope.hint [yt-dlp]",
-  "en:settings.sources.soundcloud.hint [фолбэк]",
   "en:views.home.notice.errorText [кэш]",
   "ru:app.hotkeysDialog.footerHint [кэш]",
   "ru:media.player.errors.desktopOnly [добыча]",
@@ -96,10 +94,6 @@ const KNOWN_DEBT: string[] = [
   "ru:settings.privacy.deleteAccount.hint [кэш]",
   "ru:settings.privacy.deleteDialog.body [кэш]",
   "ru:settings.privacy.export.hint [токен]",
-  "ru:settings.sources.policy.hint [добыча]",
-  "ru:settings.sources.searchScope.hint [yt-dlp]",
-  "ru:settings.sources.soundcloud.hint [фолбэк]",
-  "ru:settings.sources.youtube.hint [добыча]",
   "ru:views.home.notice.errorText [кэш]",
 ];
 
