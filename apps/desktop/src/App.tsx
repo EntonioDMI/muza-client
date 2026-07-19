@@ -46,6 +46,7 @@ import {
 import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
 import { useWarmer, WarmerProvider } from "./player/useWarmer";
+import { useWheelScroll } from "./lib/useWheelScroll";
 import { useLyrics } from "./player/useLyrics";
 import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
@@ -205,6 +206,16 @@ const BG_DEFAULTS = {
  *  фолбэком 60). Межстрочный: prefs.lineSpacing 125–160 → --lh-ui 1.25–1.60. */
 const densityPad = (d: number) => 14 + Math.round((12 * d) / 100);
 const densityRow = (d: number) => 52 + Math.round((16 * d) / 100);
+
+/** Характер движения (зона 2 спеки 19.07): пресеты кривой --ease-out.
+ *  soft — родная кривая ДС (tokens/effects.css), crisp — быстрее выходит на
+ *  цель, linear — ровный ход. Произвольного ввода кривой нет намеренно:
+ *  это язык разработчика (спека §7). */
+const EASE_CURVES: Record<Prefs["easeStyle"], string> = {
+  soft: "cubic-bezier(0.22, 1, 0.36, 1)",
+  crisp: "cubic-bezier(0.33, 1, 0.68, 1)",
+  linear: "linear",
+};
 
 /** Восстановление плеера при старте (T2: защита от «песни сами играют»).
  *  Плеер НИКОГДА не стартует играющим сам (usePlayback.playing начинается с
@@ -457,6 +468,9 @@ function Player({
   // Прогрев метаданных добычи (Фаза 1): hover/видимость подают вьюхи через
   // useWarmRow (контекст ниже), очередь воспроизведения — отсюда.
   const warmer = useWarmer({ api, prefs });
+  // Зона 2 спеки 19.07: скорость/плавность колеса. При дефолтах (100, выкл)
+  // хук не вешает листенер — прокрутка остаётся полностью нативной.
+  useWheelScroll(prefs.scrollSpeed, prefs.scrollSmooth);
   useEffect(() => {
     warmer.noteQueue(pb.queue, pb.index);
   }, [warmer, pb.queue, pb.index]);
@@ -1551,14 +1565,19 @@ function Player({
     ...(prefs.uiScale !== 100 ? { zoom: prefs.uiScale / 100 } : {}),
     ...(wideEnoughForSidebar ? { "--w-sidebar": `${prefs.wSidebar}px` } : { "--w-sidebar": "220px" }),
     ...(prefs.anims
-      ? animMult !== 1
+      ? animMult !== 1 || prefs.durMenuMult !== 100 || prefs.durDialogMult !== 100 || prefs.durPageMult !== 100
         ? {
-            "--dur-fast": `${Math.round(150 * animMult)}ms`,
-            "--dur-base": `${Math.round(220 * animMult)}ms`,
-            "--dur-slow": `${Math.round(400 * animMult)}ms`,
+            // Зона 2 спеки 19.07: групповые множители ПОВЕРХ общего animSpeed —
+            // быстрые отклики / диалоги / переходы крутятся поотдельности.
+            "--dur-fast": `${Math.round((150 * animMult * prefs.durMenuMult) / 100)}ms`,
+            "--dur-base": `${Math.round((220 * animMult * prefs.durDialogMult) / 100)}ms`,
+            "--dur-slow": `${Math.round((400 * animMult * prefs.durPageMult) / 100)}ms`,
           }
         : {}
       : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
+    // Характер движения (зона 2): --ease-out из пресета; soft = прежняя кривая
+    // ДС (0.22,1,0.36,1) — переменную в этом случае не трогаем вовсе.
+    ...(prefs.easeStyle !== "soft" ? { "--ease-out": EASE_CURVES[prefs.easeStyle] } : {}),
   } as React.CSSProperties;
 
   // T15: вращение диска включено только когда общий anims включён и OS не

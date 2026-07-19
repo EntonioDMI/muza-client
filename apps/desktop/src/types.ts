@@ -127,6 +127,18 @@ export interface Prefs {
   /** Скорость анимаций, % длительности --dur-* (60–170: влево быстрее,
    *  вправо мягче; 100 = дефолт ДС). Старые fast/normal/slow мигрируются. */
   animSpeed: number;
+  /** Зона 2 спеки 19.07 (движение) — множители ПОВЕРХ animSpeed, по группам:
+   *  быстрые отклики (меню/подсказки, --dur-fast), диалоги/панели (--dur-base),
+   *  переходы страниц и текст (--dur-slow). 100 = как раньше. */
+  durMenuMult: number;
+  durDialogMult: number;
+  durPageMult: number;
+  /** Характер движения: кривая --ease-out. soft = прежняя (0.22,1,0.36,1). */
+  easeStyle: "soft" | "crisp" | "linear";
+  /** Скорость колеса мыши, % (50–300; 100 = нативная, листенер не вешается). */
+  scrollSpeed: number;
+  /** Плавная прокрутка: колесо докатывает список инерцией вместо прыжка. */
+  scrollSmooth: boolean;
   /** Зона 3 спеки 19.07 (плеер) — дефолты = прежним зашитым значениям. */
   /** Шаг перемотки стрелками, сек (1–60; было зашито 5 в App.tsx). */
   seekStepSec: number;
@@ -377,6 +389,12 @@ export const DEFAULT_PREFS: Prefs = {
   textDim: 62,
   uiScale: 100,
   animSpeed: 100,
+  durMenuMult: 100,
+  durDialogMult: 100,
+  durPageMult: 100,
+  easeStyle: "soft",
+  scrollSpeed: 100,
+  scrollSmooth: false,
   seekStepSec: 5,
   hPlayerBar: 92,
   coverBarSize: 60,

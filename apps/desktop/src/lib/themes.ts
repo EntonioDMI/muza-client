@@ -78,6 +78,10 @@ export const THEME_KEYS = [
   "bassReach",
   "hPlayerBar",
   "coverBarSize",
+  "durMenuMult",
+  "durDialogMult",
+  "durPageMult",
+  "easeStyle",
 ] as const satisfies readonly (keyof Prefs)[];
 
 /** Ключи Prefs, ОСОЗНАННО не переносимые темой: поведение, приватное,
@@ -135,6 +139,9 @@ export const THEME_EXCLUDED = [
   "seekStepSec",
   "warmAhead",
   "preloadAheadSec",
+  // Прокрутка — эргономика ввода (мышь конкретного человека), не внешность.
+  "scrollSpeed",
+  "scrollSmooth",
 ] as const satisfies readonly (keyof Prefs)[];
 
 export type ThemeTokens = Partial<Pick<Prefs, (typeof THEME_KEYS)[number]>>;
