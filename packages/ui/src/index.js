@@ -29,6 +29,9 @@ export { Menu } from "./components/feedback/Menu.jsx";
 export { Toast } from "./components/feedback/Toast.jsx";
 export { Tooltip } from "./components/feedback/Tooltip.jsx";
 
+// lib
+export { cssZoom } from "./lib/cssZoom.js";
+
 // media
 export { Cover } from "./components/media/Cover.jsx";
 export { Lyrics } from "./components/media/Lyrics.jsx";

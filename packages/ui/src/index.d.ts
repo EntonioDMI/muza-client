@@ -75,3 +75,4 @@ export declare function Cover(props: CoverProps): React.JSX.Element;
 export declare function Shelf(props: ShelfProps): React.JSX.Element;
 export declare function Tile(props: TileProps): React.JSX.Element;
 export declare function TrackRow(props: TrackRowProps): React.JSX.Element;
+export { cssZoom } from "./lib/cssZoom";

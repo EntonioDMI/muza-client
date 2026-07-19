@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
+import { cssZoom } from "../../lib/cssZoom.js";
 
 /** Выпадающий список — поле в стиле инпутов ДС + морозная панель опций.
  *  position: fixed — не режется overflow-контейнерами (панели настроек
@@ -16,18 +17,23 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
   const panelRef = useRef(null);
   const [hover, setHover] = useState(false);
 
-  // позиция панели от поля; переворот вверх у нижнего края окна
+  // позиция панели от поля; переворот вверх у нижнего края окна.
+  // rect — ЭКРАННЫЕ пиксели, а fixed-панель внутри зумленного корня
+  // (prefs.uiScale) позиционируется в зум-единицах: координаты делим на
+  // cssZoom, экранную высоту панели (panelH — зум-единицы) наоборот множим —
+  // иначе при масштабе ≠100% выпадашка уезжала вправо-вниз (2026-07-17).
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
+    const z = cssZoom(triggerRef.current);
     const r = triggerRef.current.getBoundingClientRect();
-    const panelH = Math.min(norm.length * 44 + 12, 292);
+    const panelH = Math.min(norm.length * 44 + 12, 292) * z;
     const below = window.innerHeight - r.bottom;
     setPanelPos({
-      left: r.left,
-      width: r.width,
+      left: r.left / z,
+      width: r.width / z,
       ...(below < panelH + 8 && r.top > panelH
-        ? { bottom: window.innerHeight - r.top + 4 }
-        : { top: r.bottom + 4 }),
+        ? { bottom: (window.innerHeight - r.top + 4) / z }
+        : { top: (r.bottom + 4) / z }),
     });
   }, [open, norm.length]);
 
@@ -137,6 +143,10 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
               ...panelPos,
               maxHeight: 292,
               overflowY: "auto",
+              /* overflow-y:auto переводит overflow-x из visible в auto — без
+                 этого снизу панели вылезает лишняя горизонтальная полоса.
+                 Подписи опций и так режутся ellipsis, прятать нечего. */
+              overflowX: "hidden",
               padding: "var(--sp-2)",
               borderRadius: "var(--r-md)",
               /* выпадающая панель — то же стекло, что у меню */
@@ -144,7 +154,6 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
               backdropFilter: "blur(var(--blur-glass))",
               WebkitBackdropFilter: "blur(var(--blur-glass))",
               boxSizing: "border-box",
-              scrollbarWidth: "thin",
             }}
           >
             {norm.map((it) => {

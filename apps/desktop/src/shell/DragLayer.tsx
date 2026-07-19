@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Icon } from "@muza/ui";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Icon, cssZoom } from "@muza/ui";
+import { useCoverArt } from "../lib/coverArt";
 import {
   DRAG_THRESHOLD,
   DROP_ATTR,
@@ -212,15 +213,24 @@ export function DragLayer({ children }: { children: ReactNode }) {
  *  объект — нет. */
 function DragPreview({ state }: { state: DragState }) {
   const accepted = state.over !== null;
+  // Вьюхи кладут в payload СЫРОЙ coverUrl — срезаем вшитые поля источника тем
+  // же canvas-кропом, что у плеера (кэш общий, чаще всего мгновенный хит).
+  const cover = useCoverArt(state.payload.cover ?? null);
+  // Курсорные координаты — экранные, transform внутри зумленного корня
+  // (prefs.uiScale) — в зум-единицах: делим, иначе превью убегает от курсора.
+  const ref = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  useLayoutEffect(() => setZoom(cssZoom(ref.current)), []);
   return (
     <div
+      ref={ref}
       aria-hidden="true"
       style={{
         position: "fixed",
         top: 0,
         left: 0,
         // -50%/-50% по Y даёт ощущение «схватил за то место, где держал»
-        transform: `translate3d(${state.x + 14}px, ${state.y - 18}px, 0) rotate(${accepted ? -1.5 : -3}deg) scale(${accepted ? 1.06 : 1})`,
+        transform: `translate3d(${(state.x + 14) / zoom}px, ${(state.y - 18) / zoom}px, 0) rotate(${accepted ? -1.5 : -3}deg) scale(${accepted ? 1.06 : 1})`,
         zIndex: 300,
         pointerEvents: "none",
         display: "flex",
@@ -236,8 +246,8 @@ function DragPreview({ state }: { state: DragState }) {
         willChange: "transform",
       }}
     >
-      {state.payload.cover ? (
-        <img src={state.payload.cover} alt="" width={32} height={32} style={{ width: 32, height: 32, borderRadius: "var(--r-xs)", objectFit: "cover", flex: "none" }} />
+      {cover ? (
+        <img src={cover} alt="" width={32} height={32} style={{ width: 32, height: 32, borderRadius: "var(--r-xs)", objectFit: "cover", flex: "none" }} />
       ) : (
         <span style={{ width: 32, height: 32, borderRadius: "var(--r-xs)", background: "var(--surface-2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="music-2" size={16} color="var(--text-3)" />

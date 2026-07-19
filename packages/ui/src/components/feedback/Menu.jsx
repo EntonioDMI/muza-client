@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../core/Icon.jsx";
+import { cssZoom } from "../../lib/cssZoom.js";
 
 // Фолбэк-таймаут delayed-unmount: см. Dialog.jsx. Покрывает --dur-fast на
 // максимальной скорости анимаций (170% → 150ms*1.7≈255ms) с запасом.
@@ -27,6 +28,24 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   const closeTimerRef = useRef(null);
   const [mounted, setMounted] = useState(open);
   const [closing, setClosing] = useState(false);
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  // x/y приходят в ЭКРАННЫХ пикселях (clientX ПКМ), а панель внутри
+  // зумленного корня (prefs.uiScale) позиционируется в зум-единицах — делим
+  // на cssZoom, иначе меню уезжает вправо-вниз (жалоба 2026-07-17). Заодно
+  // клампим в вьюпорт с полем 8px — раньше это делал (не всегда) вызыватель,
+  // на глаз и без учёта зума. useLayoutEffect — до отрисовки, без миганий.
+  useLayoutEffect(() => {
+    if (!mounted) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const z = cssZoom(el);
+    const w = el.offsetWidth * z; // offset* — зум-единицы; на экране их x z
+    const h = el.offsetHeight * z;
+    const sx = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+    const sy = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+    setPos({ left: sx / z, top: sy / z });
+  }, [mounted, x, y]);
 
   useEffect(() => {
     if (open) {
@@ -116,8 +135,8 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
         onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finishClosing(); }}
         style={{
           position: "absolute",
-          left: x,
-          top: y,
+          left: pos.left,
+          top: pos.top,
           minWidth: 220,
           padding: "var(--sp-2)",
           borderRadius: "var(--r-md)",

@@ -1,5 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
+import { Tooltip } from "../feedback/Tooltip.jsx";
+import { cssZoom } from "../../lib/cssZoom.js";
 
 /* ── hex ⇄ HSV ─────────────────────────────────────────────────────
    SV-квадрат и hue-слайдер работают во внутренних HSV-координатах;
@@ -300,27 +302,28 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
           <div aria-hidden="true" style={thumbStyle((hsv.h / 360) * SV_SIZE, HUE_H / 2)} />
         </div>
 
-        {/* Текущий/новый свотч + hex-ввод */}
+        {/* Текущий/новый свотч + hex-ввод. Подсказки — Tooltip ДС; нативные
+            title давали стоковые плашки WebView2 (жалоба 2026-07-16). */}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
-          <div style={{ display: "flex", flex: "none" }} title="Current / new color">
-            <button
-              type="button"
-              onClick={revertToInitial}
-              aria-label="Reset to original color"
-              title="Original color"
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: "var(--r-xs) 0 0 var(--r-xs)",
-                background: initialHex,
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
-              }}
-            />
+          <div style={{ display: "flex", flex: "none" }}>
+            <Tooltip label="Вернуть исходный">
+              <button
+                type="button"
+                onClick={revertToInitial}
+                aria-label="Reset to original color"
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "var(--r-xs) 0 0 var(--r-xs)",
+                  background: initialHex,
+                  border: "none",
+                  padding: 0,
+                  cursor: "pointer",
+                }}
+              />
+            </Tooltip>
             <span
               aria-hidden="true"
-              title="New color"
               style={{
                 width: 28,
                 height: 28,
@@ -387,27 +390,34 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
   // онгоинг-перетаскиванием и revert превращается в no-op).
   const openedWithRef = useRef(parseHex(value) || "#3b82f6");
 
-  // позиция popover'а от свотча; переворот вверх/влево у краёв вьюпорта
+  // позиция popover'а от свотча; переворот вверх/влево у краёв вьюпорта.
+  // Расчёт — в ЭКРАННЫХ пикселях (rect/innerWidth), поэтому габариты панели
+  // (PANEL_* — зум-единицы) множим на cssZoom, а ИТОГ делим: fixed внутри
+  // зумленного корня (prefs.uiScale) позиционируется в зум-единицах, без
+  // деления попап уезжал вправо-вниз при масштабе ≠100% (2026-07-17).
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
+    const z = cssZoom(triggerRef.current);
+    const panelW = PANEL_W * z;
+    const panelH = PANEL_H_EST * z;
     const r = triggerRef.current.getBoundingClientRect();
     let left = r.left;
     let top = r.bottom + 8;
-    if (left + PANEL_W > window.innerWidth - 8) left = window.innerWidth - 8 - PANEL_W;
+    if (left + panelW > window.innerWidth - 8) left = window.innerWidth - 8 - panelW;
     if (left < 8) left = 8;
-    if (top + PANEL_H_EST > window.innerHeight - 8) {
-      const above = r.top - 8 - PANEL_H_EST;
-      top = above > 8 ? above : Math.max(8, window.innerHeight - 8 - PANEL_H_EST);
+    if (top + panelH > window.innerHeight - 8) {
+      const above = r.top - 8 - panelH;
+      top = above > 8 ? above : Math.max(8, window.innerHeight - 8 - panelH);
     }
-    setAnchor({ left, top });
+    setAnchor({ left: left / z, top: top / z });
   }, [open]);
 
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-2)", ...style }}>
-      <button
+  // Подсказка — Tooltip ДС (нативный title рисовал стоковую плашку WebView2 и
+  // задваивался бы с ним); label не передан — и подсказки нет.
+  const trigger = (
+    <button
         ref={triggerRef}
         type="button"
-        title={label}
         aria-label={label}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -445,7 +455,11 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
             transition: "opacity var(--dur-fast) var(--ease-out)",
           }}
         />
-      </button>
+    </button>
+  );
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-2)", ...style }}>
+      {label ? <Tooltip label={label}>{trigger}</Tooltip> : trigger}
       {showValue ? (
         <span
           style={{
