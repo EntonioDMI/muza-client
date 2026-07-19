@@ -40,5 +40,9 @@
   /* Functional (rare — errors in settings/forms only) */
   --danger: #f76967;
 
+  /* Scrollbar thumb — warm-white alpha (webkit-стилизация в base.css). */
+  --sb-thumb:       rgba(255, 255, 255, 0.24);
+  --sb-thumb-hover: rgba(255, 255, 255, 0.42);
+
   color-scheme: dark;
 }

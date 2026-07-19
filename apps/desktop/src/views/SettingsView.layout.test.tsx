@@ -58,7 +58,7 @@ describe("SettingsView — скелет раскладки (контракт с 
     expect(pane!.getAttribute("role")).toBe("tabpanel");
   });
 
-  it("у каждого из 10 пунктов есть aria-label и title (подписи прячутся стилем)", () => {
+  it("у каждого из 10 пунктов есть aria-label и CSS-тултип __tip (подписи прячутся стилем)", () => {
     const { container } = renderSettings();
     // Скоуп — рельс: сегментные Tabs из @muza/ui внутри панели («Тема»,
     // «Язык интерфейса»...) тоже носят role="tab" и в счёт не входят.
@@ -67,7 +67,12 @@ describe("SettingsView — скелет раскладки (контракт с 
     expect(tabs).toHaveLength(10);
     for (const tab of tabs) {
       expect(tab.getAttribute("aria-label")).toBeTruthy();
-      expect(tab.getAttribute("title")).toBeTruthy();
+      // Подсказку узкого рельса несёт __tip (язык ДС, app.css); нативный title
+      // убран — он рисовал стоковую плашку WebView2 (жалоба 2026-07-16).
+      expect(tab.getAttribute("title")).toBeNull();
+      const tip = tab.querySelector(":scope > .muza-settings-nav__tip");
+      expect(tip).not.toBeNull();
+      expect(tip!.textContent).toBeTruthy();
       expect(tab.getAttribute("aria-controls")).toBe("muza-settings-pane");
     }
   });

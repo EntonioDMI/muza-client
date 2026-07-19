@@ -16,6 +16,33 @@ a:hover { color: var(--accent-hover); }
 
 ::selection { background: var(--accent-soft); }
 
+/* Скроллбары (2026-07-19): владелец выбрал ЗАМЕТНУЮ скруглённую полосу вместо
+   тонкой системной. Красим через ::-webkit-scrollbar — на десктопе (Tauri =
+   WebView2 = Chromium) и в вебе (Chrome/Edge) это даёт полный контроль: ширину,
+   пилюлю, прозрачный жёлоб, hover и отсутствие стрелок. Цвет — из палитры
+   (--sb-thumb, тёплый белый с альфой; в светлой теме инвертируется).
+   ⚠️ scrollbar-width глобально НЕ задавать: при заданном стандартном свойстве
+   Chromium/WebView2 ≥121 игнорирует webkit-псевдо. Инвариант сохранён — спрятать
+   полосу можно инлайновым scrollbarWidth:"none" (в Chromium он сам отключает
+   webkit для своего элемента). Firefox (только веб) webkit не понимает — ему
+   тонкая полоса через @supports not selector(::-webkit-scrollbar); @-moz-document
+   в вебе с FF 59 отключён — не использовать. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: var(--r-pill);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+::-webkit-scrollbar-button { display: none; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+}
+
 :focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);

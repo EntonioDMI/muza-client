@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs } from "@muza/ui";
+import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, Select, Slider, Switch, Tabs, Tooltip } from "@muza/ui";
 import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { useT, type TParams, type TranslationKey } from "../i18n";
@@ -704,24 +704,26 @@ function AccentSwatch({
   selected: boolean;
   onClick: () => void;
 }) {
+  // Подсказка — Tooltip ДС, не нативный title (стоковая плашка WebView2).
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      style={{
-        width: 44,
-        height: 44,
-        borderRadius: "var(--r-pill)",
-        border: "none",
-        background: color,
-        cursor: "pointer",
-        outline: selected ? "2px solid var(--text-1)" : "2px solid transparent",
-        outlineOffset: 3,
-        transition: "outline-color var(--dur-base) var(--ease-out)",
-      }}
-    ></button>
+    <Tooltip label={label}>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={onClick}
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: "var(--r-pill)",
+          border: "none",
+          background: color,
+          cursor: "pointer",
+          outline: selected ? "2px solid var(--text-1)" : "2px solid transparent",
+          outlineOffset: 3,
+          transition: "outline-color var(--dur-base) var(--ease-out)",
+        }}
+      ></button>
+    </Tooltip>
   );
 }
 
@@ -881,16 +883,16 @@ function SettingsNav({ value, onChange }: { value: string; onChange: (key: Setti
               aria-controls={SETTINGS_PANE_ID}
               // Рельс прячет подпись СТИЛЕМ, а не условным рендером (@container
               // из JS не виден), поэтому подпись нужна и машине, и глазу при
-              // любой ширине: aria-label — скринридеру, title — курсору (он же
-              // спасает, если длинная подпись схлопнулась в многоточие).
-              // Тот же приём, что у AccentSwatch выше.
+              // любой ширине: aria-label — скринридеру, __tip — курсору в узком
+              // режиме (CSS-тултип в языке ДС, см. app.css; нативный title
+              // рисовал стоковую плашку WebView2 — жалоба 2026-07-16).
               aria-label={label}
-              title={label}
               className="muza-settings-nav__item"
               onClick={() => onChange(key)}
             >
               <Icon name={SETTINGS_TAB_ICONS[key]} size={20} />
               <span className="muza-settings-nav__label">{label}</span>
+              <span className="muza-settings-nav__tip" aria-hidden="true">{label}</span>
             </button>
           );
         })}
@@ -2426,6 +2428,8 @@ export function SettingsView({
           </div>
         </div>
         {prefs.discordBtnOn ? (
+          // без title: URL и так виден в поле ввода рядом, а нативная плашка
+          // WebView2 выбивалась из языка ДС (жалоба 2026-07-16)
           <div
             style={{
               height: 34,
@@ -2438,7 +2442,6 @@ export function SettingsView({
               fontWeight: 600,
               color: "var(--text-1)",
             }}
-            title={prefs.discordBtnUrl}
           >
             {prefs.discordBtnLabel.trim() || t("settings.integrations.discord.btnLabel.placeholder")}
           </div>

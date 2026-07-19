@@ -49,6 +49,10 @@
 
   --danger: #d13c3a;
 
+  /* Scrollbar thumb — инверсия: полупрозрачный тёмный на светлом фоне. */
+  --sb-thumb:       rgba(20, 18, 15, 0.24);
+  --sb-thumb-hover: rgba(20, 18, 15, 0.42);
+
   color-scheme: light;
 }
 
