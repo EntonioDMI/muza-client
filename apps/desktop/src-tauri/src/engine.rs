@@ -122,6 +122,14 @@ pub struct EngineState {
     /// Circuit-breaker ступени 0: глобальные провалы подряд → кулдаун
     /// (см. блок «Circuit-breaker ступени 0» у хелперов).
     stage0_breaker: Mutex<Stage0Breaker>,
+    /// client_id SC-ступени (2026-07-19): добыт из JS-бандлов soundcloud.com,
+    /// живёт неделями (TTL 7 суток); 401/403 на api-v2 сбрасывает и
+    /// передобывает один раз (образец оркестрации — visitorData выше).
+    soundcloud_client_id: Mutex<Option<(String, SystemTime)>>,
+    /// Момент свежего провала добычи client_id: пока soundcloud.com лежит или
+    /// сменил вёрстку, каждый клик не имеет права заново тянуть главную и
+    /// мегабайтные бандлы — минутный кулдаун, дальше лестница yt-dlp.
+    soundcloud_cid_fail: Mutex<Option<SystemTime>>,
 }
 
 impl Default for EngineState {
@@ -140,6 +148,8 @@ impl Default for EngineState {
             youtube_visitor: Mutex::new(None),
             stage0_recent_fail: Mutex::new(HashMap::new()),
             stage0_breaker: Mutex::new(Stage0Breaker::default()),
+            soundcloud_client_id: Mutex::new(None),
+            soundcloud_cid_fail: Mutex::new(None),
         }
     }
 }
@@ -1848,8 +1858,8 @@ fn innertube_warm_entry(fmt: &InnertubeFormat, now: SystemTime) -> Result<WarmEn
 }
 
 /// Ступень 0 — только когда ВЕДУЩИЙ источник YouTube с валидным id:
-/// приоритет источников сервера не переворачиваем (SoundCloud/Bandcamp
-/// первым — сразу лестница; их прямой резолв — отдельная будущая задача).
+/// приоритет источников сервера не переворачиваем (Soundcloud первым — своя
+/// ступень stage0_soundcloud_ref ниже; Bandcamp первым — сразу лестница).
 fn stage0_youtube_id(sources: &[SourceRef]) -> Option<String> {
     match sources.first()? {
         SourceRef::Youtube { source_id } if valid_youtube_id(source_id) => Some(source_id.clone()),
@@ -2112,6 +2122,468 @@ async fn resolve_via_innertube(
         .map_err(InnertubeFail::Other)
 }
 
+// ── Ступень 0 SoundCloud: прямой api-v2-резолв (2026-07-19) ───────
+// Появилась в тот же день, что и InnerTube-ступень, и по той же жалобе:
+// владелец слушает в основном SoundCloud-треки, а всё ускорение (ступень 0 +
+// стрим с первых 128 КиБ) работало только для YouTube-первых источников — SC
+// шёл через yt-dlp с ожиданием ПОЛНОЙ закачки (~5–6 с на клик, 19.07). Схема
+// из разведки (docs/notes/2026-07-19-прямой-innertube-резолв-замер.md,
+// «Побочные победы»): GET /resolve (или /tracks/<id> для числовой формы) →
+// media.transcodings → progressive (по format.protocol, НЕ по именам полей —
+// SC уходит к AAC HLS) → GET transcoding.url → подписанный CDN-URL (~30 мин
+// жизни) → Range-проба размера (transcodings contentLength не отдают).
+// Выход — WarmEntry: вся нижняя половина (validate_warm_url, fetch_to_cache,
+// warm-кэш, muza-stream) переиспользуется байт-в-байт. Провал ЛЮБОГО класса
+// молча уступает лестнице yt-dlp — ступень 0 не имеет права сделать трек
+// неиграбельным. Circuit-breaker InnerTube эту ступень не гейтит: он про
+// бот-гейт YouTube, у SC своя автоматика — негативный кэш "sc:<source_id>"
+// и минутный кулдаун добычи client_id.
+
+/// Таймаут одного GET SC-ступени — та же философия, что INNERTUBE_TIMEOUT:
+/// ступень 0 либо быстрая, либо сразу уступает лестнице.
+const SOUNDCLOUD_TIMEOUT: Duration = Duration::from_secs(4);
+/// TTL добытого client_id: зашит в JS-бандли soundcloud.com и живёт неделями;
+/// протухание всё равно ловится 401/403 с передобычей — TTL лишь страховка,
+/// чтобы не держать труп бесконечно.
+const SOUNDCLOUD_CLIENT_ID_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+/// Кулдаун после провала добычи client_id: без него каждый клик по SC-треку
+/// заново тянул бы главную + мегабайтные бандлы (see EngineState).
+const SOUNDCLOUD_CID_FAIL_TTL: Duration = Duration::from_secs(60);
+/// Срок жизни SC-WarmEntry: подписанный CDN-URL живёт ~30 минут, но его
+/// query-параметры (Policy/Signature CloudFront) — чужой формат подписи,
+/// парсить его ненадёжно. Консервативные 20 минут от now; это меньше 6 ч
+/// googlevideo — warm-кэш сравнивает expires_at только с now, ему всё равно.
+const SOUNDCLOUD_WARM_TTL: Duration = Duration::from_secs(20 * 60);
+/// Сколько бандлов сканировать (с конца — client_id исторически в последних):
+/// защита от патологической страницы с сотней скриптов.
+const SOUNDCLOUD_CID_BUNDLE_SCAN_MAX: usize = 12;
+/// UA всех GET SC-ступени: обычный браузерный — api-v2 обслуживает браузерный
+/// фронт soundcloud.com, безликий reqwest-запрос выделялся бы сильнее.
+const SOUNDCLOUD_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/// Провал SC-ступени. ClientId отделён от Other единственным поведенческим
+/// отличием: он означает «добыча client_id провалилась», и кулдаун добычи уже
+/// взведён — вызывающему остаётся молча уйти в лестницу (как и с Other).
+#[derive(Debug, PartialEq)]
+enum SoundcloudFail {
+    ClientId(String),
+    Other(String),
+}
+
+/// Успешный разбор SC-ступени — та же тройка, что InnertubeFormat/
+/// SimulatedFormat: дальше единая конверсия в WarmEntry.
+#[derive(Debug, PartialEq)]
+struct SoundcloudFormat {
+    url: String,
+    size: u64,
+    ext: String,
+}
+
+/// SC-ступень — только когда ВЕДУЩИЙ источник Soundcloud с канонично валидным
+/// url (зеркало stage0_youtube_id: приоритет источников сервера не
+/// переворачиваем). Грамматика url — та же byte_canonical_locator, что и у
+/// лестницы: обе формы каталога (страничная и числовая api.soundcloud.com).
+fn stage0_soundcloud_ref(sources: &[SourceRef]) -> Option<(String, Url)> {
+    match sources.first()? {
+        SourceRef::Soundcloud {
+            source_id,
+            canonical_url,
+        } if valid_opaque_id(source_id) => {
+            let url = byte_canonical_locator("soundcloud", canonical_url).ok()?;
+            Some((source_id.clone(), url))
+        }
+        _ => None,
+    }
+}
+
+/// mime_type транскодинга → расширение файла кэша. Ориентир — format-поля,
+/// не имена пресетов: пресеты SC переименовывает, mime стабилен. Неизвестный
+/// mime — кандидат пропускается (лучше лестница, чем кэш с неверным ext).
+fn sc_ext_from_mime(mime: &str) -> Option<&'static str> {
+    match mime.split(';').next().unwrap_or("").trim() {
+        "audio/mpeg" | "audio/mp3" => Some("mp3"),
+        "audio/mp4" | "audio/aac" => Some("m4a"),
+        _ => None,
+    }
+}
+
+/// Выбор транскодинга: строго format.protocol == "progressive" (прямой файл).
+/// HLS не берём — манифест в кэше отравил бы его текстом вместо аудио (тот же
+/// инвариант, что у parse_simulate_output). Нет progressive — провал ступени.
+fn sc_pick_progressive(track: &serde_json::Value) -> Result<(String, &'static str), SoundcloudFail> {
+    let transcodings = track["media"]["transcodings"]
+        .as_array()
+        .ok_or_else(|| SoundcloudFail::Other("нет media.transcodings".into()))?;
+    for t in transcodings {
+        if t["format"]["protocol"].as_str() != Some("progressive") {
+            continue;
+        }
+        let Some(url) = t["url"].as_str().filter(|u| !u.is_empty()) else {
+            continue;
+        };
+        let Some(ext) = sc_ext_from_mime(t["format"]["mime_type"].as_str().unwrap_or("")) else {
+            continue;
+        };
+        return Ok((url.to_string(), ext));
+    }
+    Err(SoundcloudFail::Other(
+        "нет progressive-транскодинга (только HLS)".into(),
+    ))
+}
+
+/// URL JS-бандлов из HTML главной: подстроки https://a-v2.sndcdn.com/assets/…
+/// до конца имени ассета, только .js, дубли схлопнуты (preload + script).
+/// Без regex-крейта намеренно: грамматика тривиальна, зависимость не окупается.
+fn sc_bundle_urls(html: &str) -> Vec<String> {
+    const PREFIX: &str = "https://a-v2.sndcdn.com/assets/";
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = html;
+    while let Some(pos) = rest.find(PREFIX) {
+        let tail = &rest[pos..];
+        let end = tail[PREFIX.len()..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/')))
+            .map(|i| PREFIX.len() + i)
+            .unwrap_or(tail.len());
+        let url = &tail[..end];
+        if url.ends_with(".js") && !out.iter().any(|u| u == url) {
+            out.push(url.to_string());
+        }
+        rest = &rest[pos + PREFIX.len()..];
+    }
+    out
+}
+
+/// client_id из текста бандла: за словом client_id — `:` или `=`, кавычка,
+/// ровно 32 алфанумерных символа, закрывающая кавычка. Жёсткая грамматика
+/// отсеивает конкатенации вида `"?client_id="+e` и мусорные совпадения.
+fn sc_client_id_from_js(js: &str) -> Option<String> {
+    let mut search = js;
+    while let Some(pos) = search.find("client_id") {
+        let after = &search[pos + "client_id".len()..];
+        let trimmed = after.trim_start();
+        if let Some(rest) = trimmed
+            .strip_prefix(':')
+            .or_else(|| trimmed.strip_prefix('='))
+        {
+            let rest = rest.trim_start();
+            for quote in ['"', '\''] {
+                if let Some(body) = rest.strip_prefix(quote) {
+                    if let Some(end) = body.find(quote) {
+                        let candidate = &body[..end];
+                        if candidate.len() == 32
+                            && candidate.bytes().all(|b| b.is_ascii_alphanumeric())
+                        {
+                            return Some(candidate.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        search = after;
+    }
+    None
+}
+
+/// client_id из состояния, если не протух. now — параметром (тестируемость).
+fn sc_cached_client_id(state: &EngineState, now: SystemTime) -> Option<String> {
+    let guard = state.soundcloud_client_id.lock().unwrap();
+    match guard.as_ref() {
+        Some((id, at))
+            if now
+                .duration_since(*at)
+                .map(|age| age < SOUNDCLOUD_CLIENT_ID_TTL)
+                .unwrap_or(false) =>
+        {
+            Some(id.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Свежедобытый client_id: в состояние; успех добычи стирает кулдаун.
+fn sc_note_client_id(state: &EngineState, id: &str, now: SystemTime) {
+    *state.soundcloud_client_id.lock().unwrap() = Some((id.to_string(), now));
+    *state.soundcloud_cid_fail.lock().unwrap() = None;
+}
+
+/// Сброс client_id (401/403 на api-v2 — значение протухло).
+fn sc_drop_client_id(state: &EngineState) {
+    *state.soundcloud_client_id.lock().unwrap() = None;
+}
+
+fn sc_cid_recently_failed(state: &EngineState, now: SystemTime) -> bool {
+    (*state.soundcloud_cid_fail.lock().unwrap())
+        .map(|at| {
+            now.duration_since(at)
+                .map(|age| age < SOUNDCLOUD_CID_FAIL_TTL)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+fn sc_cid_note_fail(state: &EngineState, now: SystemTime) {
+    *state.soundcloud_cid_fail.lock().unwrap() = Some(now);
+}
+
+/// Провал добычи client_id: взводит кулдаун и отдаёт класс ClientId.
+fn sc_cid_fail(state: &EngineState, msg: String) -> SoundcloudFail {
+    sc_cid_note_fail(state, SystemTime::now());
+    SoundcloudFail::ClientId(msg)
+}
+
+/// api-v2-URL для трека: страничная форма каталога — через /resolve,
+/// числовая (api.soundcloud.com/tracks/<id>, 64% SoundCloud-каталога) — в
+/// /tracks/<id> напрямую, /resolve ей не нужен. client_id уже провалидирован
+/// грамматикой добычи (32 алфанумерных) — интерполяция безопасна.
+fn sc_api_lookup_url(canonical: &Url, client_id: &str) -> String {
+    if canonical.host_str() == Some("api.soundcloud.com") {
+        let id = canonical
+            .path_segments()
+            .and_then(|mut s| s.nth(1))
+            .unwrap_or("");
+        format!("https://api-v2.soundcloud.com/tracks/{id}?client_id={client_id}")
+    } else {
+        let mut url = Url::parse("https://api-v2.soundcloud.com/resolve")
+            .expect("статический api-v2-URL валиден");
+        url.query_pairs_mut()
+            .append_pair("url", canonical.as_str())
+            .append_pair("client_id", client_id);
+        url.into()
+    }
+}
+
+/// transcoding.url + client_id. Перед этим — та же синтаксическая граница,
+/// что у CDN-URL ниже: URL пришёл из ответа api-v2, GET на http/credentials/
+/// IP-литерал не шлём (пустой lookup = DNS-часть пропущена, она best-effort).
+fn sc_with_client_id(raw: &str, client_id: &str) -> Result<String, String> {
+    let mut url = validate_warm_url_with_lookup(raw, &mut |_, _| Ok(Vec::new()))?;
+    url.query_pairs_mut().append_pair("client_id", client_id);
+    Ok(url.into())
+}
+
+/// Добыча client_id: главная soundcloud.com → JS-бандлы С КОНЦА → грамматика
+/// client_id. ⚠️ На машине владельца DPI душит крупные загрузки у Node — но
+/// Rust/reqwest не душится (проверено живьём 19.07 на googlevideo 3.4 МБ),
+/// поэтому добыча живёт здесь, а не на сервере. Любой сбой (сеть, не-200,
+/// не нашли) — кулдаун добычи + провал ступени: следующий клик в течение
+/// минуты не тянет бандлы заново.
+async fn sc_scrape_client_id<F, Fut>(
+    state: &EngineState,
+    call: &mut F,
+) -> Result<String, SoundcloudFail>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<(u16, String), String>>,
+{
+    if sc_cid_recently_failed(state, SystemTime::now()) {
+        return Err(SoundcloudFail::ClientId("кулдаун добычи client_id".into()));
+    }
+    let (status, html) = match call("https://soundcloud.com/".to_string()).await {
+        Ok(pair) => pair,
+        Err(e) => return Err(sc_cid_fail(state, format!("главная не загрузилась: {e}"))),
+    };
+    if status != 200 {
+        return Err(sc_cid_fail(state, format!("главная: статус {status}")));
+    }
+    let bundles = sc_bundle_urls(&html);
+    if bundles.is_empty() {
+        return Err(sc_cid_fail(
+            state,
+            "на главной нет JS-бандлов a-v2.sndcdn.com".into(),
+        ));
+    }
+    for bundle in bundles.iter().rev().take(SOUNDCLOUD_CID_BUNDLE_SCAN_MAX) {
+        let (status, js) = match call(bundle.clone()).await {
+            Ok(pair) => pair,
+            // сеть легла посреди сканирования — тянуть остальные бандлы
+            // значит удлинять и без того больной клик, сдаёмся
+            Err(e) => return Err(sc_cid_fail(state, format!("бандл не загрузился: {e}"))),
+        };
+        if status != 200 {
+            return Err(sc_cid_fail(state, format!("бандл: статус {status}")));
+        }
+        if let Some(id) = sc_client_id_from_js(&js) {
+            sc_note_client_id(state, &id, SystemTime::now());
+            return Ok(id);
+        }
+    }
+    Err(sc_cid_fail(state, "client_id не найден в бандлах".into()))
+}
+
+/// Оркестрация SC-ступени с инъекцией транспорта (тестируется без сети):
+/// call — GET url → (статус, тело), probe — GET c Range: bytes=0-0 → total
+/// из Content-Range (~1 RTT; transcodings contentLength не отдают, а без
+/// точного размера не построить явный Range в fetch_to_cache).
+///  1) client_id: из состояния, иначе добыча из бандлов;
+///  2) 401/403 на api-v2 = client_id протух: сброс + ОДНА передобыча +
+///     повтор, и только если передобытый id ДРУГОЙ (образец — visitorData);
+///  3) выбор progressive-транскодинга → GET transcoding.url → CDN-URL;
+///  4) синтаксическая граница до пробы, затем проба размера.
+async fn resolve_via_soundcloud_with<F, Fut, P, PFut>(
+    state: &EngineState,
+    canonical: &Url,
+    mut call: F,
+    mut probe: P,
+) -> Result<SoundcloudFormat, SoundcloudFail>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<(u16, String), String>>,
+    P: FnMut(String) -> PFut,
+    PFut: std::future::Future<Output = Result<u64, String>>,
+{
+    let cached = sc_cached_client_id(state, SystemTime::now());
+    let was_cached = cached.is_some();
+    let mut client_id = match cached {
+        Some(id) => id,
+        None => sc_scrape_client_id(state, &mut call).await?,
+    };
+
+    let (status, body) = call(sc_api_lookup_url(canonical, &client_id))
+        .await
+        .map_err(SoundcloudFail::Other)?;
+    let track_body = match status {
+        200 => body,
+        // Протухший client_id — единственный лечимый отказ; свежедобытому
+        // id 401 не лечится повтором (передобыча вернёт его же).
+        401 | 403 if was_cached => {
+            sc_drop_client_id(state);
+            let fresh = sc_scrape_client_id(state, &mut call).await?;
+            if fresh == client_id {
+                return Err(SoundcloudFail::Other(format!(
+                    "api-v2: статус {status}, передобытый client_id тот же — повтор бессмыслен"
+                )));
+            }
+            client_id = fresh;
+            let (status2, body2) = call(sc_api_lookup_url(canonical, &client_id))
+                .await
+                .map_err(SoundcloudFail::Other)?;
+            if status2 != 200 {
+                return Err(SoundcloudFail::Other(format!(
+                    "api-v2 после передобычи: статус {status2}"
+                )));
+            }
+            body2
+        }
+        other => return Err(SoundcloudFail::Other(format!("api-v2: статус {other}"))),
+    };
+    let track: serde_json::Value = serde_json::from_str(&track_body)
+        .map_err(|e| SoundcloudFail::Other(format!("ответ api-v2 не JSON: {e}")))?;
+    let (transcoding_url, ext) = sc_pick_progressive(&track)?;
+
+    let with_id = sc_with_client_id(&transcoding_url, &client_id).map_err(SoundcloudFail::Other)?;
+    let (status, body) = call(with_id).await.map_err(SoundcloudFail::Other)?;
+    if status != 200 {
+        return Err(SoundcloudFail::Other(format!("transcoding: статус {status}")));
+    }
+    let payload: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| SoundcloudFail::Other(format!("ответ transcoding не JSON: {e}")))?;
+    let cdn_url = payload["url"]
+        .as_str()
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| SoundcloudFail::Other("ответ transcoding без url".into()))?
+        .to_string();
+
+    // Синтаксическая граница ДО пробы (https/credentials/IP-литерал): DNS-часть
+    // проверит soundcloud_warm_entry в боевой обёртке, здесь она пропущена.
+    validate_warm_url_with_lookup(&cdn_url, &mut |_, _| Ok(Vec::new()))
+        .map_err(SoundcloudFail::Other)?;
+    let size = probe(cdn_url.clone()).await.map_err(SoundcloudFail::Other)?;
+    Ok(SoundcloudFormat {
+        url: cdn_url,
+        size,
+        ext: ext.to_string(),
+    })
+}
+
+/// Сетевой GET SC-ступени: текст/JSON отдаём строкой вместе со статусом —
+/// 401/403 разбирает оркестрация (см. resolve_via_soundcloud_with).
+async fn sc_http_get(url: String) -> Result<(u16, String), String> {
+    let resp = warm_http_client()
+        .get(&url)
+        .header("User-Agent", SOUNDCLOUD_UA)
+        .timeout(SOUNDCLOUD_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("GET не ушёл: {e}"))?;
+    let status = resp.status().as_u16();
+    let body = resp.text().await.map_err(|e| format!("чтение тела: {e}"))?;
+    Ok((status, body))
+}
+
+/// Проба размера: GET с Range: bytes=0-0, total — из Content-Range 206-ответа
+/// (parse_content_range — тот же разборщик, что у fetch_to_cache).
+async fn sc_http_probe(url: String) -> Result<u64, String> {
+    let resp = warm_http_client()
+        .get(&url)
+        .header("User-Agent", SOUNDCLOUD_UA)
+        .header("Range", "bytes=0-0")
+        .timeout(SOUNDCLOUD_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("Range-проба не ушла: {e}"))?;
+    let status = resp.status().as_u16();
+    if status != 206 {
+        return Err(format!("Range-проба: статус {status}"));
+    }
+    resp.headers()
+        .get("Content-Range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_content_range)
+        .map(|(_end, total)| total)
+        .ok_or_else(|| "206 без разборчивого Content-Range".to_string())
+}
+
+/// SoundcloudFormat → WarmEntry: та же граница доверия, что у прогрева
+/// (validate_warm_url, лимит 512 МиБ, грамматика ext). expires_at — константа
+/// SOUNDCLOUD_WARM_TTL, а не разбор подписанных query-параметров sndcdn.
+fn soundcloud_warm_entry_with_lookup(
+    fmt: &SoundcloudFormat,
+    now: SystemTime,
+    lookup: &mut impl FnMut(&str, u16) -> LookupResult,
+) -> Result<WarmEntry, String> {
+    if !content_length_ok(fmt.size) {
+        return Err(format!("sc-размер вне лимита: {}", fmt.size));
+    }
+    if !valid_warm_ext(&fmt.ext) {
+        return Err(format!("подозрительное расширение: {:?}", fmt.ext));
+    }
+    let url = validate_warm_url_with_lookup(&fmt.url, lookup)?;
+    Ok(WarmEntry {
+        url,
+        size: fmt.size,
+        ext: fmt.ext.clone(),
+        provider: "soundcloud".into(),
+        expires_at: now + SOUNDCLOUD_WARM_TTL,
+    })
+}
+
+fn soundcloud_warm_entry(fmt: &SoundcloudFormat, now: SystemTime) -> Result<WarmEntry, String> {
+    let mut lookup = |host: &str, port: u16| {
+        debug_assert_eq!(port, 443);
+        (host, 443)
+            .to_socket_addrs()
+            .map(|answers| answers.map(|answer| answer.ip()).collect())
+            .map_err(|error| format!("DNS lookup failed: {error}"))
+    };
+    soundcloud_warm_entry_with_lookup(fmt, now, &mut lookup)
+}
+
+/// Боевая SC-ступень целиком: api-v2 → progressive → CDN-URL → проба →
+/// WarmEntry той же формы, что у прогрева. Err любого класса = «молча уступи
+/// лестнице» у вызывающего.
+async fn resolve_via_soundcloud(
+    state: &EngineState,
+    canonical: &Url,
+) -> Result<WarmEntry, SoundcloudFail> {
+    let fmt = resolve_via_soundcloud_with(state, canonical, sc_http_get, sc_http_probe).await?;
+    // DNS-preflight validate_warm_url — блокирующий getaddrinfo: с async-
+    // рантайма его уводит spawn_blocking (как и у InnerTube-ступени).
+    tauri::async_runtime::spawn_blocking(move || soundcloud_warm_entry(&fmt, SystemTime::now()))
+        .await
+        .map_err(|e| SoundcloudFail::Other(format!("spawn_blocking: {e}")))?
+        .map_err(SoundcloudFail::Other)
+}
+
 /// Валидация id трека: имя каталога/файла кэша (общая для resolve и warm).
 fn validate_track_id(track_id: &str) -> Result<(), String> {
     if track_id.is_empty()
@@ -2205,6 +2677,28 @@ pub async fn engine_warm(
             warm: true,
             cached: false,
         });
+    }
+
+    // Ступень 0 SoundCloud (2026-07-19): прогрев ведущего SC-источника прямым
+    // api-v2 — раньше SC грелся только процессом yt-dlp. Breaker и кулдаун
+    // ниже — про InnerTube/бот-гейт YouTube, SC ими не гейтится; у SC свои
+    // предохранители — негативный кэш "sc:" и кулдаун добычи client_id.
+    // Провал молча уступает yt-dlp --simulate ниже.
+    if let Some((source_id, canonical)) = stage0_soundcloud_ref(&sources) {
+        let sc_key = format!("sc:{source_id}");
+        if !stage0_recently_failed(&state, &sc_key, SystemTime::now()) {
+            match resolve_via_soundcloud(&state, &canonical).await {
+                Ok(entry) => {
+                    stage0_note_success(&state, &sc_key);
+                    store_warm_entry(&state, &cache_ns, &track_id, entry);
+                    return Ok(WarmOut {
+                        warm: true,
+                        cached: false,
+                    });
+                }
+                Err(_) => stage0_note_fail(&state, &sc_key, SystemTime::now()),
+            }
+        }
     }
 
     // Ступень 0 (2026-07-19): прогрев тем же прямым InnerTube-резолвом —
@@ -2399,6 +2893,30 @@ pub async fn engine_stream_start(
         let warm = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now());
         let entry = match warm {
             Some(entry) => entry,
+            // Ступень 0 SoundCloud (2026-07-19): ведущий SC-источник резолвится
+            // прямым api-v2 (~1–2 с до звука вместо 5–6 с ожидания полной
+            // закачки yt-dlp — владелец слушает в основном SC, жалоба 19.07),
+            // дальше тот же стрим с первых 128 КиБ. Breaker InnerTube SC не
+            // гейтит; свой предохранитель — негативный кэш "sc:<source_id>".
+            None if matches!(sources.first(), Some(SourceRef::Soundcloud { .. })) => {
+                let Some((source_id, canonical)) = stage0_soundcloud_ref(&sources) else {
+                    return no_stream; // кривой canonical_url — лестница
+                };
+                let sc_key = format!("sc:{source_id}");
+                if stage0_recently_failed(&state, &sc_key, SystemTime::now()) {
+                    return no_stream; // провал уже оплачен — лестница
+                }
+                match resolve_via_soundcloud(&state, &canonical).await {
+                    Ok(entry) => {
+                        stage0_note_success(&state, &sc_key);
+                        entry
+                    }
+                    Err(_) => {
+                        stage0_note_fail(&state, &sc_key, SystemTime::now());
+                        return no_stream;
+                    }
+                }
+            }
             None => {
                 let cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
                 let (Some(cfg), Some(video_id)) = (cfg, stage0_youtube_id(&sources)) else {
@@ -2865,6 +3383,41 @@ pub async fn engine_resolve(
                 from_cache: false,
                 provider: Some(entry.provider),
             });
+        }
+    }
+
+    // Ступень 0 SoundCloud (2026-07-19): ведущий SC-источник — прямой
+    // api-v2-резолв + тот же GET fetch_to_cache, что у warm-пути (~1–2 с
+    // вместо 5–6 с процесса yt-dlp с полной закачкой; владелец слушает в
+    // основном SC, жалоба 19.07). Дисциплина та же: любой провал МОЛЧА
+    // уступает лестнице. Breaker InnerTube SC не гейтит — предохранители
+    // SC свои (негативный кэш "sc:", кулдаун добычи client_id).
+    if let Some((source_id, canonical)) = stage0_soundcloud_ref(&sources) {
+        let sc_key = format!("sc:{source_id}");
+        if !stage0_recently_failed(&state, &sc_key, SystemTime::now()) {
+            match resolve_via_soundcloud(&state, &canonical).await {
+                Ok(entry) => {
+                    stage0_note_success(&state, &sc_key);
+                    match fetch_to_cache(&dir, &track_id, &entry).await {
+                        Ok(path) => {
+                            let limit = *state.cache_limit_bytes.lock().unwrap();
+                            ensure_pins_loaded(&app, &state, &cache_ns);
+                            let pins = state.pins.lock().unwrap().clone();
+                            evict_lru(&dir, limit, &path, &pins);
+                            state.stats.lock().unwrap().resolve_ok += 1;
+                            return Ok(ResolveOut {
+                                path: path.to_string_lossy().into_owned(),
+                                from_cache: false,
+                                provider: Some(entry.provider),
+                            });
+                        }
+                        // байты не доехали (URL протух/CDN отказал) — лестница;
+                        // маркеры ошибки понимает существующий классификатор
+                        Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
+                    }
+                }
+                Err(_) => stage0_note_fail(&state, &sc_key, SystemTime::now()),
+            }
         }
     }
 
@@ -5638,6 +6191,536 @@ mod innertube_tests {
         );
         assert_eq!(size, entry.size, "скачали ровно столько, сколько заявлено");
         assert!(size > 1_000_000, "полноразмерное аудио");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod soundcloud_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    /// Санитизированные ответы api-v2 (форма живого ответа 2026-07-19:
+    /// transcodings с format.protocol/mime_type, id/подписи — синтетика).
+    fn sc_track_fixture() -> String {
+        include_str!("../testdata/sc_resolve_ok.json").to_string()
+    }
+
+    fn sc_no_progressive_fixture() -> String {
+        include_str!("../testdata/sc_resolve_no_progressive.json").to_string()
+    }
+
+    fn sc_transcoding_fixture() -> String {
+        include_str!("../testdata/sc_transcoding_url.json").to_string()
+    }
+
+    /// 32 строчно-алфанумерных символа — грамматика живого client_id.
+    const SYNTH_CLIENT_ID: &str = "AAAABBBBCCCCDDDDEEEEFFFF00112233";
+    const SYNTH_CLIENT_ID_2: &str = "ZZZZYYYYXXXXWWWWVVVVUUUU99887766";
+
+    /// Главная soundcloud.com: два JS-бандла a-v2.sndcdn.com (client_id
+    /// исторически в ПОСЛЕДНИХ — сканирование обязано идти с конца).
+    const SC_HOME_HTML: &str = concat!(
+        r#"<html><head><link rel="preload" href="https://a-v2.sndcdn.com/assets/0-first11.js">"#,
+        r#"<script crossorigin src="https://a-v2.sndcdn.com/assets/0-first11.js"></script>"#,
+        r#"<script crossorigin src="https://a-v2.sndcdn.com/assets/50-last222.js"></script>"#,
+        r#"</head><body></body></html>"#
+    );
+
+    /// Кусок JS-бандла: первое упоминание client_id — не присваивание
+    /// (сканер обязан пройти дальше), второе — настоящая грамматика.
+    fn sc_bundle_with_id(id: &str) -> String {
+        format!(r#"var e=t.client_id;n.query="?client_id="+e;o.client_id="{id}";"#)
+    }
+
+    fn public_lookup(_host: &str, _port: u16) -> LookupResult {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))])
+    }
+
+    fn sc_canonical(raw: &str) -> Url {
+        byte_canonical_locator("soundcloud", raw).unwrap()
+    }
+
+    /// Прогон оркестрации с инъекцией транспорта (очередь ответов по порядку,
+    /// как run_orchestration у InnerTube) и инъекцией Range-пробы размера.
+    fn run_sc(
+        state: &EngineState,
+        canonical: &str,
+        responses: Vec<Result<(u16, String), String>>,
+        probe_response: Result<u64, String>,
+    ) -> (
+        Result<SoundcloudFormat, SoundcloudFail>,
+        Vec<String>,
+        Vec<String>,
+    ) {
+        let canonical = sc_canonical(canonical);
+        let calls: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let probes: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let queue: Mutex<VecDeque<Result<(u16, String), String>>> =
+            Mutex::new(VecDeque::from(responses));
+        let result = tauri::async_runtime::block_on(resolve_via_soundcloud_with(
+            state,
+            &canonical,
+            |url| {
+                calls.lock().unwrap().push(url);
+                let resp = queue
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("лишний вызов транспорта");
+                async move { resp }
+            },
+            |url| {
+                probes.lock().unwrap().push(url);
+                let resp = probe_response.clone();
+                async move { resp }
+            },
+        ));
+        (
+            result,
+            calls.into_inner().unwrap(),
+            probes.into_inner().unwrap(),
+        )
+    }
+
+    // ── Разбор ответа api-v2 ───────────────────────────────────────
+
+    /// Выбор по format.protocol == "progressive" (не по порядку и не по
+    /// именам полей — SC уходит к AAC HLS, protocol надёжнее).
+    #[test]
+    fn sc_picks_progressive_over_hls() {
+        let track: serde_json::Value = serde_json::from_str(&sc_track_fixture()).unwrap();
+        let (url, ext) = sc_pick_progressive(&track).unwrap();
+        assert!(url.ends_with("/stream/progressive"), "{url}");
+        assert_eq!(ext, "mp3");
+    }
+
+    /// Только HLS — провал ступени (фолбэк на лестницу yt-dlp).
+    #[test]
+    fn sc_no_progressive_is_error() {
+        let track: serde_json::Value =
+            serde_json::from_str(&sc_no_progressive_fixture()).unwrap();
+        assert!(sc_pick_progressive(&track).is_err());
+    }
+
+    /// mime_type → расширение файла кэша (find_cached понимает mp3/m4a).
+    #[test]
+    fn sc_ext_mapping_covers_known_mimes() {
+        assert_eq!(sc_ext_from_mime("audio/mpeg"), Some("mp3"));
+        assert_eq!(sc_ext_from_mime("audio/mp4; codecs=\"mp4a.40.2\""), Some("m4a"));
+        assert_eq!(sc_ext_from_mime("audio/aac"), Some("m4a"));
+        assert_eq!(sc_ext_from_mime("audio/ogg; codecs=\"opus\""), None);
+        assert_eq!(sc_ext_from_mime(""), None);
+    }
+
+    // ── Выбор источника ────────────────────────────────────────────
+
+    /// SC-ступень — только когда ПЕРВЫЙ источник Soundcloud с канонично
+    /// валидным url (та же грамматика byte_canonical_locator, что у лестницы);
+    /// приоритет источников сервера не переворачиваем.
+    #[test]
+    fn stage0_sc_ref_only_for_leading_valid_source() {
+        let sc = || SourceRef::Soundcloud {
+            source_id: "12345".into(),
+            canonical_url: "https://soundcloud.com/artist-a/track-b".into(),
+        };
+        let yt = SourceRef::Youtube {
+            source_id: "dQw4w9WgXcQ".into(),
+        };
+        let (sid, url) = stage0_soundcloud_ref(&[sc()]).unwrap();
+        assert_eq!(sid, "12345");
+        assert_eq!(url.as_str(), "https://soundcloud.com/artist-a/track-b");
+        assert!(
+            stage0_soundcloud_ref(&[yt, sc()]).is_none(),
+            "YouTube первый — его ступень, не SC"
+        );
+        assert!(stage0_soundcloud_ref(&[]).is_none());
+        let bad = SourceRef::Soundcloud {
+            source_id: "12345".into(),
+            canonical_url: "https://evil.example.com/a/b".into(),
+        };
+        assert!(stage0_soundcloud_ref(&[bad]).is_none(), "чужой хост — лестница");
+        let api_form = SourceRef::Soundcloud {
+            source_id: "987654321".into(),
+            canonical_url: "https://api.soundcloud.com/tracks/987654321".into(),
+        };
+        assert!(
+            stage0_soundcloud_ref(&[api_form]).is_some(),
+            "числовая форма каталога (64% SoundCloud) — годна"
+        );
+    }
+
+    /// Страничная форма идёт через /resolve, числовая — в /tracks/<id>
+    /// напрямую (resolve ей не нужен).
+    #[test]
+    fn sc_api_lookup_url_forms() {
+        let page = sc_canonical("https://soundcloud.com/artist-a/track-b");
+        let url = sc_api_lookup_url(&page, SYNTH_CLIENT_ID);
+        assert!(
+            url.starts_with("https://api-v2.soundcloud.com/resolve?"),
+            "{url}"
+        );
+        assert!(
+            url.contains("url=https%3A%2F%2Fsoundcloud.com%2Fartist-a%2Ftrack-b"),
+            "{url}"
+        );
+        assert!(url.contains(&format!("client_id={SYNTH_CLIENT_ID}")), "{url}");
+        let numeric = sc_canonical("https://api.soundcloud.com/tracks/987654321");
+        assert_eq!(
+            sc_api_lookup_url(&numeric, SYNTH_CLIENT_ID),
+            format!("https://api-v2.soundcloud.com/tracks/987654321?client_id={SYNTH_CLIENT_ID}")
+        );
+    }
+
+    // ── Добыча client_id из бандлов ────────────────────────────────
+
+    #[test]
+    fn sc_bundle_urls_from_home_html() {
+        let urls = sc_bundle_urls(SC_HOME_HTML);
+        assert_eq!(
+            urls,
+            vec![
+                "https://a-v2.sndcdn.com/assets/0-first11.js".to_string(),
+                "https://a-v2.sndcdn.com/assets/50-last222.js".to_string(),
+            ],
+            "порядок документа, дубли схлопнуты"
+        );
+    }
+
+    /// Грамматика client_id: за словом — : или =, кавычка, ровно 32
+    /// алфанумерных символа. Всё прочее (конкатенации URL, короткие
+    /// значения) — мимо.
+    #[test]
+    fn sc_client_id_extraction_grammar() {
+        assert_eq!(
+            sc_client_id_from_js(&sc_bundle_with_id(SYNTH_CLIENT_ID)).as_deref(),
+            Some(SYNTH_CLIENT_ID)
+        );
+        assert_eq!(sc_client_id_from_js("client_id=\"short\""), None);
+        assert_eq!(
+            sc_client_id_from_js("client_id:\"AAAABBBBCCCCDDDDEEEEFFFF0011223!\""),
+            None,
+            "не-алфанум не проходит"
+        );
+        assert_eq!(sc_client_id_from_js("тут ничего нет"), None);
+        assert_eq!(
+            sc_client_id_from_js(&format!("a.client_id = \"{SYNTH_CLIENT_ID}\"")).as_deref(),
+            Some(SYNTH_CLIENT_ID),
+            "форма с = и пробелами тоже валидна"
+        );
+    }
+
+    // ── Кэш client_id и кулдаун добычи ─────────────────────────────
+
+    #[test]
+    fn sc_client_id_cache_respects_ttl() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert_eq!(sc_cached_client_id(&state, t0), None);
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, t0);
+        assert_eq!(
+            sc_cached_client_id(&state, t0 + SOUNDCLOUD_CLIENT_ID_TTL - Duration::from_secs(1))
+                .as_deref(),
+            Some(SYNTH_CLIENT_ID)
+        );
+        assert_eq!(
+            sc_cached_client_id(&state, t0 + SOUNDCLOUD_CLIENT_ID_TTL),
+            None,
+            "протухший не переиспользуем"
+        );
+    }
+
+    #[test]
+    fn sc_cid_cooldown_respects_ttl() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!sc_cid_recently_failed(&state, t0));
+        sc_cid_note_fail(&state, t0);
+        assert!(sc_cid_recently_failed(
+            &state,
+            t0 + SOUNDCLOUD_CID_FAIL_TTL - Duration::from_secs(1)
+        ));
+        assert!(!sc_cid_recently_failed(&state, t0 + SOUNDCLOUD_CID_FAIL_TTL));
+    }
+
+    // ── Оркестрация (инъекция транспорта) ──────────────────────────
+
+    /// Обычный путь: client_id уже в состоянии — resolve → transcoding →
+    /// Range-проба; размер — из пробы (transcodings contentLength не отдают).
+    #[test]
+    fn sc_orchestration_uses_cached_client_id() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, calls, probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, sc_track_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+            ],
+            Ok(4_567_890),
+        );
+        let fmt = result.expect("успех");
+        assert_eq!(fmt.ext, "mp3");
+        assert_eq!(fmt.size, 4_567_890);
+        assert!(
+            fmt.url.starts_with("https://cf-media.sndcdn.com/"),
+            "{}",
+            fmt.url
+        );
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(
+            calls[0].starts_with("https://api-v2.soundcloud.com/resolve?"),
+            "{}",
+            calls[0]
+        );
+        assert!(
+            calls[1].contains(&format!("client_id={SYNTH_CLIENT_ID}")),
+            "{}",
+            calls[1]
+        );
+        assert_eq!(probes, vec![fmt.url.clone()], "проба — по CDN-URL");
+    }
+
+    /// Бутстрап: состояния нет — главная → бандлы С КОНЦА → client_id
+    /// оседает в состоянии (следующие клики без добычи).
+    #[test]
+    fn sc_orchestration_bootstraps_client_id_from_bundles() {
+        let state = EngineState::default();
+        let (result, calls, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, SC_HOME_HTML.to_string())),
+                Ok((200, sc_bundle_with_id(SYNTH_CLIENT_ID))),
+                Ok((200, sc_track_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+            ],
+            Ok(4_567_890),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(calls[0], "https://soundcloud.com/");
+        assert_eq!(
+            calls[1], "https://a-v2.sndcdn.com/assets/50-last222.js",
+            "бандлы сканируются С КОНЦА"
+        );
+        let cached = state.soundcloud_client_id.lock().unwrap();
+        assert_eq!(
+            cached.as_ref().map(|(id, _)| id.as_str()),
+            Some(SYNTH_CLIENT_ID),
+            "client_id осел в состоянии"
+        );
+    }
+
+    /// 401 на api-v2 = протухший client_id: сброс + ОДНА передобыча +
+    /// повтор со свежим id (образец — оркестрация visitorData).
+    #[test]
+    fn sc_orchestration_401_rescrapes_and_retries_once() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, calls, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((401, String::new())),
+                Ok((200, SC_HOME_HTML.to_string())),
+                Ok((200, sc_bundle_with_id(SYNTH_CLIENT_ID_2))),
+                Ok((200, sc_track_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+            ],
+            Ok(4_567_890),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert!(calls[0].contains(SYNTH_CLIENT_ID), "{}", calls[0]);
+        assert!(
+            calls[3].contains(SYNTH_CLIENT_ID_2),
+            "повтор — со свежим id: {}",
+            calls[3]
+        );
+        assert!(calls[4].contains(SYNTH_CLIENT_ID_2), "{}", calls[4]);
+        let cached = state.soundcloud_client_id.lock().unwrap();
+        assert_eq!(
+            cached.as_ref().map(|(id, _)| id.as_str()),
+            Some(SYNTH_CLIENT_ID_2)
+        );
+    }
+
+    /// Передобыча вернула ТОТ ЖЕ id — повтор бессмыслен, сдаёмся
+    /// (та же дисциплина, что у visitorData: не больше одного повтора).
+    #[test]
+    fn sc_orchestration_gives_up_when_rescrape_returns_same_id() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, calls, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((401, String::new())),
+                Ok((200, SC_HOME_HTML.to_string())),
+                Ok((200, sc_bundle_with_id(SYNTH_CLIENT_ID))),
+            ],
+            Ok(1),
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.len(), 3, "повтор тем же id не шлём: {calls:?}");
+    }
+
+    /// Нет progressive — Err без похода за transcoding и без пробы.
+    #[test]
+    fn sc_orchestration_no_progressive_falls_to_ladder() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, calls, probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![Ok((200, sc_no_progressive_fixture()))],
+            Ok(1),
+        );
+        assert!(matches!(result, Err(SoundcloudFail::Other(_))), "{result:?}");
+        assert_eq!(calls.len(), 1);
+        assert!(probes.is_empty(), "до пробы не дошли");
+    }
+
+    /// Проба размера провалилась — провал ступени (без размера не построить
+    /// явный Range в fetch_to_cache и не проверить целостность).
+    #[test]
+    fn sc_orchestration_probe_failure_is_error() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, _calls, probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, sc_track_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+            ],
+            Err("сеть упала".into()),
+        );
+        assert!(matches!(result, Err(SoundcloudFail::Other(_))), "{result:?}");
+        assert_eq!(probes.len(), 1);
+    }
+
+    /// Провал добычи client_id взводит кулдаун: следующий клик в течение
+    /// минуты НЕ тянет главную и бандлы заново (0 запросов).
+    #[test]
+    fn sc_client_id_scrape_failure_sets_cooldown() {
+        let state = EngineState::default();
+        let (result, calls, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![Ok((200, "<html>без бандлов</html>".to_string()))],
+            Ok(1),
+        );
+        assert!(matches!(result, Err(SoundcloudFail::ClientId(_))), "{result:?}");
+        assert_eq!(calls.len(), 1);
+        let (result2, calls2, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![],
+            Ok(1),
+        );
+        assert!(matches!(result2, Err(SoundcloudFail::ClientId(_))), "{result2:?}");
+        assert!(calls2.is_empty(), "кулдаун — сеть не трогаем");
+    }
+
+    // ── WarmEntry из ответа ────────────────────────────────────────
+
+    /// Форма наружу — WarmEntry: provider soundcloud; подписанные
+    /// query-параметры sndcdn не парсим — консервативные 20 минут от now.
+    #[test]
+    fn sc_warm_entry_conversion() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let fmt = SoundcloudFormat {
+            url: "https://cf-media.sndcdn.com/synthAAAA1111.128.mp3?Policy=P&Signature=S&Key-Pair-Id=K"
+                .into(),
+            size: 4_567_890,
+            ext: "mp3".into(),
+        };
+        let entry = soundcloud_warm_entry_with_lookup(&fmt, now, &mut public_lookup).unwrap();
+        assert_eq!(entry.provider, "soundcloud");
+        assert_eq!(entry.size, 4_567_890);
+        assert_eq!(entry.ext, "mp3");
+        assert_eq!(entry.expires_at, now + SOUNDCLOUD_WARM_TTL);
+    }
+
+    /// Граница доверия warm-пути наследуется без ослаблений (https, без
+    /// credentials, лимит 512 МиБ, грамматика ext).
+    #[test]
+    fn sc_warm_entry_inherits_trust_boundary() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for (url, size, ext) in [
+            ("http://cf-media.sndcdn.com/a.mp3", 100u64, "mp3"),
+            ("https://user:pass@cf-media.sndcdn.com/a.mp3", 100, "mp3"),
+            ("https://cf-media.sndcdn.com/a.mp3", 0, "mp3"),
+            ("https://cf-media.sndcdn.com/a.mp3", MAX_YTDLP_OUTPUT_BYTES + 1, "mp3"),
+            ("https://cf-media.sndcdn.com/a.mp3", 100, "MP3."),
+        ] {
+            let fmt = SoundcloudFormat {
+                url: url.into(),
+                size,
+                ext: ext.into(),
+            };
+            assert!(
+                soundcloud_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                "{url} size={size} ext={ext} обязан отвергаться"
+            );
+        }
+    }
+
+    // ── Негативный кэш sc:-ключей ──────────────────────────────────
+
+    /// SC-провалы живут в той же карте, что и YouTube, но под префиксом
+    /// "sc:" — источники не задевают друг друга.
+    #[test]
+    fn stage0_fail_memory_sc_keys_are_namespaced() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        stage0_note_fail(&state, "sc:12345", t0);
+        assert!(stage0_recently_failed(&state, "sc:12345", t0));
+        assert!(
+            !stage0_recently_failed(&state, "12345", t0),
+            "yt-ключ не задет sc-провалом"
+        );
+        stage0_note_success(&state, "sc:12345");
+        assert!(!stage0_recently_failed(&state, "sc:12345", t0));
+    }
+
+    /// Живой сквозной прогон SC-ступени: добыча client_id → api-v2 →
+    /// transcoding → Range-проба → fetch_to_cache.
+    /// `cargo test soundcloud_real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "сеть: живые GET soundcloud.com, api-v2 и CDN"]
+    fn soundcloud_real_resolve_and_fetch() {
+        let dir = std::env::temp_dir().join("muza-soundcloud-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let state = EngineState::default();
+        let canonical = sc_canonical("https://soundcloud.com/forss/flickermood");
+
+        let started = std::time::Instant::now();
+        let entry =
+            tauri::async_runtime::block_on(resolve_via_soundcloud(&state, &canonical))
+                .expect("прямой SC-резолв обязан пройти");
+        println!(
+            "резолв: {} мс, ext {}, size {}",
+            started.elapsed().as_millis(),
+            entry.ext,
+            entry.size
+        );
+
+        let started = std::time::Instant::now();
+        let path = tauri::async_runtime::block_on(fetch_to_cache(&dir, "smoke1", &entry))
+            .expect("байты по CDN-URL обязаны доехать");
+        let size = fs::metadata(&path).unwrap().len();
+        println!(
+            "байты: {} мс, {} байт, {}",
+            started.elapsed().as_millis(),
+            size,
+            path.display()
+        );
+        assert_eq!(size, entry.size, "скачали ровно столько, сколько заявлено");
+        assert!(size > 500_000, "полноразмерное аудио");
         let _ = fs::remove_dir_all(&dir);
     }
 }

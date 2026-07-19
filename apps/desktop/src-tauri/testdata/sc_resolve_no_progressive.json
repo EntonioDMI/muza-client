@@ -1,0 +1,34 @@
+{
+  "id": 987654321,
+  "kind": "track",
+  "title": "Synthetic HLS-Only Track",
+  "duration": 213000,
+  "policy": "ALLOW",
+  "permalink_url": "https://soundcloud.com/artist-a/track-hls",
+  "media": {
+    "transcodings": [
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:987654321/aaaabbbb-cccc-dddd-eeee-ffff00001111/stream/hls",
+        "preset": "mp3_1_0",
+        "duration": 213000,
+        "snipped": false,
+        "format": {
+          "protocol": "hls",
+          "mime_type": "audio/mpeg"
+        },
+        "quality": "sq"
+      },
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:987654321/11112222-3333-4444-5555-666677778888/stream/hls",
+        "preset": "aac_160k",
+        "duration": 213000,
+        "snipped": false,
+        "format": {
+          "protocol": "hls",
+          "mime_type": "audio/mp4; codecs=\"mp4a.40.2\""
+        },
+        "quality": "hq"
+      }
+    ]
+  }
+}
