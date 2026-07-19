@@ -7,8 +7,11 @@ describe("bassShake pref (T14)", () => {
     expect(DEFAULT_PREFS.bassShake).toBe(false);
   });
 
-  it("не входит в THEME_KEYS — поведенческий преф, не оформление", () => {
-    expect((THEME_KEYS as readonly string[]).includes("bassShake")).toBe(false);
+  it("входит в THEME_KEYS — решение спеки 19.07 §6: отклик на бас едет с темой", () => {
+    // Было наоборот (T14 считал его поведением); закрытие «дыры THEME_KEYS»
+    // 19.07 отнесло визуализатор и качание к оформлению — сторож
+    // lib/themes.coverage.test.ts требует того же.
+    expect((THEME_KEYS as readonly string[]).includes("bassShake")).toBe(true);
   });
 
   it("мигрирует через обычный DEFAULT_PREFS-мердж без спец-миграции", () => {

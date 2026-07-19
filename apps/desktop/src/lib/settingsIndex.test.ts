@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { SETTINGS_INDEX, searchSettings } from "./settingsIndex";
-import { translate } from "../i18n";
+import { translate, type TranslationKey } from "../i18n";
 
 describe("SETTINGS_INDEX", () => {
   it("каждый titleKey существует в русском словаре", () => {
-    const dead = SETTINGS_INDEX.filter((e) => translate("ru", e.titleKey) === e.titleKey).map((e) => e.titleKey);
+    // titleKey в индексе — string (ключи могут опережать словарь), поэтому
+    // каст: translate на неизвестный ключ просто возвращает сам ключ.
+    const dead = SETTINGS_INDEX.filter((e) => translate("ru", e.titleKey as TranslationKey) === e.titleKey).map((e) => e.titleKey);
     expect(dead).toEqual([]);
   });
 });
