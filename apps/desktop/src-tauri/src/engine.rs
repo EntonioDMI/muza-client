@@ -114,6 +114,11 @@ pub struct EngineState {
     /// отбивает 5 из 6 запросов /player (замер 2026-07-19); приходит в каждом
     /// ответе (даже LOGIN_REQUIRED) — кэшируем и переиспользуем до TTL.
     youtube_visitor: Mutex<Option<VisitorData>>,
+    /// Негативный кэш ступени 0: video_id → момент свежего провала. Один клик
+    /// зовёт ступень 0 из engine_stream_start И engine_resolve — без этой
+    /// памяти провал оплачивался бы дважды (до 4 POST / 2 таймаута до
+    /// лестницы, корень жалобы «стало медленнее» 2026-07-19).
+    stage0_recent_fail: Mutex<HashMap<String, SystemTime>>,
 }
 
 impl Default for EngineState {
@@ -130,6 +135,7 @@ impl Default for EngineState {
             warm: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
             youtube_visitor: Mutex::new(None),
+            stage0_recent_fail: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -1828,6 +1834,42 @@ fn classify_innertube_failure(stats: &mut EngineStats, fail: &InnertubeFail) {
     }
 }
 
+/// TTL негативного кэша ступени 0: покрывает окно «stream_start → resolve»
+/// одного клика и повторные клики по тому же треку, но не хоронит видео
+/// надолго — причина провала (бот-гейт, сеть) за минуту может рассосаться.
+const STAGE0_FAIL_TTL: Duration = Duration::from_secs(60);
+
+/// Свежий провал ступени 0 для этого видео? now — параметром (тестируемость).
+fn stage0_recently_failed(state: &EngineState, video_id: &str, now: SystemTime) -> bool {
+    state
+        .stage0_recent_fail
+        .lock()
+        .unwrap()
+        .get(video_id)
+        .map(|at| {
+            now.duration_since(*at)
+                .map(|age| age < STAGE0_FAIL_TTL)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+/// Запомнить провал; заодно проредить протухшие записи (карта не растёт).
+fn stage0_note_fail(state: &EngineState, video_id: &str, now: SystemTime) {
+    let mut map = state.stage0_recent_fail.lock().unwrap();
+    map.retain(|_, at| {
+        now.duration_since(*at)
+            .map(|age| age < STAGE0_FAIL_TTL)
+            .unwrap_or(true)
+    });
+    map.insert(video_id.to_string(), now);
+}
+
+/// Успех ступени 0 стирает память о провале — видео снова в деле сразу.
+fn stage0_note_success(state: &EngineState, video_id: &str) {
+    state.stage0_recent_fail.lock().unwrap().remove(video_id);
+}
+
 /// Тело POST /player. Значения client — из рецепта; остальные поля
 /// (deviceMake и пр.) — обязательные константы ANDROID_VR из yt-dlp ff459e5
 /// (без них клиент не признаётся «своим»).
@@ -2079,17 +2121,29 @@ pub async fn engine_warm(
     let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
     if let Some(cfg) = innertube_cfg {
         if let Some(video_id) = stage0_youtube_id(&sources) {
-            let itags = if quality.as_deref() == Some("econom") {
-                INNERTUBE_ITAGS_ECONOM
+            if stage0_recently_failed(&state, &video_id, SystemTime::now()) {
+                // свежий провал (клик/стрим/прошлый прогрев) — не дёргаем
+                // POST заново, сразу simulate-ветка ниже
             } else {
-                INNERTUBE_ITAGS_DEFAULT
-            };
-            if let Ok(entry) = resolve_via_innertube(&state, &cfg, &video_id, itags).await {
-                store_warm_entry(&state, &cache_ns, &track_id, entry);
-                return Ok(WarmOut {
-                    warm: true,
-                    cached: false,
-                });
+                let itags = if quality.as_deref() == Some("econom") {
+                    INNERTUBE_ITAGS_ECONOM
+                } else {
+                    INNERTUBE_ITAGS_DEFAULT
+                };
+                match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                    Ok(entry) => {
+                        stage0_note_success(&state, &video_id);
+                        store_warm_entry(&state, &cache_ns, &track_id, entry);
+                        return Ok(WarmOut {
+                            warm: true,
+                            cached: false,
+                        });
+                    }
+                    // счётчики KPI прогрев не трогает (см. док-коммент
+                    // команды) — но негативный кэш общий: клик после
+                    // неудачного прогрева не должен платить тот же POST
+                    Err(_) => stage0_note_fail(&state, &video_id, SystemTime::now()),
+                }
             }
         }
     }
@@ -2232,15 +2286,22 @@ pub async fn engine_stream_start(
                 let (Some(cfg), Some(video_id)) = (cfg, stage0_youtube_id(&sources)) else {
                     return no_stream;
                 };
+                if stage0_recently_failed(&state, &video_id, SystemTime::now()) {
+                    return no_stream; // провал уже оплачен — сразу лестница
+                }
                 let itags = if quality.as_deref() == Some("econom") {
                     INNERTUBE_ITAGS_ECONOM
                 } else {
                     INNERTUBE_ITAGS_DEFAULT
                 };
                 match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
-                    Ok(entry) => entry,
+                    Ok(entry) => {
+                        stage0_note_success(&state, &video_id);
+                        entry
+                    }
                     Err(fail) => {
                         classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
+                        stage0_note_fail(&state, &video_id, SystemTime::now());
                         return no_stream;
                     }
                 }
@@ -2664,31 +2725,43 @@ pub async fn engine_resolve(
     let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
     if let Some(cfg) = innertube_cfg {
         if let Some(video_id) = stage0_youtube_id(&sources) {
-            let itags = if quality.as_deref() == Some("econom") {
-                INNERTUBE_ITAGS_ECONOM
+            // Свежий провал (обычно — engine_stream_start ЭТОГО ЖЕ клика
+            // секунду назад) — не платим за тот же POST/таймаут второй раз,
+            // сразу лестница ниже.
+            if stage0_recently_failed(&state, &video_id, SystemTime::now()) {
+                // ничего: проваливаемся в лестницу
             } else {
-                INNERTUBE_ITAGS_DEFAULT
-            };
-            match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
-                Ok(entry) => match fetch_to_cache(&dir, &track_id, &entry).await {
-                    Ok(path) => {
-                        let limit = *state.cache_limit_bytes.lock().unwrap();
-                        ensure_pins_loaded(&app, &state, &cache_ns);
-                        let pins = state.pins.lock().unwrap().clone();
-                        evict_lru(&dir, limit, &path, &pins);
-                        state.stats.lock().unwrap().resolve_ok += 1;
-                        return Ok(ResolveOut {
-                            path: path.to_string_lossy().into_owned(),
-                            from_cache: false,
-                            provider: Some(entry.provider),
-                        });
+                let itags = if quality.as_deref() == Some("econom") {
+                    INNERTUBE_ITAGS_ECONOM
+                } else {
+                    INNERTUBE_ITAGS_DEFAULT
+                };
+                match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                    Ok(entry) => {
+                        stage0_note_success(&state, &video_id);
+                        match fetch_to_cache(&dir, &track_id, &entry).await {
+                            Ok(path) => {
+                                let limit = *state.cache_limit_bytes.lock().unwrap();
+                                ensure_pins_loaded(&app, &state, &cache_ns);
+                                let pins = state.pins.lock().unwrap().clone();
+                                evict_lru(&dir, limit, &path, &pins);
+                                state.stats.lock().unwrap().resolve_ok += 1;
+                                return Ok(ResolveOut {
+                                    path: path.to_string_lossy().into_owned(),
+                                    from_cache: false,
+                                    provider: Some(entry.provider),
+                                });
+                            }
+                            // байты не доехали (протухло/смена IP → 403) —
+                            // лестница; маркеры ошибки понимает существующий
+                            // классификатор
+                            Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
+                        }
                     }
-                    // байты не доехали (протухло/смена IP → 403) — лестница;
-                    // маркеры ошибки понимает существующий классификатор
-                    Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
-                },
-                Err(fail) => {
-                    classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail)
+                    Err(fail) => {
+                        classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
+                        stage0_note_fail(&state, &video_id, SystemTime::now());
+                    }
                 }
             }
         }
@@ -5035,6 +5108,50 @@ mod innertube_tests {
         );
         assert_eq!(stage0_youtube_id(&[bad]), None, "кривой id — лестница");
         assert_eq!(stage0_youtube_id(&[]), None);
+    }
+
+    // ── Негативный кэш ступени 0 ───────────────────────────────────
+    // Один клик зовёт ступень 0 дважды (engine_stream_start, затем
+    // engine_resolve при фолбэке) — без памяти о свежем провале второй
+    // вызов оплачивал бы тот же POST/таймаут заново (до 4 POST / 2×8с
+    // до лестницы — корень жалобы «стало медленнее» 2026-07-19).
+
+    /// Свежий провал помнится, старше TTL — забывается; чужой id не задет.
+    #[test]
+    fn stage0_fail_memory_respects_ttl() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!stage0_recently_failed(&state, "vid-a", t0));
+        stage0_note_fail(&state, "vid-a", t0);
+        assert!(stage0_recently_failed(
+            &state,
+            "vid-a",
+            t0 + STAGE0_FAIL_TTL - Duration::from_secs(1)
+        ));
+        assert!(!stage0_recently_failed(&state, "vid-a", t0 + STAGE0_FAIL_TTL));
+        assert!(!stage0_recently_failed(&state, "vid-b", t0), "чужой id не задет");
+    }
+
+    /// Успех стирает память о провале — видео снова в деле сразу.
+    #[test]
+    fn stage0_success_clears_fail_memory() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        stage0_note_fail(&state, "vid-a", t0);
+        stage0_note_success(&state, "vid-a");
+        assert!(!stage0_recently_failed(&state, "vid-a", t0));
+    }
+
+    /// Запись нового провала прореживает протухшие — карта не растёт вечно.
+    #[test]
+    fn stage0_fail_memory_prunes_expired() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        stage0_note_fail(&state, "vid-old", t0);
+        stage0_note_fail(&state, "vid-new", t0 + STAGE0_FAIL_TTL + Duration::from_secs(1));
+        let map = state.stage0_recent_fail.lock().unwrap();
+        assert!(!map.contains_key("vid-old"), "протухшая запись прорежена");
+        assert!(map.contains_key("vid-new"));
     }
 
     /// Маркеры KPI прямого пути: по ним видно деградацию android_vr.
