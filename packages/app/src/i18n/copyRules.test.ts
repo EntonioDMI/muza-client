@@ -20,7 +20,8 @@ import { en } from "./en";
 
 /** Однозначный жаргон. Лукбехайнды вместо \b: JS-\b не понимает кириллицу. */
 const BANNED: { name: string; re: RegExp }[] = [
-  { name: "добыча", re: /добыч/i },
+  // Чередование корня: добыЧа / добыВается / добыТых — одной формой не поймать
+  { name: "добыча", re: /добыч|добыва|добыт/i },
   { name: "фолбэк", re: /фолб[эе]к|fallback/i },
   { name: "yt-dlp", re: /yt-dlp/i },
   { name: "токен", re: /(?<![а-яёa-z])токен|(?<![a-z])tokens?(?![a-z])/i },
@@ -68,22 +69,11 @@ function violations(dict: object, lang: string): string[] {
   return out.map((v) => `${lang}:${v.path} [${v.hit}]`).sort();
 }
 
-const KNOWN_DEBT: string[] = [
-  "en:app.hotkeysDialog.footerHint [кэш]",
-  "en:plugins.install.manifestRejected [манифест]",
-  "en:views.home.notice.errorText [кэш]",
-  "ru:app.hotkeysDialog.footerHint [кэш]",
-  "ru:media.player.errors.desktopOnly [добыча]",
-  "ru:plugins.install.manifestRejected [манифест]",
-  "ru:views.home.notice.errorText [кэш]",
-];
-
+// Снапшот-долг KNOWN_DEBT сожжён полностью 19.07 (волны 2 и 4) и удалён.
+// С этого момента словари ЧИСТЫ: любое нарушение — новое, чинится сразу.
 describe("словари не говорят языком разработчика", () => {
-  it("новых нарушений нет; исправленные вычеркнуты из долга", () => {
+  it("жаргона нет ни в одном пользовательском тексте", () => {
     const found = [...violations(ru, "ru"), ...violations(en, "en")];
-    const fresh = found.filter((f) => !KNOWN_DEBT.includes(f));
-    const stale = KNOWN_DEBT.filter((d) => !found.includes(d));
-    expect(fresh, "НОВЫЙ жаргон в словаре — перепиши по правилу тона").toEqual([]);
-    expect(stale, "исправлено — вычеркни из KNOWN_DEBT").toEqual([]);
+    expect(found, "жаргон в словаре — перепиши по правилу тона (спека 19.07 §2-3)").toEqual([]);
   });
 });

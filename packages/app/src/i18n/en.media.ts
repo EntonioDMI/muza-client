@@ -40,8 +40,8 @@ export const mediaEn = {
       playFailed: "Couldn't play the file",
       playbackDidNotStart: "Playback didn't start",
       localFileNotFound: "Local file not found on this device",
-      desktopOnly: "Catalog tracks only play in the Muza app (extraction engine)",
-      trackFetchFailed: "Couldn't fetch the track",
+      desktopOnly: "Catalog tracks only play in the Muza desktop app",
+      trackFetchFailed: "Couldn't play the track",
     },
   },
   jam: {

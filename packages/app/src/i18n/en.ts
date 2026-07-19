@@ -903,7 +903,7 @@ export const en = {
         altDragCombo: "Alt + drag",
       },
       footerHint:
-        "Reassign — Settings → Hotkeys. File-drag works for already-fetched (cached) tracks; another way — drag the cover off the player bar.",
+        "Reassign keys in Settings. You can drag a track out as a file once it's saved on this computer; another way — drag the cover off the player bar.",
     },
   },
 
@@ -1013,7 +1013,7 @@ export const en = {
     shuffle: "Shuffle",
     previous: "Previous",
     next: "Next",
-    buffering: "Fetching track…",
+    buffering: "Getting the track ready…",
     pause: "Pause",
     play: "Listen",
     repeat: {
@@ -1358,7 +1358,7 @@ export const en = {
       marketOnlyInApp: "Installing a plugin is only available in the app",
       filePickerFilterName: "Muza plugin",
       filePickerTitle: "Choose a .muzaplugin file",
-      manifestRejected: "Plugin manifest rejected: {reason}",
+      manifestRejected: "Couldn't install the plugin: {reason}",
       scriptRejected: "Plugin code rejected: {reason}",
       cssRejected: "Plugin CSS rejected: {reason}",
     },

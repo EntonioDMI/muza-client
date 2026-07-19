@@ -8,8 +8,8 @@ export const mediaRu: typeof mediaEn = {
       playFailed: "Не удалось воспроизвести файл",
       playbackDidNotStart: "Воспроизведение не стартовало",
       localFileNotFound: "Локальный файл не найден на этом устройстве",
-      desktopOnly: "Каталожные треки играют только в приложении Muza (движок добычи)",
-      trackFetchFailed: "Не удалось добыть трек",
+      desktopOnly: "Треки из каталога играют только в приложении Muza на компьютере",
+      trackFetchFailed: "Не удалось включить трек",
     },
   },
   jam: {

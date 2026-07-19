@@ -28,7 +28,7 @@ export const viewsEn = {
       offlineText: "Offline copy of the feed: the server is unavailable right now, showing the last loaded version.",
       refresh: "Refresh",
       errorText:
-        "The server is unavailable, and there's no offline copy of the feed yet. Pinned offline tracks still play from the cache.",
+        "Muza is unreachable right now, and there's no offline copy of the feed yet. Pinned offline tracks still play from what's saved on this device.",
       retry: "Retry",
       emptyText: "The feed fills up as you listen: play something via Search and recommendations will start building.",
       openSearch: "Open search",
