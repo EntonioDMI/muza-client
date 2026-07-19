@@ -36,12 +36,26 @@ const RECIPE_PUBKEY_SPKI_B64: &str = "MCowBQYDK2VwAyEAtWMO3fH/dJ53pP26jQJUzu6dhD
 /// Замер лестницы целиком (4 трека): v5 9.8–25.7с (в среднем 14.8с) → v6
 /// 4.3–4.6с, ×3.3; формат и байты идентичны (itag 251, тот же размер).
 /// Подробности — docs/notes/2026-07-15-почему-песни-грузятся-долго.md.
+///
+/// v7 (2026-07-19): блок youtube.innertube — ступень 0 (прямой POST /player
+/// клиентом ANDROID_VR, ~171 мс против ~3.6 с у yt-dlp, замер ×21). Значения
+/// клиента живут в рецепте как аварийный рубильник: YouTube выпилит
+/// android_vr → сервер шлёт enabled:false или новую версию, клиент сам
+/// откатывается на yt-dlp-лестницу без релиза. clientVersion строго 1.65.10:
+/// выше — SABR-only (yt-dlp ff459e5). Замер и инварианты —
+/// docs/notes/2026-07-19-прямой-innertube-резолв-замер.md.
 const DEFAULT_RECIPE_JSON: &str = r#"{
-  "recipe_version": 6,
+  "recipe_version": 7,
   "youtube": {
     "player_clients": ["android_vr", "tv_embedded", "web_embedded", "tv"],
     "format_priority": [251, 140, "bestaudio"],
-    "js_runtime": "deno"
+    "js_runtime": "deno",
+    "innertube": {
+      "enabled": true,
+      "client_name": "ANDROID_VR",
+      "client_version": "1.65.10",
+      "client_name_id": 28
+    }
   }
 }"#;
 
@@ -65,6 +79,11 @@ pub struct EngineStats {
     pub fail_bot: u64,
     pub fail_format: u64,
     pub fail_other: u64,
+    /// Провалы ступени 0 (прямой InnerTube): SABR-сессия без прямых url и
+    /// бот-гейт LOGIN_REQUIRED. Рост — сигнал, что android_vr деградирует и
+    /// пора бампить youtube.innertube в горячем рецепте.
+    pub fail_sabr: u64,
+    pub fail_login: u64,
 }
 
 pub struct EngineState {
@@ -91,6 +110,10 @@ pub struct EngineState {
     /// Живые стримы (Фаза 2): закачка пишет .part и публикует прогресс,
     /// handler протокола muza-stream ждёт нужные байты. Ключ — (ns, track_id).
     streams: Mutex<HashMap<(String, String), StreamHandle>>,
+    /// visitorData гостевой InnerTube-сессии (ступень 0). Без него бот-гейт
+    /// отбивает 5 из 6 запросов /player (замер 2026-07-19); приходит в каждом
+    /// ответе (даже LOGIN_REQUIRED) — кэшируем и переиспользуем до TTL.
+    youtube_visitor: Mutex<Option<VisitorData>>,
 }
 
 impl Default for EngineState {
@@ -106,6 +129,7 @@ impl Default for EngineState {
             pins_ns: Mutex::new(None),
             warm: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
+            youtube_visitor: Mutex::new(None),
         }
     }
 }
@@ -1568,6 +1592,369 @@ async fn write_body_to_part(
     Ok(())
 }
 
+// ── Ступень 0: прямой InnerTube-резолв (2026-07-19) ───────────────
+// Один POST youtubei/v1/player клиентом ANDROID_VR отдаёт прямой CDN-URL
+// (itag 251/140) + размер + expire за ~171 мс против ~3.6 с у yt-dlp (замер
+// ×21 — docs/notes/2026-07-19-прямой-innertube-резолв-замер.md). Это НЕ
+// замена yt-dlp-лестницы, а быстрая ступень ПЕРЕД ней: любой провал
+// (SABR-сессия без url, LOGIN_REQUIRED, UNPLAYABLE, сеть, таймаут) молча
+// уступает лестнице — ценность yt-dlp в скорости починки сообществом.
+// Гочи (замер 2026-07-19, не переоткрывать):
+//  - visitorData ОБЯЗАТЕЛЕН: без него бот-гейт отбивает 5 из 6 запросов;
+//    значение приходит в КАЖДОМ ответе /player (даже LOGIN_REQUIRED) —
+//    кэшируем в EngineState и переиспользуем;
+//  - clientVersion строго 1.65.10 (выше — SABR-only, yt-dlp ff459e5);
+//    живёт в горячем рецепте — бампается деплоем сервера без релиза;
+//  - выходная форма = WarmEntry: всё ниже (validate_warm_url, fetch_to_cache,
+//    warm-кэш, muza-stream) переиспользуется байт-в-байт.
+
+/// Таймаут одного POST /player: ступень 0 либо быстрая, либо сразу уступает
+/// лестнице (не общий RESOLVE_TIMEOUT 180 с — столько ждать нечего).
+const INNERTUBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// TTL кэшированного visitorData гостевой сессии (эмпирически живёт часами;
+/// протухший лечится одним лишним повтором — цена ошибки мала).
+const INNERTUBE_VISITOR_TTL: Duration = Duration::from_secs(6 * 3600);
+const INNERTUBE_ENDPOINT: &str = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
+/// Приоритет itag ступени 0 (только форматы с прямым url).
+const INNERTUBE_ITAGS_DEFAULT: &[u64] = &[251, 140];
+/// Эконом-приоритет — те же малые форматы, что ECONOM_FORMATS лестницы.
+const INNERTUBE_ITAGS_ECONOM: &[u64] = &[250, 249, 139, 251, 140];
+
+/// visitorData гостевой сессии + момент получения (для TTL).
+struct VisitorData {
+    value: String,
+    obtained_at: SystemTime,
+}
+
+/// Блок `youtube.innertube` горячего рецепта — аварийный рубильник ступени 0:
+/// enabled:false или бамп client_version деплоем сервера, без релиза клиента.
+#[derive(Debug, Clone, PartialEq)]
+struct InnertubeConfig {
+    client_name: String,
+    client_version: String,
+    client_name_id: u64,
+}
+
+/// Провал ступени 0: LoginRequired лечится свежим visitorData (один повтор),
+/// остальное — сразу фолбэк на лестницу. Классы — ещё и маркеры KPI
+/// (fail_sabr/fail_login): по ним видно, что android_vr начал деградировать.
+#[derive(Debug, PartialEq)]
+enum InnertubeFail {
+    LoginRequired(String),
+    Sabr(String),
+    Other(String),
+}
+
+/// Успешный разбор ответа /player — та же тройка, что у SimulatedFormat.
+#[derive(Debug, PartialEq)]
+struct InnertubeFormat {
+    url: String,
+    size: u64,
+    ext: String,
+}
+
+/// Рубильник + значения клиента из горячего рецепта. Любая неполнота блока
+/// (нет блока, enabled≠true, битые поля) — ступень 0 выключена: аварийное
+/// отключение обязано срабатывать и на «сервер прислал урезанный блок».
+fn innertube_from_recipe(recipe: &serde_json::Value) -> Option<InnertubeConfig> {
+    let block = &recipe["youtube"]["innertube"];
+    if block["enabled"].as_bool() != Some(true) {
+        return None;
+    }
+    Some(InnertubeConfig {
+        client_name: block["client_name"].as_str()?.to_string(),
+        client_version: block["client_version"].as_str()?.to_string(),
+        client_name_id: block["client_name_id"].as_u64()?,
+    })
+}
+
+/// itag → расширение файла кэша (`{track_id}.{ext}`, понимает find_cached).
+fn innertube_ext_for_itag(itag: u64) -> Option<&'static str> {
+    match itag {
+        249 | 250 | 251 => Some("webm"),
+        139 | 140 => Some("m4a"),
+        _ => None,
+    }
+}
+
+/// Разбор ответа /player: playability-гейт + выбор аудиоформата с прямым url
+/// по приоритету itag. contentLength в живом ответе — СТРОКА («3433755»).
+fn parse_innertube_player(
+    raw: &serde_json::Value,
+    itag_priority: &[u64],
+) -> Result<InnertubeFormat, InnertubeFail> {
+    let status = raw["playabilityStatus"]["status"]
+        .as_str()
+        .unwrap_or("НЕТ_СТАТУСА");
+    if status != "OK" {
+        let reason = raw["playabilityStatus"]["reason"].as_str().unwrap_or("");
+        let msg = format!("{status}: {reason}");
+        return Err(if status == "LOGIN_REQUIRED" {
+            InnertubeFail::LoginRequired(msg)
+        } else {
+            InnertubeFail::Other(msg)
+        });
+    }
+    let formats = raw["streamingData"]["adaptiveFormats"]
+        .as_array()
+        .ok_or_else(|| InnertubeFail::Sabr("нет adaptiveFormats".into()))?;
+    for want in itag_priority {
+        for f in formats {
+            if f["itag"].as_u64() != Some(*want) {
+                continue;
+            }
+            if !f["mimeType"].as_str().unwrap_or("").starts_with("audio/") {
+                continue;
+            }
+            let Some(url) = f["url"].as_str().filter(|u| !u.is_empty()) else {
+                continue;
+            };
+            let Some(ext) = innertube_ext_for_itag(*want) else {
+                continue;
+            };
+            let Some(size) = f["contentLength"]
+                .as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            return Ok(InnertubeFormat {
+                url: url.to_string(),
+                size,
+                ext: ext.to_string(),
+            });
+        }
+    }
+    // Ничего не выбрано. Форматы есть, а прямых url нет ни у одного — это
+    // SABR-сессия (главный ожидаемый режим деградации android_vr).
+    let any_url = formats
+        .iter()
+        .any(|f| f["url"].as_str().map(|u| !u.is_empty()).unwrap_or(false));
+    if !formats.is_empty() && !any_url {
+        return Err(InnertubeFail::Sabr(
+            "adaptiveFormats без прямых url (SABR-сессия)".into(),
+        ));
+    }
+    Err(InnertubeFail::Other(
+        "нет подходящего аудиоформата с прямым url".into(),
+    ))
+}
+
+/// visitorData из ответа: приходит даже при LOGIN_REQUIRED/UNPLAYABLE.
+fn innertube_visitor(raw: &serde_json::Value) -> Option<String> {
+    raw["responseContext"]["visitorData"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+}
+
+/// InnertubeFormat → WarmEntry: та же граница доверия, что у прогрева
+/// (validate_warm_url, лимит 512 МиБ, грамматика ext), expire — из самой
+/// ссылки. Дальше запись обслуживают fetch_to_cache/warm-кэш без изменений.
+fn innertube_warm_entry_with_lookup(
+    fmt: &InnertubeFormat,
+    now: SystemTime,
+    lookup: &mut impl FnMut(&str, u16) -> LookupResult,
+) -> Result<WarmEntry, String> {
+    if !content_length_ok(fmt.size) {
+        return Err(format!("innertube-размер вне лимита: {}", fmt.size));
+    }
+    if !valid_warm_ext(&fmt.ext) {
+        return Err(format!("подозрительное расширение: {:?}", fmt.ext));
+    }
+    let url = validate_warm_url_with_lookup(&fmt.url, lookup)?;
+    let expires_at = warm_expires_at(&url, now);
+    if expires_at <= now {
+        return Err("innertube-URL уже протух".into());
+    }
+    Ok(WarmEntry {
+        url,
+        size: fmt.size,
+        ext: fmt.ext.clone(),
+        provider: "youtube".into(),
+        expires_at,
+    })
+}
+
+fn innertube_warm_entry(fmt: &InnertubeFormat, now: SystemTime) -> Result<WarmEntry, String> {
+    let mut lookup = |host: &str, port: u16| {
+        debug_assert_eq!(port, 443);
+        (host, 443)
+            .to_socket_addrs()
+            .map(|answers| answers.map(|answer| answer.ip()).collect())
+            .map_err(|error| format!("DNS lookup failed: {error}"))
+    };
+    innertube_warm_entry_with_lookup(fmt, now, &mut lookup)
+}
+
+/// Ступень 0 — только когда ВЕДУЩИЙ источник YouTube с валидным id:
+/// приоритет источников сервера не переворачиваем (SoundCloud/Bandcamp
+/// первым — сразу лестница; их прямой резолв — отдельная будущая задача).
+fn stage0_youtube_id(sources: &[SourceRef]) -> Option<String> {
+    match sources.first()? {
+        SourceRef::Youtube { source_id } if valid_youtube_id(source_id) => Some(source_id.clone()),
+        _ => None,
+    }
+}
+
+fn classify_innertube_failure(stats: &mut EngineStats, fail: &InnertubeFail) {
+    match fail {
+        InnertubeFail::Sabr(_) => stats.fail_sabr += 1,
+        InnertubeFail::LoginRequired(_) => stats.fail_login += 1,
+        InnertubeFail::Other(_) => stats.fail_other += 1,
+    }
+}
+
+/// Тело POST /player. Значения client — из рецепта; остальные поля
+/// (deviceMake и пр.) — обязательные константы ANDROID_VR из yt-dlp ff459e5
+/// (без них клиент не признаётся «своим»).
+fn build_innertube_body(
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    visitor: Option<&str>,
+) -> serde_json::Value {
+    let mut client = serde_json::json!({
+        "clientName": cfg.client_name,
+        "clientVersion": cfg.client_version,
+        "deviceMake": "Oculus",
+        "deviceModel": "Quest 3",
+        "androidSdkVersion": 32,
+        "osName": "Android",
+        "osVersion": "12L",
+        "hl": "en",
+        "gl": "US",
+    });
+    if let Some(v) = visitor {
+        client["visitorData"] = serde_json::Value::String(v.to_string());
+    }
+    serde_json::json!({
+        "context": { "client": client },
+        "videoId": video_id,
+        "contentCheckOk": true,
+        "racyCheckOk": true,
+    })
+}
+
+/// Оркестрация visitorData вокруг одного вызова /player (транспорт
+/// инъецируется — тестируется без сети):
+///  1) свежий visitor из состояния идёт в первый запрос;
+///  2) visitorData из ЛЮБОГО ответа освежает состояние;
+///  3) LOGIN_REQUIRED лечится ровно ОДНИМ повтором с новым visitor
+///     (замер 2026-07-19: с ним 5/6 OK) — нечем повторять или снова отказ →
+///     наружу, фолбэк решает вызывающий.
+async fn resolve_via_innertube_with<F, Fut>(
+    state: &EngineState,
+    itag_priority: &[u64],
+    mut call: F,
+) -> Result<InnertubeFormat, InnertubeFail>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+{
+    let now = SystemTime::now();
+    let visitor = {
+        let guard = state.youtube_visitor.lock().unwrap();
+        guard
+            .as_ref()
+            .filter(|v| {
+                now.duration_since(v.obtained_at)
+                    .map(|age| age < INNERTUBE_VISITOR_TTL)
+                    .unwrap_or(false)
+            })
+            .map(|v| v.value.clone())
+    };
+    let resp = call(visitor.clone()).await.map_err(InnertubeFail::Other)?;
+    let fresh = innertube_visitor(&resp);
+    if let Some(v) = &fresh {
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: v.clone(),
+            obtained_at: SystemTime::now(),
+        });
+    }
+    match parse_innertube_player(&resp, itag_priority) {
+        Err(InnertubeFail::LoginRequired(msg)) => {
+            // повторяем только если появился ДРУГОЙ visitor — слать тот же
+            // значит получить тот же отказ
+            let Some(retry_visitor) = fresh.filter(|v| Some(v.as_str()) != visitor.as_deref())
+            else {
+                return Err(InnertubeFail::LoginRequired(msg));
+            };
+            let resp2 = call(Some(retry_visitor))
+                .await
+                .map_err(InnertubeFail::Other)?;
+            if let Some(v2) = innertube_visitor(&resp2) {
+                *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+                    value: v2,
+                    obtained_at: SystemTime::now(),
+                });
+            }
+            parse_innertube_player(&resp2, itag_priority)
+        }
+        other => other,
+    }
+}
+
+/// Сетевой транспорт ступени 0: один POST /player клиентом из рецепта.
+/// Форма запроса проверена живьём 2026-07-19 (~171 мс медианы); UA и
+/// заголовки X-YouTube-* обязательны. reqwest собран без фичи gzip —
+/// Accept-Encoding: identity делает ответ детерминированно несжатым.
+async fn innertube_player_call(
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    visitor: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let body = build_innertube_body(cfg, video_id, visitor);
+    let ua = format!(
+        "com.google.android.apps.youtube.vr.oculus/{} (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+        cfg.client_version
+    );
+    let mut req = warm_http_client()
+        .post(INNERTUBE_ENDPOINT)
+        .header("Content-Type", "application/json")
+        .header("User-Agent", ua)
+        .header("X-YouTube-Client-Name", cfg.client_name_id.to_string())
+        .header("X-YouTube-Client-Version", &cfg.client_version)
+        .header("Origin", "https://www.youtube.com")
+        .header("Accept-Encoding", "identity")
+        .timeout(INNERTUBE_TIMEOUT)
+        .body(serde_json::to_vec(&body).map_err(|e| format!("сериализация body: {e}"))?);
+    if let Some(v) = visitor {
+        req = req.header("X-Goog-Visitor-Id", v);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("POST /player не ушёл: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() != 200 {
+        return Err(format!("POST /player: статус {status}"));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("чтение ответа /player: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("ответ /player не JSON: {e}"))
+}
+
+/// Боевая ступень 0 целиком: POST → разбор → WarmEntry той же формы, что у
+/// прогрева. Err любого класса = «молча уступи лестнице» у вызывающего.
+async fn resolve_via_innertube(
+    state: &EngineState,
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    itag_priority: &[u64],
+) -> Result<WarmEntry, InnertubeFail> {
+    let cfg_owned = cfg.clone();
+    let vid = video_id.to_string();
+    let fmt = resolve_via_innertube_with(state, itag_priority, move |visitor| {
+        let cfg = cfg_owned.clone();
+        let vid = vid.clone();
+        async move { innertube_player_call(&cfg, &vid, visitor.as_deref()).await }
+    })
+    .await?;
+    innertube_warm_entry(&fmt, SystemTime::now()).map_err(InnertubeFail::Other)
+}
+
 /// Валидация id трека: имя каталога/файла кэша (общая для resolve и warm).
 fn validate_track_id(track_id: &str) -> Result<(), String> {
     if track_id.is_empty()
@@ -1660,6 +2047,28 @@ pub async fn engine_warm(
             warm: true,
             cached: false,
         });
+    }
+
+    // Ступень 0 (2026-07-19): прогрев тем же прямым InnerTube-резолвом —
+    // ~171 мс вместо ~2–4 с процесса yt-dlp (дешёвый прогрев = можно греть
+    // смелее). Провал молча уступает yt-dlp --simulate ниже; счётчики KPI
+    // прогрев не трогает (см. док-коммент команды).
+    let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
+    if let Some(cfg) = innertube_cfg {
+        if let Some(video_id) = stage0_youtube_id(&sources) {
+            let itags = if quality.as_deref() == Some("econom") {
+                INNERTUBE_ITAGS_ECONOM
+            } else {
+                INNERTUBE_ITAGS_DEFAULT
+            };
+            if let Ok(entry) = resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                store_warm_entry(&state, &cache_ns, &track_id, entry);
+                return Ok(WarmOut {
+                    warm: true,
+                    cached: false,
+                });
+            }
+        }
     }
 
     let (clients, format_str) = ladder_from_recipe(&state, quality.as_deref());
@@ -2188,6 +2597,46 @@ pub async fn engine_resolve(
         }
     }
 
+    // Ступень 0 (2026-07-19): прямой InnerTube-резолв — один POST вместо
+    // процесса yt-dlp (~171 мс против ~3.6 с, полный путь ~4.5 с → ~1.4 с).
+    // Только когда ведущий источник YouTube. Та же дисциплина, что у warm-пути
+    // выше: любой провал (SABR, бот-гейт, UNPLAYABLE, сеть, 403 на байтах)
+    // МОЛЧА уступает лестнице — ступень 0 не имеет права сделать трек
+    // неиграбельным. Провалы метятся в KPI (fail_sabr/fail_login) — по ним
+    // видно, что android_vr деградирует и пора бампить рецепт.
+    let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
+    if let Some(cfg) = innertube_cfg {
+        if let Some(video_id) = stage0_youtube_id(&sources) {
+            let itags = if quality.as_deref() == Some("econom") {
+                INNERTUBE_ITAGS_ECONOM
+            } else {
+                INNERTUBE_ITAGS_DEFAULT
+            };
+            match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                Ok(entry) => match fetch_to_cache(&dir, &track_id, &entry).await {
+                    Ok(path) => {
+                        let limit = *state.cache_limit_bytes.lock().unwrap();
+                        ensure_pins_loaded(&app, &state, &cache_ns);
+                        let pins = state.pins.lock().unwrap().clone();
+                        evict_lru(&dir, limit, &path, &pins);
+                        state.stats.lock().unwrap().resolve_ok += 1;
+                        return Ok(ResolveOut {
+                            path: path.to_string_lossy().into_owned(),
+                            from_cache: false,
+                            provider: Some(entry.provider),
+                        });
+                    }
+                    // байты не доехали (протухло/смена IP → 403) — лестница;
+                    // маркеры ошибки понимает существующий классификатор
+                    Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
+                },
+                Err(fail) => {
+                    classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail)
+                }
+            }
+        }
+    }
+
     // Лестница попыток из рецепта (спайк Stage 0: tv → web_music → след. источник)
     let (clients, format_str) = ladder_from_recipe(&state, quality.as_deref());
 
@@ -2570,8 +3019,8 @@ mod tests {
         let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
         assert_eq!(
             recipe["recipe_version"].as_u64(),
-            Some(6),
-            "бандл-рецепт обязан быть v6 (правка порядка лестницы 2026-07-15); \
+            Some(7),
+            "бандл-рецепт обязан быть v7 (ступень 0 innertube 2026-07-19); \
              серверный recipe.config.ts обязан быть той же версии"
         );
     }
@@ -4181,6 +4630,503 @@ mod warm_tests {
         );
         fs::write(dir.join("42.opus"), b"full").unwrap();
         assert!(find_cached(&dir, "42").is_some(), "полный файл — хит");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod innertube_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    /// Живые ответы /player от 2026-07-19, санитизированные для публичного
+    /// репо (IP/ei/id/sig/visitorData заменены синтетикой, форма полей — как
+    /// в живом ответе: contentLength — СТРОКА, и т.д.). Снято probe-скриптом,
+    /// методика — docs/notes/2026-07-19-прямой-innertube-резолв-замер.md.
+    fn ok_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../testdata/innertube_player_ok.json")).unwrap()
+    }
+
+    fn unplayable_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../testdata/innertube_player_unplayable.json")).unwrap()
+    }
+
+    fn login_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../testdata/innertube_player_login_required.json"
+        ))
+        .unwrap()
+    }
+
+    /// visitorData из санитизированных фикстур.
+    const SYNTH_VISITOR: &str = "CgtTWU5USF9WSVNJVE9SKPKm89IGMmIKAlVTElwSWA%3D%3D";
+
+    fn public_lookup(_host: &str, _port: u16) -> LookupResult {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))])
+    }
+
+    // ── Разбор ответа ──────────────────────────────────────────────
+
+    /// opus 251 предпочтён m4a 140; размер — из строкового contentLength.
+    #[test]
+    fn parse_prefers_opus_251() {
+        let fmt = parse_innertube_player(&ok_fixture(), INNERTUBE_ITAGS_DEFAULT).unwrap();
+        assert_eq!(fmt.ext, "webm");
+        assert_eq!(fmt.size, 3_433_755);
+        assert!(fmt.url.contains("itag=251"), "{}", fmt.url);
+    }
+
+    /// Нет opus — берём m4a 140 (вторая ступень приоритета).
+    #[test]
+    fn parse_falls_back_to_m4a_without_opus() {
+        let mut raw = ok_fixture();
+        raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| {
+                !f["mimeType"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("audio/webm")
+            });
+        let fmt = parse_innertube_player(&raw, INNERTUBE_ITAGS_DEFAULT).unwrap();
+        assert_eq!(fmt.ext, "m4a");
+        assert!(fmt.url.contains("itag=140"), "{}", fmt.url);
+    }
+
+    /// Эконом-приоритет — малые форматы (тот же смысл, что ECONOM_FORMATS
+    /// лестницы): из фикстуры берётся 249 (250 в ней нет).
+    #[test]
+    fn parse_econom_prefers_small_formats() {
+        let fmt = parse_innertube_player(&ok_fixture(), INNERTUBE_ITAGS_ECONOM).unwrap();
+        assert!(fmt.url.contains("itag=249"), "{}", fmt.url);
+        assert_eq!(fmt.ext, "webm");
+        assert_eq!(fmt.size, 1_231_355);
+    }
+
+    /// Видео-форматы — не кандидаты, даже когда аудио в ответе нет вовсе.
+    #[test]
+    fn parse_ignores_video_formats() {
+        let mut raw = ok_fixture();
+        raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| {
+                f["mimeType"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("video/")
+            });
+        assert!(parse_innertube_player(&raw, INNERTUBE_ITAGS_DEFAULT).is_err());
+    }
+
+    /// Реальная блокировка правообладателем (живой ответ: Bohemian Rhapsody,
+    /// SME) — провал, годный для фолбэка; повтором не лечится.
+    #[test]
+    fn parse_unplayable_is_error() {
+        let err =
+            parse_innertube_player(&unplayable_fixture(), INNERTUBE_ITAGS_DEFAULT).unwrap_err();
+        match err {
+            InnertubeFail::Other(msg) => assert!(msg.contains("UNPLAYABLE"), "{msg}"),
+            other => panic!("ожидали Other(UNPLAYABLE), получили {other:?}"),
+        }
+    }
+
+    /// Бот-гейт «Sign in to confirm…» — отдельный класс: его лечит один
+    /// повтор со свежим visitorData (замер: без visitorData 5 отказов из 6).
+    #[test]
+    fn parse_login_required_is_login_class() {
+        let err = parse_innertube_player(&login_fixture(), INNERTUBE_ITAGS_DEFAULT).unwrap_err();
+        assert!(matches!(err, InnertubeFail::LoginRequired(_)), "{err:?}");
+    }
+
+    /// SABR-сессия: playability OK, форматы есть, а прямых url нет — отдельный
+    /// класс для KPI (рост fail_sabr = сигнал бампить рецепт).
+    #[test]
+    fn parse_formats_without_url_is_sabr() {
+        let mut raw = ok_fixture();
+        for f in raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+        {
+            f.as_object_mut().unwrap().remove("url");
+        }
+        let err = parse_innertube_player(&raw, INNERTUBE_ITAGS_DEFAULT).unwrap_err();
+        assert!(matches!(err, InnertubeFail::Sabr(_)), "{err:?}");
+    }
+
+    /// itag → расширение файла кэша (грамматика valid_warm_ext).
+    #[test]
+    fn ext_table_matches_itags() {
+        assert_eq!(innertube_ext_for_itag(251), Some("webm"));
+        assert_eq!(innertube_ext_for_itag(250), Some("webm"));
+        assert_eq!(innertube_ext_for_itag(249), Some("webm"));
+        assert_eq!(innertube_ext_for_itag(140), Some("m4a"));
+        assert_eq!(innertube_ext_for_itag(139), Some("m4a"));
+        assert_eq!(innertube_ext_for_itag(22), None);
+    }
+
+    // ── WarmEntry из ответа ────────────────────────────────────────
+
+    /// Форма наружу — WarmEntry: expire из САМОЙ ссылки (не константа 6ч),
+    /// провайдер youtube; всё ниже (fetch_to_cache и т.д.) переиспользуется.
+    #[test]
+    fn warm_entry_takes_expire_from_url() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let fmt = InnertubeFormat {
+            url: "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000&itag=251"
+                .into(),
+            size: 3_433_755,
+            ext: "webm".into(),
+        };
+        let entry = innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).unwrap();
+        assert_eq!(
+            entry.expires_at,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_021_000) - WARM_EXPIRY_MARGIN
+        );
+        assert_eq!(entry.size, 3_433_755);
+        assert_eq!(entry.ext, "webm");
+        assert_eq!(entry.provider, "youtube");
+    }
+
+    /// Граница доверия validate_warm_url наследуется без ослаблений.
+    #[test]
+    fn warm_entry_rejects_invalid_url() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for raw in [
+            "http://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000",
+            "https://user:pass@rr1---sn-example.googlevideo.com/videoplayback?expire=1021000",
+        ] {
+            let fmt = InnertubeFormat {
+                url: raw.into(),
+                size: 100,
+                ext: "webm".into(),
+            };
+            assert!(
+                innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                "{raw:?} обязан отвергаться"
+            );
+        }
+    }
+
+    /// Уже протухший expire — мертворождённая запись: Err сразу.
+    #[test]
+    fn warm_entry_rejects_already_expired() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000);
+        let fmt = InnertubeFormat {
+            url: "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000".into(),
+            size: 100,
+            ext: "webm".into(),
+        };
+        assert!(innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err());
+    }
+
+    /// Лимит 512 МиБ — тот же, что у yt-dlp-пути (проверка ДО запроса байт).
+    #[test]
+    fn warm_entry_rejects_oversize() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for size in [0u64, MAX_YTDLP_OUTPUT_BYTES + 1] {
+            let fmt = InnertubeFormat {
+                url: "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000"
+                    .into(),
+                size,
+                ext: "webm".into(),
+            };
+            assert!(
+                innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                "size {size} обязан отвергаться"
+            );
+        }
+    }
+
+    // ── visitorData и тело запроса ─────────────────────────────────
+
+    /// visitorData приходит в КАЖДОМ ответе — даже LOGIN_REQUIRED и
+    /// UNPLAYABLE (на этом стоит бутстрап).
+    #[test]
+    fn visitor_captured_from_any_response() {
+        for raw in [ok_fixture(), login_fixture(), unplayable_fixture()] {
+            assert_eq!(innertube_visitor(&raw).as_deref(), Some(SYNTH_VISITOR));
+        }
+    }
+
+    /// Тело запроса: значения client — из рецепта (бампаются деплоем сервера
+    /// без релиза клиента); visitorData кладётся только когда он есть.
+    #[test]
+    fn body_builder_uses_recipe_values_and_visitor() {
+        let cfg = InnertubeConfig {
+            client_name: "ANDROID_VR".into(),
+            client_version: "1.65.10".into(),
+            client_name_id: 28,
+        };
+        let body = build_innertube_body(&cfg, "dQw4w9WgXcQ", None);
+        assert_eq!(body["context"]["client"]["clientName"], "ANDROID_VR");
+        assert_eq!(body["context"]["client"]["clientVersion"], "1.65.10");
+        assert_eq!(body["context"]["client"]["deviceMake"], "Oculus");
+        assert_eq!(body["videoId"], "dQw4w9WgXcQ");
+        assert_eq!(body["contentCheckOk"], true);
+        assert_eq!(body["racyCheckOk"], true);
+        assert!(body["context"]["client"].get("visitorData").is_none());
+        let with = build_innertube_body(&cfg, "dQw4w9WgXcQ", Some("V1"));
+        assert_eq!(with["context"]["client"]["visitorData"], "V1");
+    }
+
+    // ── Рецепт ─────────────────────────────────────────────────────
+
+    /// Рубильник: блока нет, enabled:false или битые поля — ступень 0
+    /// выключена (клиент откатывается на yt-dlp сам, без релиза).
+    #[test]
+    fn innertube_config_from_recipe_with_kill_switch() {
+        let on = serde_json::json!({"youtube": {"innertube": {
+            "enabled": true, "client_name": "ANDROID_VR",
+            "client_version": "1.65.10", "client_name_id": 28}}});
+        assert_eq!(
+            innertube_from_recipe(&on),
+            Some(InnertubeConfig {
+                client_name: "ANDROID_VR".into(),
+                client_version: "1.65.10".into(),
+                client_name_id: 28,
+            })
+        );
+        let off = serde_json::json!({"youtube": {"innertube": {
+            "enabled": false, "client_name": "ANDROID_VR",
+            "client_version": "1.65.10", "client_name_id": 28}}});
+        assert_eq!(innertube_from_recipe(&off), None);
+        let absent = serde_json::json!({"youtube": {}});
+        assert_eq!(innertube_from_recipe(&absent), None);
+        let broken = serde_json::json!({"youtube": {"innertube": {"enabled": true}}});
+        assert_eq!(innertube_from_recipe(&broken), None);
+    }
+
+    /// Бандл-рецепт обязан включать ступень 0 — иначе она не работает
+    /// оффлайн и до первого горячего рецепта.
+    #[test]
+    fn default_recipe_enables_innertube_stage0() {
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let cfg = innertube_from_recipe(&recipe).expect("ступень 0 включена в бандл-рецепте");
+        assert_eq!(cfg.client_name, "ANDROID_VR");
+        assert_eq!(
+            cfg.client_version, "1.65.10",
+            "clientVersion>1.65 может отдавать SABR-only (yt-dlp ff459e5) — \
+             бампить только через рецепт с проверкой"
+        );
+        assert_eq!(cfg.client_name_id, 28);
+    }
+
+    // ── Выбор источника и KPI ──────────────────────────────────────
+
+    /// Ступень 0 — только когда ПЕРВЫЙ источник YouTube с валидным id:
+    /// приоритет источников сервера не переворачиваем, SoundCloud/Bandcamp
+    /// идут лестницей.
+    #[test]
+    fn stage0_only_for_leading_valid_youtube_source() {
+        let yt = SourceRef::Youtube {
+            source_id: "dQw4w9WgXcQ".into(),
+        };
+        let sc = SourceRef::Soundcloud {
+            source_id: "12345".into(),
+            canonical_url: "https://soundcloud.com/a/b".into(),
+        };
+        let bad = SourceRef::Youtube {
+            source_id: "../слишком-кривой-id".into(),
+        };
+        assert_eq!(stage0_youtube_id(&[yt]).as_deref(), Some("dQw4w9WgXcQ"));
+        assert_eq!(
+            stage0_youtube_id(&[
+                sc,
+                SourceRef::Youtube {
+                    source_id: "dQw4w9WgXcQ".into()
+                }
+            ]),
+            None,
+            "SoundCloud первый — приоритет сервера не переворачиваем"
+        );
+        assert_eq!(stage0_youtube_id(&[bad]), None, "кривой id — лестница");
+        assert_eq!(stage0_youtube_id(&[]), None);
+    }
+
+    /// Маркеры KPI прямого пути: по ним видно деградацию android_vr.
+    #[test]
+    fn classify_innertube_counters() {
+        let mut stats = EngineStats::default();
+        classify_innertube_failure(&mut stats, &InnertubeFail::Sabr("нет url".into()));
+        classify_innertube_failure(&mut stats, &InnertubeFail::LoginRequired("бот-гейт".into()));
+        classify_innertube_failure(&mut stats, &InnertubeFail::Other("UNPLAYABLE".into()));
+        assert_eq!(stats.fail_sabr, 1);
+        assert_eq!(stats.fail_login, 1);
+        assert_eq!(stats.fail_other, 1);
+    }
+
+    // ── Оркестрация visitorData (инъекция транспорта) ──────────────
+
+    fn run_orchestration(
+        state: &EngineState,
+        responses: Vec<Result<serde_json::Value, String>>,
+    ) -> (Result<InnertubeFormat, InnertubeFail>, Vec<Option<String>>) {
+        let calls: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
+        let queue: Mutex<VecDeque<Result<serde_json::Value, String>>> =
+            Mutex::new(VecDeque::from(responses));
+        let result = tauri::async_runtime::block_on(resolve_via_innertube_with(
+            state,
+            INNERTUBE_ITAGS_DEFAULT,
+            |visitor| {
+                calls.lock().unwrap().push(visitor);
+                let resp = queue
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("лишний вызов транспорта");
+                async move { resp }
+            },
+        ));
+        (result, calls.into_inner().unwrap())
+    }
+
+    /// Бутстрап: без visitorData первый ответ — бот-гейт, но visitorData в
+    /// нём есть; ОДИН повтор с ним обязан спасти запрос, а значение — осесть
+    /// в состоянии для следующих резолвов.
+    #[test]
+    fn orchestration_bootstraps_visitor_and_retries_once() {
+        let state = EngineState::default();
+        let (result, calls) =
+            run_orchestration(&state, vec![Ok(login_fixture()), Ok(ok_fixture())]);
+        let fmt = result.expect("повтор со свежим visitorData обязан спасти");
+        assert_eq!(fmt.size, 3_433_755);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], None);
+        assert_eq!(calls[1].as_deref(), Some(SYNTH_VISITOR));
+        let stored = state.youtube_visitor.lock().unwrap();
+        assert_eq!(
+            stored.as_ref().map(|v| v.value.as_str()),
+            Some(SYNTH_VISITOR),
+            "visitor остаётся в состоянии"
+        );
+    }
+
+    /// Свежий visitor из состояния идёт уже в ПЕРВЫЙ запрос (обычный путь —
+    /// один POST, ~171 мс); ответ освежает значение.
+    #[test]
+    fn orchestration_reuses_fresh_visitor() {
+        let state = EngineState::default();
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-СВОЙ".into(),
+            obtained_at: SystemTime::now(),
+        });
+        let (result, calls) = run_orchestration(&state, vec![Ok(ok_fixture())]);
+        assert!(result.is_ok());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].as_deref(), Some("V-СВОЙ"));
+        assert_eq!(
+            state
+                .youtube_visitor
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|v| v.value.as_str()),
+            Some(SYNTH_VISITOR),
+            "ответ освежает visitor"
+        );
+    }
+
+    /// Протухший visitor не переиспользуется — идём бутстрапом (None).
+    #[test]
+    fn orchestration_ignores_stale_visitor() {
+        let state = EngineState::default();
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-СТАРЫЙ".into(),
+            obtained_at: SystemTime::now() - INNERTUBE_VISITOR_TTL - Duration::from_secs(1),
+        });
+        let (result, calls) = run_orchestration(&state, vec![Ok(ok_fixture())]);
+        assert!(result.is_ok());
+        assert_eq!(calls[0], None, "протухший visitor не шлём");
+    }
+
+    /// Два бот-гейта подряд — сдаёмся: не больше ОДНОГО повтора, наружу
+    /// LoginRequired (фолбэк на лестницу, счётчик fail_login).
+    #[test]
+    fn orchestration_gives_up_after_second_login() {
+        let state = EngineState::default();
+        let (result, calls) =
+            run_orchestration(&state, vec![Ok(login_fixture()), Ok(login_fixture())]);
+        assert!(matches!(result, Err(InnertubeFail::LoginRequired(_))));
+        assert_eq!(calls.len(), 2);
+    }
+
+    /// Бот-гейт БЕЗ visitorData в ответе — повторять нечем, сдаёмся сразу.
+    #[test]
+    fn orchestration_login_without_visitor_gives_up() {
+        let state = EngineState::default();
+        let mut login = login_fixture();
+        login["responseContext"]
+            .as_object_mut()
+            .unwrap()
+            .remove("visitorData");
+        let (result, calls) = run_orchestration(&state, vec![Ok(login)]);
+        assert!(matches!(result, Err(InnertubeFail::LoginRequired(_))));
+        assert_eq!(calls.len(), 1);
+    }
+
+    /// UNPLAYABLE повтором не лечится — один вызов и сразу фолбэк.
+    #[test]
+    fn orchestration_no_retry_on_unplayable() {
+        let state = EngineState::default();
+        let (result, calls) = run_orchestration(&state, vec![Ok(unplayable_fixture())]);
+        assert!(matches!(result, Err(InnertubeFail::Other(_))));
+        assert_eq!(calls.len(), 1);
+    }
+
+    /// Сеть/таймаут — Other без повтора: ступень 0 либо быстрая, либо сразу
+    /// уступает лестнице.
+    #[test]
+    fn orchestration_network_error_is_other() {
+        let state = EngineState::default();
+        let (result, calls) = run_orchestration(&state, vec![Err("сеть упала".into())]);
+        assert!(matches!(result, Err(InnertubeFail::Other(_))));
+        assert_eq!(calls.len(), 1);
+    }
+
+    /// Живой сквозной прогон ступени 0: POST /player → WarmEntry →
+    /// fetch_to_cache. Закрывает и «НЕ проверено» из ресёрча 2026-07-19:
+    /// скачивание байтов по прямому googlevideo-URL нашим reqwest (из Node
+    /// его резал DPI). `cargo test innertube_real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "сеть: живые POST /player и GET байтов"]
+    fn innertube_real_resolve_and_fetch() {
+        let dir = std::env::temp_dir().join("muza-innertube-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let state = EngineState::default();
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let cfg = innertube_from_recipe(&recipe).expect("ступень 0 включена");
+
+        let started = std::time::Instant::now();
+        let entry = tauri::async_runtime::block_on(resolve_via_innertube(
+            &state,
+            &cfg,
+            "dQw4w9WgXcQ",
+            INNERTUBE_ITAGS_DEFAULT,
+        ))
+        .expect("прямой резолв обязан пройти");
+        println!(
+            "резолв: {} мс, ext {}, size {}",
+            started.elapsed().as_millis(),
+            entry.ext,
+            entry.size
+        );
+
+        let started = std::time::Instant::now();
+        let path = tauri::async_runtime::block_on(fetch_to_cache(&dir, "smoke1", &entry))
+            .expect("байты по прямому URL обязаны доехать");
+        let size = fs::metadata(&path).unwrap().len();
+        println!(
+            "байты: {} мс, {} байт, {}",
+            started.elapsed().as_millis(),
+            size,
+            path.display()
+        );
+        assert_eq!(size, entry.size, "скачали ровно столько, сколько заявлено");
+        assert!(size > 1_000_000, "полноразмерное аудио");
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,164 @@
+{
+  "responseContext": {
+    "visitorData": "CgtTWU5USF9WSVNJVE9SKPKm89IGMmIKAlVTElwSWA%3D%3D"
+  },
+  "playabilityStatus": {
+    "status": "OK",
+    "playableInEmbed": true
+  },
+  "streamingData": {
+    "expiresInSeconds": "21540",
+    "adaptiveFormats": [
+      {
+        "itag": 313,
+        "url": "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1784482114&ei=SYNTH_EI&ip=203.0.113.7&id=o-SYNTH&itag=313&source=youtube&mime=video%2Fwebm&dur=213.040&lmt=1766963492248817&ratebypass=yes&sig=SYNTH_SIG",
+        "mimeType": "video/webm; codecs=\"vp9\"",
+        "bitrate": 18076636,
+        "width": 3840,
+        "height": 2160,
+        "initRange": {
+          "start": "0",
+          "end": "220"
+        },
+        "indexRange": {
+          "start": "221",
+          "end": "893"
+        },
+        "lastModified": "1766963492248817",
+        "contentLength": "358608461",
+        "quality": "hd2160",
+        "fps": 25,
+        "qualityLabel": "2160p",
+        "projectionType": "RECTANGULAR",
+        "averageBitrate": 13466333,
+        "colorInfo": {
+          "primaries": "COLOR_PRIMARIES_BT709",
+          "transferCharacteristics": "COLOR_TRANSFER_CHARACTERISTICS_BT709",
+          "matrixCoefficients": "COLOR_MATRIX_COEFFICIENTS_BT709"
+        },
+        "approxDurationMs": "213040",
+        "qualityOrdinal": "QUALITY_ORDINAL_2160P"
+      },
+      {
+        "itag": 251,
+        "url": "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1784482114&ei=SYNTH_EI&ip=203.0.113.7&id=o-SYNTH&itag=251&source=youtube&mime=audio%2Fwebm&dur=213.061&lmt=1766955883819090&ratebypass=yes&sig=SYNTH_SIG",
+        "mimeType": "audio/webm; codecs=\"opus\"",
+        "bitrate": 136544,
+        "initRange": {
+          "start": "0",
+          "end": "258"
+        },
+        "indexRange": {
+          "start": "259",
+          "end": "629"
+        },
+        "lastModified": "1766955883819090",
+        "contentLength": "3433755",
+        "quality": "tiny",
+        "projectionType": "RECTANGULAR",
+        "averageBitrate": 128930,
+        "audioQuality": "AUDIO_QUALITY_MEDIUM",
+        "approxDurationMs": "213061",
+        "audioSampleRate": "48000",
+        "audioChannels": 2,
+        "loudnessDb": 0.97999954,
+        "trackAbsoluteLoudnessLkfs": -13.02,
+        "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+      },
+      {
+        "itag": 140,
+        "url": "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1784482114&ei=SYNTH_EI&ip=203.0.113.7&id=o-SYNTH&itag=140&source=youtube&mime=audio%2Fmp4&dur=213.089&lmt=1766955925572207&ratebypass=yes&sig=SYNTH_SIG",
+        "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"",
+        "bitrate": 130677,
+        "initRange": {
+          "start": "0",
+          "end": "722"
+        },
+        "indexRange": {
+          "start": "723",
+          "end": "1018"
+        },
+        "lastModified": "1766955925572207",
+        "contentLength": "3449447",
+        "quality": "tiny",
+        "projectionType": "RECTANGULAR",
+        "averageBitrate": 129502,
+        "highReplication": true,
+        "audioQuality": "AUDIO_QUALITY_MEDIUM",
+        "approxDurationMs": "213089",
+        "audioSampleRate": "44100",
+        "audioChannels": 2,
+        "loudnessDb": 0.9899998,
+        "trackAbsoluteLoudnessLkfs": -13.01,
+        "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+      },
+      {
+        "itag": 249,
+        "url": "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1784482114&ei=SYNTH_EI&ip=203.0.113.7&id=o-SYNTH&itag=249&source=youtube&mime=audio%2Fwebm&dur=213.061&lmt=1766955883595299&ratebypass=yes&sig=SYNTH_SIG",
+        "mimeType": "audio/webm; codecs=\"opus\"",
+        "bitrate": 49496,
+        "initRange": {
+          "start": "0",
+          "end": "258"
+        },
+        "indexRange": {
+          "start": "259",
+          "end": "628"
+        },
+        "lastModified": "1766955883595299",
+        "contentLength": "1231355",
+        "quality": "tiny",
+        "projectionType": "RECTANGULAR",
+        "averageBitrate": 46234,
+        "audioQuality": "AUDIO_QUALITY_LOW",
+        "approxDurationMs": "213061",
+        "audioSampleRate": "48000",
+        "audioChannels": 2,
+        "loudnessDb": 0.97999954,
+        "trackAbsoluteLoudnessLkfs": -13.02,
+        "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+      },
+      {
+        "itag": 139,
+        "url": "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1784482114&ei=SYNTH_EI&ip=203.0.113.7&id=o-SYNTH&itag=139&source=youtube&mime=audio%2Fmp4&dur=213.159&lmt=1766955925459591&ratebypass=yes&sig=SYNTH_SIG",
+        "mimeType": "audio/mp4; codecs=\"mp4a.40.5\"",
+        "bitrate": 50152,
+        "initRange": {
+          "start": "0",
+          "end": "731"
+        },
+        "indexRange": {
+          "start": "732",
+          "end": "1027"
+        },
+        "lastModified": "1766955925459591",
+        "contentLength": "1300631",
+        "quality": "tiny",
+        "projectionType": "RECTANGULAR",
+        "averageBitrate": 48813,
+        "audioQuality": "AUDIO_QUALITY_LOW",
+        "approxDurationMs": "213159",
+        "audioSampleRate": "22050",
+        "audioChannels": 2,
+        "loudnessDb": 0.9899998,
+        "trackAbsoluteLoudnessLkfs": -13.01,
+        "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+      }
+    ]
+  },
+  "videoDetails": {
+    "videoId": "dQw4w9WgXcQ",
+    "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+    "author": "Rick Astley",
+    "lengthSeconds": "213",
+    "thumbnail": {
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg",
+          "width": 120,
+          "height": 90
+        }
+      ]
+    }
+  }
+}
