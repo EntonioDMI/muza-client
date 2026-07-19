@@ -1663,7 +1663,10 @@ async fn write_body_to_part(
 
 /// Таймаут одного POST /player: ступень 0 либо быстрая, либо сразу уступает
 /// лестнице (не общий RESOLVE_TIMEOUT 180 с — столько ждать нечего).
-const INNERTUBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// Было 8с (2026-07-19 → 4с): норма ~0.75с даже с бутстрапом visitorData,
+/// дольше 4с — лестница выгоднее; worst-case клика при бот-гейте
+/// (2 POST × таймаут) падает с 16с до 8с, дальше негативный кэш.
+const INNERTUBE_TIMEOUT: Duration = Duration::from_secs(4);
 /// TTL кэшированного visitorData гостевой сессии (эмпирически живёт часами;
 /// протухший лечится одним лишним повтором — цена ошибки мала).
 const INNERTUBE_VISITOR_TTL: Duration = Duration::from_secs(6 * 3600);
@@ -2100,7 +2103,13 @@ async fn resolve_via_innertube(
         async move { innertube_player_call(&cfg, &vid, visitor.as_deref()).await }
     })
     .await?;
-    innertube_warm_entry(&fmt, SystemTime::now()).map_err(InnertubeFail::Other)
+    // DNS-preflight validate_warm_url — блокирующий getaddrinfo: с async-
+    // рантайма его уводит spawn_blocking (лестница делает так же в
+    // build_attempts) — медленный DNS не душит соседние async-задачи.
+    tauri::async_runtime::spawn_blocking(move || innertube_warm_entry(&fmt, SystemTime::now()))
+        .await
+        .map_err(|e| InnertubeFail::Other(format!("spawn_blocking: {e}")))?
+        .map_err(InnertubeFail::Other)
 }
 
 /// Валидация id трека: имя каталога/файла кэша (общая для resolve и warm).
@@ -2281,9 +2290,16 @@ pub async fn engine_warm(
                     last_error = format!("warm-размер вне лимита: {}", sim.size);
                     continue;
                 }
-                let url = match validate_warm_url(&sim.url) {
-                    Ok(url) => url,
-                    Err(e) => {
+                // DNS-preflight — блокирующий getaddrinfo, с async-рантайма
+                // уводится в spawn_blocking (как build_attempts лестницы)
+                let sim_url = sim.url.clone();
+                let validated =
+                    tauri::async_runtime::spawn_blocking(move || validate_warm_url(&sim_url))
+                        .await
+                        .map_err(|e| format!("spawn_blocking: {e}"));
+                let url = match validated {
+                    Ok(Ok(url)) => url,
+                    Ok(Err(e)) | Err(e) => {
                         last_error = e;
                         continue;
                     }
