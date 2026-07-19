@@ -3,7 +3,7 @@ import { Button, EmptyState, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { WRAPPED_BANNER_PREVIEW, WRAPPED_ENABLED, wrappedSeason } from "../lib/wrappedSeason";
-import { fmtTime } from "../lib/format";
+import { fmtTime, primarySourceLabel } from "../lib/format";
 import { useWarmRow } from "../player/useWarmer";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
@@ -74,7 +74,7 @@ export function HomeFeed({
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
-  rowShow?: { cover: boolean; duration: boolean };
+  rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
   /** «⋯» на каталожном треке (плейлист/версии/оффлайн/радио). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
@@ -84,7 +84,7 @@ export function HomeFeed({
   /** Открыть Wrapped «Итоги года» (Stage 7); undefined у анонима. */
   onOpenWrapped?: () => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { dragSource } = useDrag();
   const warmRow = useWarmRow();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
@@ -243,8 +243,10 @@ export function HomeFeed({
                         showCover={rowShow?.cover !== false}
                         title={tr.title}
                         artist={tr.artist}
+                        album={rowShow?.album ? (tr.album ?? undefined) : undefined}
                         duration={fmtTime(tr.durationSec)}
                         showDuration={rowShow?.duration !== false}
+                        source={rowShow?.source ? primarySourceLabel(tr.sources, lang) : undefined}
                         active={currentId === tr.id}
                         playing={currentId === tr.id && playing}
                         liked={likes.includes(tr.id)}

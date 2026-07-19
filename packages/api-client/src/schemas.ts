@@ -47,6 +47,9 @@ export const TrackSchema = z.object({
   id: z.string(),
   artist: z.string(),
   title: z.string(),
+  /** Название альбома; сервер пока не отдаёт (поле опционально-заготовкой:
+   *  строка трека умеет показывать альбом — rowShow.album, 19.07). */
+  album: z.string().nullable().optional(),
   durationSec: z.number(),
   coverUrl: z.string().nullable(),
   /** Есть в серверном аудио-кэше (фолбэк-путь). */

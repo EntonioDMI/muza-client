@@ -61,7 +61,7 @@ export function SearchView({
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
-  rowShow?: { cover: boolean; duration: boolean };
+  rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
   onNotify: (text: string, icon?: string) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
@@ -305,8 +305,12 @@ export function SearchView({
         showCover={rowShow?.cover !== false}
         title={tr.title}
         artist={tr.artist}
+        album={rowShow?.album ? (tr.album ?? undefined) : undefined}
         duration={fmtTime(tr.durationSec)}
         showDuration={rowShow?.duration !== false}
+        // Бейдж источника в ПОИСКЕ виден всегда (запрос владельца 14.07:
+        // «откуда возьмётся звук» — свойство выдачи); тумблер rowShow.source
+        // добавляет его в остальные списки и этот ряд не гасит.
         source={primarySourceLabel(tr.sources, lang)}
         showVersions={searchGrouping}
         versionCount={versions?.count}

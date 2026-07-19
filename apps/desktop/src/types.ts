@@ -294,8 +294,12 @@ export interface Prefs {
    *  пусто/нет — дефолт). Главную выключить нельзя (normalizeNavItems).
    *  T44: ключ — родной NavItemKey либо плагинный `plugin:<id>:<tab>`. */
   navItems: { key: string; on: boolean; label?: string }[];
-  /** Строка трека: что показывать (альбом/источник появятся с данными). */
-  rowShow: { cover: boolean; duration: boolean };
+  /** Строка трека: что показывать. album/source добавлены 19.07 (спека §5
+   *  зона 4) с дефолтом false — у существующих пользователей строка не
+   *  меняется. album показывается, когда сервер начнёт отдавать Track.album
+   *  (поле в контракте уже есть, опциональное); source — бейдж источника,
+   *  как в поиске (там он виден всегда, независимо от этого тумблера). */
+  rowShow: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   /** Страница «Статистика»: видимость и порядок блоков (порядок массива =
    *  порядок на странице; новые блоки дописываются включёнными). */
   statsBlocks: { key: StatsBlockKey; on: boolean }[];
@@ -484,7 +488,7 @@ export const DEFAULT_PREFS: Prefs = {
   discordLine2: "{artist}",
   barButtons: BAR_BUTTON_KEYS.map((key) => ({ key, on: true })),
   navItems: NAV_ITEM_KEYS.map((key) => ({ key, on: true })),
-  rowShow: { cover: true, duration: true },
+  rowShow: { cover: true, duration: true, album: false, source: false },
   statsBlocks: STATS_BLOCK_KEYS.map((key) => ({ key, on: true })),
   statsPeriod: "month",
   fontScale: 100,

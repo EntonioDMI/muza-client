@@ -2333,6 +2333,23 @@ export function SettingsView({
           label={t("settings.customize.layout.rowDuration.title")}
         />
       </SettingRow>
+      {/* Зона 4 спеки 19.07: состав строки трека расширен. Оба — дефолт выкл:
+          у существующих пользователей строка не меняется. Альбом появится,
+          когда его начнёт отдавать сервер (поле в контракте уже готово). */}
+      <SettingRow title={t("settings.customize.layout.rowAlbum.title")} hint={t("settings.customize.layout.rowAlbum.hint")}>
+        <Switch
+          checked={prefs.rowShow.album}
+          onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, album: on } })}
+          label={t("settings.customize.layout.rowAlbum.title")}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.customize.layout.rowSource.title")} hint={t("settings.customize.layout.rowSource.hint")}>
+        <Switch
+          checked={prefs.rowShow.source}
+          onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, source: on } })}
+          label={t("settings.customize.layout.rowSource.title")}
+        />
+      </SettingRow>
       {/* Зона 3 спеки 19.07: габариты полосы плеера — раньше были зашиты
           в токенах (--h-playerbar 92, --size-cover-bar 60). */}
       <SettingRow title={t("settings.customize.layout.playerHeight.title")} hint={t("settings.customize.layout.playerHeight.hint")}>

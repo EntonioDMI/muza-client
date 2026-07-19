@@ -105,6 +105,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.layout.navTabs", ["навигация", "меню", "разделы"]),
   e("appearance", "customize", "settings.customize.layout.rowCover", ["обложка", "строка трека"]),
   e("appearance", "customize", "settings.customize.layout.rowDuration", ["длительность", "строка трека"]),
+  e("appearance", "customize", "settings.customize.layout.rowAlbum", ["альбом", "строка трека", "album"]),
+  e("appearance", "customize", "settings.customize.layout.rowSource", ["источник", "строка трека", "source", "soundcloud", "youtube"]),
   e("appearance", "customize", "settings.customize.layout.playerHeight", ["высота плеера", "полоса плеера", "player height"]),
   e("appearance", "customize", "settings.customize.layout.playerCover", ["обложка в плеере", "размер обложки", "cover"]),
   e("appearance", "customize", "settings.customize.background.type", ["фон", "обои", "анимированный", "background", "градиент"]),

@@ -3,7 +3,7 @@ import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, cssZoom 
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
-import { fmtTime } from "../lib/format";
+import { fmtTime, primarySourceLabel } from "../lib/format";
 import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
 import { useCoverArt } from "../lib/coverArt";
 import { useWarmRow } from "../player/useWarmer";
@@ -54,7 +54,7 @@ export function PlaylistView({
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
-  rowShow?: { cover: boolean; duration: boolean };
+  rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
   onNotify: (text: string, icon?: string) => void;
   /** Открыть «Версии и источники» трека (Stage 4). */
@@ -75,7 +75,7 @@ export function PlaylistView({
    *  параметром — пикер предлагает его обложку первой плиткой. */
   onChangeIcon: (fromTrack?: { id: string; coverUrl: string | null }) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const [detail, setDetail] = useState<PlaylistDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Stage 4: хэши локальных файлов, живых на ЭТОМ устройстве (смешанные
@@ -486,8 +486,10 @@ export function PlaylistView({
                 showCover={rowShow?.cover !== false}
                 title={tr.title}
                 artist={artistLine}
+                album={rowShow?.album ? (tr.album ?? undefined) : undefined}
                 duration={fmtTime(tr.durationSec)}
                 showDuration={rowShow?.duration !== false}
+                source={rowShow?.source ? primarySourceLabel(tr.sources, lang) : undefined}
                 liked={likes.includes(tr.id)}
                 active={currentId === tr.id}
                 playing={currentId === tr.id && playing}

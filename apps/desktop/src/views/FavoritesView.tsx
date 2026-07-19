@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
-import { fmtTime } from "../lib/format";
+import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useWarmRow } from "../player/useWarmer";
 import { useDrag } from "../shell/DragLayer";
@@ -38,14 +38,14 @@ export function FavoritesView({
   /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
   onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
-  rowShow?: { cover: boolean; duration: boolean };
+  rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Тост (T18: «Трека нет в кэше…» при Alt+drag файла). */
   onNotify: (text: string, icon?: string) => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { dragSource } = useDrag();
   const warmRow = useWarmRow();
   const [server, setServer] = useState<Track[] | null>(null);
@@ -94,8 +94,10 @@ export function FavoritesView({
               showCover={rowShow?.cover !== false}
               title={tr.title}
               artist={tr.artist}
+              album={rowShow?.album ? (tr.album ?? undefined) : undefined}
               duration={fmtTime(tr.durationSec)}
               showDuration={rowShow?.duration !== false}
+              source={rowShow?.source ? primarySourceLabel(tr.sources, lang) : undefined}
               active={currentId === tr.id}
               playing={currentId === tr.id && playing}
               liked

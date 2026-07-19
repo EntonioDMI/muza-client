@@ -75,6 +75,20 @@ describe("listeningLyricsShown pref (скрытие текста в режиме
   });
 });
 
+describe("rowShow: альбом и источник (спека 19.07 §5, зона 4)", () => {
+  it("новые поля выключены по умолчанию — строка трека не меняется после обновления", () => {
+    expect(DEFAULT_PREFS.rowShow).toEqual({ cover: true, duration: true, album: false, source: false });
+  });
+
+  it("старое сохранение без album/source получает дефолты глубоким мерджем (App.loadPrefs)", () => {
+    // Симулируем прежний rowShow из localStorage: только cover/duration.
+    const stored = { rowShow: { cover: false, duration: true } as Partial<typeof DEFAULT_PREFS.rowShow> };
+    const merged = { ...DEFAULT_PREFS.rowShow, ...stored.rowShow };
+    // Свои значения не потеряны, новые поля подставлены выключенными.
+    expect(merged).toEqual({ cover: false, duration: true, album: false, source: false });
+  });
+});
+
 describe("bgType=animated + bgAnimatedInvert (T15)", () => {
   it("bgType допускает 'animated', bgAnimatedInvert выключен по умолчанию", () => {
     expect(DEFAULT_PREFS.bgType).toBe("none");

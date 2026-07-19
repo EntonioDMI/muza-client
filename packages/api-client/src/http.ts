@@ -79,6 +79,8 @@ interface TrackWire {
   id: string;
   artist: string;
   title: string;
+  /** Сервер пока не шлёт; поле-заготовка под rowShow.album (19.07). */
+  album?: string | null;
   duration_sec: number;
   cover_url: string | null;
   is_cached: boolean;
@@ -92,6 +94,7 @@ function trackFromWire(wire: TrackWire): Track {
     id: wire.id,
     artist: wire.artist,
     title: wire.title,
+    album: wire.album ?? null,
     durationSec: wire.duration_sec,
     coverUrl: wire.cover_url,
     isCached: wire.is_cached,

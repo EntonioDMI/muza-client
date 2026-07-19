@@ -40,7 +40,8 @@ export function fromCatalog(t: CatalogTrack): PlayerTrack {
     kind: "catalog",
     title: t.title,
     artist: t.artist,
-    album: "",
+    // Контракт уже возит опциональный album (19.07); сервер пока шлёт null.
+    album: t.album ?? "",
     duration: t.durationSec,
     cover: t.coverUrl ?? null,
     explicit: false,

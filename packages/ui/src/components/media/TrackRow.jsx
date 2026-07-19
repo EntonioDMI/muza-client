@@ -19,6 +19,7 @@ export function TrackRow({
   showCover = true,
   title,
   artist,
+  album,
   duration,
   showDuration = true,
   source,
@@ -125,7 +126,12 @@ export function TrackRow({
             <span style={{ flex: "none", fontSize: 11, fontWeight: "var(--fw-semibold)", color: "var(--text-3)", background: "var(--surface-3)", borderRadius: 4, padding: "1px 5px" }}>E</span>
           ) : null}
         </div>
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{artist}</div>
+        {/* Альбом — в одной строке с артистом через « · », приглушённее
+            (text-3): обрезку обеих частей делает общий ellipsis родителя. */}
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {artist}
+          {album ? <span style={{ color: "var(--text-3)" }}> · {album}</span> : null}
+        </div>
       </div>
       {/* Источник трека — тихий информ-бейдж (всегда виден, не по ховеру): откуда
           добывается. Нативного title нет: он дублировал видимый текст стоковой

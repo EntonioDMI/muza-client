@@ -33,7 +33,7 @@ describe("matchPreset", () => {
   });
 
   it("сравнение объектных значений — по содержимому, не по ссылке", () => {
-    const withObj = { visible: { rowShow: { cover: true, duration: true } } };
+    const withObj = { visible: { rowShow: { cover: true, duration: true, album: false, source: false } } };
     expect(matchPreset(withObj, DEFAULT_PREFS)).toBe("visible");
   });
 });

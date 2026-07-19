@@ -285,6 +285,8 @@ export const en = {
         navTabs: { title: "Sidebar tabs", hint: "Which tabs show in the sidebar, their order and custom names." },
         rowCover: { title: "Track row: cover", hint: "Show a small cover on the left in track lists." },
         rowDuration: { title: "Track row: duration", hint: "Show the track duration on the right in lists." },
+        rowAlbum: { title: "Track row: album", hint: "The album name appears after the artist — for tracks where it is known." },
+        rowSource: { title: "Track row: source", hint: "A small label shows where the track plays from — like SoundCloud. In search it is always visible." },
         playerHeight: { title: "Player bar height", hint: "How tall the player bar at the bottom is." },
         playerCover: { title: "Player cover", hint: "The size of the track cover in the player bar." },
       },

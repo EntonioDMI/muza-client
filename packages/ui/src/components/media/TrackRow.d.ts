@@ -10,6 +10,9 @@ export interface TrackRowProps {
   showCover?: boolean;
   title: string;
   artist: string;
+  /** Название альбома — рисуется после артиста через « · », приглушённее
+   *  (настройка «Строка трека: альбом»); нет/пусто — не показывается. */
+  album?: string;
   /** "3:47" */
   duration?: string;
   /** false — скрыть колонку длительности (настройка «Строка трека»). */
