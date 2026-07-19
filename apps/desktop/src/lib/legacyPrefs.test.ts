@@ -88,9 +88,12 @@ describe("sanitizeTokens: легаси-темы со строковыми пре
     expect(tokens.radiusFields).toBe(0);
   });
 
-  it("density/lineSpacing — не тема (в THEME_KEYS не входят)", () => {
+  it("density/lineSpacing ЕДУТ с темой (решение 19.07 отменило прежнее исключение)", () => {
+    // Раньше этот тест утверждал обратное. Спека настроек 19.07 §6: темы
+    // молча теряли типографику и плотность — дыра закрыта, оба ключа в
+    // THEME_KEYS, и sanitizeTokens обязан их пропускать.
     const tokens = sanitizeTokens({ density: 80, lineSpacing: 130 });
-    expect("density" in tokens).toBe(false);
-    expect("lineSpacing" in tokens).toBe(false);
+    expect(tokens.density).toBe(80);
+    expect(tokens.lineSpacing).toBe(130);
   });
 });
