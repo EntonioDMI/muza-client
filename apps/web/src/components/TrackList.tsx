@@ -165,7 +165,7 @@ export function TrackList({
 
       {/* Выбор плейлиста для «В плейлист…» */}
       <Dialog open={plPick !== null} title="В какой плейлист?" onClose={() => setPlPick(null)}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 300, maxHeight: 320, overflowY: "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 300, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
           {!loaded ? (
             <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>Загрузка…</span>
           ) : playlists.length === 0 ? (

@@ -54,13 +54,11 @@ describe("PlaylistIconPicker (общий, @muza/app)", () => {
     expect(screen.getByLabelText("Иконка pi-11").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("сетка иконок скроллится со стилизованным скроллбаром (паттерн Select ДС)", () => {
+  it("сетка иконок — скролл-контейнер (полосу красит глобальное правило ДС)", () => {
     renderPicker("ru");
     // родитель свотча — тот самый скролл-контейнер сетки (maxHeight + overflowY)
     const grid = screen.getByLabelText("Иконка pi-01").parentElement as HTMLElement;
     expect(grid.style.overflowY).toBe("auto"); // якорь: взят именно скролл-контейнер
-    // без этого WebView2 рисует системный «толстый» скроллбар — единственный
-    // нестилизованный в приложении; thin — тот же паттерн, что у панели Select
-    expect(grid.style.scrollbarWidth).toBe("thin");
+    expect(grid.style.overflowX).toBe("hidden");
   });
 });

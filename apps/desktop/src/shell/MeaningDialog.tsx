@@ -53,6 +53,7 @@ export function MeaningDialog({
               lineHeight: 1.65,
               maxHeight: "42vh",
               overflowY: "auto",
+              overflowX: "hidden", // overflow-y:auto иначе включает overflow-x
               overflowWrap: "anywhere",
               whiteSpace: "pre-wrap",
               display: "flex",

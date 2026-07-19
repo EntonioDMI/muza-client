@@ -138,7 +138,7 @@ export function ImportDialog({
               <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-2)", marginBottom: "var(--sp-2)" }}>
                 {t("dialogs.importPlaylist.notFoundLabel")}
               </div>
-              <div style={{ maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ maxHeight: 180, overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 4 }}>
                 {report.unmatched.map((u, i) => (
                   <div key={i} style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
                     {u.artist} — {u.title}

@@ -84,8 +84,8 @@ function CoverSwatch({ src, active, busy, onClick }: { src: string; active: bool
     <button
       type="button"
       disabled={busy}
+      // aria-label без нативного title: стоковая плашка WebView2 не в языке ДС
       aria-label={t("dialogs.iconPicker.coverTileAria")}
-      title={t("dialogs.iconPicker.coverTileAria")}
       aria-pressed={active}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
@@ -127,12 +127,9 @@ export function PlaylistIconPicker({ open, currentIcon, coverTile, onClose, onPi
           maxHeight: "min(60vh, 420px)",
           overflowY: "auto",
           overflowX: "hidden",
-          // Без этого сетка — единственный скролл в приложении с системным
-          // «толстым» скроллбаром. thin — тот же паттерн, что у выпадающей
-          // панели Select (@muza/ui); остальные скроллы ДС прячут полосу
-          // совсем ("none"), но у сетки в диалоге полоса — единственный
-          // намёк, что иконок больше, чем видно.
-          scrollbarWidth: "thin",
+          // Полосу красит глобальное правило ДС (base.css, ::-webkit-scrollbar);
+          // в сетке она — намёк, что иконок больше, чем видно (остальные скроллы
+          // ДС прячут полосу совсем, "none").
           paddingRight: 2,
         }}
       >
