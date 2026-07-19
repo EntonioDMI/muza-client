@@ -21,6 +21,7 @@ import { usePlayback } from "./usePlayback";
 
 const h = vi.hoisted(() => ({
   resolvePlayable: vi.fn(),
+  cacheRemove: vi.fn(),
   getTrackSources: vi.fn(),
   onError: vi.fn(),
   engine: {
@@ -49,6 +50,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("../lib/engine", () => ({
   engineAvailable: () => true,
   resolvePlayable: h.resolvePlayable,
+  cacheRemove: h.cacheRemove,
 }));
 
 vi.mock("./audioEngine", () => ({
@@ -124,8 +126,10 @@ beforeEach(() => {
   // Реализации задаём явно: clearAllMocks стирает только вызовы, а reset —
   // и реализации; position без неё вернул бы undefined и remaining стал бы NaN.
   h.engine.play.mockImplementation(async () => {});
-  h.engine.resume.mockImplementation(async () => {});
+  // resume теперь отвечает «звук реально пошёл?» — дефолт стенда: пошёл
+  h.engine.resume.mockImplementation(async () => true);
   h.engine.position.mockReturnValue(0);
+  h.cacheRemove.mockImplementation(async () => {});
   h.engine.analyser.mockReturnValue(null);
   h.resolvePlayable.mockReset();
   h.getTrackSources.mockImplementation(async () => []);
@@ -593,5 +597,175 @@ describe("usePlayback: граница трека — повтор и авто-п
     });
     expect(hook.result.current.pos).toBe(0); // новый честно начинается с нуля
     expect(hook.result.current.track?.id).toBe("b");
+  });
+});
+
+/** Самолечение мёртвого звука (аудит 2026-07-17: «повтор трека/плейлиста
+ *  больше никогда не останавливается сам»). Фиксы границы 2026-07-16 живут
+ *  на событиях 'ended'/'timeupdate' — но есть двери, через которые звук
+ *  умирает БЕЗ новой границы ('ended' уже никогда не придёт, машинерия
+ *  advance бессильна): отказ resume() на рестарте repeat-one (файл выпал из
+ *  LRU-кэша — Windows не держит asset-файл открытым), ошибка медиа посреди
+ *  трека, тихо замершая позиция (уснувший ноут, пропавшее аудио-устройство).
+ *  Лечение всегда одно — полный перезапуск текущего трека через добычу
+ *  (файл кэша под подозрением — выбивается, Rust докачает заново), с
+ *  кулдауном: битый насмерть трек делает конечное число попыток и честно
+ *  встаёт на паузу, а не крутит вечную карусель рестартов. */
+describe("usePlayback: самолечение мёртвого звука", () => {
+  it("repeat-one: рестарт не завёлся (resume=false) → полный перезапуск через добычу", async () => {
+    const R = trk("heal-r1");
+    h.resolvePlayable.mockResolvedValueOnce({ url: "r1.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([R], "heal-r1");
+    });
+    act(() => {
+      hook.result.current.cycleRepeat(); // off → all
+    });
+    act(() => {
+      hook.result.current.cycleRepeat(); // all → one
+    });
+    expect(hook.result.current.repeat).toBe("one");
+
+    // Файл выпал из LRU-кэша, пока трек играл: el.play() на рестарте отказал
+    h.engine.resume.mockResolvedValueOnce(false);
+    h.resolvePlayable.mockResolvedValueOnce({ url: "r1-заново.webm", fromCache: false, provider: "youtube" });
+    await act(async () => {
+      h.cb.current?.onEnded();
+    });
+
+    // Повтор пережил отказ: кэш под подозрением выбит, трек добыт и заведён заново
+    expect(h.cacheRemove).toHaveBeenCalledWith("heal-r1");
+    expect(h.engine.play).toHaveBeenLastCalledWith("r1-заново.webm", 1, 0);
+    expect(hook.result.current.track?.id).toBe("heal-r1");
+    expect(hook.result.current.playing).toBe(true);
+  });
+
+  it("ошибка медиа посреди трека: одна попытка лечения; повторная смерть сразу — честная остановка", async () => {
+    const M = trk("heal-m1");
+    h.resolvePlayable.mockResolvedValueOnce({ url: "m1.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([M], "heal-m1");
+    });
+
+    h.resolvePlayable.mockResolvedValueOnce({ url: "m1-заново.webm", fromCache: false, provider: "youtube" });
+    await act(async () => {
+      h.cb.current?.onError("декодер умер");
+    });
+
+    expect(h.onError).toHaveBeenCalledWith("декодер умер"); // честный тост остался
+    expect(h.engine.play).toHaveBeenLastCalledWith("m1-заново.webm", 1, 0); // …и лечение прошло
+    expect(hook.result.current.playing).toBe(true);
+
+    // Трек битый насмерть: умирает снова сразу после лечения — в кулдауне
+    // честная остановка вместо вечной карусели рестартов с нуля.
+    await act(async () => {
+      h.cb.current?.onError("декодер умер снова");
+    });
+    expect(hook.result.current.playing).toBe(false);
+  });
+
+  it("ошибка медиа во время добычи нового трека лечение НЕ запускает — стартом владеет startAt", async () => {
+    const S = trk("heal-s1");
+    h.resolvePlayable.mockResolvedValueOnce({ url: "s1.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([S, B], "heal-s1");
+    });
+
+    const release = deferResolve("b.webm");
+    await act(async () => {
+      hook.result.current.playContext([S, B], "b"); // добыча B повисла
+    });
+    const playsBefore = h.engine.play.mock.calls.length;
+    await act(async () => {
+      h.cb.current?.onError("старый элемент икнул"); // ошибка в окне добычи
+    });
+
+    expect(h.engine.play.mock.calls.length).toBe(playsBefore); // второго старта нет
+    await act(async () => {
+      release();
+    });
+    expect(h.engine.play).toHaveBeenLastCalledWith("b.webm", 1, 0); // добыча довела своё
+    expect(hook.result.current.track?.id).toBe("b");
+  });
+
+  it("play после паузы: слот не завёлся (resume=false) → полноценный перезапуск клика", async () => {
+    const T = trk("heal-t1");
+    h.resolvePlayable.mockResolvedValueOnce({ url: "t1.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([T], "heal-t1");
+    });
+    await act(async () => {
+      hook.result.current.toggle(); // пауза
+    });
+    expect(hook.result.current.playing).toBe(false);
+
+    // За время паузы файл выпал из кэша: resume больше не заводит элемент
+    h.engine.resume.mockResolvedValueOnce(false);
+    h.resolvePlayable.mockResolvedValueOnce({ url: "t1-заново.webm", fromCache: true, provider: "youtube" });
+    await act(async () => {
+      hook.result.current.toggle(); // play
+    });
+
+    expect(h.engine.play).toHaveBeenLastCalledWith("t1-заново.webm", 1, 0);
+    expect(hook.result.current.playing).toBe(true);
+  });
+
+  it("сторож: позиция замерла при «играем» → толчок resume, не помогло → перезапуск через добычу", async () => {
+    // now: реальное время — кулдаун лечения сверяется с Date.now(), и стартовое
+    // «0» фейковых часов ложно попадало бы в окно кулдауна.
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const W = trk("heal-w1");
+      h.resolvePlayable.mockResolvedValueOnce({ url: "w1.webm", fromCache: true, provider: "youtube" });
+      const hook = mount();
+      await act(async () => {
+        hook.result.current.playContext([W], "heal-w1");
+      });
+      h.engine.position.mockReturnValue(42); // звук «замер»: позиция не движется
+      h.engine.resume.mockResolvedValue(false); // …и мягкий толчок не помогает
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(h.engine.resume).toHaveBeenCalled(); // мягкий толчок был (без потери позиции)
+
+      h.resolvePlayable.mockResolvedValueOnce({ url: "w1-заново.webm", fromCache: false, provider: "youtube" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(h.engine.play).toHaveBeenLastCalledWith("w1-заново.webm", 1, 0);
+      expect(hook.result.current.playing).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("сторож молчит, пока позиция движется", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const V = trk("heal-v1");
+      h.resolvePlayable.mockResolvedValueOnce({ url: "v1.webm", fromCache: true, provider: "youtube" });
+      const hook = mount();
+      await act(async () => {
+        hook.result.current.playContext([V], "heal-v1");
+      });
+      let pos = 0;
+      h.engine.position.mockImplementation(() => (pos += 5)); // живой звук: позиция растёт
+
+      const playsBefore = h.engine.play.mock.calls.length;
+      h.engine.resume.mockClear();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(h.engine.resume).not.toHaveBeenCalled();
+      expect(h.engine.play.mock.calls.length).toBe(playsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

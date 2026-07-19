@@ -7,7 +7,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MuzaApi, TrackSource } from "@muza/api-client";
 import type { Prefs, RepeatMode } from "../types";
 import { translate, type TParams, type TranslationKey } from "../i18n";
-import { engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
+import { cacheRemove, engineAvailable, resolvePlayable, type ResolveResult } from "../lib/engine";
 import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
@@ -41,6 +41,22 @@ const GAPLESS_POLL_STEP_MS = 20;
  *  паузу на 0:00»), но и не крутятся вечно, когда мертво всё (маленькая
  *  очередь на repeat all). Успешный старт сбрасывает счётчик. */
 const MAX_AUTO_SKIPS = 3;
+
+/** Кулдаун самолечения мёртвого звука (healCurrent ниже): повторная смерть
+ *  раньше этого окна — честная остановка, а не вечная карусель рестартов с
+ *  нуля (битый насмерть файл иначе перезапускался бы каждые пару секунд). */
+const HEAL_COOLDOWN_MS = 30_000;
+/** Сторож замершего звука: шаг опроса и пороги эскалации (в тиках подряд).
+ *  Позиция при «играем» не сдвинулась WATCHDOG_RESUME_TICKS тиков → мягкий
+ *  толчок resume() (позиция сохраняется — ложное срабатывание бесплатно);
+ *  дожили до WATCHDOG_HEAL_TICKS → полный перезапуск через добычу. */
+const WATCHDOG_TICK_MS = 5_000;
+const WATCHDOG_RESUME_TICKS = 3;
+const WATCHDOG_HEAL_TICKS = 6;
+/** Хвост трека, где сторож молчит: границей владеет машинерия advance/'ended'
+ *  (замер на самом стыке — её зона, у неё свои страховки: repeat-one heal,
+ *  авто-скип, радио-продолжение). */
+const WATCHDOG_TAIL_SEC = 1.5;
 
 export interface PlayEndInfo {
   track: PlayerTrack;
@@ -217,6 +233,12 @@ export function usePlayback({
         onError: (message) => {
           setBuffering(false);
           onErrorRef.current(message);
+          // Медиа умерло ПОСРЕДИ игры (ошибка активного элемента: битый или
+          // выпавший из LRU-кэша файл, сбой аудио-тракта): 'ended' уже не
+          // придёт, граница мертва — без лечения повтор и очередь встали бы
+          // навсегда под «играющим» баром. В окне добычи (startPending) не
+          // лезем: стартом и его ошибками владеет startAt.
+          if (stateRef.current.playing && !startPendingRef.current) void healCurrent();
         },
       }, t);
     }
@@ -387,6 +409,14 @@ export function usePlayback({
     } catch (e) {
       if (playSeqRef.current !== seq) return;
       const msg = e instanceof Error ? e.message : translate(prefsRef.current.language, "media.player.errors.trackFetchFailed");
+      // Рантайм-петля DRM: yt-dlp сказал «This video is DRM protected» —
+      // просим сервер перепроверить и похоронить источник, чтобы трек выпал
+      // из выдачи ДЛЯ ВСЕХ (жалоба 2026-07-17: DRM пришёл в рекомендациях).
+      // Fire-and-forget: нам он уже не сыграет, ждать нечего; сервер признак
+      // сверяет сам — ложный вызов безвреден (drm-recheck.service.ts).
+      if (/DRM protected/i.test(msg)) {
+        api.drmRecheck(t.id).catch(() => undefined);
+      }
       // АВТО-переход (конец трека, радио-продолжение): недобываемый трек не
       // должен глушить всю музыку — честный тост и скип дальше, ограниченно
       // (MAX_AUTO_SKIPS подряд, иначе на всём мёртвом кружились бы вечно).
@@ -442,8 +472,14 @@ export function usePlayback({
       // «играющим» баром — повтор молча умирал на первой же границе
       // (жалоба 2026-07-16). resume() = el.play() на том же src.
       engine().seek(0);
-      void engine().resume();
       setPos(0);
+      const seqBefore = playSeqRef.current;
+      const ok = await engine().resume();
+      // Рестарт мог не завестись (файл выпал из LRU-кэша, элемент в ошибке):
+      // повтор обязан пережить и это — полный перезапуск через добычу, а не
+      // тишина навсегда под «играющим» баром. seq-сверка: за время await
+      // пользователь мог начать другой старт/паузу — граница уже не наша.
+      if (!ok && playSeqRef.current === seqBefore) await healCurrent();
       return;
     }
     const ni = nextIndexFor(d, auto);
@@ -492,6 +528,33 @@ export function usePlayback({
     playSeqRef.current++;
     startPendingRef.current = false; // старта в полёте больше нет — граница снова живая
     setBuffering(false);
+  };
+
+  /** Самолечение мёртвого звука (аудит 2026-07-17 «повтор больше никогда не
+   *  останавливается сам»): полный перезапуск ТЕКУЩЕГО трека через добычу —
+   *  для отказов, после которых новой границы уже НЕ БУДЕТ и машинерия
+   *  advance/'ended' бессильна: рестарт repeat-one не завёлся, ошибка медиа
+   *  посреди трека, тихо замершая позиция (сторож ниже). Файл кэша под
+   *  подозрением — выбивается (Rust докачает заново, это и чинит «файл выпал
+   *  из LRU, пока играл»). Кулдаун: битый насмерть трек делает конечное число
+   *  попыток и честно встаёт на паузу, а не крутит вечную карусель рестартов. */
+  const healGuardRef = useRef(0);
+  const healCurrent = async () => {
+    const s = stateRef.current;
+    if (!s.track) return;
+    const now = Date.now();
+    if (now - healGuardRef.current < HEAL_COOLDOWN_MS) {
+      flushPlayEnd(false);
+      setPlaying(false);
+      stopGaplessPoll();
+      return;
+    }
+    healGuardRef.current = now;
+    if (s.track.kind === "catalog") {
+      await cacheRemove(s.track.id).catch(() => undefined);
+    }
+    invalidateCachedSources(s.track.id);
+    await startAt(s.index, { auto: true });
   };
 
   /** Остановить точный gapless-опрос (пауза/новый трек/сик/размонтирование). */
@@ -597,7 +660,17 @@ export function usePlayback({
       void startAt(s.index);
       return;
     }
-    void engine().resume();
+    const seqBefore = playSeqRef.current;
+    void engine().resume().then((ok) => {
+      // Слот мог не завестись (файл выпал из кэша за время паузы, элемент в
+      // ошибке): молчать под «играющим» баром нельзя — честный перезапуск тем
+      // же путём, что клик по треку. seq-сверка отсекает устаревший ответ
+      // (успели нажать паузу/другой трек, пока play() заводился).
+      if (!ok && playSeqRef.current === seqBefore) {
+        const cur = stateRef.current;
+        if (cur.track) void startAt(cur.index);
+      }
+    });
     pollGapless(); // T19 fast-follow: перезапустить точный прицел после паузы
     setPlaying(true);
   };
@@ -764,6 +837,43 @@ export function usePlayback({
   useEffect(() => {
     engineRef.current?.setEq(prefs.eqOn, prefs.eqBands);
   }, [prefs.eqOn, prefs.eqBands]);
+
+  // Сторож замершего звука (аудит 2026-07-17): ловит класс отказов, у которых
+  // нет НИ 'ended', НИ 'error' — элемент просто перестал двигаться (уснувший
+  // и проснувшийся ноут, пропавшее аудио-устройство, задушенный тракт
+  // WebView). Пока «играем» и старт не в полёте, позиция обязана расти;
+  // замерла — эскалация: мягкий resume() (позиция сохраняется, ложное
+  // срабатывание бесплатно), не помогло — healCurrent(). Хвост трека не
+  // трогаем: границей владеет advance/'ended' со своими страховками.
+  const watchdogRef = useRef({ pos: -1, stalled: 0 });
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const s = stateRef.current;
+      const w = watchdogRef.current;
+      if (!engineRef.current || !s.track || !s.playing || startPendingRef.current) {
+        w.pos = -1;
+        w.stalled = 0;
+        return;
+      }
+      const p = engine().position();
+      const nearEnd = s.track.duration > 0 && s.track.duration - p <= WATCHDOG_TAIL_SEC;
+      if (nearEnd || Math.abs(p - w.pos) > 0.05) {
+        w.pos = p;
+        w.stalled = 0;
+        return;
+      }
+      w.stalled++;
+      if (w.stalled === WATCHDOG_RESUME_TICKS) {
+        void engine().resume();
+      } else if (w.stalled >= WATCHDOG_HEAL_TICKS) {
+        w.pos = -1;
+        w.stalled = 0;
+        void healCurrent();
+      }
+    }, WATCHDOG_TICK_MS);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Смена спикеров/выхода не наша забота; при размонтировании — тишина
   useEffect(

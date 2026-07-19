@@ -242,10 +242,15 @@ export class AudioEngine {
       this.applySlotLevel(slot, 1);
     }
     this.active = nextIndex;
+    // Отказ el.play() ПРОБРАСЫВАЕТСЯ (аудит 2026-07-17): раньше здесь были
+    // тост и «успех» — startAt считал трек заведённым (playing=true, авто-скип
+    // мёртвых треков не запускался), и очередь замерзала на 0:00 под
+    // «играющим» баром. Ошибкой владеет вызывающий: у startAt на неё есть
+    // авто-скип на авто-переходе и честный стоп на ручном клике.
     try {
       await slot.el.play();
     } catch (e) {
-      this.cb.onError(e instanceof Error ? e.message : this.t("media.player.errors.playbackDidNotStart"));
+      throw e instanceof Error ? e : new Error(this.t("media.player.errors.playbackDidNotStart"));
     }
   }
 
@@ -263,15 +268,26 @@ export class AudioEngine {
     this.slots[this.active]?.el.pause();
   }
 
-  async resume(): Promise<void> {
-    if (this.ctx?.state === "suspended") await this.ctx.resume();
+  /** Возобновить активный слот. Ответ — «звук реально пошёл?»: false и когда
+   *  возобновлять нечего (пустой слот), и когда элемент отказал (файл выпал
+   *  из LRU-кэша — Windows не держит asset-файл открытым, битые данные,
+   *  умерший аудио-тракт). НЕ бросает и не тостит: что делать с отказом —
+   *  пере-добыть или честно встать — решает usePlayback (healCurrent).
+   *  Раньше отказ глотался молча, и рестарт repeat-one умирал тишиной под
+   *  «играющим» баром (аудит 2026-07-17). */
+  async resume(): Promise<boolean> {
+    try {
+      if (this.ctx?.state === "suspended") await this.ctx.resume();
+    } catch {
+      /* контекст мог умереть вместе с аудио-устройством — элемент пробуем всё равно */
+    }
     const el = this.slots[this.active]?.el;
-    if (el?.src) {
-      try {
-        await el.play();
-      } catch {
-        /* нет источника — нечего возобновлять */
-      }
+    if (!el?.src) return false;
+    try {
+      await el.play();
+      return true;
+    } catch {
+      return false;
     }
   }
 
