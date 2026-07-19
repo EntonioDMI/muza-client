@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Icon, Tabs } from "@muza/ui";
+import { Button, Icon, Spinner, Tabs } from "@muza/ui";
 import type {
   AdminContent,
   AdminDayPoint,
@@ -7,6 +7,7 @@ import type {
   AdminGrowth,
   AdminHealth,
   AdminOverview,
+  AdminPublicPlaylist,
   AdminUsers,
   MuzaApi,
 } from "@muza/api-client";
@@ -89,28 +90,50 @@ function Row({ cells, header }: { cells: (string | number)[]; header?: boolean }
   );
 }
 
-/** Загрузка вкладки: единый паттерн «грузим → данные|ошибка». */
-function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null } {
+/** Загрузка вкладки: единый паттерн «грузим → данные|ошибка».
+ *
+ *  Прежние данные при перезагрузке НЕ сбрасываются (2026-07-16): смена окна
+ *  7/30/90 подменяла всю вкладку на «Загрузка…» и отстраивала заново — экран
+ *  «моргал». Теперь старый контент стоит на месте, о фоновом обновлении
+ *  говорит тонкий спиннер у табов (тот же приём, что в StatsView). */
+function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null; loading: boolean } {
   const { t } = useT();
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     let alive = true;
-    setData(null);
+    setLoading(true);
     setError(null);
     load()
       .then((d) => {
-        if (alive) setData(d);
+        if (alive) {
+          setData(d);
+          setLoading(false);
+        }
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : t("views.admin.loadFailed"));
+        if (alive) {
+          setError(e instanceof Error ? e.message : t("views.admin.loadFailed"));
+          setLoading(false);
+        }
       });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
-  return { data, error };
+  return { data, error, loading };
+}
+
+/** Слот спиннера ФИКСИРОВАННОЙ ширины возле табов: появление/уход индикатора
+ *  не двигает соседей ни на пиксель (прыжок шапки — то же «дёргание»). */
+function BusyDot({ busy }: { busy: boolean }) {
+  return (
+    <span aria-hidden={!busy} style={{ width: 16, height: 16, flex: "none", display: "grid", placeItems: "center" }}>
+      {busy ? <Spinner size={16} color="var(--text-3)" /> : null}
+    </span>
+  );
 }
 
 function Loading({ error }: { error: string | null }) {
@@ -204,26 +227,108 @@ function ContentTab({ api }: { api: MuzaApi }) {
           ))}
         </div>
       </Section>
+      <AdminPublicPlaylistsSection api={api} />
     </div>
+  );
+}
+
+/** Рубильник публичных плейлистов (2026-07-17): обзор опубликованного +
+ *  «Снять с публикации» (чекбокс — ещё и запретить публиковать снова).
+ *  Экспорт — для точечного теста без остального ContentTab. */
+export function AdminPublicPlaylistsSection({ api }: { api: MuzaApi }) {
+  const { t, lang } = useT();
+  const [rows, setRows] = useState<AdminPublicPlaylist[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [ban, setBan] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = () =>
+    api
+      .getAdminPublicPlaylists()
+      .then(setRows)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  const unpublish = async (id: string) => {
+    setBusyId(id);
+    try {
+      await api.unpublishAdminPlaylist(id, ban);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Section title={t("views.admin.publicPlaylists.title")}>
+      {rows === null ? (
+        <Loading error={error} />
+      ) : rows.length === 0 ? (
+        <div style={{ color: "var(--text-3)", fontSize: "var(--fs-body)" }}>
+          {t("views.admin.publicPlaylists.empty")}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--sp-2)",
+              fontSize: "var(--fs-caption)",
+              color: "var(--text-2)",
+              cursor: "pointer",
+            }}
+          >
+            <input type="checkbox" checked={ban} onChange={(e) => setBan(e.target.checked)} />
+            {t("views.admin.publicPlaylists.banToggle")}
+          </label>
+          {rows.map((p) => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minHeight: 36 }}>
+              <span style={{ flex: 1, minWidth: 0, color: "var(--text-1)", fontSize: "var(--fs-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {p.name}
+                <span style={{ color: "var(--text-3)" }}> · {p.ownerUsername}</span>
+              </span>
+              <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", flex: "none" }}>
+                {t("views.admin.publicPlaylists.meta", { tracks: p.trackCount, followers: p.followersCount })}
+              </span>
+              <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", flex: "none" }}>
+                {dt(p.publishedAt, lang)}
+              </span>
+              <Button variant="secondary" disabled={busyId === p.id} onClick={() => void unpublish(p.id)}>
+                {t("views.admin.publicPlaylists.unpublish")}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }
 
 function HealthTab({ api }: { api: MuzaApi }) {
   const { t } = useT();
   const [hours, setHours] = useState(24);
-  const { data, error } = useAdminData<AdminHealth>(() => api.getAdminHealth(hours), [api, hours]);
+  const { data, error, loading } = useAdminData<AdminHealth>(() => api.getAdminHealth(hours), [api, hours]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
-      <div style={{ maxWidth: 360 }}>
-        <Tabs
-          items={[
-            { key: "24", label: t("views.admin.health.day") },
-            { key: "168", label: t("views.admin.health.week") },
-            { key: "720", label: t("views.admin.health.month30") },
-          ]}
-          value={String(hours)}
-          onChange={(k: string) => setHours(Number(k))}
-        />
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+        <div style={{ maxWidth: 360, flex: "1 1 auto" }}>
+          <Tabs
+            items={[
+              { key: "24", label: t("views.admin.health.day") },
+              { key: "168", label: t("views.admin.health.week") },
+              { key: "720", label: t("views.admin.health.month30") },
+            ]}
+            value={String(hours)}
+            onChange={(k: string) => setHours(Number(k))}
+          />
+        </div>
+        <BusyDot busy={loading && data !== null} />
       </div>
       {!data ? (
         <Loading error={error} />
@@ -306,19 +411,22 @@ function UsersTab({ api }: { api: MuzaApi }) {
 }
 
 /** Окно диапазона (кусок C): один контрол на вкладки «Рост» и «Ошибки». */
-function DaysTabs({ value, onChange }: { value: number; onChange: (d: number) => void }) {
+function DaysTabs({ value, onChange, busy = false }: { value: number; onChange: (d: number) => void; busy?: boolean }) {
   const { t } = useT();
   return (
-    <div style={{ maxWidth: 360 }}>
-      <Tabs
-        items={[
-          { key: "7", label: t("views.admin.growth.d7") },
-          { key: "30", label: t("views.admin.growth.d30") },
-          { key: "90", label: t("views.admin.growth.d90") },
-        ]}
-        value={String(value)}
-        onChange={(k: string) => onChange(Number(k))}
-      />
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+      <div style={{ maxWidth: 360, flex: "1 1 auto" }}>
+        <Tabs
+          items={[
+            { key: "7", label: t("views.admin.growth.d7") },
+            { key: "30", label: t("views.admin.growth.d30") },
+            { key: "90", label: t("views.admin.growth.d90") },
+          ]}
+          value={String(value)}
+          onChange={(k: string) => onChange(Number(k))}
+        />
+      </div>
+      <BusyDot busy={busy} />
     </div>
   );
 }
@@ -334,10 +442,10 @@ function Note({ text }: { text: string }) {
 function GrowthTab({ api }: { api: MuzaApi }) {
   const { t } = useT();
   const [days, setDays] = useState(30);
-  const { data, error } = useAdminData<AdminGrowth>(() => api.getAdminGrowth(days), [api, days]);
+  const { data, error, loading } = useAdminData<AdminGrowth>(() => api.getAdminGrowth(days), [api, days]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
-      <DaysTabs value={days} onChange={setDays} />
+      <DaysTabs value={days} onChange={setDays} busy={loading && data !== null} />
       {!data ? (
         <Loading error={error} />
       ) : (
@@ -504,7 +612,7 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
   const [openHash, setOpenHash] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { data, error } = useAdminData<AdminErrors>(
+  const { data, error, loading } = useAdminData<AdminErrors>(
     () =>
       api.getAdminErrors({
         days,
@@ -565,7 +673,7 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
     : [];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
-      <DaysTabs value={days} onChange={setDays} />
+      <DaysTabs value={days} onChange={setDays} busy={loading && data !== null} />
       {!data ? (
         <Loading error={error} />
       ) : (

@@ -12,6 +12,9 @@ import {
   type LocalEntry,
 } from "../lib/localFiles";
 import { fmtTime } from "../lib/format";
+import { tileL10n, trackRowL10n } from "../lib/dsLabels";
+import { gridInsertionIndex } from "../lib/dragEngine";
+import { useLocalReorder } from "../lib/useLocalReorder";
 import { useDrag, useDropZone } from "../shell/DragLayer";
 import { maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
@@ -84,61 +87,74 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
   );
 }
 
-/** Плитка плейлиста: зона приёма трека И реордера плейлистов. Отдельный
- *  компонент, потому что useDropZone/useDrag — хуки, а звать их внутри .map()
- *  нельзя. Реордер тянется ТОЛЬКО за ручку-⠿ (grip) справа сверху — по самой
- *  плитке остаётся обычный клик «открыть», без мисс-кликов (T-drag, 2026-07-16). */
+/** Плитка плейлиста: зона приёма трека и локального реордера. Отдельный
+ *  компонент, потому что useDropZone — хук, а звать его внутри .map() нельзя.
+ *  Реордер тянется ТОЛЬКО за ручку-⠿ (grip) — по самой плитке остаётся обычный
+ *  клик «открыть», без мисс-кликов (T-drag, 2026-07-16). Тащится САМА плитка
+ *  (useLocalReorder в LibraryView, соседи раздвигаются); зона DragLayer
+ *  принимает только треки — плейлисты между областями не переносятся. */
 function PlaylistDropTile({
   playlist,
   subtitle,
   onOpen,
   onMenu,
   onDropTrack,
-  onReorder,
+  grip,
+  tileRef,
+  shift,
+  dragged = false,
+  settling = false,
+  dimmed = false,
 }: {
   playlist: PlaylistMeta;
   subtitle: string;
   onOpen: () => void;
   onMenu?: (e: React.MouseEvent) => void;
   onDropTrack?: (playlistId: string, trackId: string) => void;
-  /** Плейлист p.id брошен на этот (drag за ручку) — переставить перед ним. */
-  onReorder?: (draggedId: string, beforeId: string) => void;
+  /** Реордер (useLocalReorder): пропсы ручки-⠿; нет — плитка без ручки. */
+  grip?: { onPointerDown: (e: React.PointerEvent<HTMLElement>) => void };
+  tileRef?: (el: HTMLElement | null) => void;
+  /** Transform плитки во время реордера (сама или сосед); null — покой. */
+  shift?: { x: number; y: number } | null;
+  /** Тащат ИМЕННО эту плитку: едет за курсором, без transition, поверх соседей. */
+  dragged?: boolean;
+  /** Плитку отпустили — она доезжает до слота, transition нужен и ей. */
+  settling?: boolean;
+  /** 2026-07-17: подписка, скрытая владельцем, — гаснет (open перехвачен выше). */
+  dimmed?: boolean;
 }) {
   const { t } = useT();
-  const { drag, dragSource } = useDrag();
   const [hover, setHover] = useState(false);
   const cover = playlist.iconCoverUrl ?? playlistIconSrc(playlist.icon);
-  // Зона живёт, если возможен хоть один приём (трек ИЛИ реордер). Префикс места
-  // в id: тот же плейлист — цель и в сайдбаре, и здесь; плоская Map зон в
-  // DragLayer одинаковые id затёрла бы.
-  const { over, props } = useDropZone(
-    onDropTrack || onReorder ? `library-playlist:${playlist.id}` : null,
-    (p) => {
-      if (p.kind === "playlist") {
-        if (p.id !== playlist.id) onReorder?.(p.id, playlist.id);
-      } else {
-        onDropTrack?.(playlist.id, p.id);
-      }
-    },
+  // Префикс места в id зоны: тот же плейлист — цель и в сайдбаре, и здесь;
+  // плоская Map зон в DragLayer одинаковые id затёрла бы.
+  const { over: litTarget, props } = useDropZone(
+    onDropTrack ? `library-playlist:${playlist.id}` : null,
+    (p) => onDropTrack?.(playlist.id, p.id),
   );
-  const draggingPlaylist = drag?.payload.kind === "playlist";
-  // Не подсвечиваем плитку как цель, когда тащат ЕЁ ЖЕ.
-  const litTarget = over && !(draggingPlaylist && drag?.payload.id === playlist.id);
-  const grip = dragSource({ id: playlist.id, title: playlist.name, cover: cover ?? null, kind: "playlist" });
   return (
     <div
       {...props}
+      ref={tileRef}
+      aria-disabled={dimmed || undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
         position: "relative",
         borderRadius: "var(--r-md)",
+        opacity: dimmed ? 0.45 : undefined,
         outline: litTarget ? "var(--focus-ring)" : undefined,
         outlineOffset: 2,
-        transition: "outline-color var(--dur-fast) var(--ease-out)",
+        // во время реордера сосед мягко съезжает на новое место; тащимая
+        // плитка липнет к курсору без сглаживания, но при ПОСАДКЕ transition
+        // получает и она — доезжает до слота, а не телепортируется
+        transition: shift && (!dragged || settling) ? "transform 160ms var(--ease-out)" : "outline-color var(--dur-fast) var(--ease-out)",
+        transform: shift ? `translate(${shift.x}px, ${shift.y}px)` : undefined,
+        zIndex: dragged ? 2 : undefined,
       }}
     >
       <Tile
+        {...tileL10n(t)}
         // T47b: иконка-обложка плейлиста (манифест @muza/core); T47c: track-
         // иконка — готовой ссылкой iconCoverUrl; битая/чужая — null, и Tile
         // рисует плейсхолдер (раньше фолбэком была демо-обложка)
@@ -150,28 +166,26 @@ function PlaylistDropTile({
         onPlay={onOpen}
         onMenu={onMenu}
       />
-      {onReorder ? (
+      {grip ? (
+        // Справа СНИЗУ карточки (уровень подписи), без плашки-фона и видима
+        // ВСЕГДА (жалоба 2026-07-16: сверху с шариком — неудобно и прячется).
+        // Правый низ ОБЛОЖКИ занят play-пилюлей Tile — сюда она не достаёт.
         <span
           {...grip}
           role="button"
           aria-label={t("views.library.reorderHandle")}
-          title={t("views.library.reorderHandle")}
           onClick={(e) => e.stopPropagation()}
           style={{
             position: "absolute",
-            top: 10,
-            right: 10,
+            bottom: 8,
+            right: 8,
             display: "grid",
             placeItems: "center",
             width: 30,
             height: 30,
-            borderRadius: "var(--r-sm)",
-            background: "var(--surface-4)",
-            color: "var(--text-2)",
-            cursor: "grab",
-            // видна на hover плитки или пока вообще тащат плейлист (видно куда)
-            opacity: hover || draggingPlaylist ? 1 : 0,
-            transition: "opacity var(--dur-fast) var(--ease-out)",
+            color: hover || dragged ? "var(--text-1)" : "var(--text-3)",
+            cursor: dragged ? "grabbing" : "grab",
+            transition: "color var(--dur-fast) var(--ease-out)",
             touchAction: "none",
           }}
         >
@@ -213,7 +227,9 @@ export function LibraryView({
   /** Трек брошен на плитку плейлиста (undefined = плитки не цели). */
   onDropTrack?: (playlistId: string, trackId: string) => void;
   /** Плейлист перетащили за ручку на другой — переставить перед ним. */
-  onReorderPlaylists?: (draggedId: string, beforeId: string) => void;
+  /** Реордер за ручку-⠿ (локальный, только внутри сетки Библиотеки): id
+   *  встаёт на toIndex (splice-индекс) — тот же контракт, что в сайдбаре. */
+  onReorderPlaylists?: (draggedId: string, toIndex: number) => void;
   /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
   currentId: string | null;
   playing: boolean;
@@ -237,6 +253,15 @@ export function LibraryView({
 }) {
   const { t } = useT();
   const { dragSource } = useDrag();
+  // Реордер плейлистов — локальный жест СЕТКИ: плитка следует за курсором в
+  // пределах сетки, соседи съезжают на будущие места (useLocalReorder +
+  // gridInsertionIndex). «Любимое» закреплено первым и в ids не входит;
+  // подписки (role follower, 2026-07-17) — тоже: их позиции сервер не хранит.
+  const reorder = useLocalReorder({
+    ids: srvPlaylists.filter((p) => p.role !== "follower").map((p) => p.id),
+    resolveTo: (rects, _from, x, y) => gridInsertionIndex(rects, x, y),
+    onCommit: (id, to) => onReorderPlaylists?.(id, to),
+  });
   const chips = localAvailable()
     ? [
         { key: "playlists", label: t("views.library.chips.playlists") },
@@ -366,6 +391,7 @@ export function LibraryView({
                 style={e.available ? undefined : { opacity: 0.45 }}
               >
                 <TrackRow
+                  {...trackRowL10n(t)}
                   index={i + 1}
                   title={e.title}
                   artist={e.available ? e.artist : t("views.library.artistFileMissing", { artist: e.artist })}
@@ -403,17 +429,40 @@ export function LibraryView({
         <div style={grid}>
           {/* «Любимое» закреплено первым — Spotify-паттерн (2026-07-16) */}
           <FavoritesTile count={favoritesCount} onOpen={onOpenFavorites} />
-          {srvPlaylists.map((p) => (
-            <PlaylistDropTile
-              key={p.id}
-              playlist={p}
-              subtitle={t("views.library.playlistSubtitle", { count: p.trackCount })}
-              onOpen={() => onOpenPlaylist(p.id)}
-              onMenu={onPlaylistMenu ? (e: React.MouseEvent) => onPlaylistMenu({ id: p.id, name: p.name }, e) : undefined}
-              onDropTrack={onDropTrack}
-              onReorder={onReorderPlaylists}
-            />
-          ))}
+          {srvPlaylists.map((p) => {
+            // Подписка (2026-07-17): чужой read-only плейлист. Скрытый
+            // владельцем — гаснет; открыть нельзя, только убрать через меню.
+            const followed = p.role === "follower";
+            const hidden = followed && p.available === false;
+            return (
+              <PlaylistDropTile
+                key={p.id}
+                playlist={p}
+                subtitle={
+                  hidden
+                    ? t("views.library.followedHidden")
+                    : followed
+                      ? t("views.library.followedSubtitle", { count: p.trackCount, owner: p.ownerUsername })
+                      : t("views.library.playlistSubtitle", { count: p.trackCount })
+                }
+                dimmed={hidden}
+                onOpen={() => {
+                  if (hidden) {
+                    onNotify(t("views.library.followedHiddenToast"), "x");
+                    return;
+                  }
+                  onOpenPlaylist(p.id);
+                }}
+                onMenu={onPlaylistMenu ? (e: React.MouseEvent) => onPlaylistMenu({ id: p.id, name: p.name }, e) : undefined}
+                onDropTrack={followed ? undefined : onDropTrack}
+                grip={onReorderPlaylists && !followed ? reorder.grip(p.id) : undefined}
+                tileRef={followed ? undefined : reorder.itemRef(p.id)}
+                shift={followed ? null : reorder.shiftFor(p.id)}
+                dragged={!followed && reorder.draggingId === p.id}
+                settling={reorder.settling}
+              />
+            );
+          })}
           {srvPlaylists.length === 0 ? (
             <div style={{ gridColumn: "1 / -1", padding: "var(--sp-6) 0", color: "var(--text-2)", lineHeight: 1.6 }}>
               {t("views.library.playlistsEmpty")}

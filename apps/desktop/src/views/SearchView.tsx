@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, EmptyState, SearchInput, TrackRow } from "@muza/ui";
-import type { GroupedSearchResult, MuzaApi, Track } from "@muza/api-client";
+import { Button, EmptyState, SearchInput, Shelf, TrackRow } from "@muza/ui";
+import type { GroupedSearchResult, MuzaApi, PublicPlaylist, PublicPlaylistHit, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
+import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { flattenGroupedResults, loadMoreScope, nextGroupLimit } from "../lib/searchGrouping";
+import { parsePlaylistCode, parsePlaylistHandle } from "../lib/playlistCode";
+import { PublicPlaylistCard } from "./PublicPlaylistCard";
 import { SearchGroupCard, type VersionsSlot } from "./SearchGroupCard";
 import { useT } from "../i18n";
 
@@ -36,6 +39,8 @@ export function SearchView({
   onLike,
   onNotify,
   onCatalogMenu,
+  onOpenPlaylist,
+  onPlaylistsChanged,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, каталог недоступен. */
@@ -60,9 +65,20 @@ export function SearchView({
   onNotify: (text: string, icon?: string) => void;
   /** «⋯» на серверном треке: меню Stage 4 (плейлист, версии/источники). */
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
+  /** Открыть плейлист из выдачи/по коду (2026-07-17, публичные плейлисты). */
+  onOpenPlaylist: (id: string) => void;
+  /** Подписка из выдачи прошла — App перечитывает список плейлистов. */
+  onPlaylistsChanged?: () => void;
 }) {
   const { t, lang } = useT();
   const [q, setQ] = useState("");
+  // Публичные плейлисты (2026-07-17): режим кода PL_… + хиты обычного поиска
+  const [codeResult, setCodeResult] = useState<PublicPlaylist | null>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [playlistHits, setPlaylistHits] = useState<PublicPlaylistHit[]>([]);
+  // на кого подписались В ЭТОЙ сессии поиска (кнопка гаснет; сервер идемпотентен)
+  const [followedIds, setFollowedIds] = useState<string[]>([]);
   const [results, setResults] = useState<Track[] | null>(null); // null — запроса ещё не было (плоский режим)
   const [groupedResults, setGroupedResults] = useState<GroupedSearchResult[] | null>(null); // grouped-режим
   // «Загрузить ещё» в grouped-режиме: лестница limit шагом 30 (group=1
@@ -81,9 +97,80 @@ export function SearchView({
   // в порядке карточек) — тот же принцип, что в веб-аналоге T41.
   const groupedFlat = useMemo(() => flattenGroupedResults(groupedResults ?? []), [groupedResults]);
 
+  /** Запрос-код PL_… или @адрес (2026-07-17): весь запрос целиком — прямой
+   *  lookup одной карточки, треки не ищем. */
+  const playlistCode = parsePlaylistCode(query);
+  const playlistHandle = playlistCode === null ? parsePlaylistHandle(query) : null;
+  const playlistLookup = playlistCode !== null || playlistHandle !== null;
+
+  // Режим кода/адреса: debounce-запрос метаданных (rate-limit на сервере общий)
+  useEffect(() => {
+    if (!canSearch || !playlistLookup) {
+      setCodeResult(null);
+      setCodeError(null);
+      setCodeBusy(false);
+      return;
+    }
+    const seq = ++seqRef.current;
+    // код вытесняет трековую выдачу прошлого запроса
+    setResults(null);
+    setGroupedResults(null);
+    setPlaylistHits([]);
+    setError(null);
+    setBusy(false);
+    setCodeBusy(true);
+    setCodeError(null);
+    const timer = setTimeout(() => {
+      (playlistCode !== null
+        ? api.getPublicPlaylistByCode(playlistCode)
+        : api.getPublicPlaylistByHandle(playlistHandle ?? ""))
+        .then((p) => {
+          if (seqRef.current === seq) {
+            setCodeResult(p);
+            setCodeBusy(false);
+          }
+        })
+        .catch((e: unknown) => {
+          if (seqRef.current === seq) {
+            setCodeResult(null);
+            setCodeError(e instanceof Error ? e.message : t("views.search.somethingWrong"));
+            setCodeBusy(false);
+          }
+        });
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, canSearch, playlistCode, playlistHandle]);
+
+  // Хиты публичных плейлистов: тот же debounce, что живой каталожный поиск.
+  // Эндпоинт дешёвый (десятки строк, TS-скоринг) — на полный поиск не ждём.
+  useEffect(() => {
+    if (!canSearch || playlistLookup || query.length < 2) {
+      setPlaylistHits([]);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      api
+        .searchPublicPlaylists(query)
+        .then((hits) => {
+          if (!stale) setPlaylistHits(hits);
+        })
+        // ошибка плейлистов НЕ трогает трековую выдачу — просто без витрины
+        .catch(() => {
+          if (!stale) setPlaylistHits([]);
+        });
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [api, canSearch, playlistCode, query]);
+
   // живой каталожный поиск с debounce («Мгновенный поиск»; выкл = по Enter)
   useEffect(() => {
     if (!canSearch) return;
+    if (playlistLookup) return; // режим кода/адреса: трековый поиск молчит
     if (query.length < 2) {
       seqRef.current += 1;
       setResults(null);
@@ -122,10 +209,10 @@ export function SearchView({
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [api, query, canSearch, instantSearch, searchGrouping]);
+  }, [api, query, canSearch, instantSearch, searchGrouping, playlistCode]);
 
   const runSearch = async (scope: "catalog" | "full") => {
-    if (!canSearch || query.length < 2 || busy) return;
+    if (!canSearch || query.length < 2 || busy || playlistLookup) return;
     const seq = ++seqRef.current;
     setBusy(true);
     setError(null);
@@ -209,6 +296,7 @@ export function SearchView({
       {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
     >
       <TrackRow
+        {...trackRowL10n(t)}
         index={index}
         cover={tr.coverUrl}
         showCover={rowShow?.cover !== false}
@@ -232,6 +320,24 @@ export function SearchView({
       />
     </div>
   );
+
+  /** Подписка из выдачи/по коду. Свой плейлист сервер отобьёт 400-кой —
+   *  честно показываем его текст тостом. */
+  const followFromSearch = async (p: PublicPlaylist) => {
+    try {
+      await api.followPlaylist(p.id);
+      setFollowedIds((ids) => (ids.includes(p.id) ? ids : [...ids, p.id]));
+      onNotify(t("views.search.publicPlaylist.added"), "list-music");
+      onPlaylistsChanged?.();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+    }
+  };
+
+  // Плашка «Лучший результат» — только совпадение ПО НАЗВАНИЮ (спека 17.07);
+  // совпавшие лишь по артистам живут в витрине под выдачей.
+  const heroHit = playlistHits.find((h) => h.nameMatched) ?? null;
+  const shelfHits = playlistHits.filter((h) => h.id !== heroHit?.id);
 
   const isEmptyResults = searchGrouping
     ? groupedResults !== null && groupedResults.length === 0
@@ -259,8 +365,49 @@ export function SearchView({
         ) : null}
       </div>
 
-      {showServerResults ? (
+      {playlistLookup && canSearch ? (
+        // Режим кода PL_… / @адреса: одна карточка вместо трековой выдачи
+        <div data-testid="playlist-code-result">
+          {codeResult ? (
+            <PublicPlaylistCard
+              playlist={codeResult}
+              variant="hero"
+              onOpen={() => onOpenPlaylist(codeResult.id)}
+              onFollow={() => void followFromSearch(codeResult)}
+              following={followedIds.includes(codeResult.id)}
+            />
+          ) : codeBusy ? (
+            <div style={{ padding: "var(--sp-4)", color: "var(--text-3)", fontSize: "var(--fs-caption)" }}>
+              {t("views.search.publicPlaylist.codeSearching")}
+            </div>
+          ) : codeError ? (
+            <EmptyState icon="list-music" title={codeError} />
+          ) : null}
+        </div>
+      ) : showServerResults ? (
         <div>
+          {heroHit ? (
+            <div style={{ margin: "0 0 var(--sp-5)" }}>
+              <div
+                style={{
+                  margin: "0 0 var(--sp-2)",
+                  fontSize: "var(--fs-caption)",
+                  color: "var(--text-3)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {t("views.search.publicPlaylist.topResult")}
+              </div>
+              <PublicPlaylistCard
+                playlist={heroHit}
+                variant="hero"
+                onOpen={() => onOpenPlaylist(heroHit.id)}
+                onFollow={() => void followFromSearch(heroHit)}
+                following={followedIds.includes(heroHit.id)}
+              />
+            </div>
+          ) : null}
           <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
             {t("views.search.results")}
           </h2>
@@ -295,6 +442,17 @@ export function SearchView({
               </div>
             ) : null}
           </div>
+          {shelfHits.length > 0 ? (
+            // Витрина «как на главной» под выдачей (решение владельца 17.07);
+            // задел под будущие категории — просто ещё один Shelf рядом.
+            <div style={{ marginTop: "var(--sp-6)" }} data-testid="public-playlists-shelf">
+              <Shelf title={t("views.search.publicPlaylist.shelf")}>
+                {shelfHits.map((h) => (
+                  <PublicPlaylistCard key={h.id} playlist={h} variant="tile" onOpen={() => onOpenPlaylist(h.id)} />
+                ))}
+              </Shelf>
+            </div>
+          ) : null}
         </div>
       ) : !canSearch ? (
         // Аноним каталог не ищет: сервер его не знает
