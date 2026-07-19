@@ -31,3 +31,12 @@ export const PRESETS_BG: Record<string, Partial<Prefs>> = {
   lively: { bgAnimSpeedSec: 64, bgAnimOpacity: 22, bgAnimScale: 140, bgAnimEdge: 20 },
   bright: { bgAnimSpeedSec: 40, bgAnimOpacity: 32, bgAnimScale: 130, bgAnimEdge: 12 },
 };
+
+/** Зона 3 — подготовка очереди (прогрев + преднагрузка). «normal» РАВЕН
+ *  дефолтам полей: экономный режим бережёт трафик, максимум — мгновенный
+ *  старт почти всей головы очереди. */
+export const PRESETS_WARM: Record<string, Partial<Prefs>> = {
+  eco: { warmAhead: 3, preloadAheadSec: 30 },
+  normal: { warmAhead: 10, preloadAheadSec: 20 },
+  max: { warmAhead: 25, preloadAheadSec: 10 },
+};

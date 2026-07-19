@@ -1104,10 +1104,10 @@ function Player({
         pb.prev();
         break;
       case "seekFwd":
-        if (track) pb.seek(Math.min(pos + 5, track.duration));
+        if (track) pb.seek(Math.min(pos + prefs.seekStepSec, track.duration));
         break;
       case "seekBack":
-        pb.seek(Math.max(pos - 5, 0));
+        pb.seek(Math.max(pos - prefs.seekStepSec, 0));
         break;
       case "mute":
         toggleMute();
@@ -1536,6 +1536,10 @@ function Player({
     // Скорость орбит анимированного фона (зона 1 спеки 19.07): app.css читает
     // var(--orb-dur, 64s) — дефолт токена = прежней зашитой скорости.
     "--orb-dur": `${prefs.bgAnimSpeedSec}s`,
+    // Размеры плеера (зона 3): все потребители уже читают эти переменные
+    // (PlayerBar height/Cover size, отступы зон в App и PluginFrames).
+    "--h-playerbar": `${prefs.hPlayerBar}px`,
+    "--size-cover-bar": `${prefs.coverBarSize}px`,
     "--fs-karaoke": `${prefs.karaokeSize}px`,
     "--w-nowplaying": `${prefs.wNowPlaying}px`,
     // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ
@@ -2518,6 +2522,8 @@ function Player({
         }}
         bassShake={prefs.bassShake}
         bassShakeStrength={prefs.bassShakeStrength}
+        bassSharp={prefs.bassSharp}
+        bassReach={prefs.bassReach}
         anims={prefs.anims}
       />
       ) : null}

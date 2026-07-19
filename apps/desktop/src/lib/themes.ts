@@ -74,6 +74,10 @@ export const THEME_KEYS = [
   "visualizerOpacity",
   "bassShake",
   "bassShakeStrength",
+  "bassSharp",
+  "bassReach",
+  "hPlayerBar",
+  "coverBarSize",
 ] as const satisfies readonly (keyof Prefs)[];
 
 /** Ключи Prefs, ОСОЗНАННО не переносимые темой: поведение, приватное,
@@ -128,6 +132,9 @@ export const THEME_EXCLUDED = [
   "sourcesEnabled",
   "sourcePolicy",
   "hotkeys",
+  "seekStepSec",
+  "warmAhead",
+  "preloadAheadSec",
 ] as const satisfies readonly (keyof Prefs)[];
 
 export type ThemeTokens = Partial<Pick<Prefs, (typeof THEME_KEYS)[number]>>;

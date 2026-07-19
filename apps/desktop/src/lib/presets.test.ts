@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchPreset, PRESETS_BG } from "./presets";
+import { matchPreset, PRESETS_BG, PRESETS_WARM } from "./presets";
 import { DEFAULT_PREFS } from "../types";
 
 /** Тестируем на СУЩЕСТВУЮЩИХ ключах Prefs — matchPreset универсален,
@@ -35,6 +35,12 @@ describe("matchPreset", () => {
   it("сравнение объектных значений — по содержимому, не по ссылке", () => {
     const withObj = { visible: { rowShow: { cover: true, duration: true } } };
     expect(matchPreset(withObj, DEFAULT_PREFS)).toBe("visible");
+  });
+});
+
+describe("PRESETS_WARM", () => {
+  it("«Обычно» равен дефолтам: поведение прогрева после обновления не меняется", () => {
+    expect(matchPreset(PRESETS_WARM, DEFAULT_PREFS)).toBe("normal");
   });
 });
 

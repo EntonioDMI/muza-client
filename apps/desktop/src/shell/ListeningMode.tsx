@@ -31,10 +31,9 @@ function prefersReducedMotion(): boolean {
  *  из-под краёв оверлея не выглядывает фон. Жёсткие выключатели (общий anims и
  *  OS prefers-reduced-motion) сильнее любого значения префа. */
 const BASS_BINS = 10;
-const BASS_ATTACK_SEC = 0.05;
-const BASS_RELEASE_SEC = 0.35;
-const BASS_SCALE_MAX = 0.02; // 1.0 → 1.02 при 100%
-const BASS_LIFT_PX = 1.5; // лёгкий подъём на ударе при 100%
+// Атака/спад/амплитуда качания с 19.07 считаются из prefs.bassSharp/bassReach
+// (зона 3 спеки настроек) — формулы в rAF-цикле ниже; середина шкалы (50/50)
+// в точности равна прежним зашитым 0.05с/0.35с/0.02/1.5px.
 
 /** Полноэкранный «режим прослушивания» — караоке-оверлей («ночной вайб»). */
 export function ListeningMode({
@@ -62,6 +61,8 @@ export function ListeningMode({
   visualizerTuning,
   bassShake = false,
   bassShakeStrength = 150,
+  bassSharp = 50,
+  bassReach = 50,
   anims = true,
 }: {
   open: boolean;
@@ -105,6 +106,11 @@ export function ListeningMode({
   bassShake?: boolean;
   /** Сила качания, % (T48): 100 = амплитуда T14, 0 — качания нет. */
   bassShakeStrength?: number;
+  /** «Резкость» отклика 0–100 (зона 3 спеки 19.07): 50 = прежние зашитые
+   *  атака 0.05с / спад 0.35с; выше — удар ловится и отпускается быстрее. */
+  bassSharp?: number;
+  /** «Размах» 0–100: 50 = прежние scale 0.02 / подъём 1.5px. */
+  bassReach?: number;
   /** Общий переключатель анимаций — выключен, значит качание тоже выключено. */
   anims?: boolean;
 }) {
@@ -133,6 +139,14 @@ export function ListeningMode({
   useEffect(() => {
     strengthRef.current = bassShakeStrength;
   }, [bassShakeStrength]);
+  // Резкость/размах — тот же ref-приём, что strengthRef выше (и по той же
+  // причине: rAF-цикл не должен пересоздаваться от кручения ползунка).
+  const sharpRef = useRef(bassSharp);
+  const reachRef = useRef(bassReach);
+  useEffect(() => {
+    sharpRef.current = bassSharp;
+    reachRef.current = bassReach;
+  }, [bassSharp, bassReach]);
   // Колбэк тумблера текста — через ref: keydown-эффект ниже пересоздаётся
   // только по [open], а App передаёт новую стрелку (с новыми prefs) на каждый
   // рендер. Без ref второе нажатие T работало бы со stale-префами и «отменяло»
@@ -164,13 +178,23 @@ export function ListeningMode({
       let sum = 0;
       for (let i = 0; i < bass.length; i++) sum += bass[i];
       const raw = sum / bass.length / 255; // 0..1
-      const tau = raw > level ? BASS_ATTACK_SEC : BASS_RELEASE_SEC;
+      // Резкость (sharp 0–100) сжимает обе постоянные времени: 50 = прежние
+      // 0.05/0.35; размах (reach) масштабирует амплитуду: 50 = прежние
+      // 0.02/1.5px. Формулы линейны и проходят через старые значения ровно
+      // посередине шкалы — дефолт неотличим от поведения до раскрытия ручек.
+      const sharp = Math.max(0, Math.min(100, sharpRef.current)) / 100;
+      const attack = 0.08 - sharp * 0.06; // 50 → 0.05с
+      const release = 0.55 - sharp * 0.4; // 50 → 0.35с
+      const tau = raw > level ? attack : release;
       level += (raw - level) * (1 - Math.exp(-dt / tau));
       const s = Math.max(0, Math.min(1, level));
       const target = shakeRef.current;
       if (target) {
         const k = Math.max(0, strengthRef.current) / 100;
-        target.style.transform = `scale(${(1 + s * BASS_SCALE_MAX * k).toFixed(4)}) translateY(${(-s * BASS_LIFT_PX * k).toFixed(2)}px)`;
+        const reach = Math.max(0, Math.min(100, reachRef.current)) / 100;
+        const scaleMax = reach * 0.04; // 50 → 0.02
+        const liftPx = reach * 3; // 50 → 1.5px
+        target.style.transform = `scale(${(1 + s * scaleMax * k).toFixed(4)}) translateY(${(-s * liftPx * k).toFixed(2)}px)`;
       }
     };
     tick();

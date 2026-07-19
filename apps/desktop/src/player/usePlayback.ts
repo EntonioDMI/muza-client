@@ -24,8 +24,9 @@ import { getCachedSources, invalidateCachedSources, putCachedSources } from "./s
 import { shouldSilenceBeforeResolve } from "./startPlan";
 import type { PlayerTrack } from "./types";
 
-/** За сколько секунд до конца начинать преднагрузку следующего трека. */
-const PRELOAD_AHEAD_SEC = 20;
+// За сколько секунд до конца начинать преднагрузку следующего трека —
+// с 19.07 это prefs.preloadAheadSec (зона 3 спеки настроек, дефолт 20 =
+// прежней зашитой константе), читается живьём через prefsRef.
 
 /** T19 fast-follow (точный триггер gapless, см. pollGapless ниже и
  *  gaplessPlan.ts): пока до конца трека дальше этого порога — один дешёвый
@@ -210,7 +211,7 @@ export function usePlayback({
           if (prefsRef.current.resumePosition && sec > 5) resumeStore.save(s.track.id, sec);
           const remaining = s.track.duration - sec;
           // преднагрузка следующего + ранний стык (кроссфейд ИЛИ gapless — см. gaplessPlan.ts)
-          if (remaining <= PRELOAD_AHEAD_SEC) void preloadNext();
+          if (remaining <= prefsRef.current.preloadAheadSec) void preloadNext();
           const plan = planAutoAdvance({
             remaining,
             crossfadeEnabled: prefsRef.current.crossfade,

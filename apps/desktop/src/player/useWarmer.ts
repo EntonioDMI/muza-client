@@ -28,8 +28,10 @@ import { WarmQueue, type WarmOutcome } from "./warmQueue";
 
 /** Сколько ближайших треков очереди держим прогретыми (после текущего).
  *  Дальние успеют прогреться, когда до них доедет index; лимит 30/мин важнее
- *  охвата хвоста. При шаффле порядок всё равно неизвестен — греется голова. */
-const QUEUE_WARM_AHEAD = 10;
+ *  охвата хвоста. При шаффле порядок всё равно неизвестен — греется голова.
+ *  С 19.07 значение — prefs.warmAhead (зона 3 спеки настроек, дефолт 10 =
+ *  прежнему зашитому); кламп 0–30 держит лимит прогрева 30/мин. */
+const QUEUE_WARM_AHEAD_MAX = 30;
 
 export interface WarmRowProps {
   /** React 19 ref-cleanup: наблюдение снимается возвратом, ref(null) не ждём. */
@@ -65,6 +67,7 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
   prefsRef.current = prefs;
   const apiRef = useRef(api);
   apiRef.current = api;
+  const warmAheadNow = () => Math.max(0, Math.min(QUEUE_WARM_AHEAD_MAX, prefsRef.current.warmAhead));
 
   const warmer = useMemo<Warmer>(() => {
     if (!engineAvailable() || typeof IntersectionObserver === "undefined") return NOOP_WARMER;
@@ -148,7 +151,7 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
     return {
       warmRow,
       noteQueue: (q, index) => {
-        for (const t of q.slice(index + 1, index + 1 + QUEUE_WARM_AHEAD)) {
+        for (const t of q.slice(index + 1, index + 1 + warmAheadNow())) {
           if (t.kind === "local") continue;
           queue.request(t.id, "queue");
         }

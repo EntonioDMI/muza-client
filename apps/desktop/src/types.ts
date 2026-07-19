@@ -127,6 +127,22 @@ export interface Prefs {
   /** Скорость анимаций, % длительности --dur-* (60–170: влево быстрее,
    *  вправо мягче; 100 = дефолт ДС). Старые fast/normal/slow мигрируются. */
   animSpeed: number;
+  /** Зона 3 спеки 19.07 (плеер) — дефолты = прежним зашитым значениям. */
+  /** Шаг перемотки стрелками, сек (1–60; было зашито 5 в App.tsx). */
+  seekStepSec: number;
+  /** Высота полосы плеера, px (72–120; было 92 в spacing.css). */
+  hPlayerBar: number;
+  /** Обложка в полосе плеера, px (44–80; было 60). */
+  coverBarSize: number;
+  /** Сколько следующих треков очереди готовить заранее (0–30; было 10 в
+   *  useWarmer). Больше — мгновенный старт, но выше расход трафика. */
+  warmAhead: number;
+  /** За сколько секунд до конца трека готовить следующий (5–60; было 20). */
+  preloadAheadSec: number;
+  /** Отклик на бас, «резкость» 0–100 (50 = прежние атака 0.05с/спад 0.35с). */
+  bassSharp: number;
+  /** Отклик на бас, «размах» 0–100 (50 = прежние scale 0.02/подъём 1.5px). */
+  bassReach: number;
   /** Размер караоке-строки, px (--fs-karaoke). */
   karaokeSize: number;
   /** Ширины зон, px (узкое окно всё равно пережимает сайдбар). */
@@ -361,6 +377,13 @@ export const DEFAULT_PREFS: Prefs = {
   textDim: 62,
   uiScale: 100,
   animSpeed: 100,
+  seekStepSec: 5,
+  hPlayerBar: 92,
+  coverBarSize: 60,
+  warmAhead: 10,
+  preloadAheadSec: 20,
+  bassSharp: 50,
+  bassReach: 50,
   karaokeSize: 56,
   wSidebar: 280,
   wNowPlaying: 340,
