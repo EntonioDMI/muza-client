@@ -4,6 +4,7 @@ import type { MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
+import { useWarmRow } from "../player/useWarmer";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { useT } from "../i18n";
@@ -46,6 +47,7 @@ export function FavoritesView({
 }) {
   const { t } = useT();
   const { dragSource } = useDrag();
+  const warmRow = useWarmRow();
   const [server, setServer] = useState<Track[] | null>(null);
 
   useEffect(() => {
@@ -83,6 +85,7 @@ export function FavoritesView({
               e.preventDefault();
             }}
             {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
+            {...warmRow(tr.id)}
           >
             <TrackRow
               {...trackRowL10n(t)}

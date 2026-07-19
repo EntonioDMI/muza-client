@@ -16,6 +16,7 @@ import { BAR_MAX_WIDTH, barSpecs } from "../lib/statsBars";
 import { hourLabel } from "../lib/hourLabel";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { trackRowL10n } from "../lib/dsLabels";
+import { useWarmRow } from "../player/useWarmer";
 import type { Prefs, StatsBlockKey } from "../types";
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
@@ -312,6 +313,8 @@ export function StatsView({
     { key: "all", label: t("settings.stats.period.allTime") },
   ];
 
+  const warmRow = useWarmRow();
+
   const renderBlock = (key: StatsBlockKey) => {
     if (!d) return null;
     switch (key) {
@@ -373,9 +376,11 @@ export function StatsView({
           <Panel key={key} title={statsBlockLabel("top_tracks", lang).label} flush>
             <div style={{ display: "flex", flexDirection: "column" }}>
               {d.topTracks.map((entry, i) => (
+                // обёртка — точка прогрева (hover/видимость), как DnD-обёртки
+                // в остальных вьюхах; у топа DnD нет, поэтому div голый
+                <div key={entry.track.id} {...warmRow(entry.track.id)}>
                 <TrackRow
                   {...trackRowL10n(t)}
-                  key={entry.track.id}
                   index={i + 1}
                   cover={entry.track.coverUrl ?? undefined}
                   title={entry.track.title}
@@ -390,6 +395,7 @@ export function StatsView({
                   onLike={() => onLike(entry.track.id)}
                   onMore={(e: React.MouseEvent) => onCatalogMenu(entry.track, e)}
                 />
+                </div>
               ))}
             </div>
           </Panel>

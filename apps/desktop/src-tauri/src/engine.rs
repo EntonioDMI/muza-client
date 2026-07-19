@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Manager, State};
 use url::{Host, Url};
 
@@ -36,12 +36,26 @@ const RECIPE_PUBKEY_SPKI_B64: &str = "MCowBQYDK2VwAyEAtWMO3fH/dJ53pP26jQJUzu6dhD
 /// Замер лестницы целиком (4 трека): v5 9.8–25.7с (в среднем 14.8с) → v6
 /// 4.3–4.6с, ×3.3; формат и байты идентичны (itag 251, тот же размер).
 /// Подробности — docs/notes/2026-07-15-почему-песни-грузятся-долго.md.
+///
+/// v7 (2026-07-19): блок youtube.innertube — ступень 0 (прямой POST /player
+/// клиентом ANDROID_VR, ~171 мс против ~3.6 с у yt-dlp, замер ×21). Значения
+/// клиента живут в рецепте как аварийный рубильник: YouTube выпилит
+/// android_vr → сервер шлёт enabled:false или новую версию, клиент сам
+/// откатывается на yt-dlp-лестницу без релиза. clientVersion строго 1.65.10:
+/// выше — SABR-only (yt-dlp ff459e5). Замер и инварианты —
+/// docs/notes/2026-07-19-прямой-innertube-резолв-замер.md.
 const DEFAULT_RECIPE_JSON: &str = r#"{
-  "recipe_version": 6,
+  "recipe_version": 7,
   "youtube": {
     "player_clients": ["android_vr", "tv_embedded", "web_embedded", "tv"],
     "format_priority": [251, 140, "bestaudio"],
-    "js_runtime": "deno"
+    "js_runtime": "deno",
+    "innertube": {
+      "enabled": true,
+      "client_name": "ANDROID_VR",
+      "client_version": "1.65.10",
+      "client_name_id": 28
+    }
   }
 }"#;
 
@@ -65,6 +79,11 @@ pub struct EngineStats {
     pub fail_bot: u64,
     pub fail_format: u64,
     pub fail_other: u64,
+    /// Провалы ступени 0 (прямой InnerTube): SABR-сессия без прямых url и
+    /// бот-гейт LOGIN_REQUIRED. Рост — сигнал, что android_vr деградирует и
+    /// пора бампить youtube.innertube в горячем рецепте.
+    pub fail_sabr: u64,
+    pub fail_login: u64,
 }
 
 pub struct EngineState {
@@ -81,6 +100,20 @@ pub struct EngineState {
     pins: Mutex<HashSet<String>>,
     /// Неймспейс, которому принадлежит текущее содержимое `pins`.
     pins_ns: Mutex<Option<String>>,
+    /// Прогрев резолва (2026-07-16): метаданные добычи, разрешённые заранее
+    /// через `yt-dlp --simulate` (0 байт трафика). Ключ включает ns по той же
+    /// причине, что и кэш файлов (баг «чужая песня»). Только в памяти, без
+    /// персиста: добытый URL живёт ~6 часов, перезапуск приложения редок, а
+    /// файл-состояние с протухающими URL был бы третьим после
+    /// recipe-cache.json/offline-pins.json.
+    warm: Mutex<HashMap<(String, String), WarmEntry>>,
+    /// Живые стримы (Фаза 2): закачка пишет .part и публикует прогресс,
+    /// handler протокола muza-stream ждёт нужные байты. Ключ — (ns, track_id).
+    streams: Mutex<HashMap<(String, String), StreamHandle>>,
+    /// visitorData гостевой InnerTube-сессии (ступень 0). Без него бот-гейт
+    /// отбивает 5 из 6 запросов /player (замер 2026-07-19); приходит в каждом
+    /// ответе (даже LOGIN_REQUIRED) — кэшируем и переиспользуем до TTL.
+    youtube_visitor: Mutex<Option<VisitorData>>,
 }
 
 impl Default for EngineState {
@@ -94,6 +127,9 @@ impl Default for EngineState {
             inflight: Mutex::new(HashMap::new()),
             pins: Mutex::new(HashSet::new()),
             pins_ns: Mutex::new(None),
+            warm: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
+            youtube_visitor: Mutex::new(None),
         }
     }
 }
@@ -1058,7 +1094,9 @@ fn evict_lru(dir: &Path, limit_bytes: u64, keep: &Path, pins: &HashSet<String>) 
         if total <= limit_bytes {
             break;
         }
-        if path == keep || is_pinned(&path, pins) {
+        // Свежий .part — возможно, живой стрим Фазы 2: не сносим на ходу
+        // (старый .part — мусор, идёт под общую уборку)
+        if path == keep || is_pinned(&path, pins) || is_live_stream_part(&path) {
             continue;
         }
         // Файл может быть занят плеером — просто пропускаем, удалим в другой раз
@@ -1072,6 +1110,1418 @@ fn is_pinned(path: &Path, pins: &HashSet<String>) -> bool {
     path.file_stem()
         .map(|s| pins.contains(s.to_string_lossy().as_ref()))
         .unwrap_or(false)
+}
+
+// ── Прогрев резолва (Фаза 1, 2026-07-16) ──────────────────────────
+// Разбивка 4.5с кэш-мисса (замер 2026-07-15): 1.2с старт yt-dlp + ~2.1с
+// сеть-резолв + 1.2с байты. Добытый googlevideo-URL живёт ~6ч, а
+// `--simulate --print` резолвит метаданные за 0 байт трафика — значит резолв
+// можно сделать заранее (engine_warm), а на клике оставить только байты
+// (fetch_to_cache): ~4.5с → ~1.2с. Дизайн и инварианты безопасности —
+// docs/notes/2026-07-16-прогрев-и-стрим-дизайн.md.
+
+/// Запас до `expire` URL: не начинаем скачивание впритык к протуханию.
+const WARM_EXPIRY_MARGIN: Duration = Duration::from_secs(300);
+/// TTL записи без `expire` в URL (SoundCloud/Bandcamp): консервативно коротко.
+const WARM_FALLBACK_TTL: Duration = Duration::from_secs(600);
+/// Потолок записей прогрева (защита памяти от многочасовой сессии).
+const WARM_MAX_ENTRIES: usize = 512;
+
+/// Прогретые метаданные одного трека: прямой CDN-URL + размер + расширение.
+/// Провайдер — для ResolveOut быстрого пути (той же формы, что у лестницы).
+#[derive(Debug, Clone)]
+struct WarmEntry {
+    url: Url,
+    size: u64,
+    ext: String,
+    provider: String,
+    expires_at: SystemTime,
+}
+
+/// Разобранный выхлоп `--print` прогрева (см. build_ytdlp_simulate_args).
+#[derive(Debug, PartialEq)]
+struct SimulatedFormat {
+    url: String,
+    size: u64,
+    ext: String,
+}
+
+/// Прогресс живого стрима (Фаза 2): публикуется закачкой после каждого чанка.
+/// total здесь, а не в StreamHandle: warm-оценка (filesize_approx) могла
+/// разойтись с настоящим размером из Content-Range — handler обязан считать
+/// Content-Range ответа по ПОСЛЕДНЕЙ правде, иначе <audio> ждал бы байты,
+/// которых не существует.
+#[derive(Debug, Clone, Copy)]
+struct StreamProgress {
+    written: u64,
+    total: u64,
+    /// rename прошёл — файл стал валидным кэшем.
+    finalized: bool,
+    failed: bool,
+}
+
+/// Живой стрим в реестре EngineState.streams: пути + канал прогресса.
+#[derive(Clone)]
+struct StreamHandle {
+    part: PathBuf,
+    final_path: PathBuf,
+    progress: tokio::sync::watch::Receiver<StreamProgress>,
+}
+
+/// argv прогрева — ОТДЕЛЬНАЯ функция, а не правка build_ytdlp_args: боевой
+/// argv security-hardened и покрыт своими тестами, смешивать режимы флагом
+/// значило бы перепроверять оба пути на каждую правку. Отличия от боя:
+/// `--simulate` вместо `--no-simulate` (0 байт трафика), `--print` метаданных
+/// вместо пути файла, нет `--max-downloads` (без скачивания бессмыслен, а его
+/// exit-101 маскировал бы ошибки — см. simulate_exit_ok), нет `-P`/`-o`
+/// (выходного файла не будет). `--max-filesize` ОСТАЁТСЯ: он фильтрует
+/// лестницу форматов на резолве, прогрев обязан видеть ту же лестницу, что бой.
+fn build_ytdlp_simulate_args(
+    attempt: &Attempt,
+    format_str: &str,
+    deno_path: &Path,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--ignore-config"),
+        OsString::from("--no-playlist"),
+        OsString::from("--max-filesize"),
+        OsString::from("512M"),
+        OsString::from("--js-runtimes"),
+        OsString::from(format!("deno:{}", deno_path.display())),
+        OsString::from("-f"),
+        OsString::from(format_str),
+        OsString::from("--no-warnings"),
+        OsString::from("--no-progress"),
+        OsString::from("--socket-timeout"),
+        OsString::from("15"),
+        OsString::from("--retries"),
+        OsString::from("2"),
+        OsString::from("--simulate"),
+        OsString::from("--print"),
+        // protocol — 4-м полем не для красоты: hls/dash-форматы (SoundCloud
+        // без progressive) печатают в %(url)s МАНИФЕСТ; скачав его, прогрев
+        // положил бы в кэш текст вместо аудио (см. parse_simulate_output).
+        OsString::from("%(url)s\t%(filesize,filesize_approx)s\t%(ext)s\t%(protocol)s"),
+    ];
+    if let Some(client) = &attempt.client {
+        args.push(OsString::from("--extractor-args"));
+        args.push(OsString::from(format!("youtube:player_client={client}")));
+    }
+    args.push(OsString::from(attempt.url.as_str()));
+    args
+}
+
+/// Успех simulate — ТОЛЬКО 0. Переиспользовать ytdlp_exit_ok нельзя: боевой
+/// 101 (MaxDownloadsReached) означает «скачал и упёрся в --max-downloads», у
+/// simulate скачивания нет и 101 может быть только ошибкой.
+fn simulate_exit_ok(code: Option<i32>) -> bool {
+    code == Some(0)
+}
+
+/// Расширение станет именем файла кэша `<id>.<ext>` — грамматика жёсткая:
+/// 1..=8 строчных ASCII-букв/цифр, никаких точек/слэшей (yt-dlp отдаёт
+/// webm/m4a/opus/mp3 — всё влезает).
+fn valid_warm_ext(ext: &str) -> bool {
+    !ext.is_empty()
+        && ext.len() <= 8
+        && ext
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// Разбор `--print "%(url)s\t%(filesize,filesize_approx)s\t%(ext)s\t%(protocol)s"`.
+/// Как run_ytdlp_once: наша строка — последняя непустая в stdout. Протокол
+/// принимается только "https" (прямой файл): hls/dash кладут в %(url)s
+/// манифест, скачивание которого отравило бы кэш текстом вместо аудио и
+/// сделало трек неиграбельным — прямое нарушение инварианта прогрева.
+/// Размер обязателен (не "NA"): без него не построить явный Range, а без
+/// Range googlevideo троттлит до 32 КБ/с (замер 2026-07-15).
+fn parse_simulate_output(stdout: &str) -> Result<SimulatedFormat, String> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .ok_or("yt-dlp --simulate не напечатал метаданные")?;
+    let fields: Vec<&str> = line.split('\t').collect();
+    let [url, size, ext, protocol] = fields.as_slice() else {
+        return Err(format!("неожиданный выхлоп simulate: {line:?}"));
+    };
+    if *protocol != "https" {
+        return Err(format!("формат с протоколом {protocol:?} не прогревается (нужен прямой https)"));
+    }
+    let size: u64 = size
+        .parse()
+        .map_err(|_| format!("simulate не отдал размер файла: {size:?}"))?;
+    if !valid_warm_ext(ext) {
+        return Err(format!("подозрительное расширение из simulate: {ext:?}"));
+    }
+    if url.trim().is_empty() {
+        return Err("simulate отдал пустой URL".into());
+    }
+    Ok(SimulatedFormat {
+        url: (*url).to_string(),
+        size,
+        ext: (*ext).to_string(),
+    })
+}
+
+/// Срок жизни warm-записи: `expire` из query URL (unix-секунды у googlevideo)
+/// минус запас — не начинаем скачивание впритык к протуханию. Нет/битый
+/// expire (SoundCloud/Bandcamp) — консервативный короткий TTL.
+fn warm_expires_at(url: &Url, now: SystemTime) -> SystemTime {
+    let expire = url
+        .query_pairs()
+        .find(|(k, _)| k == "expire")
+        .and_then(|(_, v)| v.parse::<u64>().ok());
+    match expire {
+        Some(secs) => SystemTime::UNIX_EPOCH + Duration::from_secs(secs) - WARM_EXPIRY_MARGIN,
+        None => now + WARM_FALLBACK_TTL,
+    }
+}
+
+/// Новая граница доверия (по сравнению с боевым путём): по добытому URL ходит
+/// не yt-dlp, а МЫ (reqwest в fetch_to_cache). Валидация: только https, без
+/// credentials, хост — домен (не IP-литерал), DNS-ответ — публичный по той же
+/// prefix-policy (is_public_ip), что и canonical_target. Домен CDN намеренно
+/// НЕ whitelist-ится: список хостов googlevideo/SoundCloud плавает, whitelist
+/// ломал бы прогрев молча, а планку не поднимает — yt-dlp и сегодня резолвит
+/// домен заново и следует редиректам (см. «Остаточный риск» ниже).
+///
+/// Остаточный риск (честно): это валидация ответа, а не пиннинг —
+/// reqwest резолвит заново и следует редиректам; полностью SSRF закрывается
+/// только egress-proxy/firewall, как и было записано про yt-dlp.
+fn validate_warm_url_with_lookup(
+    raw: &str,
+    lookup: &mut impl FnMut(&str, u16) -> LookupResult,
+) -> Result<Url, String> {
+    let parsed = Url::parse(raw).map_err(|_| "warm-URL не парсится".to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("warm-URL не https".into());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("warm-URL с credentials".into());
+    }
+    let host = match parsed.host() {
+        Some(Host::Domain(host)) => host.to_string(),
+        _ => return Err("warm-URL хост — не домен".into()),
+    };
+    // Best-effort, не гейт — та же философия, что DNS-преflight
+    // canonical_target: за DPI-обходом/прокси локальный getaddrinfo врёт
+    // NXDOMAIN, тогда как reqwest тем же хостом ходит через прокси. Режем
+    // только реальный приватный ответ.
+    if let Ok(answers) = lookup(&host, 443) {
+        if !answers.is_empty() && answers.iter().copied().any(|answer| !is_public_ip(answer)) {
+            return Err("warm-URL резолвится в непубличный адрес".into());
+        }
+    }
+    Ok(parsed)
+}
+
+fn validate_warm_url(raw: &str) -> Result<Url, String> {
+    let mut lookup = |host: &str, port: u16| {
+        debug_assert_eq!(port, 443);
+        (host, 443)
+            .to_socket_addrs()
+            .map(|answers| answers.map(|answer| answer.ip()).collect())
+            .map_err(|error| format!("DNS lookup failed: {error}"))
+    };
+    validate_warm_url_with_lookup(raw, &mut lookup)
+}
+
+/// Заявленный размер: >0 и в лимите кэша (тот же 512 МиБ, что у yt-dlp-пути).
+fn content_length_ok(len: u64) -> bool {
+    len > 0 && len <= MAX_YTDLP_OUTPUT_BYTES
+}
+
+/// `Content-Range: bytes 0-<end>/<total>` 206-ответа. total — ИСТИННЫЙ размер
+/// файла (filesize_approx из simulate мог наврать; обрезанный файл в кэше
+/// хуже медленного старта — см. fetch_to_cache). Диапазоны не с нуля и
+/// звёздочки не принимаем: мы всегда просим bytes=0-…
+fn parse_content_range(value: &str) -> Option<(u64, u64)> {
+    let rest = value.strip_prefix("bytes ")?;
+    let (range, total) = rest.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    if start != "0" {
+        return None;
+    }
+    Some((end.parse().ok()?, total.parse().ok()?))
+}
+
+/// `Range: bytes=<start>-[<end>]` запроса `<audio>` (протокол muza-stream,
+/// Фаза 2). Поддержан ровно тот диалект, которым говорят медиа-стеки:
+/// одиночный диапазон от start. Мульти-диапазон и суффиксную форму
+/// (`bytes=-500`) не поддерживаем: None = «отвечай 200 целиком» — законно.
+fn parse_range_header(value: &str) -> Option<(u64, Option<u64>)> {
+    let rest = value.strip_prefix("bytes=")?;
+    let (start, end) = rest.split_once('-')?;
+    if end.contains(',') {
+        return None;
+    }
+    let start: u64 = start.parse().ok()?;
+    if end.is_empty() {
+        return Some((start, None));
+    }
+    let end: u64 = end.parse().ok()?;
+    if end < start {
+        return None;
+    }
+    Some((start, Some(end)))
+}
+
+fn warm_key(ns: &str, track_id: &str) -> (String, String) {
+    (ns.to_string(), track_id.to_string())
+}
+
+fn store_warm_entry(state: &EngineState, ns: &str, track_id: &str, entry: WarmEntry) {
+    let mut warm = state.warm.lock().unwrap();
+    if warm.len() >= WARM_MAX_ENTRIES {
+        // сперва дёшево выкидываем протухшие; если живых всё ещё потолок —
+        // жертвуем самой близкой к протуханию (она наименее ценна)
+        let now = SystemTime::now();
+        warm.retain(|_, e| e.expires_at > now);
+        if warm.len() >= WARM_MAX_ENTRIES {
+            if let Some(key) = warm
+                .iter()
+                .min_by_key(|(_, e)| e.expires_at)
+                .map(|(k, _)| k.clone())
+            {
+                warm.remove(&key);
+            }
+        }
+    }
+    warm.insert(warm_key(ns, track_id), entry);
+}
+
+/// Изъятие ОДНОРАЗОВОЕ: быстрый путь engine_resolve берёт запись и либо
+/// доводит её до файла в кэше, либо она уже выброшена — «молча выбросить и
+/// упасть на лестницу» получается самим take. Протухшее удаляется на месте.
+fn take_live_warm_entry(
+    state: &EngineState,
+    ns: &str,
+    track_id: &str,
+    now: SystemTime,
+) -> Option<WarmEntry> {
+    let mut warm = state.warm.lock().unwrap();
+    let key = warm_key(ns, track_id);
+    let entry = warm.remove(&key)?;
+    if entry.expires_at > now {
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+/// Неразрушающая проверка для engine_warm: живая запись уже есть — греть
+/// нечего. Протухшая выбрасывается сразу (иначе бы врала до первого take).
+fn has_live_warm_entry(state: &EngineState, ns: &str, track_id: &str, now: SystemTime) -> bool {
+    let mut warm = state.warm.lock().unwrap();
+    let key = warm_key(ns, track_id);
+    match warm.get(&key) {
+        Some(entry) if entry.expires_at > now => true,
+        Some(_) => {
+            warm.remove(&key);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Одна попытка прогрева: тот же процесс yt-dlp, что run_ytdlp_once, но
+/// `--simulate --print` — метаданные без единого байта аудио (~2-4с против
+/// ~4.5с полной добычи; трафик 0). Успех — прямой CDN-URL + размер + ext.
+fn run_ytdlp_simulate(
+    ytdlp: &Path,
+    deno: &Path,
+    attempt: &Attempt,
+    format_str: &str,
+) -> Result<SimulatedFormat, String> {
+    let mut cmd = command(ytdlp);
+    cmd.args(build_ytdlp_simulate_args(attempt, format_str, deno));
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("yt-dlp не запустился ({}): {e}", ytdlp.display()))?;
+    let status = wait_with_timeout(&mut child, RESOLVE_TIMEOUT)?;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_string(&mut stdout);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_string(&mut stderr);
+    }
+
+    if !simulate_exit_ok(status.code()) {
+        let last = stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("yt-dlp --simulate упал без stderr");
+        return Err(last.to_string());
+    }
+    parse_simulate_output(&stdout)
+}
+
+/// Общий HTTP-клиент прогрева: пул соединений/тлс-сессий между прогревом и
+/// кликом (тот же CDN-хост) экономит рукопожатие на пути «клик → звук».
+fn warm_http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .expect("reqwest client строится")
+    })
+}
+
+/// Скачивание по прогретому URL в кэш — замена всего процесса yt-dlp на один
+/// GET, когда метаданные уже разрешены прогревом.
+///
+/// Инварианты боевого пути сохраняются ЗДЕСЬ (см. таблицу в
+/// docs/notes/2026-07-16-прогрев-и-стрим-дизайн.md):
+/// - явный `Range: bytes=0-<size-1>` обязателен — обычный GET по googlevideo
+///   троттлится до 32 КБ/с (замер 2026-07-15: 802 КБ за 25с против 1.2с);
+/// - лимит 512 МиБ трижды: заявленный размер до запроса, Content-Length /
+///   Content-Range до чтения тела, счётчик байт при записи (заголовки врут
+///   бесплатно);
+/// - целостность: сколько CDN заявил (total из Content-Range/Content-Length),
+///   столько и записали — иначе .part удаляется (filesize_approx из simulate
+///   мог наврать, обрезанное аудио в кэше хуже медленного старта);
+/// - результат становится кэшем только атомарным rename ПОСЛЕ полной записи;
+///   `.part` не может стать кэш-хитом (find_cached, тест part_file_is_not_a_cache_hit);
+/// - `validate_ytdlp_output` на финальном пути — буквально та же функция.
+async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result<PathBuf, String> {
+    fetch_to_cache_with_progress(dir, track_id, entry, None).await
+}
+
+/// То же скачивание, но с публикацией прогресса для протокола muza-stream
+/// (Фаза 2): стрим и заполнение кэша — ОДНА закачка, не две.
+async fn fetch_to_cache_with_progress(
+    dir: &Path,
+    track_id: &str,
+    entry: &WarmEntry,
+    progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+) -> Result<PathBuf, String> {
+    if !content_length_ok(entry.size) {
+        return Err(format!("warm-размер вне лимита: {}", entry.size));
+    }
+    let resp = warm_http_client()
+        .get(entry.url.clone())
+        .header("Range", format!("bytes=0-{}", entry.size - 1))
+        .timeout(RESOLVE_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("warm GET не ушёл: {e}"))?;
+
+    let status = resp.status();
+    // total — сколько байт СУЩЕСТВУЕТ у CDN: у 206 — из Content-Range (наш
+    // Range мог попросить меньше или больше реального), у 200 — Content-Length.
+    let total = match status.as_u16() {
+        206 => {
+            let (end, total) = resp
+                .headers()
+                .get("Content-Range")
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_content_range)
+                .ok_or("206 без разборчивого Content-Range")?;
+            if end + 1 != total {
+                // CDN отдаёт кусок меньше файла (настоящий размер больше
+                // simulate-оценки) — привезли бы обрезанное аудио
+                return Err(format!("warm-ответ неполный: {end}+1 из {total}"));
+            }
+            total
+        }
+        200 => resp
+            .content_length()
+            .ok_or("200 без Content-Length — размер не проверить")?,
+        other => return Err(format!("warm GET: статус {other}")),
+    };
+    if !content_length_ok(total) {
+        return Err(format!("warm Content-Length вне лимита: {total}"));
+    }
+    if let Some(tx) = progress {
+        // настоящий total из заголовков — правим warm-оценку до первого байта
+        tx.send_replace(StreamProgress {
+            written: 0,
+            total,
+            finalized: false,
+            failed: false,
+        });
+    }
+
+    let part = dir.join(format!("{track_id}.{}.part", entry.ext));
+    let final_path = dir.join(format!("{track_id}.{}", entry.ext));
+    let written = write_body_to_part(resp, &part, total, progress).await;
+    match written {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            return Err(e);
+        }
+    }
+    // На Windows rename поверх существующего файла падает — а yt-dlp мог
+    // оставить одноимённый файл от прошлой жизни. Кэш-промах уже установлен
+    // (engine_resolve смотрел find_cached), так что снести безопасно.
+    let _ = fs::remove_file(&final_path);
+    if let Err(e) = fs::rename(&part, &final_path) {
+        let _ = fs::remove_file(&part);
+        return Err(format!("rename .part не прошёл: {e}"));
+    }
+    validate_ytdlp_output(dir, &final_path)
+}
+
+/// Тело ответа → `.part`, с подсчётом байт (Content-Length врёт бесплатно,
+/// проверяем и по факту) и жёсткой сверкой с total по завершении. progress —
+/// для протокола muza-stream: handler ждёт written, а не опрашивает диск.
+async fn write_body_to_part(
+    mut resp: reqwest::Response,
+    part: &Path,
+    total: u64,
+    progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut file = fs::File::create(part).map_err(|e| format!("не создался .part: {e}"))?;
+    let mut written: u64 = 0;
+    loop {
+        let chunk = resp
+            .chunk()
+            .await
+            .map_err(|e| format!("обрыв warm-скачивания: {e}"))?;
+        let Some(bytes) = chunk else { break };
+        written += bytes.len() as u64;
+        if written > total {
+            return Err(format!("CDN прислал больше заявленного: {written} > {total}"));
+        }
+        file.write_all(&bytes)
+            .map_err(|e| format!("запись .part: {e}"))?;
+        if let Some(tx) = progress {
+            // читатель срезов ждёт БАЙТЫ НА ДИСКЕ — публикуем после write
+            tx.send_replace(StreamProgress {
+                written,
+                total,
+                finalized: false,
+                failed: false,
+            });
+        }
+    }
+    if written != total {
+        return Err(format!("warm-скачивание неполное: {written} из {total}"));
+    }
+    file.flush().map_err(|e| format!("flush .part: {e}"))?;
+    Ok(())
+}
+
+// ── Ступень 0: прямой InnerTube-резолв (2026-07-19) ───────────────
+// Один POST youtubei/v1/player клиентом ANDROID_VR отдаёт прямой CDN-URL
+// (itag 251/140) + размер + expire за ~171 мс против ~3.6 с у yt-dlp (замер
+// ×21 — docs/notes/2026-07-19-прямой-innertube-резолв-замер.md). Это НЕ
+// замена yt-dlp-лестницы, а быстрая ступень ПЕРЕД ней: любой провал
+// (SABR-сессия без url, LOGIN_REQUIRED, UNPLAYABLE, сеть, таймаут) молча
+// уступает лестнице — ценность yt-dlp в скорости починки сообществом.
+// Гочи (замер 2026-07-19, не переоткрывать):
+//  - visitorData ОБЯЗАТЕЛЕН: без него бот-гейт отбивает 5 из 6 запросов;
+//    значение приходит в КАЖДОМ ответе /player (даже LOGIN_REQUIRED) —
+//    кэшируем в EngineState и переиспользуем;
+//  - clientVersion строго 1.65.10 (выше — SABR-only, yt-dlp ff459e5);
+//    живёт в горячем рецепте — бампается деплоем сервера без релиза;
+//  - выходная форма = WarmEntry: всё ниже (validate_warm_url, fetch_to_cache,
+//    warm-кэш, muza-stream) переиспользуется байт-в-байт.
+
+/// Таймаут одного POST /player: ступень 0 либо быстрая, либо сразу уступает
+/// лестнице (не общий RESOLVE_TIMEOUT 180 с — столько ждать нечего).
+const INNERTUBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// TTL кэшированного visitorData гостевой сессии (эмпирически живёт часами;
+/// протухший лечится одним лишним повтором — цена ошибки мала).
+const INNERTUBE_VISITOR_TTL: Duration = Duration::from_secs(6 * 3600);
+const INNERTUBE_ENDPOINT: &str = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
+/// Приоритет itag ступени 0 (только форматы с прямым url).
+const INNERTUBE_ITAGS_DEFAULT: &[u64] = &[251, 140];
+/// Эконом-приоритет — те же малые форматы, что ECONOM_FORMATS лестницы.
+const INNERTUBE_ITAGS_ECONOM: &[u64] = &[250, 249, 139, 251, 140];
+
+/// visitorData гостевой сессии + момент получения (для TTL).
+struct VisitorData {
+    value: String,
+    obtained_at: SystemTime,
+}
+
+/// Блок `youtube.innertube` горячего рецепта — аварийный рубильник ступени 0:
+/// enabled:false или бамп client_version деплоем сервера, без релиза клиента.
+#[derive(Debug, Clone, PartialEq)]
+struct InnertubeConfig {
+    client_name: String,
+    client_version: String,
+    client_name_id: u64,
+}
+
+/// Провал ступени 0: LoginRequired лечится свежим visitorData (один повтор),
+/// остальное — сразу фолбэк на лестницу. Классы — ещё и маркеры KPI
+/// (fail_sabr/fail_login): по ним видно, что android_vr начал деградировать.
+#[derive(Debug, PartialEq)]
+enum InnertubeFail {
+    LoginRequired(String),
+    Sabr(String),
+    Other(String),
+}
+
+/// Успешный разбор ответа /player — та же тройка, что у SimulatedFormat.
+#[derive(Debug, PartialEq)]
+struct InnertubeFormat {
+    url: String,
+    size: u64,
+    ext: String,
+}
+
+/// Рубильник + значения клиента из горячего рецепта. Любая неполнота блока
+/// (нет блока, enabled≠true, битые поля) — ступень 0 выключена: аварийное
+/// отключение обязано срабатывать и на «сервер прислал урезанный блок».
+fn innertube_from_recipe(recipe: &serde_json::Value) -> Option<InnertubeConfig> {
+    let block = &recipe["youtube"]["innertube"];
+    if block["enabled"].as_bool() != Some(true) {
+        return None;
+    }
+    Some(InnertubeConfig {
+        client_name: block["client_name"].as_str()?.to_string(),
+        client_version: block["client_version"].as_str()?.to_string(),
+        client_name_id: block["client_name_id"].as_u64()?,
+    })
+}
+
+/// itag → расширение файла кэша (`{track_id}.{ext}`, понимает find_cached).
+fn innertube_ext_for_itag(itag: u64) -> Option<&'static str> {
+    match itag {
+        249 | 250 | 251 => Some("webm"),
+        139 | 140 => Some("m4a"),
+        _ => None,
+    }
+}
+
+/// Разбор ответа /player: playability-гейт + выбор аудиоформата с прямым url
+/// по приоритету itag. contentLength в живом ответе — СТРОКА («3433755»).
+fn parse_innertube_player(
+    raw: &serde_json::Value,
+    itag_priority: &[u64],
+) -> Result<InnertubeFormat, InnertubeFail> {
+    let status = raw["playabilityStatus"]["status"]
+        .as_str()
+        .unwrap_or("НЕТ_СТАТУСА");
+    if status != "OK" {
+        let reason = raw["playabilityStatus"]["reason"].as_str().unwrap_or("");
+        let msg = format!("{status}: {reason}");
+        return Err(if status == "LOGIN_REQUIRED" {
+            InnertubeFail::LoginRequired(msg)
+        } else {
+            InnertubeFail::Other(msg)
+        });
+    }
+    let formats = raw["streamingData"]["adaptiveFormats"]
+        .as_array()
+        .ok_or_else(|| InnertubeFail::Sabr("нет adaptiveFormats".into()))?;
+    for want in itag_priority {
+        for f in formats {
+            if f["itag"].as_u64() != Some(*want) {
+                continue;
+            }
+            if !f["mimeType"].as_str().unwrap_or("").starts_with("audio/") {
+                continue;
+            }
+            let Some(url) = f["url"].as_str().filter(|u| !u.is_empty()) else {
+                continue;
+            };
+            let Some(ext) = innertube_ext_for_itag(*want) else {
+                continue;
+            };
+            let Some(size) = f["contentLength"]
+                .as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            return Ok(InnertubeFormat {
+                url: url.to_string(),
+                size,
+                ext: ext.to_string(),
+            });
+        }
+    }
+    // Ничего не выбрано. Форматы есть, а прямых url нет ни у одного — это
+    // SABR-сессия (главный ожидаемый режим деградации android_vr).
+    let any_url = formats
+        .iter()
+        .any(|f| f["url"].as_str().map(|u| !u.is_empty()).unwrap_or(false));
+    if !formats.is_empty() && !any_url {
+        return Err(InnertubeFail::Sabr(
+            "adaptiveFormats без прямых url (SABR-сессия)".into(),
+        ));
+    }
+    Err(InnertubeFail::Other(
+        "нет подходящего аудиоформата с прямым url".into(),
+    ))
+}
+
+/// visitorData из ответа: приходит даже при LOGIN_REQUIRED/UNPLAYABLE.
+fn innertube_visitor(raw: &serde_json::Value) -> Option<String> {
+    raw["responseContext"]["visitorData"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+}
+
+/// InnertubeFormat → WarmEntry: та же граница доверия, что у прогрева
+/// (validate_warm_url, лимит 512 МиБ, грамматика ext), expire — из самой
+/// ссылки. Дальше запись обслуживают fetch_to_cache/warm-кэш без изменений.
+fn innertube_warm_entry_with_lookup(
+    fmt: &InnertubeFormat,
+    now: SystemTime,
+    lookup: &mut impl FnMut(&str, u16) -> LookupResult,
+) -> Result<WarmEntry, String> {
+    if !content_length_ok(fmt.size) {
+        return Err(format!("innertube-размер вне лимита: {}", fmt.size));
+    }
+    if !valid_warm_ext(&fmt.ext) {
+        return Err(format!("подозрительное расширение: {:?}", fmt.ext));
+    }
+    let url = validate_warm_url_with_lookup(&fmt.url, lookup)?;
+    let expires_at = warm_expires_at(&url, now);
+    if expires_at <= now {
+        return Err("innertube-URL уже протух".into());
+    }
+    Ok(WarmEntry {
+        url,
+        size: fmt.size,
+        ext: fmt.ext.clone(),
+        provider: "youtube".into(),
+        expires_at,
+    })
+}
+
+fn innertube_warm_entry(fmt: &InnertubeFormat, now: SystemTime) -> Result<WarmEntry, String> {
+    let mut lookup = |host: &str, port: u16| {
+        debug_assert_eq!(port, 443);
+        (host, 443)
+            .to_socket_addrs()
+            .map(|answers| answers.map(|answer| answer.ip()).collect())
+            .map_err(|error| format!("DNS lookup failed: {error}"))
+    };
+    innertube_warm_entry_with_lookup(fmt, now, &mut lookup)
+}
+
+/// Ступень 0 — только когда ВЕДУЩИЙ источник YouTube с валидным id:
+/// приоритет источников сервера не переворачиваем (SoundCloud/Bandcamp
+/// первым — сразу лестница; их прямой резолв — отдельная будущая задача).
+fn stage0_youtube_id(sources: &[SourceRef]) -> Option<String> {
+    match sources.first()? {
+        SourceRef::Youtube { source_id } if valid_youtube_id(source_id) => Some(source_id.clone()),
+        _ => None,
+    }
+}
+
+fn classify_innertube_failure(stats: &mut EngineStats, fail: &InnertubeFail) {
+    match fail {
+        InnertubeFail::Sabr(_) => stats.fail_sabr += 1,
+        InnertubeFail::LoginRequired(_) => stats.fail_login += 1,
+        InnertubeFail::Other(_) => stats.fail_other += 1,
+    }
+}
+
+/// Тело POST /player. Значения client — из рецепта; остальные поля
+/// (deviceMake и пр.) — обязательные константы ANDROID_VR из yt-dlp ff459e5
+/// (без них клиент не признаётся «своим»).
+fn build_innertube_body(
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    visitor: Option<&str>,
+) -> serde_json::Value {
+    let mut client = serde_json::json!({
+        "clientName": cfg.client_name,
+        "clientVersion": cfg.client_version,
+        "deviceMake": "Oculus",
+        "deviceModel": "Quest 3",
+        "androidSdkVersion": 32,
+        "osName": "Android",
+        "osVersion": "12L",
+        "hl": "en",
+        "gl": "US",
+    });
+    if let Some(v) = visitor {
+        client["visitorData"] = serde_json::Value::String(v.to_string());
+    }
+    serde_json::json!({
+        "context": { "client": client },
+        "videoId": video_id,
+        "contentCheckOk": true,
+        "racyCheckOk": true,
+    })
+}
+
+/// Оркестрация visitorData вокруг одного вызова /player (транспорт
+/// инъецируется — тестируется без сети):
+///  1) свежий visitor из состояния идёт в первый запрос;
+///  2) visitorData из ЛЮБОГО ответа освежает состояние;
+///  3) LOGIN_REQUIRED лечится ровно ОДНИМ повтором с новым visitor
+///     (замер 2026-07-19: с ним 5/6 OK) — нечем повторять или снова отказ →
+///     наружу, фолбэк решает вызывающий.
+async fn resolve_via_innertube_with<F, Fut>(
+    state: &EngineState,
+    itag_priority: &[u64],
+    mut call: F,
+) -> Result<InnertubeFormat, InnertubeFail>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+{
+    let now = SystemTime::now();
+    let visitor = {
+        let guard = state.youtube_visitor.lock().unwrap();
+        guard
+            .as_ref()
+            .filter(|v| {
+                now.duration_since(v.obtained_at)
+                    .map(|age| age < INNERTUBE_VISITOR_TTL)
+                    .unwrap_or(false)
+            })
+            .map(|v| v.value.clone())
+    };
+    let resp = call(visitor.clone()).await.map_err(InnertubeFail::Other)?;
+    let fresh = innertube_visitor(&resp);
+    if let Some(v) = &fresh {
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: v.clone(),
+            obtained_at: SystemTime::now(),
+        });
+    }
+    match parse_innertube_player(&resp, itag_priority) {
+        Err(InnertubeFail::LoginRequired(msg)) => {
+            // повторяем только если появился ДРУГОЙ visitor — слать тот же
+            // значит получить тот же отказ
+            let Some(retry_visitor) = fresh.filter(|v| Some(v.as_str()) != visitor.as_deref())
+            else {
+                return Err(InnertubeFail::LoginRequired(msg));
+            };
+            let resp2 = call(Some(retry_visitor))
+                .await
+                .map_err(InnertubeFail::Other)?;
+            if let Some(v2) = innertube_visitor(&resp2) {
+                *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+                    value: v2,
+                    obtained_at: SystemTime::now(),
+                });
+            }
+            parse_innertube_player(&resp2, itag_priority)
+        }
+        other => other,
+    }
+}
+
+/// Сетевой транспорт ступени 0: один POST /player клиентом из рецепта.
+/// Форма запроса проверена живьём 2026-07-19 (~171 мс медианы); UA и
+/// заголовки X-YouTube-* обязательны. reqwest собран без фичи gzip —
+/// Accept-Encoding: identity делает ответ детерминированно несжатым.
+async fn innertube_player_call(
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    visitor: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let body = build_innertube_body(cfg, video_id, visitor);
+    let ua = format!(
+        "com.google.android.apps.youtube.vr.oculus/{} (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+        cfg.client_version
+    );
+    let mut req = warm_http_client()
+        .post(INNERTUBE_ENDPOINT)
+        .header("Content-Type", "application/json")
+        .header("User-Agent", ua)
+        .header("X-YouTube-Client-Name", cfg.client_name_id.to_string())
+        .header("X-YouTube-Client-Version", &cfg.client_version)
+        .header("Origin", "https://www.youtube.com")
+        .header("Accept-Encoding", "identity")
+        .timeout(INNERTUBE_TIMEOUT)
+        .body(serde_json::to_vec(&body).map_err(|e| format!("сериализация body: {e}"))?);
+    if let Some(v) = visitor {
+        req = req.header("X-Goog-Visitor-Id", v);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("POST /player не ушёл: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() != 200 {
+        return Err(format!("POST /player: статус {status}"));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("чтение ответа /player: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("ответ /player не JSON: {e}"))
+}
+
+/// Боевая ступень 0 целиком: POST → разбор → WarmEntry той же формы, что у
+/// прогрева. Err любого класса = «молча уступи лестнице» у вызывающего.
+async fn resolve_via_innertube(
+    state: &EngineState,
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    itag_priority: &[u64],
+) -> Result<WarmEntry, InnertubeFail> {
+    let cfg_owned = cfg.clone();
+    let vid = video_id.to_string();
+    let fmt = resolve_via_innertube_with(state, itag_priority, move |visitor| {
+        let cfg = cfg_owned.clone();
+        let vid = vid.clone();
+        async move { innertube_player_call(&cfg, &vid, visitor.as_deref()).await }
+    })
+    .await?;
+    innertube_warm_entry(&fmt, SystemTime::now()).map_err(InnertubeFail::Other)
+}
+
+/// Валидация id трека: имя каталога/файла кэша (общая для resolve и warm).
+fn validate_track_id(track_id: &str) -> Result<(), String> {
+    if track_id.is_empty()
+        || !track_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("некорректный id трека".into());
+    }
+    Ok(())
+}
+
+/// Лестница из рецепта: player_clients + формат-строка (общая для resolve и
+/// warm — прогрев обязан резолвить ровно тот формат, который скачал бы бой).
+fn ladder_from_recipe(state: &EngineState, quality: Option<&str>) -> (Vec<String>, String) {
+    let recipe = state.recipe.lock().unwrap();
+    let clients: Vec<String> = recipe["youtube"]["player_clients"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .unwrap_or_else(|| vec!["tv".into(), "web_music".into()]);
+    let mut format_str = recipe["youtube"]["format_priority"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_else(|| "251/140/bestaudio".to_string());
+    if quality == Some("econom") {
+        format_str = format!("{ECONOM_FORMATS}/{format_str}");
+    }
+    (clients, format_str)
+}
+
+#[derive(Serialize)]
+pub struct WarmOut {
+    /// Живая warm-запись есть (уже была или только что добыта).
+    pub warm: bool,
+    /// Файл уже в кэше — греть нечего (и warm=false).
+    pub cached: bool,
+}
+
+/// Прогрев резолва: та же лестница «источники × player_clients», но
+/// `--simulate --print` вместо скачивания — 0 байт трафика, только метаданные.
+/// Результат — WarmEntry в памяти; клик по треку заберёт её быстрым путём
+/// engine_resolve (fetch_to_cache) и оставит от 4.5с только ~1.2с байтов.
+///
+/// Ошибка прогрева НЕ трогает счётчики EngineStats: KPI (SABR/403-rate) мерит
+/// боевые добычи, фоновый прогрев размывал бы сигнал.
+#[tauri::command]
+pub async fn engine_warm(
+    app: AppHandle,
+    state: State<'_, EngineState>,
+    track_id: String,
+    sources: Vec<SourceRef>,
+    quality: Option<String>,
+    cache_ns: String,
+) -> Result<WarmOut, String> {
+    validate_track_id(&track_id)?;
+    let dir = cache_dir(&app, &cache_ns)?;
+
+    // Тот же single-flight, что у engine_resolve: если резолв этого трека уже
+    // идёт, прогрев подождёт и увидит кэш-хит вместо второго yt-dlp.
+    let gate = {
+        let mut inflight = state.inflight.lock().unwrap();
+        inflight
+            .entry(track_id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _guard = gate.lock().await;
+
+    if find_cached(&dir, &track_id).is_some() {
+        return Ok(WarmOut {
+            warm: false,
+            cached: true,
+        });
+    }
+    if has_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now()) {
+        return Ok(WarmOut {
+            warm: true,
+            cached: false,
+        });
+    }
+
+    // Ступень 0 (2026-07-19): прогрев тем же прямым InnerTube-резолвом —
+    // ~171 мс вместо ~2–4 с процесса yt-dlp (дешёвый прогрев = можно греть
+    // смелее). Провал молча уступает yt-dlp --simulate ниже; счётчики KPI
+    // прогрев не трогает (см. док-коммент команды).
+    let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
+    if let Some(cfg) = innertube_cfg {
+        if let Some(video_id) = stage0_youtube_id(&sources) {
+            let itags = if quality.as_deref() == Some("econom") {
+                INNERTUBE_ITAGS_ECONOM
+            } else {
+                INNERTUBE_ITAGS_DEFAULT
+            };
+            if let Ok(entry) = resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                store_warm_entry(&state, &cache_ns, &track_id, entry);
+                return Ok(WarmOut {
+                    warm: true,
+                    cached: false,
+                });
+            }
+        }
+    }
+
+    let (clients, format_str) = ladder_from_recipe(&state, quality.as_deref());
+    let Attempts { attempts, drops } =
+        tauri::async_runtime::spawn_blocking(move || build_attempts(&sources, &clients))
+            .await
+            .map_err(|error| format!("source policy spawn_blocking: {error}"))?;
+    if attempts.is_empty() {
+        return Err(if drops.is_empty() {
+            "у трека нет живых источников".to_string()
+        } else {
+            format!("у трека нет живых источников ({})", drops.join("; "))
+        });
+    }
+
+    let sidecars = sidecar_paths()?;
+    let mut last_error = String::new();
+    for attempt in attempts {
+        let fmt = format_str.clone();
+        let ytdlp_clone = sidecars.ytdlp.clone();
+        let deno_clone = sidecars.deno.clone();
+        let attempt_provider = attempt.provider.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            run_ytdlp_simulate(&ytdlp_clone, &deno_clone, &attempt, &fmt)
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking: {e}"))?;
+
+        match result {
+            Ok(sim) => {
+                if !content_length_ok(sim.size) {
+                    last_error = format!("warm-размер вне лимита: {}", sim.size);
+                    continue;
+                }
+                let url = match validate_warm_url(&sim.url) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        last_error = e;
+                        continue;
+                    }
+                };
+                let now = SystemTime::now();
+                let entry = WarmEntry {
+                    expires_at: warm_expires_at(&url, now),
+                    url,
+                    size: sim.size,
+                    ext: sim.ext,
+                    provider: attempt_provider,
+                };
+                if entry.expires_at <= now {
+                    last_error = "warm-URL уже протух".into();
+                    continue;
+                }
+                store_warm_entry(&state, &cache_ns, &track_id, entry);
+                return Ok(WarmOut {
+                    warm: true,
+                    cached: false,
+                });
+            }
+            Err(e) => last_error = e,
+        }
+    }
+    Err(format!("прогрев не удался: {last_error}"))
+}
+
+// ── Протокол muza-stream (Фаза 2): стрим с первых килобайт ────────
+// Спайк 2026-07-16 подтвердил: WebView2 шлёт `Range` кастомному протоколу
+// (`bytes=0-` на старте, дальше по мере проигрывания/сика). Схема: клик по
+// прогретому некэшированному треку → engine_stream_start запускает ту же
+// fetch_to_cache (ОДНА закачка: стрим и кэш не дублируют трафик), ждёт
+// первые 128 КиБ и отдаёт фронту добро; <audio> играет с
+// muza-stream://localhost/<ns>/<id> (Windows: http://muza-stream.localhost),
+// handler отвечает 206-чанками, дожидаясь нужных байт по watch-каналу.
+// По завершении — тот же атомарный rename, файл становится валидным кэшем.
+
+/// Сколько ждать ПЕРВЫЕ байты в engine_stream_start: протухший warm-URL
+/// отваливается за секунды, а дольше ждать нет смысла — обычная лестница
+/// на фронте не медленнее.
+const STREAM_START_TIMEOUT: Duration = Duration::from_secs(15);
+/// Сколько handler ждёт байты одного чанка (закачка обычно опережает
+/// playback на порядок; ожидание дольше значит закачка умерла).
+const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Serialize)]
+pub struct StreamStartOut {
+    /// true — закачка идёт и первые килобайты уже на диске: фронт может
+    /// отдавать <audio> stream-URL. false — стрим не нужен/недоступен
+    /// (файл уже в кэше, warm-записи нет, закачка не завелась) — фронт
+    /// молча идёт обычным путём. Ошибок наружу нет НАМЕРЕННО: стрим —
+    /// best-effort, любой провал обязан выглядеть как «играй как раньше».
+    pub stream: bool,
+}
+
+/// Начать (или подхватить) стрим прогретого трека. Подтверждает готовность
+/// только когда первый чанк уже в .part — провалы схлопываются в
+/// {stream:false} ДО того, как <audio> закоммитится на stream-URL.
+#[tauri::command]
+pub async fn engine_stream_start(
+    app: AppHandle,
+    state: State<'_, EngineState>,
+    track_id: String,
+    cache_ns: String,
+) -> Result<StreamStartOut, String> {
+    validate_track_id(&track_id)?;
+    let dir = cache_dir(&app, &cache_ns)?;
+    let key = warm_key(&cache_ns, &track_id);
+    let no_stream = Ok(StreamStartOut { stream: false });
+
+    // уже стримится (повторный клик по треку) — подхватываем тот же канал
+    let existing = state.streams.lock().unwrap().get(&key).cloned();
+    let handle = if let Some(handle) = existing {
+        handle
+    } else {
+        if find_cached(&dir, &track_id).is_some() {
+            return no_stream; // кэш-хит быстрее обычным путём
+        }
+        let Some(entry) = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now())
+        else {
+            return no_stream; // не прогрет — обычная лестница
+        };
+        let part = dir.join(format!("{track_id}.{}.part", entry.ext));
+        let final_path = dir.join(format!("{track_id}.{}", entry.ext));
+        let (tx, rx) = tokio::sync::watch::channel(StreamProgress {
+            written: 0,
+            total: entry.size,
+            finalized: false,
+            failed: false,
+        });
+        let handle = StreamHandle {
+            part,
+            final_path,
+            progress: rx,
+        };
+        state.streams.lock().unwrap().insert(key.clone(), handle.clone());
+
+        let app_task = app.clone();
+        let ns_task = cache_ns.clone();
+        let id_task = track_id.clone();
+        let key_task = key.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = match cache_dir(&app_task, &ns_task) {
+                Ok(dir) => {
+                    fetch_to_cache_with_progress(&dir, &id_task, &entry, Some(&tx)).await
+                }
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(path) => {
+                    // тот же хвост, что у быстрого пути engine_resolve
+                    let state = app_task.state::<EngineState>();
+                    let limit = *state.cache_limit_bytes.lock().unwrap();
+                    ensure_pins_loaded(&app_task, &state, &ns_task);
+                    let pins = state.pins.lock().unwrap().clone();
+                    if let Ok(dir) = cache_dir(&app_task, &ns_task) {
+                        evict_lru(&dir, limit, &path, &pins);
+                    }
+                    let total = tx.borrow().total;
+                    tx.send_replace(StreamProgress {
+                        written: total,
+                        total,
+                        finalized: true,
+                        failed: false,
+                    });
+                }
+                Err(_) => {
+                    // молча: стрим best-effort, фронт уйдёт обычной лестницей;
+                    // .part уже удалён самим fetch_to_cache_with_progress
+                    let p = *tx.borrow();
+                    tx.send_replace(StreamProgress {
+                        failed: true,
+                        finalized: false,
+                        ..p
+                    });
+                }
+            }
+            // запись уходит из реестра ПОСЛЕ финального сигнала; handler'ы
+            // с клоном receiver'а доживут своё
+            app_task
+                .state::<EngineState>()
+                .streams
+                .lock()
+                .unwrap()
+                .remove(&key_task);
+        });
+        handle
+    };
+
+    // добро фронту — только с первыми килобайтами на диске
+    let mut rx = handle.progress.clone();
+    let wait = async {
+        loop {
+            let p = *rx.borrow();
+            if p.failed {
+                return false;
+            }
+            if p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1)) {
+                return true;
+            }
+            if rx.changed().await.is_err() {
+                // sender умер без финального сигнала — считаем провалом
+                let p = *rx.borrow();
+                return p.finalized || p.written >= STREAM_FIRST_CHUNK.min(p.total.max(1));
+            }
+        }
+    };
+    match tokio::time::timeout(STREAM_START_TIMEOUT, wait).await {
+        Ok(true) => Ok(StreamStartOut { stream: true }),
+        _ => no_stream,
+    }
+}
+
+/// Первый ответ стрима — он и есть «клик → звук»: 128 КиБ с запасом на
+/// заголовки контейнера и первые кадры, чтобы декодер точно завёлся.
+const STREAM_FIRST_CHUNK: u64 = 128 * 1024;
+/// Последующие — 512 КиБ ≈ 32с opus: playback закачку не догонит (весь файл
+/// едет ~1.2с). Чанк — гранулярность ответа <audio>, НЕ отдельный запрос в
+/// сеть: закачка одна и идёт на полной скорости.
+const STREAM_NEXT_CHUNK: u64 = 512 * 1024;
+
+/// Конец окна ответа на Range-запрос стрима. Отдавать всё до конца файла
+/// нельзя: спайк 2026-07-16 показал, что на `bytes=0-` WebView2 буферизует
+/// ответ целиком и больше Range не шлёт — дробление держит стрим стримом.
+fn stream_chunk_end(start: u64, total: u64) -> u64 {
+    let want = if start == 0 {
+        STREAM_FIRST_CHUNK
+    } else {
+        STREAM_NEXT_CHUNK
+    };
+    (start + want - 1).min(total - 1)
+}
+
+/// Свежий `.part` — возможно, ЖИВОЙ стрим (Фаза 2): его не трогают ни
+/// LRU-эвикция, ни «Очистить кэш» (риск из спеки: снести на ходу). Старше
+/// grace-периода — мусор упавшей закачки, подлежит обычной уборке.
+const STREAM_PART_GRACE: Duration = Duration::from_secs(600);
+
+fn is_live_stream_part(path: &Path) -> bool {
+    if !path.to_string_lossy().ends_with(".part") {
+        return false;
+    }
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|mtime| {
+            SystemTime::now()
+                .duration_since(mtime)
+                .map(|age| age < STREAM_PART_GRACE)
+                .unwrap_or(true) // mtime из будущего — часы прыгнули, не трогаем
+        })
+        .unwrap_or(false)
+}
+
+fn stream_content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("webm") | Some("opus") => "audio/webm",
+        Some("m4a") => "audio/mp4",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Срез файла [start..=end] — File::seek + read_exact, без чтения целиком.
+fn read_slice(path: &Path, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    file.seek(SeekFrom::Start(start))?;
+    let mut buf = vec![0u8; (end - start + 1) as usize];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
+/// Async-протокол: handler может ЖДАТЬ байты живого стрима (watch-канал) —
+/// синхронной регистрации это не под силу. Ответ отдаётся целым телом
+/// (responder Tauri не умеет стримить), поэтому дробление — через Range.
+pub fn handle_stream_request(
+    ctx: tauri::UriSchemeContext<'_, tauri::Wry>,
+    request: tauri::http::Request<Vec<u8>>,
+    responder: tauri::UriSchemeResponder,
+) {
+    let app = ctx.app_handle().clone();
+    tauri::async_runtime::spawn(async move {
+        responder.respond(build_stream_response(&app, &request).await);
+    });
+}
+
+/// CORS во всех ответах протокола обязателен: слоты AudioEngine создаются с
+/// crossOrigin="anonymous" (под Web Audio-граф — EQ/визуализатор), и без
+/// Access-Control-Allow-Origin медиастек WebView2 молча бросал загрузку после
+/// первого чанка (стенд 16.07: изолированный <audio> без crossOrigin играл,
+/// слот приложения — нет). Asset-протокол Tauri отвечает так же.
+fn stream_error(code: u16, msg: &str) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(code)
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(msg.as_bytes().to_vec())
+        .unwrap()
+}
+
+fn stream_206(
+    file: &Path,
+    start: u64,
+    end: u64,
+    total: u64,
+) -> tauri::http::Response<Vec<u8>> {
+    let Ok(body) = read_slice(file, start, end) else {
+        return stream_error(500, "срез не читается");
+    };
+    eprintln!(
+        "[muza-stream] 206 bytes {start}-{end}/{total} ({})",
+        file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    );
+    tauri::http::Response::builder()
+        .status(206)
+        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(
+            tauri::http::header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        )
+        .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+        .header(tauri::http::header::CONTENT_TYPE, stream_content_type(file))
+        .body(body)
+        .unwrap()
+}
+
+async fn build_stream_response(
+    app: &AppHandle,
+    request: &tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    // путь: /<ns>/<track_id> — те же валидации, что у команд движка
+    let path = request.uri().path();
+    let mut parts = path.trim_matches('/').split('/');
+    let (Some(ns), Some(id), None) = (parts.next(), parts.next(), parts.next()) else {
+        return stream_error(400, "ожидается /<ns>/<track_id>");
+    };
+    if validate_cache_ns(ns).is_err() || validate_track_id(id).is_err() {
+        return stream_error(400, "некорректный ns или id");
+    }
+    let Ok(dir) = cache_dir(app, ns) else {
+        return stream_error(500, "кэш-каталог недоступен");
+    };
+    let range = request
+        .headers()
+        .get(tauri::http::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_range_header);
+
+    // 1) Файл уже в кэше целиком — отдаём срезы из него. Тоже ЧАНКАМИ:
+    // спайк показал, что полный ответ на bytes=0- буферизуется целиком
+    // и Range больше не приходит — а нам нужен живой запрос под сик.
+    if let Some(file) = find_cached(&dir, id) {
+        let total = match fs::metadata(&file).map(|m| m.len()) {
+            Ok(len) if len > 0 => len,
+            _ => return stream_error(500, "файл кэша не читается"),
+        };
+        return match range {
+            Some((start, end_opt)) if start < total => {
+                let end = stream_chunk_end(start, total).min(end_opt.unwrap_or(u64::MAX));
+                stream_206(&file, start, end, total)
+            }
+            Some(_) => stream_error(416, "range вне файла"),
+            // без Range — целиком (законный 200; media-стек WebView2 так не
+            // делает, ветка для честности HTTP)
+            None => match fs::read(&file) {
+                Ok(bytes) => tauri::http::Response::builder()
+                    .status(200)
+                    .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+                    .header(tauri::http::header::CONTENT_TYPE, stream_content_type(&file))
+                    .body(bytes)
+                    .unwrap(),
+                Err(_) => stream_error(500, "файл кэша не читается"),
+            },
+        };
+    }
+
+    // 2) Живой стрим: ждём, пока .part наберёт байты окна, отдаём срез.
+    let handle = app
+        .state::<EngineState>()
+        .streams
+        .lock()
+        .unwrap()
+        .get(&warm_key(ns, id))
+        .cloned();
+    let Some(handle) = handle else {
+        return stream_error(404, "трека нет ни в кэше, ни в стриме");
+    };
+    let mut rx = handle.progress.clone();
+    let (start, end_opt) = match range {
+        Some((s, e)) => (s, e),
+        None => (0, None), // не должен случаться (спайк), но 206 с нуля законен
+    };
+
+    let wait = async {
+        loop {
+            let p = *rx.borrow();
+            if p.failed {
+                return Err(stream_error(502, "закачка стрима оборвалась"));
+            }
+            if start >= p.total {
+                return Err(stream_error(416, "range вне файла"));
+            }
+            let end = stream_chunk_end(start, p.total).min(end_opt.unwrap_or(u64::MAX));
+            if p.finalized || p.written >= end + 1 {
+                return Ok((end, p.total, p.finalized));
+            }
+            if rx.changed().await.is_err() {
+                // sender умер: перечитываем финальное состояние в голове цикла
+                let p = *rx.borrow();
+                if !(p.finalized || p.failed) {
+                    return Err(stream_error(502, "закачка стрима пропала"));
+                }
+            }
+        }
+    };
+    let (end, total, finalized) = match tokio::time::timeout(STREAM_CHUNK_TIMEOUT, wait).await {
+        Ok(Ok(win)) => win,
+        Ok(Err(resp)) => return resp,
+        Err(_) => return stream_error(504, "байты стрима не пришли вовремя"),
+    };
+
+    // rename мог пройти между сигналом и чтением — пробуем .part, затем финал
+    let source = if !finalized && handle.part.exists() {
+        handle.part.clone()
+    } else if handle.final_path.exists() {
+        handle.final_path.clone()
+    } else {
+        handle.part.clone()
+    };
+    stream_206(&source, start, end, total)
 }
 
 /// Эконом-лестница форматов: низкий битрейт в голове (250/249 = opus 64/48k,
@@ -1093,13 +2543,7 @@ pub async fn engine_resolve(
     cache_ns: String,
 ) -> Result<ResolveOut, String> {
     // id каталога числовой; заодно это защита имени файла кэша
-    if track_id.is_empty()
-        || !track_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err("некорректный id трека".into());
-    }
+    validate_track_id(&track_id)?;
     let dir = cache_dir(&app, &cache_ns)?;
 
     // Single-flight: параллельный резолв того же трека (play + преднагрузка)
@@ -1125,35 +2569,99 @@ pub async fn engine_resolve(
         });
     }
 
-    // Лестница попыток из рецепта (спайк Stage 0: tv → web_music → след. источник)
-    let (clients, format_str) = {
-        let recipe = state.recipe.lock().unwrap();
-        let clients: Vec<String> = recipe["youtube"]["player_clients"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .filter(|v: &Vec<String>| !v.is_empty())
-            .unwrap_or_else(|| vec!["tv".into(), "web_music".into()]);
-        let mut format_str = recipe["youtube"]["format_priority"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("/")
-            })
-            .unwrap_or_else(|| "251/140/bestaudio".to_string());
-        if quality.as_deref() == Some("econom") {
-            format_str = format!("{ECONOM_FORMATS}/{format_str}");
+    // Трек прямо сейчас стримится (Фаза 2): клик и стрим — одна закачка,
+    // второй yt-dlp/GET на те же байты не запускаем. Дожидаемся финала и
+    // отдаём готовый файл; стрим упал — честно идём лестницей ниже.
+    let streaming = state
+        .streams
+        .lock()
+        .unwrap()
+        .get(&warm_key(&cache_ns, &track_id))
+        .map(|h| h.progress.clone());
+    if let Some(mut rx) = streaming {
+        loop {
+            let p = *rx.borrow();
+            if p.finalized || p.failed {
+                break;
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
         }
-        (clients, format_str)
-    };
+        if let Some(path) = find_cached(&dir, &track_id) {
+            let now = filetime::FileTime::now();
+            let _ = filetime::set_file_mtime(&path, now);
+            state.stats.lock().unwrap().cache_hits += 1;
+            return Ok(ResolveOut {
+                path: path.to_string_lossy().into_owned(),
+                from_cache: true,
+                provider: None,
+            });
+        }
+    }
+
+    // Быстрый путь прогрева (Фаза 1): метаданные уже разрешены engine_warm —
+    // вместо процесса yt-dlp остаётся один GET (~4.5с → ~1.2с). Любая ошибка
+    // (URL протух, CDN отказал, размер не сошёлся) — запись уже выброшена
+    // самим take, молча падаем на обычную лестницу ниже: прогрев не имеет
+    // права сделать трек неиграбельным.
+    if let Some(entry) = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now()) {
+        if let Ok(path) = fetch_to_cache(&dir, &track_id, &entry).await {
+            let limit = *state.cache_limit_bytes.lock().unwrap();
+            ensure_pins_loaded(&app, &state, &cache_ns);
+            let pins = state.pins.lock().unwrap().clone();
+            evict_lru(&dir, limit, &path, &pins);
+            state.stats.lock().unwrap().resolve_ok += 1;
+            return Ok(ResolveOut {
+                path: path.to_string_lossy().into_owned(),
+                from_cache: false,
+                provider: Some(entry.provider),
+            });
+        }
+    }
+
+    // Ступень 0 (2026-07-19): прямой InnerTube-резолв — один POST вместо
+    // процесса yt-dlp (~171 мс против ~3.6 с, полный путь ~4.5 с → ~1.4 с).
+    // Только когда ведущий источник YouTube. Та же дисциплина, что у warm-пути
+    // выше: любой провал (SABR, бот-гейт, UNPLAYABLE, сеть, 403 на байтах)
+    // МОЛЧА уступает лестнице — ступень 0 не имеет права сделать трек
+    // неиграбельным. Провалы метятся в KPI (fail_sabr/fail_login) — по ним
+    // видно, что android_vr деградирует и пора бампить рецепт.
+    let innertube_cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
+    if let Some(cfg) = innertube_cfg {
+        if let Some(video_id) = stage0_youtube_id(&sources) {
+            let itags = if quality.as_deref() == Some("econom") {
+                INNERTUBE_ITAGS_ECONOM
+            } else {
+                INNERTUBE_ITAGS_DEFAULT
+            };
+            match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                Ok(entry) => match fetch_to_cache(&dir, &track_id, &entry).await {
+                    Ok(path) => {
+                        let limit = *state.cache_limit_bytes.lock().unwrap();
+                        ensure_pins_loaded(&app, &state, &cache_ns);
+                        let pins = state.pins.lock().unwrap().clone();
+                        evict_lru(&dir, limit, &path, &pins);
+                        state.stats.lock().unwrap().resolve_ok += 1;
+                        return Ok(ResolveOut {
+                            path: path.to_string_lossy().into_owned(),
+                            from_cache: false,
+                            provider: Some(entry.provider),
+                        });
+                    }
+                    // байты не доехали (протухло/смена IP → 403) — лестница;
+                    // маркеры ошибки понимает существующий классификатор
+                    Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
+                },
+                Err(fail) => {
+                    classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail)
+                }
+            }
+        }
+    }
+
+    // Лестница попыток из рецепта (спайк Stage 0: tv → web_music → след. источник)
+    let (clients, format_str) = ladder_from_recipe(&state, quality.as_deref());
 
     // URL parsing + DNS are blocking work. Move owned renderer input and the
     // recipe client list off the async Tauri thread before any child process
@@ -1334,8 +2842,9 @@ pub fn engine_cache_clear(
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            // Оффлайн-пины переживают чистку; занятые плеером файлы пропускаем
-            if path.is_file() && !is_pinned(&path, &pins) {
+            // Оффлайн-пины переживают чистку; занятые плеером файлы пропускаем;
+            // свежий .part — возможно, живой стрим Фазы 2 (не рвать на ходу)
+            if path.is_file() && !is_pinned(&path, &pins) && !is_live_stream_part(&path) {
                 let _ = fs::remove_file(path);
             }
         }
@@ -1533,8 +3042,8 @@ mod tests {
         let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
         assert_eq!(
             recipe["recipe_version"].as_u64(),
-            Some(6),
-            "бандл-рецепт обязан быть v6 (правка порядка лестницы 2026-07-15); \
+            Some(7),
+            "бандл-рецепт обязан быть v7 (ступень 0 innertube 2026-07-19); \
              серверный recipe.config.ts обязан быть той же версии"
         );
     }
@@ -2692,5 +4201,989 @@ mod sidecar_policy_tests {
         let p = pins_file(&base, "a1b2c3d4").unwrap();
         assert_eq!(p, base.join("a1b2c3d4").join("offline-pins.json"));
         assert!(pins_file(&base, "../evil").is_err());
+    }
+}
+
+#[cfg(test)]
+mod warm_tests {
+    use super::*;
+
+    fn yt_attempt() -> Attempt {
+        Attempt {
+            provider: "youtube".into(),
+            url: Url::parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap(),
+            client: Some("android_vr".into()),
+        }
+    }
+
+    fn simulate_args() -> Vec<String> {
+        build_ytdlp_simulate_args(&yt_attempt(), "251/140/bestaudio", Path::new("C:/t/deno.exe"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// `--max-filesize` фильтрует лестницу ФОРМАТОВ уже на резолве, а не только
+    /// обрывает скачивание — прогрев обязан видеть ту же лестницу, что бой,
+    /// иначе warm-URL укажет на формат, который боевой путь отверг бы.
+    #[test]
+    fn simulate_args_keep_max_filesize() {
+        let args = simulate_args();
+        let i = args
+            .iter()
+            .position(|a| a == "--max-filesize")
+            .expect("--max-filesize обязан остаться в argv прогрева");
+        assert_eq!(args[i + 1], "512M");
+    }
+
+    /// При `--simulate` скачивания нет — `--max-downloads` бессмыслен, а его
+    /// exit-101 в боевом пути особый (успех). Прогреву флаг только мешает.
+    #[test]
+    fn simulate_args_have_no_max_downloads() {
+        assert!(
+            !simulate_args().iter().any(|a| a == "--max-downloads"),
+            "у simulate-argv не должно быть --max-downloads"
+        );
+    }
+
+    /// Прогрев — это `--simulate` + `--print` метаданных; боевого
+    /// `--no-simulate`/`after_move:filepath` быть не должно. Клиент лестницы и
+    /// URL — как в боевом argv.
+    #[test]
+    fn simulate_args_are_simulate_only() {
+        let args = simulate_args();
+        assert!(args.iter().any(|a| a == "--simulate"));
+        assert!(!args.iter().any(|a| a == "--no-simulate"));
+        assert!(!args.iter().any(|a| a.contains("after_move")));
+        let i = args.iter().position(|a| a == "--print").expect("--print");
+        assert_eq!(
+            args[i + 1],
+            "%(url)s\t%(filesize,filesize_approx)s\t%(ext)s\t%(protocol)s"
+        );
+        assert!(args.iter().any(|a| a == "youtube:player_client=android_vr"));
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        );
+        // выходной файл не пишется — шаблонов вывода в argv нет
+        assert!(!args.iter().any(|a| a == "-P" || a == "-o"));
+    }
+
+    /// В боевом пути 101 (MaxDownloadsReached) — успех ПОСЛЕ скачивания.
+    /// В simulate скачивания нет, 101 там может значить только ошибку —
+    /// переиспользовать ytdlp_exit_ok нельзя (ловушка из спеки).
+    #[test]
+    fn simulate_exit_ok_rejects_101() {
+        assert!(simulate_exit_ok(Some(0)));
+        assert!(!simulate_exit_ok(Some(YTDLP_MAX_DOWNLOADS_REACHED)));
+        assert!(!simulate_exit_ok(Some(1)));
+        assert!(!simulate_exit_ok(None));
+    }
+
+    #[test]
+    fn parse_simulate_output_happy_path() {
+        let out = "https://rr4---sn-abc.googlevideo.com/videoplayback?expire=1780000000&itag=251\t3433755\topus\thttps\n";
+        let f = parse_simulate_output(out).expect("валидный выхлоп разбирается");
+        assert_eq!(
+            f,
+            SimulatedFormat {
+                url: "https://rr4---sn-abc.googlevideo.com/videoplayback?expire=1780000000&itag=251"
+                    .into(),
+                size: 3_433_755,
+                ext: "opus".into(),
+            }
+        );
+    }
+
+    /// yt-dlp может печатать служебные строки до нашей — берём последнюю
+    /// непустую (как run_ytdlp_once берёт путь).
+    #[test]
+    fn parse_simulate_output_takes_last_nonempty_line() {
+        let out = "WARNING: что-то\nhttps://cdn.example.com/a?x=1\t100\tm4a\thttps\n\n";
+        let f = parse_simulate_output(out).expect("последняя непустая строка");
+        assert_eq!(f.url, "https://cdn.example.com/a?x=1");
+    }
+
+    /// Без размера warm-запись бесполезна: явный Range строится по size
+    /// (без Range googlevideo троттлит до 32 КБ/с — замер 2026-07-15).
+    #[test]
+    fn parse_simulate_output_rejects_na_size() {
+        let out = "https://cdn.example.com/a\tNA\topus\thttps\n";
+        assert!(parse_simulate_output(out).is_err());
+    }
+
+    #[test]
+    fn parse_simulate_output_rejects_missing_fields() {
+        assert!(parse_simulate_output("").is_err());
+        assert!(parse_simulate_output("\n\n").is_err());
+        assert!(parse_simulate_output("https://cdn.example.com/a\t123\n").is_err());
+    }
+
+    /// ext становится именем файла кэша `<id>.<ext>` — грамматика жёсткая.
+    #[test]
+    fn parse_simulate_output_rejects_weird_ext() {
+        for ext in ["", "OPUS", "op us", "we..bm", "a/b", "оченьдлинное", "webm2000x"] {
+            let out = format!("https://cdn.example.com/a\t123\t{ext}\thttps\n");
+            assert!(
+                parse_simulate_output(&out).is_err(),
+                "ext {ext:?} обязан отвергаться"
+            );
+        }
+    }
+
+    /// hls/dash печатают протокол m3u8_native/http_dash_segments, а их «url» —
+    /// манифест: скачав его, мы положили бы в кэш ТЕКСТ вместо аудио и сделали
+    /// трек неиграбельным (нарушение главного инварианта прогрева). Принимаем
+    /// только прямой https.
+    #[test]
+    fn parse_simulate_output_rejects_non_https_protocol() {
+        for proto in ["m3u8_native", "http_dash_segments", "http", "ftp"] {
+            let out = format!("https://cdn.example.com/manifest\t123\tm4a\t{proto}\n");
+            assert!(
+                parse_simulate_output(&out).is_err(),
+                "протокол {proto:?} обязан отвергаться"
+            );
+        }
+    }
+
+    /// `expire` в googlevideo-URL — unix-секунды; запись живёт до него минус
+    /// запас (не начинаем скачивание впритык к протуханию).
+    #[test]
+    fn warm_url_expire_parsed_from_query() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let url =
+            Url::parse("https://r4.googlevideo.com/videoplayback?a=1&expire=1021000&b=2").unwrap();
+        assert_eq!(
+            warm_expires_at(&url, now),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_021_000) - WARM_EXPIRY_MARGIN
+        );
+    }
+
+    /// Нет/битый expire (SoundCloud, Bandcamp) — консервативный короткий TTL.
+    #[test]
+    fn warm_url_expire_fallback_without_param() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for raw in [
+            "https://cdn.example.com/a.mp3",
+            "https://cdn.example.com/a.mp3?expire=abc",
+        ] {
+            let url = Url::parse(raw).unwrap();
+            assert_eq!(warm_expires_at(&url, now), now + WARM_FALLBACK_TTL);
+        }
+    }
+
+    fn entry_with_expiry(expires_at: SystemTime) -> WarmEntry {
+        WarmEntry {
+            url: Url::parse("https://cdn.example.com/a").unwrap(),
+            size: 100,
+            ext: "opus".into(),
+            provider: "youtube".into(),
+            expires_at,
+        }
+    }
+
+    /// Протухшая запись не имеет права попасть в быстрый путь: URL умер,
+    /// скачивание по нему только съело бы время до фолбэка на лестницу.
+    #[test]
+    fn expired_warm_entry_is_not_used() {
+        let state = EngineState::default();
+        let now = SystemTime::now();
+        store_warm_entry(
+            &state,
+            "ns1",
+            "42",
+            entry_with_expiry(now - Duration::from_secs(1)),
+        );
+        assert!(take_live_warm_entry(&state, "ns1", "42", now).is_none());
+        assert!(!has_live_warm_entry(&state, "ns1", "42", now));
+    }
+
+    /// take — одноразовое изъятие (ошибка скачивания = запись уже выброшена);
+    /// ключ включает ns (баг «чужая песня» — id уникален только внутри БД).
+    #[test]
+    fn live_warm_entry_is_taken_once_and_namespaced() {
+        let state = EngineState::default();
+        let now = SystemTime::now();
+        let live = now + Duration::from_secs(3600);
+        store_warm_entry(&state, "ns1", "42", entry_with_expiry(live));
+        assert!(
+            !has_live_warm_entry(&state, "ns2", "42", now),
+            "чужой ns не видит запись"
+        );
+        assert!(take_live_warm_entry(&state, "ns2", "42", now).is_none());
+        assert!(has_live_warm_entry(&state, "ns1", "42", now));
+        assert!(take_live_warm_entry(&state, "ns1", "42", now).is_some());
+        assert!(
+            take_live_warm_entry(&state, "ns1", "42", now).is_none(),
+            "повторное изъятие пусто — запись одноразовая"
+        );
+    }
+
+    fn no_lookup(_host: &str, _port: u16) -> LookupResult {
+        panic!("до DNS дойти не должны");
+    }
+
+    /// Новая граница доверия: по добытому URL теперь ходим МЫ (reqwest), а не
+    /// yt-dlp — валидация обязана быть не слабее канонической (https, без
+    /// credentials, не IP-литерал, публичный DNS-ответ).
+    #[test]
+    fn validate_warm_url_rejects_http() {
+        assert!(validate_warm_url_with_lookup("http://cdn.example.com/a", &mut no_lookup).is_err());
+    }
+
+    #[test]
+    fn validate_warm_url_rejects_credentials() {
+        for raw in [
+            "https://user:pass@cdn.example.com/a",
+            "https://user@cdn.example.com/a",
+        ] {
+            assert!(
+                validate_warm_url_with_lookup(raw, &mut no_lookup).is_err(),
+                "{raw:?} обязан отвергаться"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_warm_url_rejects_ip_literal() {
+        for raw in [
+            "https://142.250.74.14/videoplayback",
+            "https://[2a00:1450:4010:c05::5f]/videoplayback",
+        ] {
+            assert!(
+                validate_warm_url_with_lookup(raw, &mut no_lookup).is_err(),
+                "{raw:?} обязан отвергаться"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_warm_url_rejects_private_dns_answer() {
+        let mut lookup =
+            |_host: &str, _port: u16| -> LookupResult { Ok(vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))]) };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut lookup).is_err());
+    }
+
+    /// Та же философия, что у DNS-преflight canonical_target: best-effort, не
+    /// гейт. За DPI-обходом/прокси локальный getaddrinfo может врать
+    /// NXDOMAIN, тогда как reqwest тем же хостом сходит через прокси. Режем
+    /// только реальный приватный ответ.
+    #[test]
+    fn validate_warm_url_is_best_effort_on_dns_failure() {
+        let mut failing = |_h: &str, _p: u16| -> LookupResult { Err("nx".into()) };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut failing).is_ok());
+        let mut empty = |_h: &str, _p: u16| -> LookupResult { Ok(vec![]) };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut empty).is_ok());
+        let mut public = |_h: &str, _p: u16| -> LookupResult {
+            Ok(vec![IpAddr::V4(Ipv4Addr::new(142, 250, 74, 14))])
+        };
+        assert!(validate_warm_url_with_lookup("https://cdn.example.com/a", &mut public).is_ok());
+    }
+
+    /// Content-Length врёт бесплатно, но заведомый перебор лимита режем ДО
+    /// чтения тела (по факту байты пересчитываются ещё раз при записи).
+    #[test]
+    fn content_length_over_limit_rejected() {
+        assert!(content_length_ok(1));
+        assert!(content_length_ok(MAX_YTDLP_OUTPUT_BYTES));
+        assert!(!content_length_ok(MAX_YTDLP_OUTPUT_BYTES + 1));
+        assert!(!content_length_ok(0));
+    }
+
+    /// Content-Range 206-ответа — источник ИСТИННОГО размера файла:
+    /// filesize_approx мог наврать, и обрезанный файл в кэше хуже медленного
+    /// старта. Формат: `bytes 0-<end>/<total>`.
+    #[test]
+    fn content_range_total_parsed() {
+        assert_eq!(parse_content_range("bytes 0-99/1234"), Some((99, 1234)));
+        assert_eq!(
+            parse_content_range("bytes 0-3433754/3433755"),
+            Some((3_433_754, 3_433_755))
+        );
+        assert_eq!(parse_content_range("bytes */1234"), None);
+        assert_eq!(parse_content_range("bytes 0-99/*"), None);
+        assert_eq!(parse_content_range("garbage"), None);
+        assert_eq!(
+            parse_content_range("bytes 5-99/1234"),
+            None,
+            "начало не с нуля"
+        );
+    }
+
+    /// Окно ответа стрима: первый чанк 128 КиБ (он и есть «клик → звук»:
+    /// с запасом на заголовки контейнера, чтобы декодер завёлся), дальше
+    /// 512 КиБ (~32с opus — playback закачку не догонит). Отдавать ВЕСЬ файл
+    /// на `bytes=0-` нельзя: спайк 2026-07-16 показал, что WebView2 тогда
+    /// буферизует целиком одним ответом и больше Range не шлёт — чанки
+    /// обязаны резать ответ, чтобы стрим оставался стримом.
+    #[test]
+    fn stream_chunk_end_first_and_next() {
+        let total = 4_605_080;
+        assert_eq!(stream_chunk_end(0, total), 128 * 1024 - 1);
+        assert_eq!(stream_chunk_end(128 * 1024, total), 128 * 1024 + 512 * 1024 - 1);
+        // хвост не вылезает за файл
+        assert_eq!(stream_chunk_end(total - 10, total), total - 1);
+        // крошечный файл — первый чанк упирается в конец
+        assert_eq!(stream_chunk_end(0, 1000), 999);
+    }
+
+    /// `Range` запроса от <audio> (Фаза 2): `bytes=<start>-[<end>]`.
+    /// Мульти-диапазоны и суффиксную форму (`bytes=-500`) не поддерживаем —
+    /// None означает «отвечай 200 целиком», это законно по HTTP.
+    #[test]
+    fn parse_range_header_start_only() {
+        assert_eq!(parse_range_header("bytes=0-"), Some((0, None)));
+        assert_eq!(parse_range_header("bytes=131072-"), Some((131_072, None)));
+    }
+
+    #[test]
+    fn parse_range_header_start_end() {
+        assert_eq!(parse_range_header("bytes=100-511"), Some((100, Some(511))));
+        assert_eq!(parse_range_header("bytes=0-0"), Some((0, Some(0))));
+        assert_eq!(parse_range_header("bytes=511-100"), None, "конец раньше начала");
+    }
+
+    #[test]
+    fn parse_range_header_rejects_garbage() {
+        for raw in ["", "items=0-", "bytes=", "bytes=a-b", "bytes=0-1,5-9", "bytes=-500", "bytes=0"] {
+            assert_eq!(parse_range_header(raw), None, "{raw:?} обязан отвергаться");
+        }
+    }
+
+    /// Живой A/B-замер «клик → файл готов» (сеть + sidecar-бинари):
+    /// ДО = полная лестница run_ytdlp_once; ПОСЛЕ = fetch_to_cache по
+    /// прогретой записи (стоимость прогрева печатается отдельно — на клик
+    /// она не ложится). Те же 4 трека, что в замере 2026-07-15. Сеть шумная —
+    /// серии с чередованием порядка, одиночному прогону не верить.
+    /// `MUZA_AB_SERIES=3 cargo test warm_ab_real_tracks -- --ignored --nocapture`
+    #[test]
+    #[ignore = "сеть + yt-dlp + deno"]
+    fn warm_ab_real_tracks() {
+        let series: u32 = std::env::var("MUZA_AB_SERIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        let tracks = ["dQw4w9WgXcQ", "kJQP7kiw5Fk", "9bZkp7q19f0", "JGwWNGJdvx8"];
+        let dir = std::env::temp_dir().join("muza-warm-ab");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let clients: Vec<String> = recipe["youtube"]["player_clients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        let sidecars = sidecar_paths().expect("sidecar-файлы доступны");
+        let fmt = "251/140/bestaudio";
+
+        let cold = |vid: &str, tag: &str| -> f64 {
+            let source = SourceRef::Youtube {
+                source_id: vid.into(),
+            };
+            let attempts = build_attempts(&[source], &clients).attempts;
+            let t0 = Instant::now();
+            for attempt in attempts {
+                if let Ok(path) =
+                    run_ytdlp_once(&sidecars.ytdlp, &sidecars.deno, &dir, tag, &attempt, fmt)
+                {
+                    let secs = t0.elapsed().as_secs_f64();
+                    let _ = fs::remove_file(path);
+                    return secs;
+                }
+            }
+            panic!("лестница не добыла {vid}");
+        };
+        let warm = |vid: &str, tag: &str| -> (f64, f64) {
+            let source = SourceRef::Youtube {
+                source_id: vid.into(),
+            };
+            let attempts = build_attempts(&[source], &clients).attempts;
+            let t0 = Instant::now();
+            for attempt in attempts {
+                let Ok(sim) = run_ytdlp_simulate(&sidecars.ytdlp, &sidecars.deno, &attempt, fmt)
+                else {
+                    continue;
+                };
+                let warm_secs = t0.elapsed().as_secs_f64();
+                let url = validate_warm_url(&sim.url).expect("warm-URL валиден");
+                let now = SystemTime::now();
+                let entry = WarmEntry {
+                    expires_at: warm_expires_at(&url, now),
+                    url,
+                    size: sim.size,
+                    ext: sim.ext,
+                    provider: "youtube".into(),
+                };
+                let t1 = Instant::now();
+                let path = tauri::async_runtime::block_on(fetch_to_cache(&dir, tag, &entry))
+                    .expect("fetch_to_cache по свежему warm-URL");
+                let fetch_secs = t1.elapsed().as_secs_f64();
+                let _ = fs::remove_file(path);
+                return (warm_secs, fetch_secs);
+            }
+            panic!("simulate не разрешил {vid}");
+        };
+
+        println!("серия;трек;порядок;cold_лестница_с;warm_simulate_с;warm_fetch_с");
+        for s in 0..series {
+            for (i, vid) in tracks.iter().enumerate() {
+                let tag = format!("ab{s}x{i}");
+                // чередуем порядок: чётные серии cold→warm, нечётные warm→cold,
+                // чтобы дрейф сети не работал систематически на одну сторону
+                if s % 2 == 0 {
+                    let c = cold(vid, &tag);
+                    let (w, f) = warm(vid, &tag);
+                    println!("{s};{vid};cold→warm;{c:.2};{w:.2};{f:.2}");
+                } else {
+                    let (w, f) = warm(vid, &tag);
+                    let c = cold(vid, &tag);
+                    println!("{s};{vid};warm→cold;{c:.2};{w:.2};{f:.2}");
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Свежий `.part` — это, возможно, ЖИВОЙ стрим (Фаза 2): эвикция и
+    /// «Очистить кэш» не имеют права снести его на ходу (спека помечала это
+    /// явным риском — на Windows спасал бы открытый хэндл записи, но читатель
+    /// открывает файл на каждый чанк, и окно есть). Старый `.part` — мусор
+    /// упавшей закачки, его эвиктить МОЖНО и НУЖНО.
+    #[test]
+    fn evict_and_clear_spare_fresh_part_only() {
+        let dir = std::env::temp_dir().join(format!("muza-warm-evict-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let fresh = dir.join("1.opus.part");
+        let stale = dir.join("2.opus.part");
+        fs::write(&fresh, vec![0u8; 1000]).unwrap();
+        fs::write(&stale, vec![0u8; 1000]).unwrap();
+        let old = filetime::FileTime::from_unix_time(
+            filetime::FileTime::now().unix_seconds() - 3600,
+            0,
+        );
+        filetime::set_file_mtime(&stale, old).unwrap();
+        let keep = dir.join("нет-такого");
+        evict_lru(&dir, 0, &keep, &HashSet::new());
+        assert!(fresh.exists(), "свежий .part (живой стрим) пережил эвикцию");
+        assert!(!stale.exists(), "старый .part (мусор) эвиктнут");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Регресс-защита от огрызков: `.part` недокачки не имеет права стать
+    /// кэш-хитом (двойная защита: find_cached пропускает .part явно, плюс
+    /// file_stem у `<id>.<ext>.part` — это `<id>.<ext>`, не `<id>`).
+    #[test]
+    fn part_file_is_not_a_cache_hit() {
+        let dir = std::env::temp_dir().join(format!("muza-warm-part-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("42.opus.part"), b"partial").unwrap();
+        assert!(
+            find_cached(&dir, "42").is_none(),
+            ".part не имеет права быть кэш-хитом"
+        );
+        fs::write(dir.join("42.opus"), b"full").unwrap();
+        assert!(find_cached(&dir, "42").is_some(), "полный файл — хит");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod innertube_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    /// Живые ответы /player от 2026-07-19, санитизированные для публичного
+    /// репо (IP/ei/id/sig/visitorData заменены синтетикой, форма полей — как
+    /// в живом ответе: contentLength — СТРОКА, и т.д.). Снято probe-скриптом,
+    /// методика — docs/notes/2026-07-19-прямой-innertube-резолв-замер.md.
+    fn ok_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../testdata/innertube_player_ok.json")).unwrap()
+    }
+
+    fn unplayable_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../testdata/innertube_player_unplayable.json")).unwrap()
+    }
+
+    fn login_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../testdata/innertube_player_login_required.json"
+        ))
+        .unwrap()
+    }
+
+    /// visitorData из санитизированных фикстур.
+    const SYNTH_VISITOR: &str = "CgtTWU5USF9WSVNJVE9SKPKm89IGMmIKAlVTElwSWA%3D%3D";
+
+    fn public_lookup(_host: &str, _port: u16) -> LookupResult {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))])
+    }
+
+    // ── Разбор ответа ──────────────────────────────────────────────
+
+    /// opus 251 предпочтён m4a 140; размер — из строкового contentLength.
+    #[test]
+    fn parse_prefers_opus_251() {
+        let fmt = parse_innertube_player(&ok_fixture(), INNERTUBE_ITAGS_DEFAULT).unwrap();
+        assert_eq!(fmt.ext, "webm");
+        assert_eq!(fmt.size, 3_433_755);
+        assert!(fmt.url.contains("itag=251"), "{}", fmt.url);
+    }
+
+    /// Нет opus — берём m4a 140 (вторая ступень приоритета).
+    #[test]
+    fn parse_falls_back_to_m4a_without_opus() {
+        let mut raw = ok_fixture();
+        raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| {
+                !f["mimeType"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("audio/webm")
+            });
+        let fmt = parse_innertube_player(&raw, INNERTUBE_ITAGS_DEFAULT).unwrap();
+        assert_eq!(fmt.ext, "m4a");
+        assert!(fmt.url.contains("itag=140"), "{}", fmt.url);
+    }
+
+    /// Эконом-приоритет — малые форматы (тот же смысл, что ECONOM_FORMATS
+    /// лестницы): из фикстуры берётся 249 (250 в ней нет).
+    #[test]
+    fn parse_econom_prefers_small_formats() {
+        let fmt = parse_innertube_player(&ok_fixture(), INNERTUBE_ITAGS_ECONOM).unwrap();
+        assert!(fmt.url.contains("itag=249"), "{}", fmt.url);
+        assert_eq!(fmt.ext, "webm");
+        assert_eq!(fmt.size, 1_231_355);
+    }
+
+    /// Видео-форматы — не кандидаты, даже когда аудио в ответе нет вовсе.
+    #[test]
+    fn parse_ignores_video_formats() {
+        let mut raw = ok_fixture();
+        raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| {
+                f["mimeType"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("video/")
+            });
+        assert!(parse_innertube_player(&raw, INNERTUBE_ITAGS_DEFAULT).is_err());
+    }
+
+    /// Реальная блокировка правообладателем (живой ответ: Bohemian Rhapsody,
+    /// SME) — провал, годный для фолбэка; повтором не лечится.
+    #[test]
+    fn parse_unplayable_is_error() {
+        let err =
+            parse_innertube_player(&unplayable_fixture(), INNERTUBE_ITAGS_DEFAULT).unwrap_err();
+        match err {
+            InnertubeFail::Other(msg) => assert!(msg.contains("UNPLAYABLE"), "{msg}"),
+            other => panic!("ожидали Other(UNPLAYABLE), получили {other:?}"),
+        }
+    }
+
+    /// Бот-гейт «Sign in to confirm…» — отдельный класс: его лечит один
+    /// повтор со свежим visitorData (замер: без visitorData 5 отказов из 6).
+    #[test]
+    fn parse_login_required_is_login_class() {
+        let err = parse_innertube_player(&login_fixture(), INNERTUBE_ITAGS_DEFAULT).unwrap_err();
+        assert!(matches!(err, InnertubeFail::LoginRequired(_)), "{err:?}");
+    }
+
+    /// SABR-сессия: playability OK, форматы есть, а прямых url нет — отдельный
+    /// класс для KPI (рост fail_sabr = сигнал бампить рецепт).
+    #[test]
+    fn parse_formats_without_url_is_sabr() {
+        let mut raw = ok_fixture();
+        for f in raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+        {
+            f.as_object_mut().unwrap().remove("url");
+        }
+        let err = parse_innertube_player(&raw, INNERTUBE_ITAGS_DEFAULT).unwrap_err();
+        assert!(matches!(err, InnertubeFail::Sabr(_)), "{err:?}");
+    }
+
+    /// itag → расширение файла кэша (грамматика valid_warm_ext).
+    #[test]
+    fn ext_table_matches_itags() {
+        assert_eq!(innertube_ext_for_itag(251), Some("webm"));
+        assert_eq!(innertube_ext_for_itag(250), Some("webm"));
+        assert_eq!(innertube_ext_for_itag(249), Some("webm"));
+        assert_eq!(innertube_ext_for_itag(140), Some("m4a"));
+        assert_eq!(innertube_ext_for_itag(139), Some("m4a"));
+        assert_eq!(innertube_ext_for_itag(22), None);
+    }
+
+    // ── WarmEntry из ответа ────────────────────────────────────────
+
+    /// Форма наружу — WarmEntry: expire из САМОЙ ссылки (не константа 6ч),
+    /// провайдер youtube; всё ниже (fetch_to_cache и т.д.) переиспользуется.
+    #[test]
+    fn warm_entry_takes_expire_from_url() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let fmt = InnertubeFormat {
+            url: "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000&itag=251"
+                .into(),
+            size: 3_433_755,
+            ext: "webm".into(),
+        };
+        let entry = innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).unwrap();
+        assert_eq!(
+            entry.expires_at,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_021_000) - WARM_EXPIRY_MARGIN
+        );
+        assert_eq!(entry.size, 3_433_755);
+        assert_eq!(entry.ext, "webm");
+        assert_eq!(entry.provider, "youtube");
+    }
+
+    /// Граница доверия validate_warm_url наследуется без ослаблений.
+    #[test]
+    fn warm_entry_rejects_invalid_url() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for raw in [
+            "http://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000",
+            "https://user:pass@rr1---sn-example.googlevideo.com/videoplayback?expire=1021000",
+        ] {
+            let fmt = InnertubeFormat {
+                url: raw.into(),
+                size: 100,
+                ext: "webm".into(),
+            };
+            assert!(
+                innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                "{raw:?} обязан отвергаться"
+            );
+        }
+    }
+
+    /// Уже протухший expire — мертворождённая запись: Err сразу.
+    #[test]
+    fn warm_entry_rejects_already_expired() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000);
+        let fmt = InnertubeFormat {
+            url: "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000".into(),
+            size: 100,
+            ext: "webm".into(),
+        };
+        assert!(innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err());
+    }
+
+    /// Лимит 512 МиБ — тот же, что у yt-dlp-пути (проверка ДО запроса байт).
+    #[test]
+    fn warm_entry_rejects_oversize() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for size in [0u64, MAX_YTDLP_OUTPUT_BYTES + 1] {
+            let fmt = InnertubeFormat {
+                url: "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1021000"
+                    .into(),
+                size,
+                ext: "webm".into(),
+            };
+            assert!(
+                innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                "size {size} обязан отвергаться"
+            );
+        }
+    }
+
+    // ── visitorData и тело запроса ─────────────────────────────────
+
+    /// visitorData приходит в КАЖДОМ ответе — даже LOGIN_REQUIRED и
+    /// UNPLAYABLE (на этом стоит бутстрап).
+    #[test]
+    fn visitor_captured_from_any_response() {
+        for raw in [ok_fixture(), login_fixture(), unplayable_fixture()] {
+            assert_eq!(innertube_visitor(&raw).as_deref(), Some(SYNTH_VISITOR));
+        }
+    }
+
+    /// Тело запроса: значения client — из рецепта (бампаются деплоем сервера
+    /// без релиза клиента); visitorData кладётся только когда он есть.
+    #[test]
+    fn body_builder_uses_recipe_values_and_visitor() {
+        let cfg = InnertubeConfig {
+            client_name: "ANDROID_VR".into(),
+            client_version: "1.65.10".into(),
+            client_name_id: 28,
+        };
+        let body = build_innertube_body(&cfg, "dQw4w9WgXcQ", None);
+        assert_eq!(body["context"]["client"]["clientName"], "ANDROID_VR");
+        assert_eq!(body["context"]["client"]["clientVersion"], "1.65.10");
+        assert_eq!(body["context"]["client"]["deviceMake"], "Oculus");
+        assert_eq!(body["videoId"], "dQw4w9WgXcQ");
+        assert_eq!(body["contentCheckOk"], true);
+        assert_eq!(body["racyCheckOk"], true);
+        assert!(body["context"]["client"].get("visitorData").is_none());
+        let with = build_innertube_body(&cfg, "dQw4w9WgXcQ", Some("V1"));
+        assert_eq!(with["context"]["client"]["visitorData"], "V1");
+    }
+
+    // ── Рецепт ─────────────────────────────────────────────────────
+
+    /// Рубильник: блока нет, enabled:false или битые поля — ступень 0
+    /// выключена (клиент откатывается на yt-dlp сам, без релиза).
+    #[test]
+    fn innertube_config_from_recipe_with_kill_switch() {
+        let on = serde_json::json!({"youtube": {"innertube": {
+            "enabled": true, "client_name": "ANDROID_VR",
+            "client_version": "1.65.10", "client_name_id": 28}}});
+        assert_eq!(
+            innertube_from_recipe(&on),
+            Some(InnertubeConfig {
+                client_name: "ANDROID_VR".into(),
+                client_version: "1.65.10".into(),
+                client_name_id: 28,
+            })
+        );
+        let off = serde_json::json!({"youtube": {"innertube": {
+            "enabled": false, "client_name": "ANDROID_VR",
+            "client_version": "1.65.10", "client_name_id": 28}}});
+        assert_eq!(innertube_from_recipe(&off), None);
+        let absent = serde_json::json!({"youtube": {}});
+        assert_eq!(innertube_from_recipe(&absent), None);
+        let broken = serde_json::json!({"youtube": {"innertube": {"enabled": true}}});
+        assert_eq!(innertube_from_recipe(&broken), None);
+    }
+
+    /// Бандл-рецепт обязан включать ступень 0 — иначе она не работает
+    /// оффлайн и до первого горячего рецепта.
+    #[test]
+    fn default_recipe_enables_innertube_stage0() {
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let cfg = innertube_from_recipe(&recipe).expect("ступень 0 включена в бандл-рецепте");
+        assert_eq!(cfg.client_name, "ANDROID_VR");
+        assert_eq!(
+            cfg.client_version, "1.65.10",
+            "clientVersion>1.65 может отдавать SABR-only (yt-dlp ff459e5) — \
+             бампить только через рецепт с проверкой"
+        );
+        assert_eq!(cfg.client_name_id, 28);
+    }
+
+    // ── Выбор источника и KPI ──────────────────────────────────────
+
+    /// Ступень 0 — только когда ПЕРВЫЙ источник YouTube с валидным id:
+    /// приоритет источников сервера не переворачиваем, SoundCloud/Bandcamp
+    /// идут лестницей.
+    #[test]
+    fn stage0_only_for_leading_valid_youtube_source() {
+        let yt = SourceRef::Youtube {
+            source_id: "dQw4w9WgXcQ".into(),
+        };
+        let sc = SourceRef::Soundcloud {
+            source_id: "12345".into(),
+            canonical_url: "https://soundcloud.com/a/b".into(),
+        };
+        let bad = SourceRef::Youtube {
+            source_id: "../слишком-кривой-id".into(),
+        };
+        assert_eq!(stage0_youtube_id(&[yt]).as_deref(), Some("dQw4w9WgXcQ"));
+        assert_eq!(
+            stage0_youtube_id(&[
+                sc,
+                SourceRef::Youtube {
+                    source_id: "dQw4w9WgXcQ".into()
+                }
+            ]),
+            None,
+            "SoundCloud первый — приоритет сервера не переворачиваем"
+        );
+        assert_eq!(stage0_youtube_id(&[bad]), None, "кривой id — лестница");
+        assert_eq!(stage0_youtube_id(&[]), None);
+    }
+
+    /// Маркеры KPI прямого пути: по ним видно деградацию android_vr.
+    #[test]
+    fn classify_innertube_counters() {
+        let mut stats = EngineStats::default();
+        classify_innertube_failure(&mut stats, &InnertubeFail::Sabr("нет url".into()));
+        classify_innertube_failure(&mut stats, &InnertubeFail::LoginRequired("бот-гейт".into()));
+        classify_innertube_failure(&mut stats, &InnertubeFail::Other("UNPLAYABLE".into()));
+        assert_eq!(stats.fail_sabr, 1);
+        assert_eq!(stats.fail_login, 1);
+        assert_eq!(stats.fail_other, 1);
+    }
+
+    // ── Оркестрация visitorData (инъекция транспорта) ──────────────
+
+    fn run_orchestration(
+        state: &EngineState,
+        responses: Vec<Result<serde_json::Value, String>>,
+    ) -> (Result<InnertubeFormat, InnertubeFail>, Vec<Option<String>>) {
+        let calls: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
+        let queue: Mutex<VecDeque<Result<serde_json::Value, String>>> =
+            Mutex::new(VecDeque::from(responses));
+        let result = tauri::async_runtime::block_on(resolve_via_innertube_with(
+            state,
+            INNERTUBE_ITAGS_DEFAULT,
+            |visitor| {
+                calls.lock().unwrap().push(visitor);
+                let resp = queue
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("лишний вызов транспорта");
+                async move { resp }
+            },
+        ));
+        (result, calls.into_inner().unwrap())
+    }
+
+    /// Бутстрап: без visitorData первый ответ — бот-гейт, но visitorData в
+    /// нём есть; ОДИН повтор с ним обязан спасти запрос, а значение — осесть
+    /// в состоянии для следующих резолвов.
+    #[test]
+    fn orchestration_bootstraps_visitor_and_retries_once() {
+        let state = EngineState::default();
+        let (result, calls) =
+            run_orchestration(&state, vec![Ok(login_fixture()), Ok(ok_fixture())]);
+        let fmt = result.expect("повтор со свежим visitorData обязан спасти");
+        assert_eq!(fmt.size, 3_433_755);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], None);
+        assert_eq!(calls[1].as_deref(), Some(SYNTH_VISITOR));
+        let stored = state.youtube_visitor.lock().unwrap();
+        assert_eq!(
+            stored.as_ref().map(|v| v.value.as_str()),
+            Some(SYNTH_VISITOR),
+            "visitor остаётся в состоянии"
+        );
+    }
+
+    /// Свежий visitor из состояния идёт уже в ПЕРВЫЙ запрос (обычный путь —
+    /// один POST, ~171 мс); ответ освежает значение.
+    #[test]
+    fn orchestration_reuses_fresh_visitor() {
+        let state = EngineState::default();
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-СВОЙ".into(),
+            obtained_at: SystemTime::now(),
+        });
+        let (result, calls) = run_orchestration(&state, vec![Ok(ok_fixture())]);
+        assert!(result.is_ok());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].as_deref(), Some("V-СВОЙ"));
+        assert_eq!(
+            state
+                .youtube_visitor
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|v| v.value.as_str()),
+            Some(SYNTH_VISITOR),
+            "ответ освежает visitor"
+        );
+    }
+
+    /// Протухший visitor не переиспользуется — идём бутстрапом (None).
+    #[test]
+    fn orchestration_ignores_stale_visitor() {
+        let state = EngineState::default();
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-СТАРЫЙ".into(),
+            obtained_at: SystemTime::now() - INNERTUBE_VISITOR_TTL - Duration::from_secs(1),
+        });
+        let (result, calls) = run_orchestration(&state, vec![Ok(ok_fixture())]);
+        assert!(result.is_ok());
+        assert_eq!(calls[0], None, "протухший visitor не шлём");
+    }
+
+    /// Два бот-гейта подряд — сдаёмся: не больше ОДНОГО повтора, наружу
+    /// LoginRequired (фолбэк на лестницу, счётчик fail_login).
+    #[test]
+    fn orchestration_gives_up_after_second_login() {
+        let state = EngineState::default();
+        let (result, calls) =
+            run_orchestration(&state, vec![Ok(login_fixture()), Ok(login_fixture())]);
+        assert!(matches!(result, Err(InnertubeFail::LoginRequired(_))));
+        assert_eq!(calls.len(), 2);
+    }
+
+    /// Бот-гейт БЕЗ visitorData в ответе — повторять нечем, сдаёмся сразу.
+    #[test]
+    fn orchestration_login_without_visitor_gives_up() {
+        let state = EngineState::default();
+        let mut login = login_fixture();
+        login["responseContext"]
+            .as_object_mut()
+            .unwrap()
+            .remove("visitorData");
+        let (result, calls) = run_orchestration(&state, vec![Ok(login)]);
+        assert!(matches!(result, Err(InnertubeFail::LoginRequired(_))));
+        assert_eq!(calls.len(), 1);
+    }
+
+    /// UNPLAYABLE повтором не лечится — один вызов и сразу фолбэк.
+    #[test]
+    fn orchestration_no_retry_on_unplayable() {
+        let state = EngineState::default();
+        let (result, calls) = run_orchestration(&state, vec![Ok(unplayable_fixture())]);
+        assert!(matches!(result, Err(InnertubeFail::Other(_))));
+        assert_eq!(calls.len(), 1);
+    }
+
+    /// Сеть/таймаут — Other без повтора: ступень 0 либо быстрая, либо сразу
+    /// уступает лестнице.
+    #[test]
+    fn orchestration_network_error_is_other() {
+        let state = EngineState::default();
+        let (result, calls) = run_orchestration(&state, vec![Err("сеть упала".into())]);
+        assert!(matches!(result, Err(InnertubeFail::Other(_))));
+        assert_eq!(calls.len(), 1);
+    }
+
+    /// Живой сквозной прогон ступени 0: POST /player → WarmEntry →
+    /// fetch_to_cache. Закрывает и «НЕ проверено» из ресёрча 2026-07-19:
+    /// скачивание байтов по прямому googlevideo-URL нашим reqwest (из Node
+    /// его резал DPI). `cargo test innertube_real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "сеть: живые POST /player и GET байтов"]
+    fn innertube_real_resolve_and_fetch() {
+        let dir = std::env::temp_dir().join("muza-innertube-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let state = EngineState::default();
+        let recipe: serde_json::Value = serde_json::from_str(DEFAULT_RECIPE_JSON).unwrap();
+        let cfg = innertube_from_recipe(&recipe).expect("ступень 0 включена");
+
+        let started = std::time::Instant::now();
+        let entry = tauri::async_runtime::block_on(resolve_via_innertube(
+            &state,
+            &cfg,
+            "dQw4w9WgXcQ",
+            INNERTUBE_ITAGS_DEFAULT,
+        ))
+        .expect("прямой резолв обязан пройти");
+        println!(
+            "резолв: {} мс, ext {}, size {}",
+            started.elapsed().as_millis(),
+            entry.ext,
+            entry.size
+        );
+
+        let started = std::time::Instant::now();
+        let path = tauri::async_runtime::block_on(fetch_to_cache(&dir, "smoke1", &entry))
+            .expect("байты по прямому URL обязаны доехать");
+        let size = fs::metadata(&path).unwrap().len();
+        println!(
+            "байты: {} мс, {} байт, {}",
+            started.elapsed().as_millis(),
+            size,
+            path.display()
+        );
+        assert_eq!(size, entry.size, "скачали ровно столько, сколько заявлено");
+        assert!(size > 1_000_000, "полноразмерное аудио");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

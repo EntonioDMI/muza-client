@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 // muza-plugin:// (Windows-вебвью сервит его как http://muza-plugin.localhost).
 // Директива стоит ПЕРЕД connect-src: DEVELOPMENT_CSP дописывает localhost:8000
 // строкой в хвост, и connect-src обязан оставаться последней директивой.
-export const PRODUCTION_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost";
+export const PRODUCTION_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost http://muza-stream.localhost muza-stream://localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost";
 export const DEVELOPMENT_CSP = `${PRODUCTION_CSP} http://localhost:8000`;
 
 const MAX_ARTIFACT_TEXT_BYTES = 32 * 1024 * 1024;

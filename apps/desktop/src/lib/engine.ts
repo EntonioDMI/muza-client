@@ -128,6 +128,60 @@ export async function resolveTrack(
   return { url: convertFileSrc(out.path), fromCache: out.from_cache, provider: out.provider };
 }
 
+export interface WarmResult {
+  /** Живая warm-запись есть (уже была или только что добыта). */
+  warm: boolean;
+  /** Файл уже в кэше добычи — греть нечего. */
+  cached: boolean;
+}
+
+/** Прогреть резолв трека (Фаза 1, спека 2026-07-16): yt-dlp --simulate
+ *  разрешает метаданные (прямой CDN-URL + размер) за 0 байт трафика; клик по
+ *  прогретому треку скачает файл одним GET вместо полного процесса yt-dlp
+ *  (~4.5с → ~1.2с). Ошибка прогрева не фатальна по определению — трек
+ *  добудется обычной лестницей; вызывающий (useWarmer) её глотает в кулдаун. */
+export async function engineWarm(
+  trackId: string,
+  sources: TrackSource[],
+  quality: StreamQuality = "auto",
+): Promise<WarmResult> {
+  const out = await invoke<{ warm: boolean; cached: boolean }>("engine_warm", {
+    trackId,
+    sources: toNativeSourceRefs(sources),
+    quality,
+    cacheNs: CACHE_NS,
+  }).catch((e: unknown) => {
+    // та же граница IPC, что у resolveTrack: Tauri реджектит голой строкой
+    throw e instanceof Error ? e : new Error(typeof e === "string" ? e : String(e));
+  });
+  return out;
+}
+
+/** Стрим с первых килобайт (Фаза 2): если файл НЕ в кэше, а warm-запись
+ *  жива, Rust начинает закачку в кэш и подтверждает первые байты — тогда
+ *  трек играется прямо из наполняющегося .part через протокол muza-stream
+ *  (handler отвечает 206-чанками, дожидаясь нужных байт). true даёт Rust
+ *  ТОЛЬКО когда первые килобайты уже на диске: провал закачки схлопывается
+ *  в false ДО того, как <audio> закоммитится на stream-URL, — «молча упасть
+ *  на обычную лестницу» соблюдается по построению. */
+export async function engineStreamStart(trackId: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  const out = await invoke<{ stream: boolean }>("engine_stream_start", {
+    trackId,
+    cacheNs: CACHE_NS,
+  }).catch(() => ({ stream: false })); // стрим — best-effort по определению
+  return out.stream;
+}
+
+/** URL стрима для <audio>: http://muza-stream.localhost/<ns>/<id> (Windows)
+ *  или muza-stream://localhost/<ns>/<id>. convertFileSrc даёт платформенную
+ *  базу, но путь кодирует ЦЕЛИКОМ (слэш → %2F, обработчик видел один сегмент
+ *  и отвечал 400 — поймано живым стендом 16.07) — поэтому в него идёт только
+ *  ns, а id доклеивается сырым: оба валидны как [a-z0-9_-], кодировать нечего. */
+export function engineStreamUrl(trackId: string): string {
+  return `${convertFileSrc(CACHE_NS, "muza-stream")}/${trackId}`;
+}
+
 /** Резолв с учётом локальных источников (Stage 4): source provider=local —
  *  это файл на устройстве (sourceId = sha256), в yt-dlp ему нельзя.
  *  Локальный, стоящий первым (выбор пользователя или единственный источник),

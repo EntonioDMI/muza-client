@@ -22,6 +22,7 @@ import { usePlayback } from "./usePlayback";
 const h = vi.hoisted(() => ({
   resolvePlayable: vi.fn(),
   cacheRemove: vi.fn(),
+  engineStreamStart: vi.fn(),
   getTrackSources: vi.fn(),
   onError: vi.fn(),
   engine: {
@@ -51,6 +52,8 @@ vi.mock("../lib/engine", () => ({
   engineAvailable: () => true,
   resolvePlayable: h.resolvePlayable,
   cacheRemove: h.cacheRemove,
+  engineStreamStart: h.engineStreamStart,
+  engineStreamUrl: (id: string) => `http://muza-stream.localhost/testns/${id}`,
 }));
 
 vi.mock("./audioEngine", () => ({
@@ -132,6 +135,10 @@ beforeEach(() => {
   h.cacheRemove.mockImplementation(async () => {});
   h.engine.analyser.mockReturnValue(null);
   h.resolvePlayable.mockReset();
+  // Фаза 2 по умолчанию выключена в тестах: стрим недоступен = старый путь,
+  // существующие сценарии добычи не меняются
+  h.engineStreamStart.mockReset();
+  h.engineStreamStart.mockResolvedValue(false);
   h.getTrackSources.mockImplementation(async () => []);
   h.cb.current = null;
 });
@@ -767,5 +774,33 @@ describe("usePlayback: самолечение мёртвого звука", () =
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("стрим с первых килобайт (Фаза 2, muza-stream)", () => {
+  it("прогретый некэшированный трек играет стримом, резолв не зовётся", async () => {
+    // Rust подтвердил: warm-запись есть, закачка началась, первые байты пришли
+    h.engineStreamStart.mockResolvedValueOnce(true);
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([A, B], "a");
+    });
+    expect(h.engineStreamStart).toHaveBeenCalledWith("a");
+    expect(h.engine.play).toHaveBeenCalledWith(
+      expect.stringContaining("muza-stream"),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(h.resolvePlayable).not.toHaveBeenCalled();
+  });
+
+  it("стрим недоступен (не прогрет/уже в кэше) — обычная добыча, как раньше", async () => {
+    h.engineStreamStart.mockResolvedValueOnce(false);
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: false, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([A, B], "a");
+    });
+    expect(h.engine.play).toHaveBeenCalledWith("a.webm", expect.anything(), expect.anything());
   });
 });

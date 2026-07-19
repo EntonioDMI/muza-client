@@ -4,6 +4,7 @@ import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { WRAPPED_BANNER_PREVIEW, WRAPPED_ENABLED, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
+import { useWarmRow } from "../player/useWarmer";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { shelfL10n, tileL10n, trackRowL10n } from "../lib/dsLabels";
@@ -85,6 +86,7 @@ export function HomeFeed({
 }) {
   const { t } = useT();
   const { dragSource } = useDrag();
+  const warmRow = useWarmRow();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
   // сервер недоступен / пустая лента нового аккаунта / аноним (ленты нет)
   const [feed, setFeed] = useState<{
@@ -232,6 +234,7 @@ export function HomeFeed({
                         e.preventDefault();
                       }}
                       {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
+                      {...warmRow(tr.id)}
                     >
                       <TrackRow
                         {...trackRowL10n(t)}

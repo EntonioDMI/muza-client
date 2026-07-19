@@ -3,6 +3,7 @@ import { Button, EmptyState, SearchInput, Shelf, TrackRow } from "@muza/ui";
 import type { GroupedSearchResult, MuzaApi, PublicPlaylist, PublicPlaylistHit, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
+import { useWarmRow } from "../player/useWarmer";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { flattenGroupedResults, loadMoreScope, nextGroupLimit } from "../lib/searchGrouping";
@@ -273,6 +274,7 @@ export function SearchView({
 
   const showServerResults = canSearch && query.length >= 2;
   const { dragSource } = useDrag();
+  const warmRow = useWarmRow();
 
   /** Строка трека: тач-таргет/драг-источник (Alt+drag — файл, T18) — общая
    *  для плоского и grouped-режима, чтобы не дублировать DnD/очередь/
@@ -294,6 +296,7 @@ export function SearchView({
         e.preventDefault();
       }}
       {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
+      {...warmRow(tr.id)}
     >
       <TrackRow
         {...trackRowL10n(t)}
