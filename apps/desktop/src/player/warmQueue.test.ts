@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   WARM_FAIL_COOLDOWN_MS,
   WARM_PARALLELISM,
+  WARM_RATE_PER_HOUR,
   WARM_RATE_PER_MINUTE,
+  WARM_VISIBLE_DWELL_MS,
   WarmQueue,
   type WarmOutcome,
 } from "./warmQueue";
@@ -64,6 +66,9 @@ describe("WarmQueue: приоритет", () => {
     q.request("из-очереди", "queue");
     q.request("видимый", "visible");
     q.request("под-курсором", "hover");
+    // dwell видимости дожидаемся, пока блокер ещё держит слот, — приоритеты
+    // сравниваются на реальных заявках
+    await vi.advanceTimersByTimeAsync(WARM_VISIBLE_DWELL_MS);
     await t.finish("block");
     await t.finish("под-курсором");
     await t.finish("видимый");
@@ -104,6 +109,7 @@ describe("WarmQueue: сигнал доезжает до прогрева", () =>
     q.request("апгрейд", "hover"); // курсор пришёл на ждущую строку
     await t.finish("block");
     await t.finish("апгрейд");
+    await vi.advanceTimersByTimeAsync(WARM_VISIBLE_DWELL_MS); // dwell «видимого»
     await t.finish("видимый");
     expect(t.run).toHaveBeenCalledWith("block", "queue");
     expect(t.run).toHaveBeenCalledWith("апгрейд", "hover");
@@ -116,7 +122,8 @@ describe("WarmQueue: лимиты (жёсткий режим — решение 
   it("параллелизм ≤ 2 по умолчанию", async () => {
     const t = testRuns();
     const q = new WarmQueue(t.run);
-    for (const id of ["a", "b", "c", "d"]) q.request(id, "visible");
+    // сигнал queue: тест про лимит слотов, dwell видимости здесь ни при чём
+    for (const id of ["a", "b", "c", "d"]) q.request(id, "queue");
     await vi.advanceTimersByTimeAsync(0);
     expect(t.started).toEqual(["a", "b"]);
     expect(WARM_PARALLELISM).toBe(2);
@@ -129,13 +136,69 @@ describe("WarmQueue: лимиты (жёсткий режим — решение 
     const t = testRuns();
     // parallelism выше лимита, чтобы упереться именно в окно
     const q = new WarmQueue(t.run, { parallelism: 100 });
-    for (let i = 0; i < 35; i++) q.request(`t${i}`, "visible");
+    for (let i = 0; i < 35; i++) q.request(`t${i}`, "queue");
     await vi.advanceTimersByTimeAsync(0);
     expect(t.started).toHaveLength(WARM_RATE_PER_MINUTE);
     expect(WARM_RATE_PER_MINUTE).toBe(30);
     // окно скользящее: через минуту+ хвост стартует сам, без новых заявок
     await vi.advanceTimersByTimeAsync(61_000);
     expect(t.started).toHaveLength(35);
+    q.dispose();
+  });
+});
+
+describe("WarmQueue: dwell видимости и часовое окно (2026-07-19)", () => {
+  /** Быстрый скролл поиска раньше генерировал заявку на КАЖДУЮ мелькнувшую
+   *  строку (118 результатов → волна прогрева → бот-гейт → CPU-лавина
+   *  yt-dlp-фолбэков). Видимость становится заявкой только после
+   *  WARM_VISIBLE_DWELL_MS непрерывной видимости; hover/queue — сразу. */
+  it("visible становится заявкой только после непрерывной видимости", async () => {
+    const t = testRuns();
+    const q = new WarmQueue(t.run);
+    q.request("a", "visible");
+    await vi.advanceTimersByTimeAsync(WARM_VISIBLE_DWELL_MS - 1);
+    expect(t.started).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(t.started).toEqual(["a"]);
+    expect(WARM_VISIBLE_DWELL_MS).toBe(1500);
+    q.dispose();
+  });
+
+  it("уход с экрана до истечения dwell снимает заявку (скролл бесплатен)", async () => {
+    const t = testRuns();
+    const q = new WarmQueue(t.run);
+    q.request("a", "visible");
+    await vi.advanceTimersByTimeAsync(1000);
+    q.cancel("a");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.started).toEqual([]);
+    q.dispose();
+  });
+
+  it("hover по ждущему dwell продвигает мгновенно и с hover-сигналом", async () => {
+    const t = testRuns();
+    const q = new WarmQueue(t.run);
+    q.request("a", "visible");
+    await vi.advanceTimersByTimeAsync(100);
+    q.request("a", "hover");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.started).toEqual(["a"]);
+    expect(t.run).toHaveBeenCalledWith("a", "hover");
+    q.dispose();
+  });
+
+  /** 30/мин без часового капа = до 1800/час при лимите гостевой сессии
+   *  YouTube ~300 видео/час — долгая сессия скролла сама загоняла IP под
+   *  бот-гейт. Второе скользящее окно ограничивает час. */
+  it("часовое окно: сверх WARM_RATE_PER_HOUR не стартует, хвост уходит после сдвига", async () => {
+    const t = testRuns();
+    const q = new WarmQueue(t.run, { parallelism: 1000, ratePerMinute: 1000 });
+    for (let i = 0; i < 125; i++) q.request(`h${i}`, "hover");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.started).toHaveLength(WARM_RATE_PER_HOUR);
+    expect(WARM_RATE_PER_HOUR).toBe(120);
+    await vi.advanceTimersByTimeAsync(3_600_001);
+    expect(t.started).toHaveLength(125);
     q.dispose();
   });
 });
@@ -156,7 +219,7 @@ describe("WarmQueue: отмена и дедупликация", () => {
   it("уже прогретый не дёргается повторно", async () => {
     const t = testRuns();
     const q = new WarmQueue(t.run);
-    q.request("a", "visible");
+    q.request("a", "hover");
     await t.finish("a", "warmed");
     q.request("a", "hover");
     await vi.advanceTimersByTimeAsync(0);
@@ -167,9 +230,9 @@ describe("WarmQueue: отмена и дедупликация", () => {
   it("уже закэшированный не дёргается повторно", async () => {
     const t = testRuns();
     const q = new WarmQueue(t.run);
-    q.request("a", "visible");
+    q.request("a", "hover");
     await t.finish("a", "cached");
-    q.request("a", "visible");
+    q.request("a", "hover");
     await vi.advanceTimersByTimeAsync(0);
     expect(t.run).toHaveBeenCalledTimes(1);
     q.dispose();
@@ -189,13 +252,13 @@ describe("WarmQueue: отмена и дедупликация", () => {
   it("ошибка прогрева не долбит повторно до кулдауна, после — можно", async () => {
     const t = testRuns();
     const q = new WarmQueue(t.run);
-    q.request("a", "visible");
+    q.request("a", "hover");
     await t.fail("a");
-    q.request("a", "visible");
+    q.request("a", "hover");
     await vi.advanceTimersByTimeAsync(0);
     expect(t.run).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(WARM_FAIL_COOLDOWN_MS + 1);
-    q.request("a", "visible");
+    q.request("a", "hover");
     await vi.advanceTimersByTimeAsync(0);
     expect(t.run).toHaveBeenCalledTimes(2);
     q.dispose();
