@@ -107,7 +107,20 @@ export function VersionsDialog({
         {sources === null && !error ? (
           <div style={{ color: "var(--text-3)", fontSize: "var(--fs-body)" }}>{t("dialogs.versions.loading")}</div>
         ) : null}
-        {(sources ?? []).map((s) => {
+        {/* Список источников скроллится при большом числе; полосу красит глобальное
+            правило ДС (base.css, ::-webkit-scrollbar). overflowX:hidden — без горизонтальной. */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--sp-2)",
+            maxHeight: "min(52vh, 460px)",
+            overflowY: "auto",
+            overflowX: "hidden",
+            paddingRight: 2,
+          }}
+        >
+          {(sources ?? []).map((s) => {
           const meta = [
             kindLabel(s.kind),
             s.durationSec ? fmtTime(s.durationSec) : null,
@@ -152,6 +165,7 @@ export function VersionsDialog({
             </button>
           );
         })}
+        </div>
         {sources !== null && sources.length === 0 ? (
           <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
             {t("dialogs.versions.noSources")}

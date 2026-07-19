@@ -159,15 +159,27 @@ export function QueuePanel({
   const listRef = useRef<HTMLDivElement | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  // ⚠️ НЕ scrollIntoView и НЕ focus() без preventScroll: оба прокручивают ВСЕХ
+  // скроллируемых предков, а не только этот список. Корень приложения —
+  // overflow:hidden, но программно он всё равно скроллится, а вернуть его нечем
+  // (полосы нет) — поэтому при открытии длинной очереди весь интерфейс залипал
+  // сдвинутым вверх (жалоба владельца 2026-07-19). Скроллим строго свой контейнер.
   const scrollToCurrent = (smooth: boolean) => {
-    const el = listRef.current?.querySelector("[data-queue-current]");
-    el?.scrollIntoView({ block: "center", behavior: smooth ? "smooth" : "auto" });
+    const list = listRef.current;
+    const el = list?.querySelector<HTMLElement>("[data-queue-current]");
+    if (!list || !el) return;
+    const top =
+      list.scrollTop +
+      (el.getBoundingClientRect().top - list.getBoundingClientRect().top) -
+      (list.clientHeight - el.offsetHeight) / 2;
+    if (smooth && typeof list.scrollTo === "function") list.scrollTo({ top, behavior: "smooth" });
+    else list.scrollTop = top;
   };
 
   // Открытие: фокус в панель (Esc из App работает) + текущий трек в видимости
   useEffect(() => {
     if (!open) return;
-    panelRef.current?.focus();
+    panelRef.current?.focus({ preventScroll: true });
     scrollToCurrent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -231,7 +243,16 @@ export function QueuePanel({
           {t("dialogs.queue.empty")}
         </div>
       ) : (
-        <div ref={listRef} style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+        // overflowX:hidden обязателен: overflow-y:auto переводит overflow-x из
+        // visible в auto — снизу вылезала лишняя горизонтальная полоса (жалоба
+        // владельца 2026-07-19; проявилось, когда полоса ДС стала 11px и контент
+        // перестал влезать по ширине). Прятать нечего: заголовки строк и так
+        // режутся ellipsis. Тот же паттерн — ReplaceVersionDialog,
+        // PlaylistIconPicker, VersionsDialog.
+        <div
+          ref={listRef}
+          style={{ overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 2 }}
+        >
           {history.length > 0 ? (
             <>
               <SectionLabel

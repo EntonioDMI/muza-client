@@ -3,6 +3,7 @@ import { EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
+import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { useT } from "../i18n";
@@ -84,6 +85,7 @@ export function FavoritesView({
             {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
           >
             <TrackRow
+              {...trackRowL10n(t)}
               index={i + 1}
               cover={tr.coverUrl}
               showCover={rowShow?.cover !== false}

@@ -29,6 +29,7 @@ import { useTelemetry, type PlayCounters } from "./lib/useTelemetry";
 import { useErrorTelemetry } from "./lib/useErrorTelemetry";
 import { useVisitPing } from "./lib/useVisitPing";
 import { useCoverArt } from "./lib/coverArt";
+import { moveItem } from "./lib/dragEngine";
 import { comboFromEvent, matchAction, formatCombo, withDefaults, HOTKEY_ACTIONS, hotkeyActionLabel } from "./lib/hotkeys";
 import {
   canGoBack,
@@ -59,6 +60,7 @@ import { QueuePanel } from "./shell/QueuePanel";
 import { ListeningMode } from "./shell/ListeningMode";
 import { MeaningDialog } from "./shell/MeaningDialog";
 import { VersionsDialog } from "./shell/VersionsDialog";
+import { ReplaceVersionDialog, type ReplaceCtx } from "./shell/ReplaceVersionDialog";
 import { DragLayer } from "./shell/DragLayer";
 import { AddLinkDialog } from "./shell/AddLinkDialog";
 import { ImportDialog } from "./shell/ImportDialog";
@@ -278,14 +280,24 @@ function Player({
   const historyRef = useRef<HistoryState<View>>(createHistory<View>({ view }));
   // выбор плейлиста для «В плейлист» из поиска
   const [plPick, setPlPick] = useState<CatalogTrack | null>(null);
-  // Stage 4: меню трека («⋯») и диалог «Источники»
-  const [catMenu, setCatMenu] = useState<{ open: boolean; x: number; y: number; track: CatalogTrack | null }>({
+  // Stage 4: меню трека («⋯») и диалог «Источники». inFavorites — меню
+  // открыто из Любимого: только там показывается «Заменить версию»
+  // (в Поиске/Хоуме нечего заменять — трек не лежит в списке пользователя).
+  const [catMenu, setCatMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    track: CatalogTrack | null;
+    inFavorites?: boolean;
+  }>({
     open: false,
     x: 0,
     y: 0,
     track: null,
   });
   const [versionsTrack, setVersionsTrack] = useState<CatalogTrack | null>(null);
+  // «Заменить версию» (2026-07-18): трек + где заменяем (плейлист/Любимое)
+  const [replaceCtx, setReplaceCtx] = useState<ReplaceCtx | null>(null);
   // Stage 4: «Добавить по ссылке» (прямые источники) и импорт плейлистов
   const [addLinkOpen, setAddLinkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -525,18 +537,17 @@ function Player({
     }
   };
 
-  /** Реордер плейлистов (drag-drop за ручку в Библиотеке): draggedId встаёт
-   *  ПЕРЕД beforeId. Оптимистично правим локальный список (сайдбар/медиатека
-   *  сразу), затем шлём полный порядок на сервер; ошибка — откат перечиткой. */
-  const reorderPlaylists = async (draggedId: string, beforeId: string) => {
-    if (draggedId === beforeId) return;
+  /** Реордер плейлистов (локальный drag за ручку-⠿ в сайдбаре/Библиотеке):
+   *  draggedId встаёт на toIndex — splice-индекс от useLocalReorder (термины
+   *  массива после изъятия элемента, см. moveItem). Оптимистично правим
+   *  локальный список (сайдбар/медиатека сразу — порядок у них общий), затем
+   *  шлём полный порядок на сервер; ошибка — откат перечиткой. */
+  const reorderPlaylists = async (draggedId: string, toIndex: number) => {
     let nextIds: string[] = [];
     setSrvPlaylists((ps) => {
-      const rest = ps.filter((p) => p.id !== draggedId);
-      const to = rest.findIndex((p) => p.id === beforeId);
-      const dragged = ps.find((p) => p.id === draggedId);
-      if (to < 0 || !dragged) return ps;
-      const next = [...rest.slice(0, to), dragged, ...rest.slice(to)];
+      const from = ps.findIndex((p) => p.id === draggedId);
+      if (from < 0 || from === toIndex) return ps;
+      const next = moveItem(ps, from, toIndex);
       nextIds = next.map((p) => p.id);
       return next;
     });
@@ -1144,14 +1155,29 @@ function Player({
   };
 
   /** «⋯» на каталожном (серверном) треке — меню Stage 4. */
-  const openCatalogMenu = (t: CatalogTrack, e: React.MouseEvent) => {
+  const openCatalogMenu = (t: CatalogTrack, e: React.MouseEvent, opts?: { inFavorites?: boolean }) => {
     e.stopPropagation();
     setCatMenu({
       open: true,
       x: Math.min(e.clientX, window.innerWidth - 250),
       y: Math.min(e.clientY, window.innerHeight - 180),
       track: t,
+      inFavorites: opts?.inFavorites ?? false,
     });
+  };
+
+  /** После «Заменить версию»: плейлист перечитывает себя сам (reload из
+   *  PlaylistView), Любимое живёт от likes — правим их напрямую: сервер уже
+   *  поменял, toggleLike звать нельзя (он бы снова дёрнул API). */
+  const handleReplaced = (oldId: string, newTrack: CatalogTrack) => {
+    if (replaceCtx?.target.kind === "playlist") {
+      replaceCtx.target.reload();
+    } else {
+      setLikes((ls) => {
+        const without = ls.filter((x) => x !== oldId);
+        return without.includes(newTrack.id) ? without : [...without, newTrack.id];
+      });
+    }
   };
 
   /** T17: ПКМ по плейлисту (сайдбар/медиатека) — Открыть/Переименовать/Удалить. */
@@ -1165,9 +1191,24 @@ function Player({
     });
   };
 
-  // Совместный плейлист «от кого-то» переименовывать/удалять нельзя — я не владелец
-  const plMenuIsOwner =
-    plMenu.pl === null || !canSearch || srvPlaylists.find((x) => x.id === plMenu.pl?.id)?.role !== "collaborator";
+  // Чужой плейлист (совместный ИЛИ подписка, 2026-07-17) переименовывать/
+  // удалять нельзя — я не владелец; подписке — свой пункт «Убрать из библиотеки»
+  const plMenuRole = (plMenu.pl !== null && canSearch && srvPlaylists.find((x) => x.id === plMenu.pl?.id)?.role) || "owner";
+  const plMenuIsOwner = plMenuRole === "owner";
+
+  /** Отписка из контекст-меню (2026-07-17): живая «ссылка» уходит из
+   *  библиотеки; сам плейлист у владельца никак не страдает. */
+  const unfollowFromMenu = async () => {
+    const target = plMenu.pl;
+    if (!target || !canSearch) return;
+    try {
+      await api.unfollowPlaylist(target.id);
+      await reloadServerPlaylists();
+      showToast(t("views.search.publicPlaylist.removed"), "list-x");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+    }
+  };
 
   /** Переименование из контекст-меню: как в PlaylistView. Плейлисты есть
    *  только у серверной сессии — анониму переименовывать нечего. */
@@ -1299,12 +1340,20 @@ function Player({
         id: p.id,
         name: p.name,
         meta:
-          p.role === "collaborator"
-            ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername })
-            : p.collaboratorsCount > 0
-              ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
-              : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
+          p.role === "follower"
+            ? p.available === false
+              ? t("sidebar.playlistMeta.hiddenByOwner")
+              : t("sidebar.playlistMeta.followedFrom", { count: p.trackCount, owner: p.ownerUsername })
+            : p.role === "collaborator"
+              ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername })
+              : p.collaboratorsCount > 0
+                ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
+                : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
+        // 2026-07-17: подписки в реордер не входят (их позиции сервер не
+        // хранит), скрытые владельцем — гаснут
+        fixed: p.role === "follower",
+        dimmed: p.role === "follower" && p.available === false,
         // T47b: иконка-обложка из манифеста @muza/core; T47c: track-иконка —
         // готовой ссылкой iconCoverUrl; нет/невалидна — PlaylistRow сама
         // рисует прежний фолбэк (users/list-music)
@@ -1732,6 +1781,8 @@ function Player({
           onPlaylistMenu={openPlaylistMenu}
           // DnD: строка трека брошена на плейлист (только серверные списки)
           onDropTrack={dropTrackOnPlaylist}
+          // DnD: реордер плейлистов за ручку-⠿ — общий с Библиотекой порядок
+          onReorderPlaylists={reorderPlaylists}
           isAdmin={isAdmin}
           onOpenHotkeys={openHotkeys}
         />
@@ -1772,6 +1823,8 @@ function Player({
                 onLike={toggleLike}
                 onNotify={showToast}
                 onCatalogMenu={openCatalogMenu}
+                onOpenPlaylist={openPlaylist}
+                onPlaylistsChanged={() => void reloadServerPlaylists()}
               />
             ) : view === "favorites" ? (
               <FavoritesView
@@ -1784,7 +1837,7 @@ function Player({
                 onQueueCatalog={onQueueCatalog}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
-                onCatalogMenu={openCatalogMenu}
+                onCatalogMenu={(tr, e) => openCatalogMenu(tr, e, { inFavorites: true })}
                 onNotify={showToast}
               />
             ) : view === "playlist" && openPlaylistId ? (
@@ -1802,6 +1855,9 @@ function Player({
                 onLike={toggleLike}
                 onNotify={showToast}
                 onVersions={setVersionsTrack}
+                onReplaceVersion={(tr, reload) =>
+                  setReplaceCtx({ track: tr, target: { kind: "playlist", playlistId: openPlaylistId, reload } })
+                }
                 onShare={(detail) =>
                   setShareData({
                     kind: "playlist",
@@ -2067,6 +2123,18 @@ function Player({
               if (catMenu.track) setVersionsTrack(catMenu.track);
             },
           },
+          // «Заменить версию» — только из Любимого (см. комментарий у catMenu)
+          ...(catMenu.inFavorites
+            ? [
+                {
+                  icon: "refresh-cw",
+                  label: t("menu.catalog.replaceVersion"),
+                  onClick: () => {
+                    if (catMenu.track) setReplaceCtx({ track: catMenu.track, target: { kind: "favorites" } });
+                  },
+                },
+              ]
+            : []),
           {
             icon: catMenu.track && pins.has(catMenu.track.id) ? "cloud-off" : "download",
             label: catMenu.track && pins.has(catMenu.track.id) ? t("menu.catalog.removeOffline") : t("menu.catalog.saveOffline"),
@@ -2136,6 +2204,17 @@ function Player({
                   onClick: () => {
                     if (plMenu.pl) setPlDelete(plMenu.pl);
                   },
+                },
+              ] as const)
+            : []),
+          // 2026-07-17: подписка — единственное действие «Убрать из библиотеки»
+          ...(plMenuRole === "follower"
+            ? ([
+                "-",
+                {
+                  icon: "list-x",
+                  label: t("menu.playlist.unfollow"),
+                  onClick: () => void unfollowFromMenu(),
                 },
               ] as const)
             : []),
@@ -2211,6 +2290,20 @@ function Player({
       />
 
       <VersionsDialog api={api} track={versionsTrack} onClose={() => setVersionsTrack(null)} onNotify={showToast} />
+
+      {/* «Заменить версию» (2026-07-18): подмена трека другой загрузкой той же
+          песни — в плейлисте (позиция сохраняется) или в Любимом (место в
+          списке сохраняется на сервере через createdAt) */}
+      <ReplaceVersionDialog
+        api={api}
+        ctx={replaceCtx}
+        onClose={() => setReplaceCtx(null)}
+        onNotify={showToast}
+        onPlayCatalog={playCatalog}
+        currentId={track?.id ?? null}
+        playing={playing}
+        onReplaced={handleReplaced}
+      />
 
       {/* «Добавить по ссылке» (Stage 4): прямой источник + сразу «в плейлист» */}
       <AddLinkDialog
@@ -2381,6 +2474,7 @@ function Player({
         lyricsLoading={lyricsLoading}
         playing={playing}
         pos={pos}
+        speed={pb.speed}
         activeLine={activeLine}
         lyricsAutoScroll={prefs.lyricsAutoScroll}
         lyricsEndNote={prefs.lyricsEndNote}
@@ -2443,7 +2537,9 @@ function PlaylistPickRow({
   onClick: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const src = coverUrl ?? playlistIconSrc(icon);
+  // Track-иконка — сырой ytimg: без objectFit сплющивалась в 20×20, а вшитые
+  // поля источника лечит тот же canvas-кроп, что у остальных обложек.
+  const src = useCoverArt(coverUrl ?? playlistIconSrc(icon) ?? null);
   return (
     <button
       type="button"
@@ -2469,7 +2565,7 @@ function PlaylistPickRow({
       }}
     >
       {src ? (
-        <img src={src} alt="" width={20} height={20} style={{ borderRadius: "var(--r-xs)", flex: "none", display: "block" }} />
+        <img src={src} alt="" width={20} height={20} style={{ borderRadius: "var(--r-xs)", flex: "none", display: "block", objectFit: "cover" }} />
       ) : (
         <Icon name="list-music" size={18} color="currentColor" />
       )}

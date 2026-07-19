@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, Tooltip } from "@muza/ui";
+import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, cssZoom } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
 import { fmtTime } from "../lib/format";
 import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
+import { useCoverArt } from "../lib/coverArt";
 import { useDrag, useDropZone } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
+import { trackRowL10n } from "../lib/dsLabels";
 import { CollabDialog } from "../shell/CollabDialog";
+import { ShareVisibilityDialog } from "../shell/ShareVisibilityDialog";
 import { useT } from "../i18n";
 
 /** Страница серверного плейлиста (Stage 2, слайс 4): треки по позициям,
@@ -27,6 +30,7 @@ export function PlaylistView({
   onLike,
   onNotify,
   onVersions,
+  onReplaceVersion,
   onShare,
   onSaveOffline,
   onChanged,
@@ -54,6 +58,10 @@ export function PlaylistView({
   onNotify: (text: string, icon?: string) => void;
   /** Открыть «Версии и источники» трека (Stage 4). */
   onVersions: (t: Track) => void;
+  /** «Заменить версию» (2026-07-18): подменить трек другой загрузкой той же
+   *  песни. reload — чтобы диалог App-уровня перечитал ЭТУ страницу после
+   *  замены (без ремаунта plBump — скролл сохраняется). */
+  onReplaceVersion: (t: Track, reload: () => void) => void;
   /** Шеринг-карточка плейлиста (Stage 7). */
   onShare: (detail: PlaylistDetail) => void;
   /** «Сохранить оффлайн» весь плейлист (Stage 4): пины + фоновая догрузка. */
@@ -82,6 +90,8 @@ export function PlaylistView({
   const [deleteOpen, setDeleteOpen] = useState(false);
   // Stage 7: диалог «Совместный доступ» (код, участники, выход)
   const [collabOpen, setCollabOpen] = useState(false);
+  // 2026-07-17: диалог «Поделиться плейлистом» (лесенка видимости + код PL_…)
+  const [shareVisOpen, setShareVisOpen] = useState(false);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: Track | null }>({
     open: false,
     x: 0,
@@ -132,20 +142,46 @@ export function PlaylistView({
     onChanged();
   };
 
+  /** Подписка viewer-а (2026-07-17): живая «ссылка» в библиотеке.
+   *  Состояние честно перечитывается с сервера (isFollowing в detail). */
+  const toggleFollow = async () => {
+    if (!detail) return;
+    try {
+      if (detail.isFollowing) {
+        await api.unfollowPlaylist(playlistId);
+        onNotify(t("views.search.publicPlaylist.removed"), "list-x");
+      } else {
+        await api.followPlaylist(playlistId);
+        onNotify(t("views.search.publicPlaylist.added"), "list-music");
+      }
+      await load();
+      onChanged();
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+    }
+  };
+
   // T47b: иконка-обложка плейлиста в шапке — валидный icon манифеста @muza/core,
   // иначе прежний фолбэк "list-music". T47c: track-иконка приходит готовой
   // ссылкой iconCoverUrl (сервер разрешил "track:<id>" в cover_url трека).
   // Смену иконки может запускать только владелец живого (не оффлайн-снапшот)
   // плейлиста — как переименование/удаление выше.
   const iconSrc = detail?.iconCoverUrl ?? playlistIconSrc(detail?.icon);
+  // Track-иконка — сырой ytimg-URL: срезаем вшитые поля тем же canvas-кропом,
+  // что у плеера (не-ytimg и локальные иконки проходят насквозь как есть).
+  const cleanIconSrc = useCoverArt(iconSrc ?? null);
   const canChangeIcon = detail !== null && detail.isOwner && !offline;
+  // 2026-07-17: чужой открытый плейлист (role viewer) — read-only: слушать и
+  // лайкать можно, любые правки состава/имени/порядка — нет (сервер их всё
+  // равно отобьёт через own/accessible, но кнопки прячем честно).
+  const readOnly = detail?.role === "viewer";
 
   // ---------- реордер треков перетаскиванием ----------
-  // Доступен всем, у кого есть доступ к плейлисту, — ровно как на сервере: PUT
-  // /me/playlists/:id/tracks идёт через тот же playlistsAccess.accessible(),
-  // что и удаление трека, то есть владелец ИЛИ соавтор. Раз detail пришёл с
-  // /me/playlists/:id — доступ есть. Оффлайн — снапшот, писать некуда.
-  const canReorder = detail !== null && !offline;
+  // Доступен владельцу И соавтору — ровно как на сервере: PUT
+  // /me/playlists/:id/tracks идёт через playlistsAccess.accessible(). Viewer
+  // (2026-07-17) читает detail тем же GET, но в accessible не пролезает —
+  // реордер ему не рисуем. Оффлайн — снапшот, писать некуда.
+  const canReorder = detail !== null && !offline && !readOnly;
   const tracks = detail?.tracks ?? [];
   const { drag, dragSource } = useDrag();
   const rowsRef = useRef(new Map<string, HTMLElement>());
@@ -165,6 +201,10 @@ export function PlaylistView({
   const selfReorder =
     drag !== null && drag.payload.kind === "playlist-track" && drag.payload.fromPlaylistId === playlistId;
   const from = selfReorder ? tracks.findIndex((tr) => tr.id === drag.payload.id) : -1;
+  // Экранные пиксели (rects) → зум-единицы transform'а: при prefs.uiScale ≠
+  // 100% движок умножает transform на zoom, и без деления соседи разъезжались
+  // бы дальше/ближе, чем нужно (тот же класс бага, что попапы, 2026-07-17).
+  const reorderZoom = selfReorder ? cssZoom(rowsRef.current.get(drag.payload.id) ?? null) : 1;
   // Считается ПРЯМО В РЕНДЕРЕ из статичных прямоугольников и живого drag.y:
   // чистая функция, лишнего состояния и лишнего ререндера на кадр не нужно.
   const to =
@@ -226,8 +266,8 @@ export function PlaylistView({
             overflow: "hidden",
           }}
         >
-          {iconSrc ? (
-            <img src={iconSrc} alt="" width={56} height={56} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          {cleanIconSrc ? (
+            <img src={cleanIconSrc} alt="" width={56} height={56} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           ) : (
             <Icon name="list-music" size={26} color="var(--accent-text)" />
           )}
@@ -249,12 +289,19 @@ export function PlaylistView({
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
             {detail
               ? [
+                  // @Адрес (2026-07-17) — первым: им хвастаются
+                  detail.handle ? `@${detail.handle}` : null,
                   t("views.playlist.trackCount", { count: detail.tracks.length }),
                   detail.isOwner
                     ? detail.collaborators.length > 0
                       ? t("views.playlist.sharedCount", { count: detail.collaborators.length + 1 })
                       : null
-                    : t("views.playlist.sharedFrom", { owner: detail.ownerUsername }),
+                    : readOnly
+                      ? t("views.playlist.publicFrom", { owner: detail.ownerUsername })
+                      : t("views.playlist.sharedFrom", { owner: detail.ownerUsername }),
+                  detail.followersCount > 0
+                    ? t("views.playlist.followerCount", { count: detail.followersCount })
+                    : null,
                   offline ? t("views.playlist.offlineCopy") : t("views.playlist.syncing"),
                 ]
                   .filter(Boolean)
@@ -262,19 +309,39 @@ export function PlaylistView({
               : t("views.playlist.loadingLabel")}
           </div>
         </div>
-        <Tooltip label={t("views.playlist.collabAccess")}>
+        {/* 2026-07-17: viewer подписывается/отписывается прямо из шапки. */}
+        {detail && readOnly && !offline ? (
+          <Button
+            variant="secondary"
+            icon={detail.isFollowing ? "check" : "plus"}
+            onClick={() => void toggleFollow()}
+          >
+            {detail.isFollowing ? t("views.playlist.followRemove") : t("views.playlist.followAdd")}
+          </Button>
+        ) : null}
+        {/* Без внешнего <Tooltip>: IconButton сам тултипит свой label — обёртка
+            давала ДВЕ одинаковые подсказки на кнопке (косяк волны 0.1.4).
+            Совместный доступ — не для viewer-а (2026-07-17): он не участник. */}
+        {!readOnly ? (
           <IconButton icon="users" size="sm" label={t("views.playlist.collabAccess")} onClick={() => setCollabOpen(true)} />
-        </Tooltip>
-        <Tooltip label={t("views.playlist.share")}>
+        ) : null}
+        {/* 2026-07-17: лесенка видимости — только владелец живого плейлиста */}
+        {detail?.isOwner && !offline ? (
           <IconButton
-            icon="share-2"
+            icon="globe"
             size="sm"
-            label={t("views.playlist.share")}
-            onClick={() => {
-              if (detail) onShare(detail);
-            }}
+            label={t("views.playlist.publicAccess")}
+            onClick={() => setShareVisOpen(true)}
           />
-        </Tooltip>
+        ) : null}
+        <IconButton
+          icon="share-2"
+          size="sm"
+          label={t("views.playlist.share")}
+          onClick={() => {
+            if (detail) onShare(detail);
+          }}
+        />
         <IconButton
           icon="download"
           size="sm"
@@ -336,7 +403,7 @@ export function PlaylistView({
             .join(" · ");
           // локальный трек: Alt+drag тащит сам файл с устройства, каталожный — экспорт из кэша
           const localOnly = tr.localHash !== null && tr.sources.every((s) => s === "local");
-          const shift = reorderShift(rectsRef.current, from, to, i);
+          const shift = reorderShift(rectsRef.current, from, to, i) / reorderZoom;
           const dragged = i === from;
           const rowDrag = dragSource({
             id: tr.id,
@@ -398,6 +465,7 @@ export function PlaylistView({
               }}
             >
               <TrackRow
+                {...trackRowL10n(t)}
                 index={i + 1}
                 cover={tr.coverUrl}
                 showCover={rowShow?.cover !== false}
@@ -422,7 +490,8 @@ export function PlaylistView({
                   setMenu({
                     open: true,
                     x: Math.min(e.clientX, window.innerWidth - 250),
-                    y: Math.min(e.clientY, window.innerHeight - 160),
+                    // 200: меню подросло на «Заменить версию» (2026-07-18)
+                    y: Math.min(e.clientY, window.innerHeight - 200),
                     track: tr,
                   });
                 }}
@@ -464,15 +533,41 @@ export function PlaylistView({
                 },
               ] as const)
             : []),
-          "-",
-          {
-            icon: "list-x",
-            label: t("views.playlist.removeFromPlaylist"),
-            onClick: () => {
-              if (menu.track) void removeTrack(menu.track.id);
-            },
-          },
+          // 2026-07-17: viewer состав не правит — «Убрать из плейлиста» и
+          // «Заменить версию» не его
+          ...(readOnly
+            ? []
+            : ([
+                "-",
+                {
+                  icon: "refresh-cw",
+                  label: t("menu.catalog.replaceVersion"),
+                  onClick: () => {
+                    if (menu.track) onReplaceVersion(menu.track, () => void load());
+                  },
+                },
+                {
+                  icon: "list-x",
+                  label: t("views.playlist.removeFromPlaylist"),
+                  onClick: () => {
+                    if (menu.track) void removeTrack(menu.track.id);
+                  },
+                },
+              ] as const)),
         ]}
+      />
+
+      <ShareVisibilityDialog
+        api={api}
+        open={shareVisOpen}
+        playlistId={playlistId}
+        detail={detail}
+        onClose={() => setShareVisOpen(false)}
+        onNotify={onNotify}
+        onChanged={() => {
+          void load();
+          onChanged();
+        }}
       />
 
       <CollabDialog
