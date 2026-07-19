@@ -19,6 +19,7 @@ import { Button, IconButton, Slider } from "@muza/ui";
 import type { MuzaApi, Wrapped } from "@muza/api-client";
 import { hourLabel } from "../lib/hourLabel";
 import { wrappedSeason } from "../lib/wrappedSeason";
+import { useCoverArt } from "../lib/coverArt";
 import type { ShareData } from "../lib/shareCard";
 import { WrappedAmbient } from "../player/wrappedAmbient";
 import { useT, type Lang } from "../i18n";
@@ -40,6 +41,17 @@ export interface WrappedOverlayAmbient {
   /** Позиция слайдера 0–100 (prefs.wrappedAmbientVol). */
   volume: number;
   onVolumeChange: (v: number) => void;
+}
+
+/** Обложка с вырезанными вшитыми полями источника — тот же canvas-кроп, что у
+ *  плеера (lib/coverArt, кэш общий на сессию). Recap отдаёт СЫРЫЕ coverUrl,
+ *  мимо чищеного track.cover плеера, поэтому без кропа постер топ-трека и
+ *  мини-обложки чарта снова показывали серые/чёрные рамки (жалоба 2026-07-16).
+ *  Пока кроп не готов, рисуется исходник — данные приходят раньше, чем юзер
+ *  долистывает до обложек, так что подмена глазу не видна. */
+function CleanCover({ src, className }: { src: string; className?: string }) {
+  const clean = useCoverArt(src);
+  return clean ? <img className={className} src={clean} alt="" draggable={false} /> : null;
 }
 
 /** Плавный count-up числа при появлении слайда. */
@@ -379,7 +391,7 @@ export function WrappedOverlay({
             <span className="wrapped__frame-back" />
             <div className="wrapped__frame">
               {frameCover ? (
-                <img src={frameCover} alt="" draggable={false} />
+                <CleanCover src={frameCover} />
               ) : (
                 <span className="wrapped__cover-fallback">M</span>
               )}
@@ -413,7 +425,7 @@ export function WrappedOverlay({
                 Не чинить разметку по CDP-скринам — сверяться PrintWindow. */}
             <div className="wrapped__vinyl-disc">
               <span className="wrapped__vinyl-spin">
-                {heroCover ? <img className="wrapped__vinyl-art" src={heroCover} alt="" draggable={false} /> : null}
+                {heroCover ? <CleanCover className="wrapped__vinyl-art" src={heroCover} /> : null}
               </span>
               <span className="wrapped__vinyl-shade" />
               <span className="wrapped__vinyl-center" />
@@ -430,7 +442,7 @@ export function WrappedOverlay({
             <span className="wrapped__poster-rank" aria-hidden="true">01</span>
             <div className="wrapped__poster-cover">
               {topTrack.track.coverUrl ? (
-                <img src={topTrack.track.coverUrl} alt="" draggable={false} />
+                <CleanCover src={topTrack.track.coverUrl} />
               ) : <span className="wrapped__cover-fallback">M</span>}
             </div>
           </div>
@@ -446,7 +458,7 @@ export function WrappedOverlay({
                 {recap.topTracks.slice(1).map((entry, index) => (
                   <li key={entry.track.id}>
                     <span className="wrapped__chart-rank">{rank(index + 1)}</span>
-                    {entry.track.coverUrl ? <img src={entry.track.coverUrl} alt="" draggable={false} /> : null}
+                    {entry.track.coverUrl ? <CleanCover src={entry.track.coverUrl} /> : null}
                     <span className="wrapped__chart-title">
                       <strong>{entry.track.title}</strong>
                       <small>{entry.track.artist}</small>
@@ -561,12 +573,10 @@ export function WrappedOverlay({
           <div className="wrapped__final-art wrapped__art" aria-hidden="true">
             <div className="wrapped__final-yearbg">{recap.year}</div>
             {covers.map((track, index) => (
-              <img
+              <CleanCover
                 key={track.id}
                 className={`wrapped__final-cover wrapped__final-cover--${index + 1}`}
                 src={track.coverUrl!}
-                alt=""
-                draggable={false}
               />
             ))}
             <span className="wrapped__seal">MUZA</span>
@@ -598,11 +608,13 @@ export function WrappedOverlay({
       }}
     >
       <div className="wrapped__backdrop" aria-hidden="true">
+        {/* Сценография тоже через CleanCover: блюр размывает, но серые рамки
+            источника «грязнили» края кадра тёмными полосами */}
         {scene.prev ? (
-          <img key={`prev-${scene.prev}`} className="wrapped__scenery is-past" src={scene.prev} alt="" draggable={false} />
+          <CleanCover key={`prev-${scene.prev}`} className="wrapped__scenery is-past" src={scene.prev} />
         ) : null}
         {scene.cur ? (
-          <img key={scene.cur} className="wrapped__scenery" src={scene.cur} alt="" draggable={false} />
+          <CleanCover key={scene.cur} className="wrapped__scenery" src={scene.cur} />
         ) : null}
         <span className="wrapped__scrim" />
         <span className="wrapped__glow wrapped__glow--a" />
