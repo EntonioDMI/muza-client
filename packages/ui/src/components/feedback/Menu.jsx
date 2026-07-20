@@ -17,6 +17,10 @@ function prefersReducedMotion() {
 /** Context / dropdown menu — frosted panel anchored at a point.
  *  Keyboard: focus jumps into the menu on open (and back on close),
  *  Arrows/Home/End walk items, Enter activates, Escape closes.
+ *  Пункт: { icon?, label, onClick?, danger?, disabled?, hint? }; "-" —
+ *  разделитель; { header } — заголовок секции («Выбрано: 3»). disabled-пункт
+ *  выпадает из клавиатурного обхода (селектор :not([disabled]) в moveFocus —
+ *  иначе стрелки застревают на нём). hint — тихая правая подпись.
  *  Закрытие — delayed-unmount (см. Dialog.jsx): узел остаётся в DOM на время
  *  exit-анимации (muzaMenuOut), снимается по onAnimationEnd с
  *  таймаут-фолбэком; reduced-motion и повторное открытие во время закрытия
@@ -94,7 +98,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement;
-    const first = panelRef.current?.querySelector('[role="menuitem"]');
+    const first = panelRef.current?.querySelector('[role="menuitem"]:not([disabled])');
     if (first) first.focus();
     return () => {
       const el = restoreRef.current;
@@ -103,7 +107,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   }, [open]);
 
   const moveFocus = (delta, edge) => {
-    const nodes = [...(panelRef.current?.querySelectorAll('[role="menuitem"]') ?? [])];
+    const nodes = [...(panelRef.current?.querySelectorAll('[role="menuitem"]:not([disabled])') ?? [])];
     if (nodes.length === 0) return;
     if (edge === "first") { nodes[0].focus(); return; }
     if (edge === "last") { nodes[nodes.length - 1].focus(); return; }
@@ -156,13 +160,30 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
         {items.map((it, i) =>
           it === "-" ? (
             <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--surface-3)", margin: "var(--sp-1) var(--sp-2)" }}></div>
+          ) : it.header !== undefined ? (
+            <div
+              key={i}
+              role="presentation"
+              style={{
+                padding: "var(--sp-2) var(--sp-3) var(--sp-1)",
+                fontSize: "var(--fs-caption)",
+                fontWeight: "var(--fw-semibold)",
+                color: "var(--text-3)",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                userSelect: "none",
+              }}
+            >
+              {it.header}
+            </div>
           ) : (
             <button
               key={i}
               type="button"
               role="menuitem"
+              disabled={it.disabled || undefined}
               onClick={() => { if (it.onClick) it.onClick(); if (onClose) onClose(); }}
-              onMouseEnter={() => setHoverIdx(i)}
+              onMouseEnter={() => { if (!it.disabled) setHoverIdx(i); }}
               onMouseLeave={() => setHoverIdx(null)}
               onFocus={() => setHoverIdx(i)}
               onBlur={() => setHoverIdx(null)}
@@ -174,18 +195,21 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
                 padding: "0 var(--sp-3)",
                 border: "none",
                 borderRadius: "var(--r-xs)",
-                background: hoverIdx === i ? "var(--surface-3)" : "transparent",
-                color: it.danger ? "var(--danger)" : hoverIdx === i ? "var(--text-1)" : "var(--text-2)",
+                background: hoverIdx === i && !it.disabled ? "var(--surface-3)" : "transparent",
+                color: it.disabled ? "var(--text-3)" : it.danger ? "var(--danger)" : hoverIdx === i ? "var(--text-1)" : "var(--text-2)",
                 fontFamily: "var(--font-ui)",
                 fontSize: "var(--fs-body)",
                 fontWeight: "var(--fw-medium)",
-                cursor: "pointer",
+                cursor: it.disabled ? "default" : "pointer",
                 textAlign: "left",
                 transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
               }}
             >
               {it.icon ? <Icon name={it.icon} size={18} /> : null}
               {it.label}
+              {it.hint !== undefined ? (
+                <span style={{ marginLeft: "auto", paddingLeft: "var(--sp-3)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{it.hint}</span>
+              ) : null}
             </button>
           )
         )}

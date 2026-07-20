@@ -32,6 +32,7 @@ export function TrackRow({
   playing = false,
   liked = false,
   explicit = false,
+  selected = false,
   onPlay,
   onRowDoubleClick,
   onLike,
@@ -63,6 +64,7 @@ export function TrackRow({
             }
           : undefined
       }
+      aria-selected={selected || undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -70,7 +72,9 @@ export function TrackRow({
         height: "var(--h-trackrow, 60px)",
         padding: "0 var(--sp-4)",
         borderRadius: "var(--r-sm)",
-        background: active ? "var(--surface-3)" : lit ? "var(--surface-2)" : "transparent",
+        // выделение сильнее «играет сейчас»: иначе выделенный играющий трек
+        // визуально выпадает из выделения (мультивыбор, 2026-07-20)
+        background: selected ? "var(--surface-4)" : active ? "var(--surface-3)" : lit ? "var(--surface-2)" : "transparent",
         transition: "background var(--dur-fast) var(--ease-out)",
       }}
     >

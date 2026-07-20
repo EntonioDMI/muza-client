@@ -88,6 +88,7 @@ export function PlayerBar({
   onSleep,
   jamActive,
   onJam,
+  onTrackMenu,
   onCoverDragOut,
   buttons,
   pluginButtons = [],
@@ -129,6 +130,8 @@ export function PlayerBar({
   /** Jam (Stage 7): активная сессия подсвечивает кнопку. */
   jamActive: boolean;
   onJam: () => void;
+  /** ПКМ по обложке/названию (2026-07-20): меню текущего трека. */
+  onTrackMenu?: (e: React.MouseEvent) => void;
   /** Drag-out: подготовить файл трека для нативного драга (null = не вышло,
    *  тост уже показан снаружи). undefined — жест недоступен (браузер/аноним). */
   onCoverDragOut?: () => Promise<string | null>;
@@ -208,7 +211,7 @@ export function PlayerBar({
           </div>
         </div>
       ) : (
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }} onContextMenu={onTrackMenu}>
         <Tooltip label={onCoverDragOut ? t("player.listeningModeTooltipDrag") : t("player.listeningModeTooltip")}>
           {/* настоящая кнопка: клавиатура открывает режим прослушивания;
               с зажатой ЛКМ обложка утаскивается файлом (drag-out) */}
@@ -364,7 +367,12 @@ export function PlayerBar({
               );
             case "queue":
               return (
-                <IconButton key={key} icon="list-music" size="sm" active={queueOn} label={t("player.queue")} onClick={onQueue} />
+                // span-обёртка: маркер для QueuePanel (клик по переключателю не
+                // «закрыть по клику вне» — иначе toggle схлопнулся бы в мигание)
+                // и для возврата фокуса из closeQueue без привязки к aria-label
+                <span key={key} data-queue-toggle style={{ display: "contents" }}>
+                  <IconButton icon="list-music" size="sm" active={queueOn} label={t("player.queue")} onClick={onQueue} />
+                </span>
               );
             case "volume":
               // клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость

@@ -34,6 +34,9 @@ export interface TrackRowProps {
   versionsLabel?: string;
   /** This row is the current track (accent title). */
   active?: boolean;
+  /** Строка в множественном выделении (--surface-4). Сильнее active по фону:
+   *  выделенный играющий трек не должен выпадать из выделения. */
+  selected?: boolean;
   /** Playback running (equalizer glyph instead of index). */
   playing?: boolean;
   liked?: boolean;

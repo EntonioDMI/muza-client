@@ -12,6 +12,9 @@ export interface TileProps {
   width?: number | string;
   /** Currently playing — keeps the play pill visible. */
   playing?: boolean;
+  /** Плитка в множественном выделении: --surface-4 + галочка в ЛЕВОМ верхнем
+   *  углу обложки (правый низ занят play-пилюлей). */
+  selected?: boolean;
   /** Play-pill click. */
   onPlay?: () => void;
   /** Whole-tile click (open page). */

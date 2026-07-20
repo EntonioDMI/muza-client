@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
 import { Cover } from "./Cover.jsx";
 
@@ -9,7 +10,7 @@ import { Cover } from "./Cover.jsx";
  *  width: дефолт — var(--w-tile, 176px), а не число: приложение крутит размер
  *  плиток одной переменной (настройка «Размер плитки», зона 4 спеки 19.07);
  *  явный width ("auto" в сетках) по-прежнему сильнее. */
-export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", playing = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
+export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", playing = false, selected = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
   const lit = hover || focused;
@@ -40,18 +41,39 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
         }
       }}
       onClick={onClick}
+      aria-selected={selected || undefined}
       style={{
         width,
         flex: "none",
         padding: "var(--pad-tile)",
         borderRadius: "var(--r-md)",
-        background: lit ? "var(--surface-3)" : "var(--surface-2)",
+        background: selected ? "var(--surface-4)" : lit ? "var(--surface-3)" : "var(--surface-2)",
         cursor: "pointer",
         transition: "background var(--dur-base) var(--ease-out)",
       }}
     >
       <div style={{ position: "relative", marginBottom: "var(--sp-3)" }}>
         <Cover src={cover} />
+        {/* галочка выделения — ЛЕВЫЙ верх: правый низ занят play-пилюлей */}
+        {selected ? (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: 8,
+              top: 8,
+              width: 24,
+              height: 24,
+              borderRadius: "var(--r-pill)",
+              background: "var(--accent)",
+              display: "grid",
+              placeItems: "center",
+              color: "var(--text-1)",
+            }}
+          >
+            <Icon name="check" size={16} color="currentColor" />
+          </div>
+        ) : null}
         <div
           style={{
             position: "absolute",

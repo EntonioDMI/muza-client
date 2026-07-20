@@ -6,8 +6,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Cover, Icon, IconButton } from "@muza/ui";
-import type { PlayerTrack } from "../player/types";
+import { toCatalog, type PlayerTrack } from "../player/types";
 import { fmtTime } from "../lib/format";
+import { useContextMenu } from "./ContextMenu";
+import { SelectionBar } from "./SelectionBar";
+import { useMultiSelect } from "../lib/useMultiSelect";
 import { useT } from "../i18n";
 
 function QueueRow({
@@ -19,6 +22,9 @@ function QueueRow({
   onRemove,
   onMoveUp,
   onMoveDown,
+  onMenu,
+  selected = false,
+  onClickCapture,
 }: {
   track: PlayerTrack;
   position: number;
@@ -28,6 +34,12 @@ function QueueRow({
   onRemove?: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  /** ПКМ по строке (2026-07-20) — контекстное меню очереди. */
+  onMenu?: (e: React.MouseEvent) => void;
+  /** Строка в множественном выделении (2026-07-20). */
+  selected?: boolean;
+  /** Capture-перехват клика для выделения (Ctrl/Shift/режим). */
+  onClickCapture?: (e: React.MouseEvent) => void;
 }) {
   const { t } = useT();
   const [hover, setHover] = useState(false);
@@ -42,13 +54,17 @@ function QueueRow({
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocused(false);
       }}
+      onContextMenu={onMenu}
+      onClickCapture={onClickCapture}
+      aria-selected={selected || undefined}
       style={{
         display: "flex",
         alignItems: "center",
         gap: "var(--sp-2)",
         padding: "var(--sp-2)",
         borderRadius: "var(--r-sm)",
-        background: current ? "var(--surface-3)" : hover ? "var(--surface-2)" : "transparent",
+        // выделение сильнее «текущего» — как в TrackRow ДС
+        background: selected ? "var(--surface-4)" : current ? "var(--surface-3)" : hover ? "var(--surface-2)" : "transparent",
         transition: "background var(--dur-fast) var(--ease-out)",
       }}
       data-queue-current={current || undefined}
@@ -139,6 +155,8 @@ export function QueuePanel({
   onMove,
   onClearUpNext,
   onSaveAsPlaylist,
+  onRowMenu,
+  onRemoveMany,
 }: {
   open: boolean;
   tracks: PlayerTrack[];
@@ -153,11 +171,60 @@ export function QueuePanel({
   onMove: (id: string, dir: 1 | -1) => void;
   onClearUpNext: () => void;
   onSaveAsPlaylist: () => void;
+  /** ПКМ по строке (2026-07-20); index — АБСОЛЮТНЫЙ в tracks, не в секции. */
+  onRowMenu?: (track: PlayerTrack, index: number, e: React.MouseEvent) => void;
+  /** Убрать пачку выделенных (2026-07-20): один суммарный тост, не N undo. */
+  onRemoveMany?: (ids: string[]) => void;
 }) {
   const { t } = useT();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  // ── множественное выделение (2026-07-20) ──
+  // ⚠️ ключ выделения — id трека; повторный трек в очереди (редкость) выделится
+  // обеими строками — осознанный компромисс против позиционных ключей.
+  // Диапазоны Shift — по ПЛОСКОМУ tracks, секции История/Сейчас/Далее не рвут их.
+  const multi = useMultiSelect(tracks.map((tr) => tr.id));
+  const { openMenu, menuCtxRef } = useContextMenu();
+  const selectedCatalog = () =>
+    tracks.filter((tr) => multi.has(tr.id)).flatMap((tr) => {
+      const ct = toCatalog(tr);
+      return ct ? [ct] : [];
+    });
+  // закрылась панель — выделение не должно пережить её (открыл заново — чисто)
+  useEffect(() => {
+    if (!open) multi.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const rowSelection = (tr: PlayerTrack) => ({
+    selected: multi.has(tr.id),
+    onClickCapture: (e: React.MouseEvent) => {
+      if (multi.onItemClick(tr.id, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+  });
+
+  /** ПКМ: по выделенному — меню выделения, по невыделенному — сброс + меню строки. */
+  const rowMenu = (tr: PlayerTrack, index: number) => (e: React.MouseEvent) => {
+    if (multi.count > 0 && multi.has(tr.id)) {
+      openMenu(e, {
+        kind: "selection",
+        tracks: selectedCatalog(),
+        place: "queue",
+        ctl: {
+          remove: onRemoveMany ? { scope: "queue", run: () => onRemoveMany(multi.ids) } : undefined,
+          clear: multi.clear,
+        },
+      });
+      return;
+    }
+    if (multi.count > 0) multi.clear();
+    onRowMenu?.(tr, index, e);
+  };
 
   // ⚠️ НЕ scrollIntoView и НЕ focus() без preventScroll: оба прокручивают ВСЕХ
   // скроллируемых предков, а не только этот список. Корень приложения —
@@ -183,6 +250,27 @@ export function QueuePanel({
     scrollToCurrent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Закрытие по клику на пустое место (2026-07-20). Полноэкранный backdrop НЕ
+  // годится: плеер-бар на zIndex 40 — НИЖЕ панели (50), слой съел бы клики по
+  // всему бару. Вместо него точечный слушатель с тремя исключениями: свои
+  // клики; кнопка-переключатель (иначе toggle схлопывался бы в «закрыл здесь —
+  // открыл кликом» мигание); меню, открытое ИЗ очереди (клик по его ПУНКТУ не
+  // должен ронять панель — а клик по его фону закрывает и меню, и очередь
+  // одним движением, это сознательно).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target) return;
+      if (panelRef.current?.contains(target)) return;
+      if (target.closest("[data-queue-toggle]")) return;
+      if (target.closest('[role="menu"]')) return;
+      onClose();
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [open, onClose]);
 
   if (!open) return null; // unmount: закрытая панель не ловит Tab
 
@@ -278,6 +366,8 @@ export function QueuePanel({
                       playing={false}
                       onPlay={() => onPlayTrack(t.id)}
                       onRemove={() => onRemove(t.id)}
+                      onMenu={rowMenu(t, i)}
+                      {...rowSelection(t)}
                     />
                   ))
                 : null}
@@ -294,6 +384,8 @@ export function QueuePanel({
                 playing={playing}
                 onPlay={() => onPlayTrack(current.id)}
                 onRemove={() => onRemove(current.id)}
+                onMenu={rowMenu(current, currentIndex)}
+                {...rowSelection(current)}
               />
             </>
           ) : null}
@@ -324,6 +416,8 @@ export function QueuePanel({
                   onRemove={() => onRemove(t.id)}
                   onMoveUp={i > 0 ? () => onMove(t.id, -1) : undefined}
                   onMoveDown={i < upNext.length - 1 ? () => onMove(t.id, 1) : undefined}
+                  onMenu={rowMenu(t, currentIndex + 1 + i)}
+                  {...rowSelection(t)}
                 />
               ))}
             </>
@@ -334,6 +428,38 @@ export function QueuePanel({
           )}
         </div>
       )}
+
+      {/* Панель массовых действий выделения: без playNext/queue — они
+          добавляли бы КОПИИ уже стоящих в очереди треков */}
+      {multi.count > 0 ? (
+        <SelectionBar
+          label={t("menu.selection.count", { count: multi.count })}
+          clearLabel={t("menu.selection.clear")}
+          onClear={multi.clear}
+          actions={[
+            {
+              icon: "plus",
+              label: t("menu.addToPlaylist"),
+              onClick: () => menuCtxRef.current.addManyToPlaylist(selectedCatalog()),
+            },
+            {
+              icon: "heart",
+              label: t("menu.catalog.like"),
+              onClick: () => menuCtxRef.current.likeMany(selectedCatalog().map((x) => x.id)),
+            },
+            ...(onRemoveMany
+              ? [
+                  {
+                    icon: "list-x",
+                    label: t("menu.queue.remove"),
+                    danger: true,
+                    onClick: () => onRemoveMany(multi.ids),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      ) : null}
     </div>
   );
 }
