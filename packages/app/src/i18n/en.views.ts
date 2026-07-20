@@ -69,6 +69,11 @@ export const viewsEn = {
     // Публичные плейлисты (2026-07-17): код PL_… и выдача
     publicPlaylist: {
       kind: "Playlist",
+      // Плейлисты SoundCloud в выдаче (2026-07-20)
+      kindSc: "SoundCloud playlist",
+      likeCount: "{count} likes",
+      showAll: "View all {count} tracks",
+      listen: "Listen",
       by: "by {owner}",
       trackCount: "{count} tracks",
       followerCount: "{count} listeners",
@@ -122,7 +127,26 @@ export const viewsEn = {
     playlistsEmpty:
       'No playlists yet. Create your first one with the "+" button in the sidebar, import from Spotify/YouTube/Apple Music, or add tracks by link.',
     removeFromMuza: "Remove from Muza (file stays)",
+    // массовое удаление плиток (мультивыбор, 2026-07-20)
+    bulkDeleteTitle: "Remove selected playlists?",
+    bulkDeleteHint: "Your own playlists will be deleted for good. This cannot be undone.",
+    bulkDeleteConfirm: "Remove ({count})",
+    bulkDeleted: "Playlists removed: {count}",
+    bulkDeleteFailed: "Some could not be removed — the list has been refreshed",
     removedFromLocal: "Removed from local files",
+  },
+
+  // Read-only страница плейлиста SoundCloud (2026-07-20)
+  scPlaylist: {
+    kind: "SoundCloud playlist",
+    loadFailed: "Could not open the SoundCloud playlist",
+    saveCopy: "Save to my library",
+    saving: "Saving…",
+    savedCopy: 'Saved to your library: "{name}"',
+    saveFailed: "Could not save the playlist",
+    playableCount: "{count} tracks playable",
+    // жалоба владельца 20.07: расхождение счётчиков надо объяснять словами
+    drmNotice: "Some songs are protected by SoundCloud and aren't shown — the list has only the ones you can play.",
   },
 
   playlist: {

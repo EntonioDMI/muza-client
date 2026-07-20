@@ -59,6 +59,11 @@ export const viewsRu: typeof viewsEn = {
     // Публичные плейлисты (2026-07-17): код PL_… и выдача
     publicPlaylist: {
       kind: "Плейлист",
+      // Плейлисты SoundCloud в выдаче (2026-07-20)
+      kindSc: "Плейлист SoundCloud",
+      likeCount: "{count} лайков",
+      showAll: "Показать все {count} тр.",
+      listen: "Слушать",
       by: "от {owner}",
       trackCount: "{count} тр.",
       followerCount: "{count} слуш.",
@@ -111,6 +116,25 @@ export const viewsRu: typeof viewsEn = {
     playlistsEmpty: "Плейлистов пока нет. Создай первый кнопкой «+» в сайдбаре, импортируй из Spotify/YouTube/Apple Music или добавь треки по ссылке.",
     removeFromMuza: "Убрать из Muza (файл останется)",
     removedFromLocal: "Убрано из локальных",
+    // массовое удаление плиток (мультивыбор, 2026-07-20)
+    bulkDeleteTitle: "Убрать выбранные плейлисты?",
+    bulkDeleteHint: "Свои плейлисты удалятся насовсем. Вернуть их будет нельзя.",
+    bulkDeleteConfirm: "Убрать ({count})",
+    bulkDeleted: "Убрано плейлистов: {count}",
+    bulkDeleteFailed: "Убрать удалось не всё — список обновлён",
+  },
+
+  // Read-only страница плейлиста SoundCloud (2026-07-20)
+  scPlaylist: {
+    kind: "Плейлист SoundCloud",
+    loadFailed: "Не удалось открыть плейлист SoundCloud",
+    saveCopy: "Сохранить к себе",
+    saving: "Сохраняем…",
+    savedCopy: "Сохранено к себе: «{name}»",
+    saveFailed: "Не удалось сохранить плейлист",
+    playableCount: "{count} тр. можно слушать",
+    // жалоба владельца 20.07: расхождение счётчиков надо объяснять словами
+    drmNotice: "Часть песен защищена SoundCloud и не показывается — в списке только те, что можно слушать.",
   },
 
   playlist: {

@@ -110,7 +110,7 @@ export const en = {
         rowTitle: "Sessions and devices",
         rowHint: "A list of devices signed into your account. You can sign out any device you don't recognize.",
         title: "Sessions and devices",
-        hint: "Each row is a device signed into your account. The date is its last activity. Don't recognize a device — sign it out and change your password.",
+        hint: "Each row is a device signed into your account. The date is when it signed in. Don't recognize a device — sign it out and change your password.",
         loadFailed: "Couldn't load the session list.",
         currentSuffix: "current",
         thisDevice: "this device",
@@ -811,6 +811,19 @@ export const en = {
         errors: { installFailed: "Couldn't install the update" },
       },
       miniPlayer: { title: "Mini player", hint: "A small window on top of the others: cover, playback buttons and like. Drag it by the background." },
+      stage0: {
+        rowTitle: "Track loading diagnostics",
+        rowHint: "Shows how tracks are being opened, with a log of recent hiccups.",
+        statusOk: "all good",
+        statusPaused: "slower than usual",
+        title: "Track loading diagnostics",
+        ok: "The fast path is working",
+        okHint: "Tracks open directly, no delays in sight.",
+        paused: "Fast path paused until {until}",
+        pausedHint: "A few failures in a row — tracks temporarily open the backup way, which is slower. The pause lifts by itself.",
+        refresh: "Refresh",
+        empty: "No hiccups — the log is empty.",
+      },
       aboutGroup: "About",
       version: { title: "Version", hint: "Muza · development build" },
       licenses: {
@@ -900,6 +913,8 @@ export const en = {
     },
     addToPlaylistDialog: {
       titleWithTrack: "\"{title}\" — add to playlist",
+      // мультивыбор (2026-07-20): в плейлист уезжает пачка
+      titleWithCount: "Add to playlist: {count} tracks",
       empty: "No playlists yet — create the first one with the \"+\" button in the sidebar.",
     },
     hotkeysDialog: {
@@ -921,7 +936,12 @@ export const en = {
   menu: {
     addToPlaylist: "Add to playlist",
     catalog: {
+      // ПКМ везде (2026-07-20): очередь-действия первыми — самые частые
+      playNext: "Play next",
+      queue: "Add to queue",
       radio: "Radio from this track",
+      like: "Add to Favorites",
+      unlike: "Remove from Favorites",
       addToJam: "Add to Jam",
       share: "Share",
       versions: "Sources",
@@ -932,11 +952,42 @@ export const en = {
     },
     playlist: {
       open: "Open",
+      play: "Play",
+      playNext: "Play next",
+      queue: "Add to queue",
       rename: "Rename",
       changeIcon: "Change icon",
       delete: "Delete playlist",
       // Публичные плейлисты (2026-07-17): подписка follower-а
       unfollow: "Remove from library",
+    },
+    // Трек внутри плейлиста: перестановка без перетаскивания (2026-07-20)
+    playlistTrack: {
+      toStart: "To top of playlist",
+      toEnd: "To bottom of playlist",
+    },
+    // ПКМ по строке очереди (2026-07-20)
+    queue: {
+      play: "Play",
+      playNext: "Play next",
+      remove: "Remove from queue",
+      clearAfter: "Clear everything after this",
+    },
+    // ПКМ по пустому месту медиатеки (2026-07-20)
+    library: {
+      createPlaylist: "Create playlist",
+      addLink: "Add track by link",
+      importPlaylist: "Import playlist",
+      joinCode: "Enter a code",
+      showInFolder: "Show in folder",
+    },
+    // Множественное выделение (2026-07-20)
+    selection: {
+      count: "Selected: {count}",
+      enter: "Select tracks",
+      enterPlaylists: "Select playlists",
+      all: "Select all",
+      clear: "Clear selection",
     },
   },
 
@@ -964,6 +1015,13 @@ export const en = {
     },
     queue: {
       added: "To queue: {title}",
+      // «Играть следующим» из контекстного меню (2026-07-20)
+      playNext: "Playing next: {title}",
+      playlistNext: "Playlist will play next",
+      playlistAdded: "Playlist added to the queue",
+      selectionNext: "Playing next: {count} tracks",
+      selectionAdded: "To queue: {count} tracks",
+      removedMany: "Removed from queue: {count} tracks",
       trackRemoved: "\"{title}\" removed from the queue",
       nothingToSave: "No catalog tracks in the queue — nothing to save",
       savedAsPlaylist: "Saved: \"{name}\" · {count} tr.",
@@ -983,6 +1041,8 @@ export const en = {
     },
     favorites: {
       added: "Added to Favorites",
+      likedMany: "Added to Favorites: {count} tracks",
+      already: "This track is already in Favorites",
       removed: "Removed from Favorites",
       syncFailed: "Couldn't sync the like",
       versionReplaced: "Version replaced in Favorites",
@@ -998,6 +1058,7 @@ export const en = {
       iconChanged: "Icon changed",
       iconChangeFailed: "Couldn't change the icon",
       addedTrack: "Added to \"{name}\"",
+      addedTracks: "Added to \"{name}\": {count} tracks",
       addFailed: "Couldn't add",
       joined: "You're in the playlist \"{name}\" (from {owner})",
       versionReplaced: "Version replaced",
