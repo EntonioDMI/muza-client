@@ -14,10 +14,11 @@
  *  ⚠️ Направление «файл всегда истина» — ловушка (наступили 2026-07-16):
  *  запись файла асинхронна, перезагрузка страницы может её потерять, и файл
  *  оказывается СТАРЕЕ LevelDB; слепое восстановление из него подсовывает
- *  api-client уже ротированный токен → сервер видит «кражу». Поэтому у
- *  каждой копии есть номер версии: файл хранит {seq, value}, localStorage —
- *  парный ключ muza.mirror.seq:<key> (он живёт и умирает ВМЕСТЕ с основным
- *  ключом в одном LevelDB — после kill оба отстают согласованно). На старте
+ *  api-client протухшую копию сессии. Поэтому у каждой копии есть номер
+ *  версии: файл хранит {seq, value}, localStorage — парный ключ
+ *  muza.mirror.seq:<key>. Счётчик ПЕРЕЖИВАЕТ removeItem (2026-07-20):
+ *  удаление — тоже версия, на диск едет могильный камень {seq, value:null},
+ *  иначе потерянный state_del воскрешал отозванную сессию. На старте
  *  сравниваем номера и берём новее; проигравшую копию догоняем.
  *
  *  Патчим Storage.prototype, а не оборачиваем вызовы: сессию пишет
@@ -27,22 +28,28 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
 /** Что зеркалим. Ровно то, чья потеря = потеря входа или кастомизации.
+ *  muza.device.v1 — стабильный id установки (сессия = устройство, 2026-07-20):
+ *  его потеря не разлогинит, но задвоит устройство в списке сессий.
  *  Ключи обязаны проходить valid_key() в state_kv.rs ([a-z0-9._-]). */
-export const MIRROR_KEYS = ["muza.session.v1", "muza.prefs.v1"] as const;
+export const MIRROR_KEYS = ["muza.session.v1", "muza.prefs.v1", "muza.device.v1"] as const;
 
 const mirrored = new Set<string>(MIRROR_KEYS);
-/** Парный ключ счётчика в localStorage ("...seq:<key>" валиден для state_kv). */
+/** Парный ключ счётчика в localStorage. Сам он НЕ зеркалится (и не должен:
+ *  двоеточие не пройдёт valid_key state_kv) — живёт только в LevelDB. */
 const seqKey = (key: string) => `muza.mirror.seq:${key}`;
 
 interface Envelope {
   seq: number;
-  value: string;
+  /** null — могильный камень: «в этой версии ключ удалён» (см. removeItem). */
+  value: string | null;
 }
 
 function parseEnvelope(raw: string): Envelope {
   try {
     const p = JSON.parse(raw) as Partial<Envelope>;
-    if (typeof p.seq === "number" && typeof p.value === "string") return { seq: p.seq, value: p.value };
+    if (typeof p.seq === "number" && (typeof p.value === "string" || p.value === null)) {
+      return { seq: p.seq, value: p.value };
+    }
   } catch {
     /* не JSON-конверт */
   }
@@ -65,12 +72,21 @@ export async function initDurableState(): Promise<void> {
       const disk = raw === null ? null : parseEnvelope(raw);
       const mem = window.localStorage.getItem(key);
       const seq = memSeq(key);
-      if (disk !== null && (mem === null || disk.seq > seq)) {
+      // ⚠️ mem === null НЕ значит «локального состояния нет»: живой счётчик
+      // при пустом ключе = «удалено в версии seq» (могильные камни, см.
+      // removeItem) — решают НОМЕРА версий, иначе старый файл воскрешал бы
+      // отозванную сессию. Исключение — девственная память (ни ключа, ни
+      // счётчика): live-значение с диска берём даже при равных номерах
+      // (легаси-файлы без конверта имеют seq 0).
+      const memVirgin = mem === null && seq === 0;
+      if (disk !== null && (disk.seq > seq || (memVirgin && disk.value !== null))) {
         // Файл новее (типичный случай — kill убил хвост LevelDB): догоняем память
-        window.localStorage.setItem(key, disk.value);
+        if (disk.value === null) window.localStorage.removeItem(key);
+        else window.localStorage.setItem(key, disk.value);
         window.localStorage.setItem(seqKey(key), String(disk.seq));
-      } else if (mem !== null && (disk === null || seq >= disk.seq)) {
-        // Память новее (файл-запись потерялась/первый запуск): догоняем файл
+      } else if (mem !== null || seq > 0) {
+        // Память новее (файл-запись потерялась/первый запуск): догоняем файл —
+        // живым значением либо камнем (mem === null при живом счётчике)
         await invoke("state_set", { key, value: JSON.stringify({ seq, value: mem } satisfies Envelope) });
       }
     } catch {
@@ -103,8 +119,17 @@ function patchStorage(): void {
   Storage.prototype.removeItem = function (key: string) {
     del.call(this, key);
     if (this === window.localStorage && mirrored.has(key)) {
-      del.call(this, seqKey(key));
-      void Promise.resolve(invoke("state_del", { key })).catch(() => undefined);
+      // Удаление — тоже ВЕРСИЯ состояния, а не сброс счётчика: раньше seq
+      // умирал вместе с ключом, state_del летел fire-and-forget, и убитый
+      // сразу после выхода процесс оставлял на диске файл со старшим seq —
+      // следующий старт ВОСКРЕШАЛ отозванную сессию. Теперь счётчик живёт,
+      // а на диск уезжает могильный камень {seq, value: null}; потеря этой
+      // записи не страшна — счётчик в LevelDB всё равно старше файла.
+      const seq = memSeq(key) + 1;
+      set.call(this, seqKey(key), String(seq));
+      void Promise.resolve(
+        invoke("state_set", { key, value: JSON.stringify({ seq, value: null } satisfies Envelope) }),
+      ).catch(() => undefined);
     }
   };
 }

@@ -22,6 +22,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // Отзыв входа на ходу (2026-07-20): restoreSession больше не ходит в
+    // сеть, поэтому просроченный вход вскрывается первым же 401 — без этого
+    // сигнала страница осталась бы «залогиненной» с падающими запросами.
+    getApi().onSessionRevoked(() => setSession(null));
     getApi()
       .restoreSession()
       .then((s) => setSession(s && !s.user.anonymous ? s : null))
