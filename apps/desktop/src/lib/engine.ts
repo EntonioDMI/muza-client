@@ -313,3 +313,23 @@ export interface EngineDoctor {
 export async function engineDoctor(): Promise<EngineDoctor> {
   return invoke<EngineDoctor>("engine_doctor");
 }
+
+/** Событие журнала ступени 0 (текст уже человеческий, показывается как есть). */
+export interface Stage0Event {
+  at_ms: number;
+  text: string;
+}
+
+/** Снимок «Диагностики добычи» (2026-07-20): жалоба «стало медленно» была
+ *  неразбираема — предохранители движка срабатывали молча. Теперь их
+ *  состояние и журнал видны в Настройки → Система. */
+export interface Stage0Status {
+  cooldown_until_ms: number | null;
+  consecutive_fails: number;
+  sc_key_ready: boolean;
+  events: Stage0Event[];
+}
+
+export async function engineStage0Status(): Promise<Stage0Status> {
+  return invoke<Stage0Status>("engine_stage0_status");
+}

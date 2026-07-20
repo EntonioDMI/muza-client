@@ -202,6 +202,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("system", null, "settings.system.closeAction", ["закрытие", "крестик", "свернуть"]),
   e("system", null, "settings.system.update", ["обновление", "версия", "update"]),
   e("system", null, "settings.system.miniPlayer", ["мини-плеер", "маленькое окно", "miniplayer"]),
+  e("system", null, "settings.system.stage0", ["диагностика", "медленно", "долго грузится", "журнал", "diagnostics", "slow"], {
+    title: "settings.system.stage0.rowTitle",
+    hint: "settings.system.stage0.rowHint",
+  }),
   e("system", null, "settings.system.version", ["версия", "version"]),
   e("system", null, "settings.system.licenses", ["лицензии", "licenses"], { title: "settings.system.licenses.rowTitle", hint: "settings.system.licenses.rowHint" }),
   e("system", null, "settings.system.website", ["сайт", "website"]),

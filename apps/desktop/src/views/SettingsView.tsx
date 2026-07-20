@@ -25,7 +25,7 @@ import type { InstalledPluginInfo } from "../plugins/types";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
-import { cacheClear, cacheStats, engineAvailable, type CacheStats } from "../lib/engine";
+import { cacheClear, cacheStats, engineAvailable, engineStage0Status, type CacheStats, type Stage0Status } from "../lib/engine";
 import { formatTemplate, rpcAvailable } from "../lib/discord";
 import { openExternal } from "../lib/system";
 import { checkForUpdate, updaterAvailable, type FoundUpdate } from "../lib/updater";
@@ -983,6 +983,7 @@ type Sub =
   | "nav"
   | "sessions"
   | "privacy"
+  | "stage0"
   | null;
 
 /** Открытый код внутри клиента: id (→ имя из словаря) · лицензия · сайт
@@ -1039,6 +1040,7 @@ const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   nav: "appearance",
   sessions: "account",
   privacy: "account",
+  stage0: "system",
 };
 
 /** Полосы эквалайзера (десятиполосник) в Гц + пресеты. Значения в дБ (−12..+12).
@@ -1846,6 +1848,18 @@ export function SettingsView({
   useEffect(() => {
     if (sub === "discord") rpcAvailable().then(setDiscordAvail);
   }, [sub]);
+
+  // Диагностика добычи (2026-07-20): снимок предохранителей движка — на
+  // входе во вкладку «Система» и при каждом открытии журнала (свежесть
+  // важнее экономии: жалоба «стало медленно» разбирается именно тут).
+  const [stage0, setStage0] = useState<Stage0Status | null>(null);
+  useEffect(() => {
+    if ((tab === "system" || sub === "stage0") && engineAvailable()) {
+      engineStage0Status()
+        .then(setStage0)
+        .catch(() => setStage0(null));
+    }
+  }, [tab, sub]);
   const fmtGb = (bytes: number) =>
     bytes >= 1024 * 1024 * 1024
       ? t("settings.library.units.gb", { n: (bytes / (1024 * 1024 * 1024)).toFixed(1) })
@@ -3147,6 +3161,61 @@ export function SettingsView({
     </div>
   );
 
+  // Под-экран «Диагностика загрузки треков» (2026-07-20): состояние
+  // предохранителей движка + журнал последних событий. Тексты событий
+  // приходят из движка уже человеческими — показываются как есть.
+  const fmtEventClock = (ms: number) =>
+    new Date(ms).toLocaleTimeString(lang === "ru" ? "ru-RU" : "en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  const stage0Pane = (
+    <div key="stage0" className={paneClass} style={paneStyle}>
+      <SubHeader title={t("settings.system.stage0.title")} onBack={() => setSub(null)} />
+      <SettingRow
+        title={
+          stage0?.cooldown_until_ms
+            ? t("settings.system.stage0.paused", {
+                until: new Date(stage0.cooldown_until_ms).toLocaleTimeString(lang === "ru" ? "ru-RU" : "en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+              })
+            : t("settings.system.stage0.ok")
+        }
+        hint={stage0?.cooldown_until_ms ? t("settings.system.stage0.pausedHint") : t("settings.system.stage0.okHint")}
+      >
+        <Button
+          variant="ghost"
+          icon="refresh-cw"
+          onClick={() => void engineStage0Status().then(setStage0).catch(() => undefined)}
+        >
+          {t("settings.system.stage0.refresh")}
+        </Button>
+      </SettingRow>
+      {(stage0?.events.length ?? 0) === 0 ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+          {t("settings.system.stage0.empty")}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+          {stage0?.events.map((e, i) => (
+            <div
+              key={`${e.at_ms}-${i}`}
+              style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
+            >
+              <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                {fmtEventClock(e.at_ms)}
+              </span>
+              <span style={{ color: "var(--text-2)" }}>{e.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   // Под-экраны компоновки (волна 3): кнопки бара и вкладки сайдбара —
   // тот же паттерн, что statsBlocks (Switch + ↑/↓, порядок массива = порядок в UI)
   const barButtons = normalizeBarButtons(prefs.barButtons, pluginBarKeys);
@@ -3314,6 +3383,8 @@ export function SettingsView({
       sessionsPane
     ) : sub === "privacy" ? (
       privacyPane
+    ) : sub === "stage0" ? (
+      stage0Pane
     ) : tab === "account" ? (
       <div key="account" className={paneClass} style={paneStyle}>
         <SettingRow title={t("settings.account.profile.title")} hint={username}>
@@ -3974,6 +4045,20 @@ export function SettingsView({
             onChange={(miniPlayer: boolean) => set({ miniPlayer })}
             label={t("settings.system.miniPlayer.title")}
           />
+        </SettingRow>
+        {/* Диагностика добычи (2026-07-20): предохранители движка срабатывают
+            молча — статус и журнал делают «стало медленно» разбираемым. */}
+        <SettingRow
+          title={t("settings.system.stage0.rowTitle")}
+          hint={engineAvailable() ? t("settings.system.stage0.rowHint") : t("settings.system.appOnly")}
+          onClick={engineAvailable() ? () => setSub("stage0") : undefined}
+          chevron
+        >
+          {engineAvailable() && (
+            <RowValue>
+              {stage0?.cooldown_until_ms ? t("settings.system.stage0.statusPaused") : t("settings.system.stage0.statusOk")}
+            </RowValue>
+          )}
         </SettingRow>
         {/* T28: переключатель языка переехал в «Внешний вид» (первый элемент
             вкладки, по требованию владельца) — здесь была заглушка-стаб. */}

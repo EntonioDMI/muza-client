@@ -92,6 +92,7 @@ pub fn run() {
             engine::engine_pins,
             engine::engine_stats_take,
             engine::engine_doctor,
+            engine::engine_stage0_status,
             local::local_scan,
             local::local_list,
             local::local_resolve,

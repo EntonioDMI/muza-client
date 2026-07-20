@@ -7,7 +7,7 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read as _;
@@ -130,6 +130,15 @@ pub struct EngineState {
     /// сменил вёрстку, каждый клик не имеет права заново тянуть главную и
     /// мегабайтные бандлы — минутный кулдаун, дальше лестница yt-dlp.
     soundcloud_cid_fail: Mutex<Option<SystemTime>>,
+    /// Журнал ступени 0 (2026-07-20, жалоба «через два часа всё стало
+    /// медленно»): предохранители срабатывали МОЛЧА, и жалобу нельзя было
+    /// разобрать постфактум. Кольцо последних событий (переходы breaker'а,
+    /// классы провалов, кулдаун SC-ключа) + зеркало в файл ниже; наружу —
+    /// engine_stage0_status → Настройки → Система → «Диагностика добычи».
+    stage0_events: Mutex<VecDeque<Stage0Event>>,
+    /// Путь файла-зеркала журнала (app_data/engine-events.log, сеется в
+    /// init()); None — тесты/ранний старт, живёт только кольцо.
+    stage0_log_path: Mutex<Option<PathBuf>>,
 }
 
 impl Default for EngineState {
@@ -150,6 +159,8 @@ impl Default for EngineState {
             stage0_breaker: Mutex::new(Stage0Breaker::default()),
             soundcloud_client_id: Mutex::new(None),
             soundcloud_cid_fail: Mutex::new(None),
+            stage0_events: Mutex::new(VecDeque::new()),
+            stage0_log_path: Mutex::new(None),
         }
     }
 }
@@ -163,6 +174,10 @@ pub fn init(app: &AppHandle) {
     let Ok(dir) = app.path().app_data_dir() else {
         return;
     };
+    // Файл-зеркало журнала ступени 0 — ДО ранних return'ов рецепта ниже:
+    // диагностика обязана жить и без recipe-cache.json
+    *app.state::<EngineState>().stage0_log_path.lock().unwrap() =
+        Some(dir.join("engine-events.log"));
     let path = dir.join("recipe-cache.json");
     let Ok(raw) = fs::read_to_string(&path) else {
         return;
@@ -1877,6 +1892,67 @@ fn classify_innertube_failure(stats: &mut EngineStats, fail: &InnertubeFail) {
     }
 }
 
+// ── Журнал ступени 0 (2026-07-20) ─────────────────────────────────
+// Предохранители ниже срабатывают за доли секунды и МОЛЧА — владелец видел
+// только «через два часа всё стало медленно», а разобрать постфактум было
+// нечем. Каждый значимый переход (провал с классом, открытие/закрытие
+// кулдауна, пауза SC-ключа) оставляет след: кольцо в памяти + файл-зеркало.
+// Наружу — engine_stage0_status (Настройки → Система → «Диагностика добычи»).
+
+/// Событие журнала: unix-миллисекунды + текст простым языком (его видит
+/// пользователь в настройках; сырые детали провала — после « — »).
+#[derive(Clone, Serialize)]
+pub struct Stage0Event {
+    pub at_ms: u64,
+    pub text: String,
+}
+
+/// Кэп кольца: часа событий хватает на разбор, память не растёт.
+const STAGE0_EVENTS_CAP: usize = 300;
+/// Кэп файла-зеркала: перерос — начинаем заново (журнал НЕДАВНИХ событий,
+/// история не самоцель).
+const STAGE0_LOG_MAX_BYTES: u64 = 512 * 1024;
+
+/// Событие в кольцо + best-effort в файл: диагностика не имеет права
+/// ломать или тормозить добычу (все ошибки файла глотаются).
+fn stage0_log(state: &EngineState, now: SystemTime, text: impl Into<String>) {
+    let text = text.into();
+    let at_ms = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    {
+        let mut ring = state.stage0_events.lock().unwrap();
+        ring.push_back(Stage0Event { at_ms, text: text.clone() });
+        while ring.len() > STAGE0_EVENTS_CAP {
+            ring.pop_front();
+        }
+    }
+    let path = state.stage0_log_path.lock().unwrap().clone();
+    if let Some(path) = path {
+        if fs::metadata(&path)
+            .map(|m| m.len() > STAGE0_LOG_MAX_BYTES)
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_file(&path);
+        }
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+            use std::io::Write;
+            let _ = writeln!(f, "{at_ms} {text}");
+        }
+    }
+}
+
+/// Класс провала — человеком: показывается в журнале настроек.
+fn innertube_fail_label(fail: &InnertubeFail) -> (&'static str, &str) {
+    match fail {
+        InnertubeFail::LoginRequired(d) => ("YouTube требует вход", d),
+        InnertubeFail::Sabr(d) => ("YouTube сменил формат", d),
+        InnertubeFail::Network(d) => ("сеть не ответила", d),
+        InnertubeFail::Other(d) => ("трек недоступен", d),
+    }
+}
+
 // ── Circuit-breaker ступени 0 ─────────────────────────────────────
 // Бот-гейт YouTube бьёт по IP: продолжать долбить POST /player — усиливать
 // блок, а каждый провал прогрева доваливается в yt-dlp simulate (CPU-лавина:
@@ -1914,20 +1990,48 @@ fn stage0_breaker_note_fail(state: &EngineState, fail: &InnertubeFail, now: Syst
     if matches!(fail, InnertubeFail::Other(_)) {
         return;
     }
-    let mut b = state.stage0_breaker.lock().unwrap();
-    b.consecutive_fails += 1;
-    if b.consecutive_fails >= STAGE0_BREAKER_THRESHOLD {
-        b.cooldown_until = Some(now + STAGE0_COOLDOWN);
-        // после истечения кулдауна счёт начинается заново — один свежий
-        // провал не захлопывает ступень 0 обратно
-        b.consecutive_fails = 0;
+    let (label, detail) = innertube_fail_label(fail);
+    // detail режем: в журнале важен класс, сырой хвост — только зацепка
+    let detail: String = detail.chars().take(120).collect();
+    stage0_log(state, now, format!("сбой быстрого пути: {label} — {detail}"));
+    let opened = {
+        let mut b = state.stage0_breaker.lock().unwrap();
+        b.consecutive_fails += 1;
+        if b.consecutive_fails >= STAGE0_BREAKER_THRESHOLD {
+            b.cooldown_until = Some(now + STAGE0_COOLDOWN);
+            // после истечения кулдауна счёт начинается заново — один свежий
+            // провал не захлопывает ступень 0 обратно
+            b.consecutive_fails = 0;
+            true
+        } else {
+            false
+        }
+    };
+    if opened {
+        stage0_log(
+            state,
+            now,
+            format!(
+                "быстрый путь выключен на {} мин ({} сбоя подряд, последний: {label}) — треки идут запасной дорогой",
+                STAGE0_COOLDOWN.as_secs() / 60,
+                STAGE0_BREAKER_THRESHOLD,
+            ),
+        );
     }
 }
 
 fn stage0_breaker_note_success(state: &EngineState) {
-    let mut b = state.stage0_breaker.lock().unwrap();
-    b.consecutive_fails = 0;
-    b.cooldown_until = None;
+    let troubled = {
+        let mut b = state.stage0_breaker.lock().unwrap();
+        let troubled = b.consecutive_fails > 0 || b.cooldown_until.is_some();
+        b.consecutive_fails = 0;
+        b.cooldown_until = None;
+        troubled
+    };
+    // Тихий успех — не событие: журнал не разбавляется рутиной
+    if troubled {
+        stage0_log(state, SystemTime::now(), "быстрый путь снова в строю");
+    }
 }
 
 /// TTL негативного кэша ступени 0: покрывает окно «stream_start → resolve»
@@ -1964,6 +2068,21 @@ fn stage0_note_fail(state: &EngineState, video_id: &str, now: SystemTime) {
 /// Успех ступени 0 стирает память о провале — видео снова в деле сразу.
 fn stage0_note_success(state: &EngineState, video_id: &str) {
     state.stage0_recent_fail.lock().unwrap().remove(video_id);
+}
+
+/// Провал SC-ступени: след в журнале + негативный кэш (общая дисциплина трёх
+/// команд warm/stream_start/resolve). ClientId не дублируется — кулдаун ключа
+/// уже оставил своё событие в sc_cid_fail.
+fn stage0_note_sc_fail(state: &EngineState, sc_key: &str, fail: &SoundcloudFail, now: SystemTime) {
+    if let SoundcloudFail::Other(d) = fail {
+        let detail: String = d.chars().take(120).collect();
+        stage0_log(
+            state,
+            now,
+            format!("SoundCloud не отдал трек — запасная дорога ({detail})"),
+        );
+    }
+    stage0_note_fail(state, sc_key, now);
 }
 
 /// Тело POST /player. Значения client — из рецепта; остальные поля
@@ -2327,7 +2446,14 @@ fn sc_cid_note_fail(state: &EngineState, now: SystemTime) {
 
 /// Провал добычи client_id: взводит кулдаун и отдаёт класс ClientId.
 fn sc_cid_fail(state: &EngineState, msg: String) -> SoundcloudFail {
-    sc_cid_note_fail(state, SystemTime::now());
+    let now = SystemTime::now();
+    sc_cid_note_fail(state, now);
+    let detail: String = msg.chars().take(120).collect();
+    stage0_log(
+        state,
+        now,
+        format!("ключ SoundCloud не добылся — минуту треки SC идут запасной дорогой ({detail})"),
+    );
     SoundcloudFail::ClientId(msg)
 }
 
@@ -2696,7 +2822,7 @@ pub async fn engine_warm(
                         cached: false,
                     });
                 }
-                Err(_) => stage0_note_fail(&state, &sc_key, SystemTime::now()),
+                Err(e) => stage0_note_sc_fail(&state, &sc_key, &e, SystemTime::now()),
             }
         }
     }
@@ -2911,8 +3037,8 @@ pub async fn engine_stream_start(
                         stage0_note_success(&state, &sc_key);
                         entry
                     }
-                    Err(_) => {
-                        stage0_note_fail(&state, &sc_key, SystemTime::now());
+                    Err(e) => {
+                        stage0_note_sc_fail(&state, &sc_key, &e, SystemTime::now());
                         return no_stream;
                     }
                 }
@@ -3416,7 +3542,7 @@ pub async fn engine_resolve(
                         Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
                     }
                 }
-                Err(_) => stage0_note_fail(&state, &sc_key, SystemTime::now()),
+                Err(e) => stage0_note_sc_fail(&state, &sc_key, &e, SystemTime::now()),
             }
         }
     }
@@ -3666,6 +3792,66 @@ pub fn engine_cache_clear(
         }
     }
     Ok(())
+}
+
+// ── Диагностика ступени 0 (2026-07-20) ────────────────────────────
+
+/// Снимок для Настройки → Система → «Диагностика добычи».
+#[derive(Serialize)]
+pub struct Stage0Status {
+    /// Конец кулдауна предохранителя (unix-мс), если он активен СЕЙЧАС.
+    pub cooldown_until_ms: Option<u64>,
+    /// Провалы подряд в счётчике breaker'а (0..THRESHOLD-1).
+    pub consecutive_fails: u32,
+    /// Ключ SoundCloud добыт и не протух (без него SC-треки — запасной дорогой).
+    pub sc_key_ready: bool,
+    /// Последние события журнала, НОВЫЕ ПЕРВЫМИ (кольцо — до 300, наружу — 50).
+    pub events: Vec<Stage0Event>,
+}
+
+/// Чистая часть команды: now — параметром (тестируемость).
+fn stage0_status_snapshot(state: &EngineState, now: SystemTime) -> Stage0Status {
+    let (cooldown_until_ms, consecutive_fails) = {
+        let b = state.stage0_breaker.lock().unwrap();
+        let until = b.cooldown_until.filter(|until| now < *until).map(|until| {
+            until
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+        });
+        (until, b.consecutive_fails)
+    };
+    let sc_key_ready = state
+        .soundcloud_client_id
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(_, at)| {
+            now.duration_since(*at)
+                .map(|age| age < SOUNDCLOUD_CLIENT_ID_TTL)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let events = state
+        .stage0_events
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .take(50)
+        .cloned()
+        .collect();
+    Stage0Status {
+        cooldown_until_ms,
+        consecutive_fails,
+        sc_key_ready,
+        events,
+    }
+}
+
+#[tauri::command]
+pub fn engine_stage0_status(state: State<'_, EngineState>) -> Stage0Status {
+    stage0_status_snapshot(&state, SystemTime::now())
 }
 
 // ── Оффлайн-пины (Stage 4) ────────────────────────────────────────
@@ -6019,6 +6205,128 @@ mod innertube_tests {
         assert!(!stage0_in_cooldown(&state, after));
         stage0_breaker_note_fail(&state, &InnertubeFail::Network("сеть".into()), after);
         assert!(!stage0_in_cooldown(&state, after), "один провал — ещё не кулдаун");
+    }
+
+    // ── Журнал ступени 0 (2026-07-20) ──────────────────────────────
+    // Предохранители срабатывали МОЛЧА — жалоба «через два часа всё стало
+    // медленно» была неразбираема постфактум. Теперь каждый значимый переход
+    // оставляет след, и Настройки → Система показывают его человеку.
+
+    /// Открытие кулдауна — событие с классом причины; сами провалы тоже видны.
+    #[test]
+    fn breaker_opening_leaves_journal_trail() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for _ in 0..3 {
+            stage0_breaker_note_fail(&state, &InnertubeFail::Network("таймаут 4с".into()), t0);
+        }
+        let ring = state.stage0_events.lock().unwrap();
+        assert!(
+            ring.iter().any(|e| e.text.contains("выключен")),
+            "открытие кулдауна — событие"
+        );
+        assert!(
+            ring.iter().any(|e| e.text.contains("сеть не ответила")),
+            "класс провала назван человеком"
+        );
+    }
+
+    /// Восстановление — событие ТОЛЬКО после неприятностей: рутинные успехи
+    /// журнал не разбавляют.
+    #[test]
+    fn breaker_recovery_logged_only_after_trouble() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        stage0_breaker_note_success(&state);
+        assert!(
+            state.stage0_events.lock().unwrap().is_empty(),
+            "тихий успех — не событие"
+        );
+        stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("бот".into()), t0);
+        stage0_breaker_note_success(&state);
+        assert!(
+            state
+                .stage0_events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e.text.contains("снова в строю")),
+            "восстановление после сбоев — событие"
+        );
+    }
+
+    /// Кольцо каппится: старые события уходят, память не растёт.
+    #[test]
+    fn journal_ring_is_capped() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for i in 0..(STAGE0_EVENTS_CAP + 50) {
+            stage0_log(&state, t0, format!("событие {i}"));
+        }
+        let ring = state.stage0_events.lock().unwrap();
+        assert_eq!(ring.len(), STAGE0_EVENTS_CAP);
+        assert_eq!(ring.front().unwrap().text, "событие 50", "старые вытеснены");
+    }
+
+    /// Файл-зеркало: строки дописываются; перерос кэп — журнал начинается
+    /// заново (лог НЕДАВНИХ событий, не вечный архив).
+    #[test]
+    fn journal_mirrors_to_file_and_caps_size() {
+        let state = EngineState::default();
+        let dir = std::env::temp_dir().join("muza-stage0-log-test");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("engine-events.log");
+        let _ = fs::remove_file(&path);
+        *state.stage0_log_path.lock().unwrap() = Some(path.clone());
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+        stage0_log(&state, t0, "первая запись");
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("первая запись"));
+        assert!(content.contains("1000000000"), "unix-мс в строке");
+
+        fs::write(&path, "x".repeat((STAGE0_LOG_MAX_BYTES + 1) as usize)).unwrap();
+        stage0_log(&state, t0, "после кэпа");
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("после кэпа"));
+        assert!(!content.starts_with("xxx"), "переросший файл начат заново");
+    }
+
+    /// Снимок статуса: активный кулдаун виден с моментом конца, истёкший —
+    /// нет; события отдаются новыми первыми.
+    #[test]
+    fn stage0_status_snapshot_reports_cooldown_and_events() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for _ in 0..3 {
+            stage0_breaker_note_fail(&state, &InnertubeFail::Network("сеть".into()), t0);
+        }
+        let st = stage0_status_snapshot(&state, t0 + Duration::from_secs(1));
+        assert!(st.cooldown_until_ms.is_some(), "активный кулдаун виден");
+        assert!(!st.events.is_empty());
+        let newest = st.events.first().unwrap();
+        let oldest = st.events.last().unwrap();
+        assert!(newest.at_ms >= oldest.at_ms, "новые первыми");
+
+        let st2 = stage0_status_snapshot(&state, t0 + STAGE0_COOLDOWN + Duration::from_secs(1));
+        assert!(st2.cooldown_until_ms.is_none(), "истёкший кулдаун не пугает");
+        assert!(!st2.sc_key_ready, "ключ SC не добывался");
+    }
+
+    /// Кулдаун SC-ключа оставляет событие (sc_cid_fail — единственная точка).
+    #[test]
+    fn sc_key_cooldown_leaves_journal_trail() {
+        let state = EngineState::default();
+        let _ = sc_cid_fail(&state, "бандл не скачался".into());
+        assert!(
+            state
+                .stage0_events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| e.text.contains("ключ SoundCloud")),
+            "пауза SC-ключа — событие"
+        );
     }
 
     // ── Оркестрация visitorData (инъекция транспорта) ──────────────
