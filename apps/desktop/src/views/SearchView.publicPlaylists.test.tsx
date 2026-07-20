@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, PublicPlaylistHit } from "@muza/api-client";
 import { DragLayer } from "../shell/DragLayer";
+import { TestMenuProvider } from "../shell/menuTestUtils";
 import { SearchView } from "./SearchView";
 
 // Публичные плейлисты в поиске (2026-07-17): режим кода PL_…, плашка
@@ -20,6 +22,10 @@ const hit = (over: Partial<PublicPlaylistHit> = {}): PublicPlaylistHit => ({
   handle: null,
   icon: null,
   iconCoverUrl: null,
+  // единая выдача с SoundCloud (2026-07-20)
+  source: "muza",
+  previewTracks: [],
+  permalinkUrl: null,
   nameMatched: true,
   ...over,
 });
@@ -39,23 +45,37 @@ function makeApi(over: Partial<Record<keyof MuzaApi, unknown>> = {}): MuzaApi {
 
 const noop = () => undefined;
 
+/** Текст поиска с 2026-07-20 управляемый (живёт в App) — тестам нужен
+ *  стейт-держатель, иначе ввод в SearchInput не долетает до debounce. */
+function Harness({ api, extra }: { api: MuzaApi; extra: { onNotify?: (m: string) => void; onPlaylistsChanged?: () => void } }) {
+  const [q, setQ] = useState("");
+  return (
+    <SearchView
+      api={api}
+      canSearch
+      currentId={null}
+      playing={false}
+      likes={[]}
+      query={q}
+      onQueryChange={setQ}
+      onPlayCatalog={noop}
+      onLike={noop}
+      onNotify={extra.onNotify ?? noop}
+      onCatalogMenu={noop}
+      onOpenPlaylist={noop}
+      onOpenScPlaylist={noop}
+      onPlaylistsChanged={extra.onPlaylistsChanged}
+    />
+  );
+}
+
 function renderView(api: MuzaApi, extra: { onNotify?: (m: string) => void; onPlaylistsChanged?: () => void } = {}) {
   return render(
+    <TestMenuProvider>
     <DragLayer>
-      <SearchView
-        api={api}
-        canSearch
-        currentId={null}
-        playing={false}
-        likes={[]}
-        onPlayCatalog={noop}
-        onLike={noop}
-        onNotify={extra.onNotify ?? noop}
-        onCatalogMenu={noop}
-        onOpenPlaylist={noop}
-        onPlaylistsChanged={extra.onPlaylistsChanged}
-      />
-    </DragLayer>,
+      <Harness api={api} extra={extra} />
+    </DragLayer>
+    </TestMenuProvider>,
   );
 }
 
@@ -70,7 +90,7 @@ describe("SearchView — режим кода PL_…", () => {
 
     typeQuery("pl_ggcrygb8");
 
-    await waitFor(() => expect(screen.getByTestId("public-playlist-hero")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("playlist-result-card")).toBeTruthy());
     expect(api.getPublicPlaylistByCode).toHaveBeenCalledWith("PL_GGCRYGB8");
     expect(api.searchGrouped).not.toHaveBeenCalled();
     expect(api.searchPublicPlaylists).not.toHaveBeenCalled();
@@ -95,7 +115,7 @@ describe("SearchView — режим кода PL_…", () => {
     renderView(api, { onPlaylistsChanged });
 
     typeQuery("PL_GGCRYGB8");
-    await waitFor(() => expect(screen.getByTestId("public-playlist-hero")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("playlist-result-card")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Add to library/ }));
 
@@ -111,7 +131,7 @@ describe("SearchView — режим @адреса", () => {
 
     typeQuery("@Fonk_2026");
 
-    await waitFor(() => expect(screen.getByTestId("public-playlist-hero")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("playlist-result-card")).toBeTruthy());
     expect(api.getPublicPlaylistByHandle).toHaveBeenCalledWith("fonk_2026");
     expect(api.getPublicPlaylistByCode).not.toHaveBeenCalled();
     expect(api.searchGrouped).not.toHaveBeenCalled();
@@ -152,7 +172,7 @@ describe("SearchView — плейлисты в обычной выдаче", () 
 
     typeQuery("phonk");
 
-    await waitFor(() => expect(screen.getByTestId("public-playlist-hero")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("playlist-result-card")).toBeTruthy());
     expect(screen.getByText("Top result")).toBeTruthy();
     const shelf = screen.getByTestId("public-playlists-shelf");
     expect(shelf.textContent).toContain("Random mix");
@@ -169,7 +189,7 @@ describe("SearchView — плейлисты в обычной выдаче", () 
     typeQuery("phonk");
 
     await waitFor(() => expect(screen.getByTestId("public-playlists-shelf")).toBeTruthy());
-    expect(screen.queryByTestId("public-playlist-hero")).toBeNull();
+    expect(screen.queryByTestId("playlist-result-card")).toBeNull();
   });
 
   it("ошибка поиска плейлистов не роняет трековую выдачу", async () => {

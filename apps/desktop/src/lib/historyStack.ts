@@ -10,6 +10,8 @@
 export interface HistoryPayload {
   /** view="playlist": id открытого плейлиста. */
   playlistId?: string;
+  /** view="scPlaylist": id плейлиста SoundCloud (с префиксом sc:, 2026-07-20). */
+  scPlaylistId?: string;
 }
 
 export interface HistoryEntry<V extends string = string> {

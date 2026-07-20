@@ -9,7 +9,11 @@ import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { flattenGroupedResults, loadMoreScope, nextGroupLimit } from "../lib/searchGrouping";
 import { parsePlaylistCode, parsePlaylistHandle } from "../lib/playlistCode";
 import { PublicPlaylistCard } from "./PublicPlaylistCard";
+import { PlaylistResultCard } from "./PlaylistResultCard";
 import { SearchGroupCard, type VersionsSlot } from "./SearchGroupCard";
+import { useContextMenu } from "../shell/ContextMenu";
+import { SelectionBar } from "../shell/SelectionBar";
+import { useMultiSelect } from "../lib/useMultiSelect";
 import { useT } from "../i18n";
 
 /** Поиск Stage 2 (слайс 3): живой ввод — мгновенный поиск по накопленному
@@ -31,6 +35,8 @@ export function SearchView({
   currentId,
   playing,
   likes,
+  query: q,
+  onQueryChange,
   instantSearch = true,
   searchScope = "all",
   searchGrouping = true,
@@ -41,11 +47,16 @@ export function SearchView({
   onNotify,
   onCatalogMenu,
   onOpenPlaylist,
+  onOpenScPlaylist,
   onPlaylistsChanged,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, каталог недоступен. */
   canSearch: boolean;
+  /** Текст поиска живёт в App (2026-07-20): «назад» из плейлиста возвращает
+   *  поиск С ЗАПРОСОМ — раньше он терялся с размонтированием вью. */
+  query: string;
+  onQueryChange: (q: string) => void;
   /** id играющего трека; null — ничего не играет (ни одна строка не активна). */
   currentId: string | null;
   playing: boolean;
@@ -68,11 +79,12 @@ export function SearchView({
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Открыть плейлист из выдачи/по коду (2026-07-17, публичные плейлисты). */
   onOpenPlaylist: (id: string) => void;
+  /** Открыть read-only страницу плейлиста SoundCloud (2026-07-20). */
+  onOpenScPlaylist: (id: string) => void;
   /** Подписка из выдачи прошла — App перечитывает список плейлистов. */
   onPlaylistsChanged?: () => void;
 }) {
   const { t, lang } = useT();
-  const [q, setQ] = useState("");
   // Публичные плейлисты (2026-07-17): режим кода PL_… + хиты обычного поиска
   const [codeResult, setCodeResult] = useState<PublicPlaylist | null>(null);
   const [codeBusy, setCodeBusy] = useState(false);
@@ -97,6 +109,14 @@ export function SearchView({
   // Плоский список для очереди воспроизведения (канон → варианты → singles,
   // в порядке карточек) — тот же принцип, что в веб-аналоге T41.
   const groupedFlat = useMemo(() => flattenGroupedResults(groupedResults ?? []), [groupedResults]);
+
+  // ── множественное выделение (2026-07-20) ──
+  // ⚠️ порядок диапазонов — по groupedFlat, НЕ по groupedResults: диапазон
+  // через развёрнутую группу должен идти по видимым строкам.
+  const flatTracks = searchGrouping ? groupedFlat : (results ?? []);
+  const multi = useMultiSelect(flatTracks.map((tr) => tr.id));
+  const selectedTracks = () => flatTracks.filter((tr) => multi.has(tr.id));
+  const { openMenu, menuCtxRef } = useContextMenu();
 
   /** Запрос-код PL_… или @адрес (2026-07-17): весь запрос целиком — прямой
    *  lookup одной карточки, треки не ищем. */
@@ -297,6 +317,13 @@ export function SearchView({
       }}
       {...dragSource({ id: tr.id, title: tr.title, artist: tr.artist, cover: tr.coverUrl, kind: "track" })}
       {...warmRow(tr.id)}
+      // Ctrl/Shift/режим — клик выделяет (capture: раньше play-кнопки строки)
+      onClickCapture={(e) => {
+        if (multi.onItemClick(tr.id, e)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
     >
       <TrackRow
         {...trackRowL10n(t)}
@@ -320,13 +347,41 @@ export function SearchView({
         active={currentId === tr.id}
         playing={currentId === tr.id && playing}
         liked={likes.includes(tr.id)}
+        selected={multi.has(tr.id)}
         onPlay={() => onPlayCatalog(searchGrouping ? groupedFlat : (results ?? []), tr.id)}
-        onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(tr) : undefined}
+        onRowDoubleClick={onQueueCatalog && !multi.active ? () => onQueueCatalog(tr) : undefined}
         onLike={() => onLike(tr.id)}
-        onMore={(e: React.MouseEvent) => onCatalogMenu(tr, e)}
+        onMore={(e: React.MouseEvent) => {
+          // ПКМ по выделенному — меню выделения; по невыделенному — сброс
+          if (multi.count > 0 && multi.has(tr.id)) {
+            openMenu(e, { kind: "selection", tracks: selectedTracks(), place: "list", ctl: { clear: multi.clear } });
+            return;
+          }
+          if (multi.count > 0) multi.clear();
+          onCatalogMenu(tr, e);
+        }}
       />
     </div>
   );
+
+  /** Открыть карточку выдачи: свои — обычной страницей, SC — read-only. */
+  const openHit = (p: PublicPlaylist) => {
+    if (p.source === "soundcloud") onOpenScPlaylist(p.id);
+    else onOpenPlaylist(p.id);
+  };
+
+  /** «Слушать» прямо с карточки: состав дотягивается по клику (у своих —
+   *  getPlaylist viewer-ом, у SC — upsert состава на сервере). */
+  const playHit = async (p: PublicPlaylist) => {
+    try {
+      const tracks =
+        p.source === "soundcloud" ? (await api.getSoundcloudPlaylist(p.id)).tracks : (await api.getPlaylist(p.id)).tracks;
+      if (tracks.length > 0) onPlayCatalog(tracks, tracks[0].id);
+      else onNotify(t("views.playlist.empty"), "x");
+    } catch (e) {
+      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+    }
+  };
 
   /** Подписка из выдачи/по коду. Свой плейлист сервер отобьёт 400-кой —
    *  честно показываем его текст тостом. */
@@ -364,7 +419,7 @@ export function SearchView({
           if (e.key === "Enter") void fullSearch();
         }}
       >
-        <SearchInput value={q} onChange={setQ} placeholder={t("views.search.placeholder")} autoFocus style={{ maxWidth: 520, flex: 1 }} />
+        <SearchInput value={q} onChange={onQueryChange} placeholder={t("views.search.placeholder")} autoFocus style={{ maxWidth: 520, flex: 1 }} />
         {showServerResults && searchScope !== "catalog" ? (
           <Button variant="secondary" icon="search" disabled={busy} onClick={() => void fullSearch()}>
             {busy ? t("views.search.searching") : t("views.search.searchSources")}
@@ -376,10 +431,10 @@ export function SearchView({
         // Режим кода PL_… / @адреса: одна карточка вместо трековой выдачи
         <div data-testid="playlist-code-result">
           {codeResult ? (
-            <PublicPlaylistCard
+            <PlaylistResultCard
               playlist={codeResult}
-              variant="hero"
               onOpen={() => onOpenPlaylist(codeResult.id)}
+              onPlay={() => void playHit(codeResult)}
               onFollow={() => void followFromSearch(codeResult)}
               following={followedIds.includes(codeResult.id)}
             />
@@ -406,11 +461,12 @@ export function SearchView({
               >
                 {t("views.search.publicPlaylist.topResult")}
               </div>
-              <PublicPlaylistCard
+              <PlaylistResultCard
                 playlist={heroHit}
-                variant="hero"
-                onOpen={() => onOpenPlaylist(heroHit.id)}
-                onFollow={() => void followFromSearch(heroHit)}
+                onOpen={() => openHit(heroHit)}
+                onPlay={() => void playHit(heroHit)}
+                // подписка — только на наши: SC-плейлист живёт у SoundCloud
+                onFollow={heroHit.source === "muza" ? () => void followFromSearch(heroHit) : undefined}
                 following={followedIds.includes(heroHit.id)}
               />
             </div>
@@ -455,7 +511,7 @@ export function SearchView({
             <div style={{ marginTop: "var(--sp-6)" }} data-testid="public-playlists-shelf">
               <Shelf title={t("views.search.publicPlaylist.shelf")}>
                 {shelfHits.map((h) => (
-                  <PublicPlaylistCard key={h.id} playlist={h} variant="tile" onOpen={() => onOpenPlaylist(h.id)} />
+                  <PublicPlaylistCard key={h.id} playlist={h} variant="tile" onOpen={() => openHit(h)} />
                 ))}
               </Shelf>
             </div>
@@ -470,6 +526,39 @@ export function SearchView({
         // включая только что зарегистрировавшегося.
         <EmptyState icon="search" title={t("views.search.start.title")} hint={t("views.search.start.hint")} />
       )}
+
+      {/* Панель массовых действий выделения (2026-07-20): в выдаче состав
+          не правится — без «Убрать» */}
+      {multi.count > 0 ? (
+        <SelectionBar
+          label={t("menu.selection.count", { count: multi.count })}
+          clearLabel={t("menu.selection.clear")}
+          onClear={multi.clear}
+          actions={[
+            {
+              icon: "list-start",
+              label: t("menu.catalog.playNext"),
+              onClick: () => menuCtxRef.current.playNextMany(selectedTracks()),
+            },
+            {
+              icon: "list-end",
+              label: t("menu.catalog.queue"),
+              onClick: () => menuCtxRef.current.queueMany(selectedTracks()),
+            },
+            {
+              icon: "plus",
+              label: t("menu.addToPlaylist"),
+              onClick: () => menuCtxRef.current.addManyToPlaylist(selectedTracks()),
+            },
+            { icon: "heart", label: t("menu.catalog.like"), onClick: () => menuCtxRef.current.likeMany(multi.ids) },
+            {
+              icon: "download",
+              label: t("menu.catalog.saveOffline"),
+              onClick: () => menuCtxRef.current.pinMany(selectedTracks()),
+            },
+          ]}
+        />
+      ) : null}
     </div>
   );
 }
