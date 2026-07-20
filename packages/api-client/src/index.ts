@@ -30,6 +30,7 @@ import type {
   PlaylistVisibility,
   PublicPlaylist,
   PublicPlaylistHit,
+  SoundcloudPlaylist,
   RecipeEnvelope,
   RecsSettings,
   RegisterStatus,
@@ -56,8 +57,13 @@ export interface MuzaApi {
   /** Регистрация без почты: аккаунт сразу, восстановление пароля недоступно. */
   register(credentials: Credentials): Promise<Session>;
   logout(): Promise<void>;
-  /** Восстановить сессию из локального хранилища (если была). */
+  /** Восстановить сессию из локального хранилища (если была). Локально, БЕЗ
+   *  сети (2026-07-20): валидность проверяется лениво первым же 401. */
   restoreSession(): Promise<Session | null>;
+  /** «Вход отозван по-настоящему» — приложению пора на экран входа.
+   *  Парная к локальному restoreSession: без неё окно остаётся
+   *  «залогиненным» с падающими запросами до перезапуска. */
+  onSessionRevoked(handler: () => void): void;
 
   // Регистрация с почтой (verify-before-create):
   // start → письмо → поллинг status → verified → complete → сессия.
@@ -267,8 +273,12 @@ export interface MuzaApi {
   /** Подписаться — живая «ссылка» в библиотеке (идемпотентно). */
   followPlaylist(playlistId: string): Promise<PlaylistMeta>;
   unfollowPlaylist(playlistId: string): Promise<void>;
-  /** Поиск публичных: топ-10 по скору (название сильнее артистов внутри). */
+  /** Поиск публичных: топ-10 по скору (название сильнее артистов внутри);
+   *  2026-07-20 — в хвосте выдачи плейлисты SoundCloud (source различает). */
   searchPublicPlaylists(q: string): Promise<PublicPlaylistHit[]>;
+  /** Состав плейлиста SoundCloud (2026-07-20): треки уже в каталоге, играют
+   *  как обычные; id — с префиксом sc: из выдачи или голый числовой. */
+  getSoundcloudPlaylist(id: string): Promise<SoundcloudPlaylist>;
   /** Админ-рубильник: обзор публичных + снятие с публикации (ban — навсегда). */
   getAdminPublicPlaylists(): Promise<AdminPublicPlaylist[]>;
   unpublishAdminPlaylist(playlistId: string, ban?: boolean): Promise<void>;

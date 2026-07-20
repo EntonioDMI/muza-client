@@ -234,8 +234,19 @@ export type PlaylistDetail = z.infer<typeof PlaylistDetailSchema>;
 /** Лесенка видимости плейлиста (2026-07-17): private → code → public. */
 export type PlaylistVisibility = "private" | "code" | "public";
 
+/** Строка превью в карточке выдачи (2026-07-20, стиль SoundCloud). */
+export const PreviewTrackSchema = z.object({
+  artist: z.string().default(""),
+  title: z.string(),
+  durationSec: z.number(),
+  coverUrl: z.string().nullable().default(null),
+});
+export type PreviewTrack = z.infer<typeof PreviewTrackSchema>;
+
 /** Публичный плейлист — карточка discovery (по коду / в поиске). Треки
- *  приходят обычным getPlaylist(id): сервер пускает viewer-ом. */
+ *  приходят обычным getPlaylist(id): сервер пускает viewer-ом.
+ *  2026-07-20: единая выдача с плейлистами SoundCloud — source различает,
+ *  previewTracks — первые ~5 треков для карточки, permalinkUrl — только SC. */
 export const PublicPlaylistSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -246,8 +257,24 @@ export const PublicPlaylistSchema = z.object({
   handle: z.string().nullable().default(null),
   icon: z.string().nullable().default(null),
   iconCoverUrl: z.string().nullable().default(null),
+  source: z.enum(["muza", "soundcloud"]).default("muza"),
+  previewTracks: z.array(PreviewTrackSchema).default([]),
+  permalinkUrl: z.string().nullable().default(null),
 });
 export type PublicPlaylist = z.infer<typeof PublicPlaylistSchema>;
+
+/** Состав плейлиста SoundCloud (2026-07-20): read-only страница. Треки —
+ *  обычные Track: сервер уже положил их в каталог, играют тем же движком. */
+export const SoundcloudPlaylistSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  ownerUsername: z.string().default(""),
+  artworkUrl: z.string().nullable().default(null),
+  permalinkUrl: z.string(),
+  trackCount: z.number(),
+  tracks: z.array(TrackSchema),
+});
+export type SoundcloudPlaylist = z.infer<typeof SoundcloudPlaylistSchema>;
 
 /** Хит поиска: nameMatched=true — совпало НАЗВАНИЕ (кандидат в плашку
  *  «Лучший результат»); false — совпали только артисты внутри (витрина). */

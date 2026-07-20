@@ -36,6 +36,8 @@ import {
   PublicPlaylistSchema,
   type PublicPlaylistHit,
   PublicPlaylistHitSchema,
+  type SoundcloudPlaylist,
+  SoundcloudPlaylistSchema,
   type RecipeEnvelope,
   type RecsSettings,
   type RegisterStatus,
@@ -56,6 +58,22 @@ import {
 } from "./schemas";
 
 const STORAGE_KEY = "muza.session.v1";
+const DEVICE_KEY = "muza.device.v1";
+
+/** Стабильный id этой установки (сессия = устройство, 2026-07-20): сервер
+ *  держит ОДНУ строку сессии на устройство (upsert по нему в login, бэкфилл
+ *  в refresh) — список «Устройства» перестал копить строку на каждый вход.
+ *  Живёт в localStorage; на десктопе зеркалится в файл durableState-слоем
+ *  (MIRROR_KEYS) и переживает «Завершить задачу». Формат — по серверному
+ *  DTO: [A-Za-z0-9_-]{8,64}; чужое/битое значение перегенерируется. */
+function deviceId(): string {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id || !/^[A-Za-z0-9_-]{8,64}$/.test(id)) {
+    id = crypto.randomUUID();
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
 
 /** Ошибка API с человекочитаемым сообщением сервера (409 «Имя занято» и т.п.). */
 export class ApiError extends Error {
@@ -168,7 +186,16 @@ function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
   });
 }
 
-/** Проводной формат публичного плейлиста (2026-07-17, discovery). */
+/** Проводной формат строки превью карточки (2026-07-20). */
+interface PreviewTrackWire {
+  artist?: string;
+  title: string;
+  duration_sec: number;
+  cover_url?: string | null;
+}
+
+/** Проводной формат публичного плейлиста (2026-07-17, discovery;
+ *  2026-07-20 — source/preview_tracks/permalink_url единой выдачи). */
 interface PublicPlaylistWire {
   id: string;
   name: string;
@@ -178,7 +205,14 @@ interface PublicPlaylistWire {
   handle?: string | null;
   icon?: string | null;
   icon_cover_url?: string | null;
+  source?: "muza" | "soundcloud";
+  preview_tracks?: PreviewTrackWire[];
+  permalink_url?: string | null;
   name_matched?: boolean;
+}
+
+function previewTrackFromWire(w: PreviewTrackWire) {
+  return { artist: w.artist ?? "", title: w.title, durationSec: w.duration_sec, coverUrl: w.cover_url ?? null };
 }
 
 function publicPlaylistFromWire(w: PublicPlaylistWire): PublicPlaylist {
@@ -191,6 +225,9 @@ function publicPlaylistFromWire(w: PublicPlaylistWire): PublicPlaylist {
     handle: w.handle ?? null,
     icon: w.icon ?? null,
     iconCoverUrl: w.icon_cover_url ?? null,
+    source: w.source ?? "muza",
+    previewTracks: (w.preview_tracks ?? []).map(previewTrackFromWire),
+    permalinkUrl: w.permalink_url ?? null,
   });
 }
 
@@ -373,7 +410,14 @@ export class HttpMuzaApi implements MuzaApi {
       throw new ApiError(res.status, message);
     }
     if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch {
+      // 200 с не-JSON телом (сплэш каптив-портала, HTML-страница прокси) —
+      // беда транспорта, не авторизации: наверх уходит ApiError, а не голый
+      // SyntaxError (его выше по стеку однажды приняли за отказ и разлогинили)
+      throw new ApiError(0, "Сервер ответил не-JSON — похоже, сеть перехвачена");
+    }
   }
 
   private persist(session: Session): Session {
@@ -397,7 +441,7 @@ export class HttpMuzaApi implements MuzaApi {
   async login(credentials: Credentials): Promise<Session> {
     const pair = await this.request<TokenPair>("/auth/login", {
       method: "POST",
-      body: JSON.stringify(credentials),
+      body: JSON.stringify({ ...credentials, device_id: deviceId() }),
     });
     return this.persist(sessionFromTokens(pair));
   }
@@ -406,7 +450,7 @@ export class HttpMuzaApi implements MuzaApi {
   async register(credentials: Credentials): Promise<Session> {
     const pair = await this.request<TokenPair>("/auth/register", {
       method: "POST",
-      body: JSON.stringify(credentials),
+      body: JSON.stringify({ ...credentials, device_id: deviceId() }),
     });
     return this.persist(sessionFromTokens(pair));
   }
@@ -423,33 +467,60 @@ export class HttpMuzaApi implements MuzaApi {
     }
   }
 
+  /** Локальное восстановление, БЕЗ сети (2026-07-20, разбор вылетов из
+   *  аккаунта): раньше каждый старт гонял refresh-ротацию — каждый запуск
+   *  был шансом вылететь (упавшая ротация оставляла в localStorage мёртвый
+   *  токен, и СЛЕДУЮЩИЙ старт за него разлогинивал — «выкидывает после
+   *  перезапуска»). Валидность access проверяется лениво: первый 401 →
+   *  refreshPair. Бонус: старт быстрее и открывается офлайн. */
   async restoreSession(): Promise<Session | null> {
     const session = this.load();
     if (!session) return null;
     if (session.user.anonymous) return session;
-    // access мог протухнуть — обновляем пару через refresh-ротацию
-    if (!session.refreshToken) return null;
-    try {
-      return await this.refreshPair(session.refreshToken);
-    } catch (e) {
-      // Сессию стирает только ЯВНЫЙ отказ авторизации (401/403: токен отозван
-      // или протух по-настоящему). Всё остальное — временные беды, за которые
-      // пользователь не должен платить перелогином: офлайн (status 0), сервер
-      // перезапускается/лежит (5xx), троттлинг (429). Раньше любой не-0 статус
-      // разлогинивал — рестарт сервера в момент старта клиента ронял вход.
-      if (e instanceof ApiError && e.status !== 401 && e.status !== 403) return session;
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
+    return session.refreshToken ? session : null;
   }
 
-  /** Обновить пару токенов по refresh (ротация) и сохранить сессию. */
-  private async refreshPair(refreshToken: string): Promise<Session> {
-    const pair = await this.request<TokenPair>("/auth/refresh", {
-      method: "POST",
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    return this.persist(sessionFromTokens(pair));
+  /** Обновить access по refresh-токену и сохранить сессию. Сервер с
+   *  2026-07-20 НЕ ротирует: возвращает тот же refresh_token, продлевая
+   *  срок (скользящий год). Single-flight: параллельные 401 ждут ОДИН
+   *  запрос — N одновременных обновлений одним токеном раньше гонялись
+   *  насмерть. Стирание сессии — ТОЛЬКО здесь и ТОЛЬКО на явный 401/403
+   *  от самого /auth/refresh: сеть, 5xx, 429, не-JSON — временные беды,
+   *  за которые пользователь не платит перелогином. */
+  private refreshInFlight: Promise<Session> | null = null;
+  private sessionRevoked: (() => void) | null = null;
+
+  /** Подписка на «вход отозван по-настоящему»: сессия стёрта, приложению
+   *  пора на экран входа. Нужна потому, что старт больше НЕ ходит в сеть —
+   *  до 2026-07-20 просроченный вход ловил сетевой restoreSession, а без
+   *  сигнала окно оставалось «залогиненным» с падающими запросами до
+   *  перезапуска (поймано живым запуском 20.07). Своего выхода и удаления
+   *  аккаунта не касается: там приложение и так знает. */
+  onSessionRevoked(handler: () => void): void {
+    this.sessionRevoked = handler;
+  }
+
+  private refreshPair(refreshToken: string): Promise<Session> {
+    this.refreshInFlight ??= (async () => {
+      try {
+        const pair = await this.request<TokenPair>("/auth/refresh", {
+          method: "POST",
+          // device_id — бэкфилл: сервер привяжет к строке это устройство
+          body: JSON.stringify({ refresh_token: refreshToken, device_id: deviceId() }),
+        });
+        return this.persist(sessionFromTokens(pair));
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+          localStorage.removeItem(STORAGE_KEY);
+          // single-flight гарантирует ровно один сигнал на волну 401
+          this.sessionRevoked?.();
+        }
+        throw e;
+      } finally {
+        this.refreshInFlight = null;
+      }
+    })();
+    return this.refreshInFlight;
   }
 
   /** Запрос с Bearer текущей сессии; на 401 — одна refresh-ротация и повтор
@@ -792,6 +863,29 @@ export class HttpMuzaApi implements MuzaApi {
     return out.playlists.map((w) =>
       PublicPlaylistHitSchema.parse({ ...publicPlaylistFromWire(w), nameMatched: w.name_matched ?? false }),
     );
+  }
+
+  async getSoundcloudPlaylist(id: string): Promise<SoundcloudPlaylist> {
+    // id приходит из выдачи с префиксом sc: — серверная ручка ждёт голое число
+    const bare = id.startsWith("sc:") ? id.slice(3) : id;
+    const w = await this.authedRequest<{
+      id: string;
+      name: string;
+      owner_username?: string;
+      artwork_url?: string | null;
+      permalink_url: string;
+      track_count: number;
+      tracks: TrackWire[];
+    }>(`/playlists/soundcloud/${encodeURIComponent(bare)}`);
+    return SoundcloudPlaylistSchema.parse({
+      id: w.id,
+      name: w.name,
+      ownerUsername: w.owner_username ?? "",
+      artworkUrl: w.artwork_url ?? null,
+      permalinkUrl: w.permalink_url,
+      trackCount: w.track_count,
+      tracks: w.tracks.map(trackFromWire),
+    });
   }
 
   async getAdminPublicPlaylists(): Promise<AdminPublicPlaylist[]> {
@@ -1572,7 +1666,7 @@ export class HttpMuzaApi implements MuzaApi {
   async registerComplete(pendingId: string): Promise<Session> {
     const pair = await this.request<TokenPair>("/auth/register/complete", {
       method: "POST",
-      body: JSON.stringify({ pending_id: pendingId }),
+      body: JSON.stringify({ pending_id: pendingId, device_id: deviceId() }),
     });
     return this.persist(sessionFromTokens(pair));
   }
@@ -1644,7 +1738,17 @@ export class HttpMuzaApi implements MuzaApi {
   private load(): Session | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = SessionSchema.safeParse(JSON.parse(raw));
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      // Битый JSON (оборванная запись хранилища): раньше исключение улетало
+      // сквозь restoreSession, промис в App.tsx отклонялся и restoring
+      // зависал навсегда — ЧЁРНЫЙ ЭКРАН вместо приложения. Это «нет сессии».
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    const parsed = SessionSchema.safeParse(json);
     return parsed.success ? parsed.data : null;
   }
 }
