@@ -287,13 +287,34 @@ function PlaylistRow({
 /** «Любимое» — закреплённая ПЕРВАЯ строка списка плейлистов (Spotify-паттерн,
  *  2026-07-16): не вкладка сайдбара, а особый плейлист. Фирменный градиент
  *  логотипа Музы + сердце вместо обложки; подсвечивается, когда открыт её
- *  экран (view==="favorites"). Приёмной зоны дропа нет — это агрегат лайков,
- *  трек в него кладут кнопкой-сердцем, а не перетаскиванием. */
-function FavoritesRow({ count, active, onOpen }: { count: number; active: boolean; onOpen: () => void }) {
+ *  экран (view==="favorites").
+ *
+ *  Принимает бросок трека (2026-07-20, жалоба владельца «DnD не работает для
+ *  любимых»): раньше зоны не было намеренно («кладут кнопкой-сердцем»), но раз
+ *  на обычные плейлисты трек бросается — жест ждут и здесь. Кладёт ТОЛЬКО
+ *  добавление: бросок уже любимого трека безобиден (см. favoritesDrop.ts). */
+function FavoritesRow({
+  count,
+  active,
+  onOpen,
+  onDropTrack,
+}: {
+  count: number;
+  active: boolean;
+  onOpen: () => void;
+  onDropTrack?: (trackId: string) => void;
+}) {
   const { t } = useT();
   const [hover, setHover] = useState(false);
+  // id зоны с тем же префиксом места, что у строк плейлистов (реестр зон в
+  // DragLayer — плоская Map, одинаковые id затирали бы колбэки друг друга)
+  const { over: dropLit, props: dropProps } = useDropZone(
+    onDropTrack ? "sidebar-favorites" : null,
+    (p) => onDropTrack?.(p.id),
+  );
   return (
     <button
+      {...dropProps}
       type="button"
       onClick={onOpen}
       // имя — только «Любимое» (без счётчика в подписи): и скринридеру чище, и
@@ -309,7 +330,9 @@ function FavoritesRow({ count, active, onOpen }: { count: number; active: boolea
         padding: "var(--sp-2)",
         border: "none",
         borderRadius: "var(--r-sm)",
-        background: active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
+        // подсветка приёма — как у строк плейлистов
+        background: dropLit ? "var(--accent-soft)" : active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
+        outline: dropLit ? "var(--focus-ring)" : undefined,
         cursor: "pointer",
         textAlign: "left",
         transition: "background var(--dur-fast) var(--ease-out)",
@@ -363,6 +386,7 @@ export function Sidebar({
   onOpenPlaylist,
   onPlaylistMenu,
   onDropTrack,
+  onDropTrackOnFavorites,
   onReorderPlaylists,
   isAdmin = false,
   navItems,
@@ -378,6 +402,8 @@ export function Sidebar({
   /** «Любимое» — закреплённая первая строка списка (счётчик лайков + переход). */
   favoritesCount: number;
   onOpenFavorites: () => void;
+  /** Бросок трека на «Любимое» (2026-07-20): только добавляет, повтор безобиден. */
+  onDropTrackOnFavorites?: (trackId: string) => void;
   onCreatePlaylist: () => void;
   onOpenPlaylist: (id: string) => void;
   /** T17: ПКМ по плейлисту — контекст-меню (App: Открыть/Переименовать/Удалить). */
@@ -515,7 +541,12 @@ export function Sidebar({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", scrollbarWidth: "none" }}>
         {/* «Любимое» закреплено первым (2026-07-16) — над обычными плейлистами */}
-        <FavoritesRow count={favoritesCount} active={view === "favorites"} onOpen={onOpenFavorites} />
+        <FavoritesRow
+          count={favoritesCount}
+          active={view === "favorites"}
+          onOpen={onOpenFavorites}
+          onDropTrack={onDropTrackOnFavorites}
+        />
         {playlists.map((p) => (
           <PlaylistRow
             key={p.id}

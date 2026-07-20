@@ -17,7 +17,7 @@ import {
 const rows = (n: number, h = 40) => Array.from({ length: n }, (_, i) => ({ top: i * h, bottom: (i + 1) * h }));
 
 describe("shouldStart: граница с drag-out наружу", () => {
-  const base = { button: 0, altKey: false, ctrlKey: false, metaKey: false };
+  const base = { button: 0, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
   it("левая кнопка без модификаторов — наш перенос", () => {
     expect(shouldStart(base)).toBe(true);
   });
@@ -31,6 +31,9 @@ describe("shouldStart: граница с drag-out наружу", () => {
   it("Ctrl/Cmd зарезервированы под выделение", () => {
     expect(shouldStart({ ...base, ctrlKey: true })).toBe(false);
     expect(shouldStart({ ...base, metaKey: true })).toBe(false);
+  });
+  it("Shift — диапазон выделения, не перенос (2026-07-20: раньше Shift жил только в комментарии)", () => {
+    expect(shouldStart({ ...base, shiftKey: true })).toBe(false);
   });
 });
 

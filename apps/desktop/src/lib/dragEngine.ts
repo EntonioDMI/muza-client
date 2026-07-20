@@ -57,9 +57,16 @@ export const DRAG_THRESHOLD = 6;
 
 /** Стартовать ли перенос по этому pointerdown. Мышь — только левая кнопка;
  *  Alt зарезервирован под drag-out файла (lib/dragOut.ts), Ctrl/Shift — под
- *  множественное выделение в будущем; правая — контекст-меню. */
-export function shouldStart(e: { button: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): boolean {
-  return e.button === 0 && !e.altKey && !e.ctrlKey && !e.metaKey;
+ *  множественное выделение (2026-07-20: Shift раньше был только в комментарии
+ *  — и Shift+клик запускал перенос, дерясь с диапазоном); правая — меню. */
+export function shouldStart(e: {
+  button: number;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}): boolean {
+  return e.button === 0 && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 }
 
 export function dist(ax: number, ay: number, bx: number, by: number): number {
