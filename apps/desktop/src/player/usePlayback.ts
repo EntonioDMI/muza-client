@@ -836,6 +836,14 @@ export function usePlayback({
     patchQueue(s.queue.slice(0, s.index + 1), s.index);
   };
 
+  /** Очистить всё после позиции at (контекстное меню очереди, 2026-07-20).
+   *  at раньше текущего трека — no-op: срез выбросил бы играющий. */
+  const clearAfter = (at: number) => {
+    const s = stateRef.current;
+    if (at < s.index || at >= s.queue.length - 1) return;
+    patchQueue(s.queue.slice(0, at + 1), s.index);
+  };
+
   // ── Управление для плагинов (T44): произвольная скорость + операции над
   //    очередью, которых не было в UX-наборе (реордер from→to, полный сброс). ──
 
@@ -954,6 +962,7 @@ export function usePlayback({
       insertInQueue,
       moveInQueue,
       clearUpNext,
+      clearAfter,
       // Плагины (T44)
       setRate,
       enqueue,

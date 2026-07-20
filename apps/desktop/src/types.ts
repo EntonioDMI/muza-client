@@ -1,7 +1,17 @@
 import { DEFAULT_HOTKEYS, type HotkeyAction } from "./lib/hotkeys";
 import type { Lang } from "./i18n";
 
-export type View = "home" | "search" | "favorites" | "library" | "stats" | "playlist" | "settings" | "admin";
+export type View =
+  | "home"
+  | "search"
+  | "favorites"
+  | "library"
+  | "stats"
+  | "playlist"
+  // read-only страница плейлиста SoundCloud из выдачи (2026-07-20)
+  | "scPlaylist"
+  | "settings"
+  | "admin";
 
 /** Режим повтора: выкл → вся очередь → один трек. */
 export type RepeatMode = "off" | "all" | "one";

@@ -50,6 +50,27 @@ export function fromCatalog(t: CatalogTrack): PlayerTrack {
   };
 }
 
+/** Обратный адаптер для контекстных меню плеер-бара и очереди (2026-07-20):
+ *  собирает каталожную форму из трека очереди. sources пустые сознательно —
+ *  меню-действиям хватает id/названий (добыча резолвит источники по id сама,
+ *  PlayerTrack их и не возит). Локальный трек без серверного id каталожной
+ *  формы не имеет — null, вызыватель меню не показывает. */
+export function toCatalog(pt: PlayerTrack): CatalogTrack | null {
+  if (pt.kind !== "catalog") return null;
+  return {
+    id: pt.id,
+    artist: pt.artist,
+    title: pt.title,
+    album: pt.album || null,
+    durationSec: pt.duration,
+    coverUrl: pt.cover,
+    isCached: false,
+    sources: [],
+    loudness: pt.loudness,
+    localHash: pt.localHash ?? null,
+  };
+}
+
 /** Локальный файл: с серверным id — обычный каталожный трек (скроббл/лайки),
  *  просто источник local; без него (аноним) — kind=local, играет только с диска. */
 export function fromLocalEntry(
