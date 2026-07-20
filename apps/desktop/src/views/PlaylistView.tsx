@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Dialog, Icon, IconButton, Menu, SearchInput, TrackRow, cssZoom } from "@muza/ui";
+import { Button, Dialog, Icon, IconButton, SearchInput, TrackRow, cssZoom } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { localList, localResolve } from "../lib/localFiles";
 import { withSnapshot } from "../lib/offlineSnapshot";
@@ -8,6 +8,9 @@ import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
 import { useCoverArt } from "../lib/coverArt";
 import { useWarmRow } from "../player/useWarmer";
 import { useDrag, useDropZone } from "../shell/DragLayer";
+import { useContextMenu } from "../shell/ContextMenu";
+import { SelectionBar } from "../shell/SelectionBar";
+import { useMultiSelect } from "../lib/useMultiSelect";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
 import { trackRowL10n } from "../lib/dsLabels";
@@ -30,7 +33,6 @@ export function PlaylistView({
   rowShow,
   onLike,
   onNotify,
-  onVersions,
   onReplaceVersion,
   onShare,
   onSaveOffline,
@@ -57,8 +59,6 @@ export function PlaylistView({
   rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
   onNotify: (text: string, icon?: string) => void;
-  /** Открыть «Версии и источники» трека (Stage 4). */
-  onVersions: (t: Track) => void;
   /** «Заменить версию» (2026-07-18): подменить трек другой загрузкой той же
    *  песни. reload — чтобы диалог App-уровня перечитал ЭТУ страницу после
    *  замены (без ремаунта plBump — скролл сохраняется). */
@@ -93,12 +93,9 @@ export function PlaylistView({
   const [collabOpen, setCollabOpen] = useState(false);
   // 2026-07-17: диалог «Поделиться плейлистом» (лесенка видимости + код PL_…)
   const [shareVisOpen, setShareVisOpen] = useState(false);
-  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; track: Track | null }>({
-    open: false,
-    x: 0,
-    y: 0,
-    track: null,
-  });
+  // контекстное меню трека — общий механизм (shell/ContextMenu.tsx, 2026-07-20);
+  // вьюшно-локальные действия уезжают в target.ctl замыканиями
+  const { openMenu, menuCtxRef } = useContextMenu();
 
   // Stage 4: сервер лёг — читаем последний снапшот (закреплённое играет из кэша)
   const [offline, setOffline] = useState(false);
@@ -184,6 +181,27 @@ export function PlaylistView({
   // реордер ему не рисуем. Оффлайн — снапшот, писать некуда.
   const canReorder = detail !== null && !offline && !readOnly;
   const tracks = detail?.tracks ?? [];
+
+  // ── множественное выделение (2026-07-20) ──
+  // Ctrl/Shift-клик всегда; режим (обычный клик выделяет) — из меню пустого
+  // места. Матрица жестов — lib/selection.ts.
+  const multi = useMultiSelect(tracks.map((tr) => tr.id));
+  const canEditRows = !readOnly && !offline;
+  const selectedTracks = () => tracks.filter((tr) => multi.has(tr.id));
+
+  /** Убрать выделенное: по одному (пакетного метода нет; серверный reorder
+   *  подмножеством НЕ удаляет — он лишь переписывает позиции перечисленных). */
+  const removeSelected = async (ids: string[]) => {
+    try {
+      for (const id of ids) await api.removePlaylistTrack(playlistId, id);
+      onNotify(t("views.playlist.removedFromPlaylist"), "list-x");
+    } catch {
+      onNotify(t("views.playlist.removeTrackFailed"), "x");
+    }
+    multi.clear();
+    await load();
+    onChanged();
+  };
   const { drag, dragSource } = useDrag();
   const warmRow = useWarmRow();
   const rowsRef = useRef(new Map<string, HTMLElement>());
@@ -237,6 +255,28 @@ export function PlaylistView({
     }
   };
 
+  /** «В начало/конец плейлиста» из контекстного меню (2026-07-20): тот же
+   *  оптимистичный путь, что commitReorder, только цель — край списка. */
+  const moveTrackEdge = async (trackId: string, edge: "start" | "end") => {
+    if (!detail) return;
+    const f = detail.tracks.findIndex((tr) => tr.id === trackId);
+    const target = edge === "start" ? 0 : detail.tracks.length - 1;
+    if (f < 0 || f === target) return;
+    const prev = detail.tracks;
+    const next = moveItem(prev, f, target);
+    setDetail({ ...detail, tracks: next });
+    try {
+      await api.reorderPlaylist(
+        playlistId,
+        next.map((tr) => tr.id),
+      );
+      onChanged();
+    } catch (e) {
+      setDetail({ ...detail, tracks: prev });
+      onNotify(e instanceof Error ? e.message : t("views.playlist.reorderFailed"), "x");
+    }
+  };
+
   const { over: pageOver, props: pageDropProps } = useDropZone(
     canReorder ? `playlist-page:${playlistId}` : null,
     (p) => {
@@ -252,7 +292,20 @@ export function PlaylistView({
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}
+      // ПКМ по пустому месту страницы (2026-07-20): вход в выбор треков.
+      // Строки гасят всплытие в openMenu — сюда долетает только пустота.
+      onContextMenu={
+        tracks.length > 0
+          ? (e) =>
+              openMenu(e, {
+                kind: "playlistBlank",
+                ctl: { enterSelect: multi.enterMode, selectAll: multi.selectAll },
+              })
+          : undefined
+      }
+    >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <div
           aria-hidden="true"
@@ -463,6 +516,15 @@ export function PlaylistView({
                 if (!missingLocal) measureRows();
                 rowDrag.onPointerDown(e);
               }}
+              // Выделение перехватывает клик В CAPTURE-фазе: Ctrl/Shift или
+              // режим — клик наш (включая play/лайк), иначе строка живёт
+              // обычной жизнью (играть). Матрица — lib/selection.ts.
+              onClickCapture={(e) => {
+                if (multi.onItemClick(tr.id, e)) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
               style={{
                 ...(missingLocal ? { opacity: 0.45 } : null),
                 ...(shift !== 0 || dragged
@@ -493,6 +555,7 @@ export function PlaylistView({
                 liked={likes.includes(tr.id)}
                 active={currentId === tr.id}
                 playing={currentId === tr.id && playing}
+                selected={multi.has(tr.id)}
                 onPlay={() => {
                   if (missingLocal) {
                     onNotify(t("views.playlist.localTrackNotOnDevice"), "x");
@@ -500,16 +563,40 @@ export function PlaylistView({
                   }
                   onPlayCatalog(detail?.tracks ?? [], tr.id);
                 }}
-                onRowDoubleClick={onQueueCatalog && !missingLocal ? () => onQueueCatalog(tr) : undefined}
+                onRowDoubleClick={onQueueCatalog && !missingLocal && !multi.active ? () => onQueueCatalog(tr) : undefined}
                 onLike={() => onLike(tr.id)}
                 onMore={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  setMenu({
-                    open: true,
-                    x: Math.min(e.clientX, window.innerWidth - 250),
-                    // 200: меню подросло на «Заменить версию» (2026-07-18)
-                    y: Math.min(e.clientY, window.innerHeight - 200),
+                  // ПКМ по выделенному — меню выделения; по невыделенному —
+                  // выделение сбрасывается на обычное меню этого трека
+                  if (multi.count > 0 && multi.has(tr.id)) {
+                    openMenu(e, {
+                      kind: "selection",
+                      tracks: selectedTracks(),
+                      place: "list",
+                      ctl: {
+                        remove: canEditRows
+                          ? { scope: "playlist", run: () => void removeSelected(multi.ids) }
+                          : undefined,
+                        clear: multi.clear,
+                      },
+                    });
+                    return;
+                  }
+                  if (multi.count > 0) multi.clear();
+                  openMenu(e, {
+                    kind: "track",
                     track: tr,
+                    place: "playlist",
+                    ctl: {
+                      // T47c: обложка кликнутого трека уезжает в пикер первой плиткой
+                      changeIcon: () => onChangeIcon({ id: tr.id, coverUrl: tr.coverUrl }),
+                      replaceVersion: () => onReplaceVersion(tr, () => void load()),
+                      removeTrack: () => void removeTrack(tr.id),
+                      moveToStart: () => void moveTrackEdge(tr.id, "start"),
+                      moveToEnd: () => void moveTrackEdge(tr.id, "end"),
+                      canChangeIcon,
+                      canEdit: canEditRows,
+                    },
                   });
                 }}
               />
@@ -523,56 +610,48 @@ export function PlaylistView({
         ) : null}
       </div>
 
-      <Menu
-        open={menu.open}
-        x={menu.x}
-        y={menu.y}
-        onClose={() => setMenu((m) => ({ ...m, open: false }))}
-        items={[
-          {
-            icon: "git-branch",
-            label: t("menu.catalog.versions"),
-            onClick: () => {
-              if (menu.track) onVersions(menu.track);
+      {/* Панель массовых действий: те же действия, что в меню выделения
+          (menuCtxRef — живой MenuContext App-а, читается в обработчиках) */}
+      {multi.count > 0 ? (
+        <SelectionBar
+          label={t("menu.selection.count", { count: multi.count })}
+          clearLabel={t("menu.selection.clear")}
+          onClear={multi.clear}
+          actions={[
+            {
+              icon: "list-start",
+              label: t("menu.catalog.playNext"),
+              onClick: () => menuCtxRef.current.playNextMany(selectedTracks()),
             },
-          },
-          // T47b: ПКМ на треке ВНУТРИ плейлиста — тот же пикер, что и ПКМ на
-          // самом плейлисте в сайдбаре/медиатеке; меняет иконку плейлиста,
-          // не трека. Только владелец живого плейлиста (как выше в шапке).
-          ...(canChangeIcon
-            ? ([
-                {
-                  icon: "image",
-                  label: t("views.playlist.changePlaylistIcon"),
-                  // T47c: обложка кликнутого трека уезжает в пикер первой плиткой
-                  onClick: () =>
-                    onChangeIcon(menu.track ? { id: menu.track.id, coverUrl: menu.track.coverUrl } : undefined),
-                },
-              ] as const)
-            : []),
-          // 2026-07-17: viewer состав не правит — «Убрать из плейлиста» и
-          // «Заменить версию» не его
-          ...(readOnly
-            ? []
-            : ([
-                "-",
-                {
-                  icon: "refresh-cw",
-                  label: t("menu.catalog.replaceVersion"),
-                  onClick: () => {
-                    if (menu.track) onReplaceVersion(menu.track, () => void load());
+            {
+              icon: "list-end",
+              label: t("menu.catalog.queue"),
+              onClick: () => menuCtxRef.current.queueMany(selectedTracks()),
+            },
+            {
+              icon: "plus",
+              label: t("menu.addToPlaylist"),
+              onClick: () => menuCtxRef.current.addManyToPlaylist(selectedTracks()),
+            },
+            { icon: "heart", label: t("menu.catalog.like"), onClick: () => menuCtxRef.current.likeMany(multi.ids) },
+            {
+              icon: "download",
+              label: t("menu.catalog.saveOffline"),
+              onClick: () => menuCtxRef.current.pinMany(selectedTracks()),
+            },
+            ...(canEditRows
+              ? [
+                  {
+                    icon: "list-x",
+                    label: t("views.playlist.removeFromPlaylist"),
+                    danger: true,
+                    onClick: () => void removeSelected(multi.ids),
                   },
-                },
-                {
-                  icon: "list-x",
-                  label: t("views.playlist.removeFromPlaylist"),
-                  onClick: () => {
-                    if (menu.track) void removeTrack(menu.track.id);
-                  },
-                },
-              ] as const)),
-        ]}
-      />
+                ]
+              : []),
+          ]}
+        />
+      ) : null}
 
       <ShareVisibilityDialog
         api={api}

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { MuzaApi, PlaylistMeta } from "@muza/api-client";
 import { DragLayer } from "../shell/DragLayer";
+import { TestMenuProvider } from "../shell/menuTestUtils";
 import { LibraryView } from "./LibraryView";
 
 // Подписанные плейлисты в библиотеке (2026-07-17): плитка с автором;
@@ -28,6 +29,7 @@ const noop = () => undefined;
 
 function renderView(playlists: PlaylistMeta[], extra: { onOpenPlaylist?: (id: string) => void; onNotify?: (m: string) => void } = {}) {
   return render(
+    <TestMenuProvider>
     <DragLayer>
       <LibraryView
         api={{} as MuzaApi}
@@ -45,7 +47,8 @@ function renderView(playlists: PlaylistMeta[], extra: { onOpenPlaylist?: (id: st
         onJoinCode={noop}
         onNotify={extra.onNotify ?? noop}
       />
-    </DragLayer>,
+    </DragLayer>
+    </TestMenuProvider>,
   );
 }
 

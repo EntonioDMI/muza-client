@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, PlaylistDetail } from "@muza/api-client";
 import { DragLayer } from "../shell/DragLayer";
+import { TestMenuProvider } from "../shell/menuTestUtils";
 import { PlaylistView } from "./PlaylistView";
 
 afterEach(() => {
@@ -41,26 +42,27 @@ const noop = () => undefined;
  *  бросают. В приложении слой стоит на корне дерева Player (App.tsx). */
 function renderView(api: MuzaApi, extra: { onReplaceVersion?: (t: { id: string }, reload: () => void) => void } = {}) {
   return render(
-    <DragLayer>
-      <PlaylistView
-        api={api}
-        playlistId="pl1"
-        userId="u1"
-        likes={[]}
-        currentId=""
-        playing={false}
-        onPlayCatalog={noop}
-        onLike={noop}
-        onNotify={noop}
-        onVersions={noop}
-        onReplaceVersion={extra.onReplaceVersion ?? noop}
-        onShare={noop}
-        onSaveOffline={noop}
-        onChanged={noop}
-        onDeleted={noop}
-        onChangeIcon={noop}
-      />
-    </DragLayer>,
+    <TestMenuProvider>
+      <DragLayer>
+        <PlaylistView
+          api={api}
+          playlistId="pl1"
+          userId="u1"
+          likes={[]}
+          currentId=""
+          playing={false}
+          onPlayCatalog={noop}
+          onLike={noop}
+          onNotify={noop}
+          onReplaceVersion={extra.onReplaceVersion ?? noop}
+          onShare={noop}
+          onSaveOffline={noop}
+          onChanged={noop}
+          onDeleted={noop}
+          onChangeIcon={noop}
+        />
+      </DragLayer>
+    </TestMenuProvider>,
   );
 }
 

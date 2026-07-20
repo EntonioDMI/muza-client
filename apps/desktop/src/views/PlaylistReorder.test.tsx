@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { DragLayer } from "../shell/DragLayer";
+import { TestMenuProvider } from "../shell/menuTestUtils";
 import { PlaylistView } from "./PlaylistView";
 
 /** Реордер строк перетаскиванием — сквозной путь: pointer-жест в DragLayer →
@@ -61,6 +62,7 @@ const ROW_H = 40;
 
 function renderView(api: MuzaApi, onNotify: (t: string, i?: string) => void = noop) {
   return render(
+    <TestMenuProvider>
     <DragLayer>
       <PlaylistView
         api={api}
@@ -72,7 +74,6 @@ function renderView(api: MuzaApi, onNotify: (t: string, i?: string) => void = no
         onPlayCatalog={noop}
         onLike={noop}
         onNotify={onNotify}
-        onVersions={noop}
         onReplaceVersion={noop}
         onShare={noop}
         onSaveOffline={noop}
@@ -80,7 +81,8 @@ function renderView(api: MuzaApi, onNotify: (t: string, i?: string) => void = no
         onDeleted={noop}
         onChangeIcon={noop}
       />
-    </DragLayer>,
+    </DragLayer>
+    </TestMenuProvider>,
   );
 }
 

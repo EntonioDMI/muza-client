@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, ChipGroup, EmptyState, Icon, Menu, Tile, TrackRow } from "@muza/ui";
+import { Button, ChipGroup, Dialog, EmptyState, Icon, Tile, TrackRow } from "@muza/ui";
 import type { MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
 import {
   loadServerIds,
@@ -16,8 +16,12 @@ import { tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { gridInsertionIndex } from "../lib/dragEngine";
 import { useLocalReorder } from "../lib/useLocalReorder";
 import { useDrag, useDropZone } from "../shell/DragLayer";
+import { useContextMenu } from "../shell/ContextMenu";
+import { SelectionBar } from "../shell/SelectionBar";
+import { useMultiSelect } from "../lib/useMultiSelect";
 import { maybeAltFileDrag } from "../lib/dragOut";
 import { playlistIconSrc } from "@muza/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useT } from "../i18n";
 
 /** «Любимое» — закреплённая ПЕРВАЯ плитка библиотеки (Spotify-паттерн, выбор
@@ -34,6 +38,12 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
       aria-label={t("views.favorites.title")}
       onMouseEnter={() => setLit(true)}
       onMouseLeave={() => setLit(false)}
+      // глотаем ПКМ: своего меню у «Любимого» пока нет, а меню пустого места
+      // медиатеки на конкретной плитке выглядело бы враньём (2026-07-20)
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -105,12 +115,18 @@ function PlaylistDropTile({
   dragged = false,
   settling = false,
   dimmed = false,
+  selected = false,
+  onClickCapture,
 }: {
   playlist: PlaylistMeta;
   subtitle: string;
   onOpen: () => void;
   onMenu?: (e: React.MouseEvent) => void;
   onDropTrack?: (playlistId: string, trackId: string) => void;
+  /** Плитка в множественном выделении (2026-07-20). */
+  selected?: boolean;
+  /** Capture-перехват клика для выделения (Ctrl/Shift/режим). */
+  onClickCapture?: (e: React.MouseEvent) => void;
   /** Реордер (useLocalReorder): пропсы ручки-⠿; нет — плитка без ручки. */
   grip?: { onPointerDown: (e: React.PointerEvent<HTMLElement>) => void };
   tileRef?: (el: HTMLElement | null) => void;
@@ -139,6 +155,7 @@ function PlaylistDropTile({
       aria-disabled={dimmed || undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onClickCapture={onClickCapture}
       style={{
         position: "relative",
         borderRadius: "var(--r-md)",
@@ -162,6 +179,7 @@ function PlaylistDropTile({
         title={playlist.name}
         subtitle={subtitle}
         width="auto"
+        selected={selected}
         onClick={onOpen}
         onPlay={onOpen}
         onMenu={onMenu}
@@ -219,6 +237,7 @@ export function LibraryView({
   onNotify,
   onDropTrack,
   onReorderPlaylists,
+  onPlaylistsChanged,
 }: {
   api: MuzaApi;
   /** false у анонима: серверная библиотека недоступна (локальные — работают). */
@@ -250,6 +269,8 @@ export function LibraryView({
   /** Вход в совместный плейлист по инвайт-коду (Stage 7). */
   onJoinCode: () => void;
   onNotify: (text: string, icon?: string) => void;
+  /** Массовое удаление плиток прошло — App перечитывает список (2026-07-20). */
+  onPlaylistsChanged?: () => void;
 }) {
   const { t } = useT();
   const { dragSource } = useDrag();
@@ -277,12 +298,60 @@ export function LibraryView({
   const [chip, setChip] = useState("playlists");
   const [locals, setLocals] = useState<LocalEntry[] | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; entry: LocalEntry | null }>({
-    open: false,
-    x: 0,
-    y: 0,
-    entry: null,
-  });
+  // контекстные меню — общий механизм (shell/ContextMenu.tsx, 2026-07-20):
+  // локальные файлы + пустое место медиатеки (создать/по ссылке/импорт/код)
+  const { openMenu, menuCtxRef } = useContextMenu();
+
+  // ── множественное выделение плиток (2026-07-20) ──
+  // Подписки (role follower) вне выделения — та же граница, что у реордера:
+  // массовые действия (оффлайн/удаление) — про СВОИ плейлисты.
+  const selectable = srvPlaylists.filter((p) => p.role !== "follower");
+  const multi = useMultiSelect(selectable.map((p) => p.id));
+  const selectedPls = () => selectable.filter((p) => multi.has(p.id));
+  const [bulkDelete, setBulkDelete] = useState<{ id: string; name: string }[] | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const runBulkDelete = async () => {
+    const targets = bulkDelete;
+    if (!targets || bulkBusy) return;
+    setBulkBusy(true);
+    let ok = 0;
+    try {
+      // пакетного метода нет — по одному, как addToPlaylist/saveOfflinePlaylist
+      for (const p of targets) {
+        await api.deletePlaylist(p.id);
+        ok += 1;
+      }
+      onNotify(t("views.library.bulkDeleted", { count: ok }), "trash-2");
+    } catch {
+      onNotify(t("views.library.bulkDeleteFailed"), "x");
+    } finally {
+      setBulkBusy(false);
+      setBulkDelete(null);
+      multi.clear();
+      onPlaylistsChanged?.();
+    }
+  };
+
+  /** ПКМ по плитке: по выделенной — меню выделения, иначе сброс + меню плейлиста. */
+  const tileMenu = (p: PlaylistMeta) => (e: React.MouseEvent) => {
+    if (multi.count > 0 && multi.has(p.id)) {
+      openMenu(e, {
+        kind: "playlistSelection",
+        playlists: selectedPls().map((x) => ({ id: x.id, name: x.name })),
+        ctl: {
+          saveOffline: () => {
+            for (const x of selectedPls()) menuCtxRef.current.savePlaylistOffline(x.id);
+          },
+          requestDelete: () => setBulkDelete(selectedPls().map((x) => ({ id: x.id, name: x.name }))),
+          clear: multi.clear,
+        },
+      });
+      return;
+    }
+    if (multi.count > 0) multi.clear();
+    onPlaylistMenu?.({ id: p.id, name: p.name }, e);
+  };
 
   const reloadLocals = () => localList().then(setLocals).catch(() => setLocals([]));
   useEffect(() => {
@@ -323,7 +392,24 @@ export function LibraryView({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}
+      // ПКМ по пустому месту (2026-07-20): плитки и строки гасят всплытие в
+      // openMenu, так что сюда долетает только пустота. Анониму меню не
+      // показываем — все пункты требуют серверной сессии.
+      onContextMenu={
+        canSearch
+          ? (e) =>
+              openMenu(e, {
+                kind: "libraryBlank",
+                ctl:
+                  selectable.length > 0
+                    ? { enterSelect: multi.enterMode, selectAll: multi.selectAll }
+                    : undefined,
+              })
+          : undefined
+      }
+    >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
         <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)", flex: 1 }}>
           {t("views.library.title")}
@@ -408,15 +494,44 @@ export function LibraryView({
                     }
                     onPlayLocal(locals ?? [], e.hash);
                   }}
-                  onMore={(ev: React.MouseEvent) => {
-                    ev.stopPropagation();
-                    setMenu({
-                      open: true,
-                      x: Math.min(ev.clientX, window.innerWidth - 250),
-                      y: Math.min(ev.clientY, window.innerHeight - 160),
+                  onMore={(ev: React.MouseEvent) =>
+                    openMenu(ev, {
+                      kind: "localTrack",
                       entry: e,
-                    });
-                  }}
+                      ctl: {
+                        // класть в плейлист можно только зарегистрированный на
+                        // сервере файл (серверная сессия + известный id)
+                        addToPlaylist:
+                          canSearch && serverIds[e.hash]
+                            ? () =>
+                                onAddToPlaylist({
+                                  id: serverIds[e.hash],
+                                  artist: e.artist,
+                                  title: e.title,
+                                  durationSec: e.duration_sec,
+                                  coverUrl: null,
+                                  isCached: false,
+                                  sources: ["local"],
+                                  loudness: null,
+                                  localHash: e.hash,
+                                })
+                            : null,
+                        // файл есть на устройстве → открыть его папку в проводнике
+                        reveal: e.available
+                          ? () =>
+                              void localResolve(e.hash).then((path) => {
+                                if (path) return revealItemInDir(path);
+                                onNotify(t("views.library.fileNotOnDevice"), "x");
+                              })
+                          : null,
+                        forget: () =>
+                          void localForget(e.hash).then(() => {
+                            onNotify(t("views.library.removedFromLocal"), "trash-2");
+                            void reloadLocals();
+                          }),
+                      },
+                    })
+                  }
                 />
               </div>
               );
@@ -456,7 +571,18 @@ export function LibraryView({
                   }
                   onOpenPlaylist(p.id);
                 }}
-                onMenu={onPlaylistMenu ? (e: React.MouseEvent) => onPlaylistMenu({ id: p.id, name: p.name }, e) : undefined}
+                onMenu={tileMenu(p)}
+                selected={multi.has(p.id)}
+                onClickCapture={
+                  followed
+                    ? undefined
+                    : (e: React.MouseEvent) => {
+                        if (multi.onItemClick(p.id, e)) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }
+                }
                 onDropTrack={followed ? undefined : onDropTrack}
                 grip={onReorderPlaylists && !followed ? reorder.grip(p.id) : undefined}
                 tileRef={followed ? undefined : reorder.itemRef(p.id)}
@@ -486,50 +612,60 @@ export function LibraryView({
         </div>
       )}
 
-      {/* Меню локального трека */}
-      <Menu
-        open={menu.open}
-        x={menu.x}
-        y={menu.y}
-        onClose={() => setMenu((m) => ({ ...m, open: false }))}
-        items={[
-          ...(menu.entry && canSearch && serverIds[menu.entry.hash]
-            ? [
-                {
-                  icon: "plus",
-                  label: t("menu.addToPlaylist"),
-                  onClick: () => {
-                    const e = menu.entry;
-                    if (!e) return;
-                    onAddToPlaylist({
-                      id: serverIds[e.hash],
-                      artist: e.artist,
-                      title: e.title,
-                      durationSec: e.duration_sec,
-                      coverUrl: null,
-                      isCached: false,
-                      sources: ["local"],
-                      loudness: null,
-                      localHash: e.hash,
-                    });
-                  },
-                },
-              ]
-            : []),
-          {
-            icon: "trash-2",
-            label: t("views.library.removeFromMuza"),
-            onClick: () => {
-              const e = menu.entry;
-              if (!e) return;
-              void localForget(e.hash).then(() => {
-                onNotify(t("views.library.removedFromLocal"), "trash-2");
-                void reloadLocals();
-              });
+      {/* Панель массовых действий выделенных плиток (2026-07-20) */}
+      {multi.count > 0 ? (
+        <SelectionBar
+          label={t("menu.selection.count", { count: multi.count })}
+          clearLabel={t("menu.selection.clear")}
+          onClear={multi.clear}
+          actions={[
+            {
+              icon: "download",
+              label: t("menu.catalog.saveOffline"),
+              onClick: () => {
+                for (const x of selectedPls()) menuCtxRef.current.savePlaylistOffline(x.id);
+              },
             },
-          },
-        ]}
-      />
+            {
+              icon: "trash-2",
+              label: t("menu.playlist.delete"),
+              danger: true,
+              onClick: () => setBulkDelete(selectedPls().map((x) => ({ id: x.id, name: x.name }))),
+            },
+          ]}
+        />
+      ) : null}
+
+      {/* Подтверждение массового удаления: перечисляем имена — владелец должен
+          видеть, ЧТО исчезнет, прежде чем нажать */}
+      <Dialog
+        open={bulkDelete !== null}
+        title={t("views.library.bulkDeleteTitle")}
+        onClose={() => (bulkBusy ? undefined : setBulkDelete(null))}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setBulkDelete(null)} disabled={bulkBusy}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" icon="trash-2" disabled={bulkBusy} onClick={() => void runBulkDelete()}>
+              {t("views.library.bulkDeleteConfirm", { count: bulkDelete?.length ?? 0 })}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 280, maxWidth: 380 }}>
+          <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.5 }}>
+            {t("views.library.bulkDeleteHint")}
+          </div>
+          <div style={{ color: "var(--text-1)", fontSize: "var(--fs-body)", lineHeight: 1.7 }}>
+            {(bulkDelete ?? []).map((p) => (
+              <div key={p.id} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {p.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
