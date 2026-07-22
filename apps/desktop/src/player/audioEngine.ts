@@ -252,6 +252,12 @@ export class AudioEngine {
   }
 
   // ── Вывод на устройства: фан-аут финального сигнала ──────────────
+  // Известное ограничение (отчёт P, ресёрч Chromium/WebView2 2026-07-22):
+  // дрейф часов между двумя аудио-устройствами браузер НЕ компенсирует —
+  // ~180 мс/час при типичных 50 ppm разницы кварцев. На двух независимых
+  // тапах (наушники + кабель) это через час-полтора уже слышимый рассинхрон;
+  // чинится это ресэмплингом по общим часам, которого у Web Audio API нет —
+  // не чинится на этом уровне, это потолок платформы, не баг движка.
 
   /** Задать маршруты вывода. Пустой массив — вернуться к системному выходу.
    *  Безопасно звать до постройки графа (запомним и применим в ensureGraph)
@@ -292,6 +298,14 @@ export class AudioEngine {
       this.taps.push(tap);
       try {
         await el.setSinkId(route.deviceId);
+        // Читаем sinkId ОБРАТНО (отчёт P): на «устройство пропало между
+        // enumerateDevices и setSinkId» Chromium не всегда бросает — спека
+        // требует no-op/reject, реальность иногда молча падает на дефолт.
+        // Без сверки тап считался бы живым (tap.ok=true) и тихо дублировал
+        // бы дефолтный выход под видом выбранного устройства.
+        if (el.sinkId !== route.deviceId) {
+          throw new Error(`setSinkId не применился (устройство пропало?): ${route.deviceId}`);
+        }
         await el.play();
         tap.ok = true;
       } catch {
@@ -340,18 +354,31 @@ export class AudioEngine {
       try {
         let stream: MediaStream;
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: this.micCfg.deviceId ? { deviceId: { exact: this.micCfg.deviceId } } : true,
-          });
+          stream = await navigator.mediaDevices.getUserMedia({ audio: this.micConstraints(this.micCfg.deviceId) });
         } catch {
           // выбранный микрофон пропал/занят — пробуем системный по умолчанию
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // (те же констрейнты: AEC/NS/AGC вырезают голос НЕЗАВИСИМО от того,
+          // какое физическое устройство их применяет)
+          stream = await navigator.mediaDevices.getUserMedia({ audio: this.micConstraints(null) });
         }
         this.micStream = stream;
         this.micSource = ctx.createMediaStreamSource(stream);
         this.micGain = ctx.createGain();
         this.micGain.gain.value = volCurve(this.micCfg.gain);
         this.micSource.connect(this.micGain);
+        // Спека — best effort, не гарантия: тихий маркер разработчику (не
+        // тост юзеру — недиагностируемо с его стороны), если Chromium всё
+        // же включил AEC/NS/AGC поверх запрошенного false (отчёт P).
+        const micTrack = stream.getAudioTracks()[0];
+        if (micTrack) {
+          const settings = micTrack.getSettings();
+          if (settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl) {
+            console.warn(
+              "[audioEngine] микрофон вернул AEC/NS/AGC=true поверх запрошенного false — Chromium мог проигнорировать констрейнты",
+              settings,
+            );
+          }
+        }
         // микрофон умер сам (USB выдернули) — прибрать и попробовать заново
         for (const tr of stream.getTracks()) {
           tr.onended = () => {
@@ -380,6 +407,25 @@ export class AudioEngine {
         delete tap.el.dataset.muzaMic;
       }
     }
+  }
+
+  /** Констрейнты захвата голоса (отчёт P, грабли Chromium): echoCancellation/
+   *  noiseSuppression/autoGainControl ОБЯЗАНЫ жить ВНУТРИ audio-блока
+   *  getUserMedia — на топ-левел объекте (audio: true, echoCancellation:
+   *  false рядом) Chromium их молча игнорирует и включает AEC по умолчанию.
+   *  AEC слышит музыку из динамиков/виртуального кабеля как «эхо» голоса и
+   *  вырезает её из микса — без этого сценарий «голос в кабель» либо режет
+   *  музыку, либо звучит артефактно. voiceIsolation — нестандартное поле
+   *  Chromium (нет в lib.dom.d.ts) — добавляется через приведение типа. */
+  private micConstraints(deviceId: string | null): MediaTrackConstraints {
+    const c: MediaTrackConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    if (deviceId) c.deviceId = { exact: deviceId };
+    (c as Record<string, unknown>).voiceIsolation = false;
+    return c;
   }
 
   private stopMic(): void {

@@ -248,6 +248,22 @@ describe("AudioEngine: маршрутизация на устройства (т�
     expect(peek(engine).master?.gain.value).toBe(1);
   });
 
+  it("укрепление: setSinkId read-back — несовпадение el.sinkId топит тап (Chromium молча падает на дефолт)", async () => {
+    setSinkIdSpy.mockImplementation(async function (this: HTMLMediaElement) {
+      // Устройство пропало между enumerate и setSinkId — Chromium НЕ бросает,
+      // просто остаётся на дефолтном выходе (отчёт P).
+      Object.defineProperty(this, "sinkId", { value: "", configurable: true });
+    });
+    const engine = makeEngine();
+    await engine.play(ASSET_URL, 1, 0);
+
+    engine.setOutputs([{ deviceId: "dev-ghost", volume: 100 }]);
+    await flush(engine);
+
+    expect(peek(engine).taps).toHaveLength(0); // тап не прижился — считаем отказом
+    expect(document.querySelectorAll("audio[data-muza-tap]")).toHaveLength(0);
+  });
+
   describe("голос (mixMic) — reconcileMic", () => {
     const micTrack = () => ({
       onended: null as (() => void) | null,
@@ -287,6 +303,48 @@ describe("AudioEngine: маршрутизация на устройства (т�
       await flush(engine);
       expect(track.stop).toHaveBeenCalled();
       expect(getUserMedia).toHaveBeenCalledTimes(1); // не переоткрывали заново
+    });
+
+    it("укрепление: getUserMedia получает echoCancellation/noiseSuppression/autoGainControl=false ВНУТРИ audio", async () => {
+      const track = micTrack();
+      const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+      const getUserMedia = vi.fn(async () => stream as unknown as MediaStream);
+      (navigator as unknown as { mediaDevices: unknown }).mediaDevices = { getUserMedia };
+
+      const engine = makeEngine();
+      await engine.play(ASSET_URL, 1, 0);
+      engine.setOutputs([{ deviceId: "dev-mic", volume: 100, mixMic: true }]);
+      await flush(engine);
+
+      // Констрейнты ВНУТРИ audio-блока (не на топ-левел getUserMedia) — гоча
+      // Chromium из шапки reconcileMic/micConstraints.
+      expect(getUserMedia).toHaveBeenCalledWith({
+        audio: expect.objectContaining({
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          voiceIsolation: false,
+        }),
+      });
+    });
+
+    it("укрепление: Chromium вернул AEC=true поверх запрошенного false — тихий маркер в console.warn", async () => {
+      const track = {
+        ...micTrack(),
+        getSettings: () => ({ echoCancellation: true, noiseSuppression: false, autoGainControl: false }),
+      };
+      const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+      const getUserMedia = vi.fn(async () => stream as unknown as MediaStream);
+      (navigator as unknown as { mediaDevices: unknown }).mediaDevices = { getUserMedia };
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const engine = makeEngine();
+      await engine.play(ASSET_URL, 1, 0);
+      engine.setOutputs([{ deviceId: "dev-mic", volume: 100, mixMic: true }]);
+      await flush(engine);
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("AEC/NS/AGC"), expect.anything());
+      warnSpy.mockRestore();
     });
   });
 });

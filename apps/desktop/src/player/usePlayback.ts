@@ -68,6 +68,12 @@ const WATCHDOG_HEAL_TICKS = 6;
  *  авто-скип, радио-продолжение). */
 const WATCHDOG_TAIL_SEC = 1.5;
 
+/** Дебаунс devicechange (вывод на устройства, отчёт P): Chromium шлёт это
+ *  событие пачками на одно физическое подключение/отключение — без дебаунса
+ *  каждый пере-резолв маршрутов (listOutputDevices + setOutputs) дублировался
+ *  бы столько же раз подряд. */
+const DEVICECHANGE_DEBOUNCE_MS = 500;
+
 export interface PlayEndInfo {
   track: PlayerTrack;
   playedMs: number;
@@ -952,12 +958,26 @@ export function usePlayback({
   useEffect(() => {
     const md = navigator.mediaDevices;
     if (!md?.addEventListener) return;
+    // devicechange стреляет ПАЧКАМИ на одно физическое событие (Chromium
+    // шлёт его на каждое логическое под-устройство отдельно — отчёт P) —
+    // дебаунс схлопывает пачку в один пере-резолв маршрутов.
+    // number, не ReturnType<typeof window.setTimeout> — тот же приём, что у
+    // gaplessTimerRef (см. выше): в смешанном DOM+node тайпинге monorepo
+    // ReturnType резолвится в Node Timeout и ломает присваивание window.setTimeout.
+    let timer: number | null = null;
     const onChange = () => {
       if (prefsRef.current.audioOutputs.length === 0 && !deviceAccessUnlocked()) return;
-      void applyOutputRoutes();
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void applyOutputRoutes();
+      }, DEVICECHANGE_DEBOUNCE_MS);
     };
     md.addEventListener("devicechange", onChange);
-    return () => md.removeEventListener("devicechange", onChange);
+    return () => {
+      md.removeEventListener("devicechange", onChange);
+      if (timer !== null) window.clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
