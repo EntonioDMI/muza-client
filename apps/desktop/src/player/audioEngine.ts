@@ -66,6 +66,16 @@ export interface OutputRoute {
   deviceId: string;
   volume: number;
   followsMaster?: boolean;
+  /** Подмешивать голос с микрофона в это устройство (v2, сценарий саундпада). */
+  mixMic?: boolean;
+}
+
+/** Конфиг голоса (v2): какой микрофон и с какой громкостью подмешивать.
+ *  deviceId null = системный микрофон по умолчанию. */
+export interface MicConfig {
+  deviceId: string | null;
+  /** 0–100, та же перцептивная кривая, что у остальных громкостей. */
+  gain: number;
 }
 
 /** Тап фан-аута: ответвление финального сигнала на одно устройство.
@@ -109,6 +119,13 @@ export class AudioEngine {
    *  setOutputs может прилетать чаще (слайдеры) — без очереди интерливинг
    *  двух реконсиляций плодил бы тапы-сироты. */
   private tapWork: Promise<void> = Promise.resolve();
+  // Голос (v2): один захват микрофона на движок, подмешивается в dest тапов
+  // с mixMic МИМО tap.gain (громкость музыки не трогает голос) и мимо мастера.
+  private micCfg: MicConfig = { deviceId: null, gain: 100 };
+  private micStream: MediaStream | null = null;
+  private micSource: MediaStreamAudioSourceNode | null = null;
+  private micGain: GainNode | null = null;
+  private micTaps = new Set<OutputTap>();
 
   private volume = 64;
   private speed = 1;
@@ -277,11 +294,102 @@ export class AudioEngine {
       this.defaultOut = wantDefault;
     }
     this.applyOutputLevels();
+    // 4) голос (v2) — после тапов: множество mixMic-получателей могло измениться
+    await this.reconcileMic();
+  }
+
+  /** Задать микрофон и громкость голоса. Смена устройства пересоздаёт захват
+   *  (если он жив); громкость применяется мгновенно. */
+  setMicConfig(cfg: MicConfig): void {
+    const deviceChanged = cfg.deviceId !== this.micCfg.deviceId;
+    this.micCfg = cfg;
+    if (this.micGain) this.micGain.gain.value = volCurve(cfg.gain);
+    if (deviceChanged && this.micStream) this.stopMic();
+    if (this.ctx) this.queueTapReconcile();
+  }
+
+  /** Захват микрофона жив ⇔ есть живой тап с mixMic. Голос идёт в dest тапа
+   *  напрямую (мимо tap.gain и мастера): его уровень — только micGain.
+   *  Отказ микрофона (занят/пропал) НЕ валит музыку — просто без голоса. */
+  private async reconcileMic(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const want = this.taps.filter((t) => t.ok && this.routes.find((r) => r.deviceId === t.deviceId)?.mixMic);
+    if (want.length === 0) {
+      this.stopMic();
+      return;
+    }
+    if (!this.micStream) {
+      try {
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: this.micCfg.deviceId ? { deviceId: { exact: this.micCfg.deviceId } } : true,
+          });
+        } catch {
+          // выбранный микрофон пропал/занят — пробуем системный по умолчанию
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+        this.micStream = stream;
+        this.micSource = ctx.createMediaStreamSource(stream);
+        this.micGain = ctx.createGain();
+        this.micGain.gain.value = volCurve(this.micCfg.gain);
+        this.micSource.connect(this.micGain);
+        // микрофон умер сам (USB выдернули) — прибрать и попробовать заново
+        for (const tr of stream.getTracks()) {
+          tr.onended = () => {
+            this.stopMic();
+            this.queueTapReconcile();
+          };
+        }
+      } catch {
+        return;
+      }
+    }
+    for (const tap of this.taps) {
+      const on = want.includes(tap);
+      const has = this.micTaps.has(tap);
+      if (on && !has && this.micGain) {
+        this.micGain.connect(tap.dest);
+        this.micTaps.add(tap);
+        tap.el.dataset.muzaMic = "1"; // видно в инспекторе: в этот тап идёт голос
+      } else if (!on && has) {
+        try {
+          this.micGain?.disconnect(tap.dest);
+        } catch {
+          /* уже отключён */
+        }
+        this.micTaps.delete(tap);
+        delete tap.el.dataset.muzaMic;
+      }
+    }
+  }
+
+  private stopMic(): void {
+    if (this.micStream) for (const tr of this.micStream.getTracks()) tr.stop();
+    try {
+      this.micGain?.disconnect();
+    } catch {
+      /* уже отключён */
+    }
+    this.micStream = null;
+    this.micSource = null;
+    this.micGain = null;
+    for (const tap of this.micTaps) delete tap.el.dataset.muzaMic;
+    this.micTaps.clear();
   }
 
   private destroyTap(tap: OutputTap): void {
     const i = this.taps.indexOf(tap);
     if (i >= 0) this.taps.splice(i, 1);
+    if (this.micTaps.has(tap)) {
+      try {
+        this.micGain?.disconnect(tap.dest);
+      } catch {
+        /* уже отключён */
+      }
+      this.micTaps.delete(tap);
+    }
     try {
       this.analyserNode?.disconnect(tap.gain);
     } catch {

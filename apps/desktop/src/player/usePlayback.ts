@@ -252,7 +252,8 @@ export function usePlayback({
       }, t);
       // Маршруты вывода задаются prefs-эффектом при монтировании — раньше,
       // чем ленивая фабрика создаст движок. Догоняем при создании (сам граф
-      // подхватит их в ensureGraph).
+      // подхватит их в ensureGraph). Конфиг голоса — тем же приёмом.
+      engineRef.current.setMicConfig({ deviceId: prefsRef.current.micDeviceId || null, gain: prefsRef.current.micGain });
       if (resolvedRoutesRef.current.length > 0) engineRef.current.setOutputs(resolvedRoutesRef.current);
     }
     return engineRef.current;
@@ -928,6 +929,12 @@ export function usePlayback({
     void applyOutputRoutes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.audioOutputs]);
+
+  // Голос (v2): микрофон и громкость голоса — на движок. Захват стартует
+  // внутри движка и только при живом mixMic-тапе.
+  useEffect(() => {
+    engineRef.current?.setMicConfig({ deviceId: prefs.micDeviceId || null, gain: prefs.micGain });
+  }, [prefs.micDeviceId, prefs.micGain]);
 
   // Устройство воткнули/выдернули — пересопоставить маршруты на лету.
   // Без разблокировки и без маршрутов не трогаем: enumeration дёрнула бы

@@ -71,7 +71,29 @@ export function resolveRoutes(stored: AudioOutputRoute[], devices: OutputDeviceI
   for (const r of stored) {
     const byId = devices.find((d) => d.deviceId === r.deviceId);
     const dev = byId ?? devices.find((d) => d.label === r.label);
-    if (dev) routes.push({ deviceId: dev.deviceId, volume: r.volume, followsMaster: r.followsMaster });
+    if (dev) routes.push({ deviceId: dev.deviceId, volume: r.volume, followsMaster: r.followsMaster, mixMic: r.mixMic });
   }
   return routes;
+}
+
+/** Микрофоны (audioinput) — для выбора «какой голос подмешивать» (v2).
+ *  Виртуальные default/communications отфильтрованы так же, как у выводов:
+ *  «системный по умолчанию» — это пустой deviceId в Prefs.micDeviceId. */
+export async function listInputDevices(): Promise<OutputDeviceInfo[]> {
+  if (!(await ensureDeviceAccess())) return [];
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs
+      .filter(
+        (d) =>
+          d.kind === "audioinput" &&
+          d.deviceId &&
+          d.deviceId !== "default" &&
+          d.deviceId !== "communications" &&
+          d.label,
+      )
+      .map((d) => ({ deviceId: d.deviceId, label: cleanLabel(d.label) }));
+  } catch {
+    return [];
+  }
 }

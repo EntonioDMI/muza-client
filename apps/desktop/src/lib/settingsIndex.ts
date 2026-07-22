@@ -145,6 +145,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
     title: "settings.playback.outputs.rowTitle",
     hint: "settings.playback.outputs.rowHint",
   }),
+  e("playback", "outputs", "settings.outputs.micDevice", ["микрофон", "голос", "захват", "microphone", "voice"]),
+  e("playback", "outputs", "settings.outputs.micGain", ["громкость голоса", "голос", "voice volume"]),
   e("playback", null, "settings.playback.normalize", ["громкость", "выравнивание", "normalize"]),
   e("playback", null, "settings.playback.speedSteps", ["скорость", "1.5x", "2x", "speed"]),
   e("playback", null, "settings.playback.radioEndless", ["радио", "бесконечно", "radio"]),

@@ -11,7 +11,7 @@ import {
   type Prefs,
   type StatsBlockKey,
 } from "../types";
-import { listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
+import { listInputDevices, listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
 import { useT, type TParams, type TranslationKey } from "../i18n";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
 import { barButtonLabel, normalizeBarButtons } from "../lib/barButtons";
@@ -3019,8 +3019,10 @@ export function SettingsView({
   // pb сюда не нужно: применением маршрутов на движок владеет usePlayback
   // через эффект по prefs.audioOutputs. Здесь только редактирование prefs.
   const [outDevices, setOutDevices] = useState<OutputDeviceInfo[] | null>(null);
+  const [inDevices, setInDevices] = useState<OutputDeviceInfo[]>([]);
   const refreshOutDevices = () => {
     void listOutputDevices().then(setOutDevices);
+    void listInputDevices().then(setInDevices);
   };
   useEffect(() => {
     if (sub !== "outputs") return;
@@ -3076,15 +3078,26 @@ export function SettingsView({
 
   const outDeviceRow = (dev: OutputDeviceInfo) => {
     const r = routeForDevice(dev);
+    const hint = r
+      ? [
+          r.followsMaster ? t("settings.outputs.device.linkedHint") : t("settings.outputs.device.independentHint"),
+          r.mixMic ? t("settings.outputs.device.micHint") : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : undefined;
     return (
-      <SettingRow
-        key={dev.deviceId}
-        title={dev.label}
-        hint={r ? (r.followsMaster ? t("settings.outputs.device.linkedHint") : t("settings.outputs.device.independentHint")) : undefined}
-      >
+      <SettingRow key={dev.deviceId} title={dev.label} hint={hint}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           {r ? (
             <>
+              <IconButton
+                icon={r.mixMic ? "mic" : "mic-off"}
+                size="sm"
+                active={!!r.mixMic}
+                label={r.mixMic ? t("settings.outputs.device.micOff") : t("settings.outputs.device.micOn")}
+                onClick={() => patchRoute(r, { mixMic: !r.mixMic })}
+              />
               <IconButton
                 icon={r.followsMaster ? "link" : "unlink"}
                 size="sm"
@@ -3136,6 +3149,39 @@ export function SettingsView({
           {t("settings.outputs.refresh")}
         </Button>
       </div>
+
+      <GroupTitle>{t("settings.outputs.voiceGroup")}</GroupTitle>
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        {t("settings.outputs.voiceIntro")}
+      </div>
+      <SettingRow title={t("settings.outputs.micDevice.title")} hint={t("settings.outputs.micDevice.hint")}>
+        <Select
+          items={[
+            { key: "default", label: t("settings.outputs.micDevice.systemDefault") },
+            ...inDevices.map((d) => ({ key: d.deviceId, label: d.label })),
+          ]}
+          value={prefs.micDeviceId || "default"}
+          onChange={(key: string) => {
+            const dev = inDevices.find((d) => d.deviceId === key);
+            set(
+              key === "default"
+                ? { micDeviceId: undefined, micDeviceLabel: undefined }
+                : { micDeviceId: key, micDeviceLabel: dev?.label },
+            );
+          }}
+          ariaLabel={t("settings.outputs.micDevice.title")}
+          width={260}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.outputs.micGain.title")} hint={t("settings.outputs.micGain.hint")}>
+        <Slider
+          value={prefs.micGain}
+          onChange={(v: number) => set({ micGain: Math.round(v) })}
+          ariaLabel={t("settings.outputs.micGain.title")}
+          valueText={`${prefs.micGain} %`}
+          style={{ width: 160 }}
+        />
+      </SettingRow>
 
       <GroupTitle>{t("settings.outputs.profilesGroup")}</GroupTitle>
       {prefs.outputProfiles.map((p) => (
