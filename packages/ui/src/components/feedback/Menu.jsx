@@ -49,7 +49,11 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     const sx = Math.max(8, Math.min(x, window.innerWidth - w - 8));
     const sy = Math.max(8, Math.min(y, window.innerHeight - h - 8));
     setPos({ left: sx / z, top: sy / z });
-  }, [mounted, x, y]);
+    // items в deps (аудит 22.07): пункты могут долиться АСИНХРОННО после
+    // открытия («Куда играть» ждёт listOutputDevices) — панель расширяется, и
+    // посчитанный по узкой панели кламп оставлял её обрезанной краем экрана.
+    // Лишние прогоны безвредны: та же геометрия — тот же pos.
+  }, [mounted, x, y, items]);
 
   useEffect(() => {
     if (open) {
