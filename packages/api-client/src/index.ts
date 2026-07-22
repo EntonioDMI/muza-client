@@ -35,8 +35,6 @@ import type {
   RecsSettings,
   RegisterStatus,
   ScrobblingStatus,
-  ProvidersStatus,
-  ExtProvider,
   SearchScope,
   Session,
   SessionInfo,
@@ -190,14 +188,6 @@ export interface MuzaApi {
   /** ListenBrainz: user token со страницы listenbrainz.org/settings. */
   listenbrainzConnect(token: string): Promise<{ username: string }>;
   listenbrainzDisconnect(): Promise<void>;
-
-  // Внешние источники аудио (Фаза 3: Яндекс). Пользователь подключает СВОЙ
-  // аккаунт; токен уходит на сервер, шифруется и больше не показывается —
-  // клиент к API источника напрямую не ходит (иначе токен утёк бы в бинарник).
-  getProviders(): Promise<ProvidersStatus>;
-  /** Подключить источник: токен + признак подписки (Плюс — нужен для lossless). */
-  connectProvider(provider: ExtProvider, token: string, premium: boolean): Promise<void>;
-  disconnectProvider(provider: ExtProvider): Promise<void>;
 
   /** Горячий рецепт добычи (Stage 2, слайс 6); применяется клиентом в Stage 3. */
   getRecipe(): Promise<RecipeEnvelope>;

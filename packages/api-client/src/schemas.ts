@@ -392,22 +392,6 @@ export interface ScrobblingStatus {
   listenbrainz: { connected: boolean; username: string | null };
 }
 
-/** Статус подключённых внешних источников аудио (настройки → Интеграции,
- *  Фаза 3). available=false — на сервере не настроен ключ шифрования токенов
- *  (подключение источников выключено). Токены наружу НЕ отдаются — только
- *  факт подключения и признак подписки. */
-export interface ProvidersStatus {
-  available: boolean;
-  providers: {
-    yandex: { connected: boolean; premium: boolean };
-    vk: { connected: boolean; premium: boolean };
-    deezer: { connected: boolean; premium: boolean };
-  };
-}
-
-/** Провайдеры внешних источников, которые умеет подключать клиент. */
-export type ExtProvider = "yandex" | "vk" | "deezer";
-
 // ── Рекомендации и лента (Stage 5) ─────────────────────────────────
 
 /** Секция главной: for_you, because_N («Потому что вы любите X»),

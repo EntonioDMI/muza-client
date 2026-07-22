@@ -41,21 +41,9 @@ const BANNED: { name: string; re: RegExp }[] = [
  *  - system.licenses: лицензии обязаны называть библиотеки по имени (yt-dlp);
  *  - integrations.listenbrainz: «user token» — термин самого ListenBrainz,
  *    пользователь копирует его со страницы сервиса — переименование запутает;
- *  - integrations.yandex: то же — пользователь вставляет токен СВОЕГО аккаунта
- *    Яндекса (внешняя учётка, как у ListenBrainz); в гайдах он зовётся токеном,
- *    переименование запутает при поиске. Видимые строки (название/статус) при
- *    этом жаргон не используют — только диалог подключения;
  *  - views.admin: админ-панель видит только владелец — это инструмент
  *    разработчика, правило тона на него не распространяется. */
-const ALLOWED_PREFIXES = [
-  "settings.customize.css.",
-  "settings.system.licenses.",
-  "settings.integrations.listenbrainz.",
-  "settings.integrations.yandex.",
-  "settings.integrations.vk.",
-  "settings.integrations.deezer.",
-  "views.admin.",
-];
+const ALLOWED_PREFIXES = ["settings.customize.css.", "settings.system.licenses.", "settings.integrations.listenbrainz.", "views.admin."];
 
 function walk(node: unknown, path: string, out: { path: string; hit: string }[]) {
   if (typeof node === "string") {

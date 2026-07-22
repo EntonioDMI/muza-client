@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, SearchInput, Select, Slider, Switch, Tabs, Tooltip } from "@muza/ui";
-import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type ProvidersStatus, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
+import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import {
   DEFAULT_PREFS,
   RADIUS_OVERRIDE_OFF,
@@ -1745,24 +1745,6 @@ export function SettingsView({
   const [lbToken, setLbToken] = useState("");
   const [lbErr, setLbErr] = useState<string | null>(null);
   const [lbBusy, setLbBusy] = useState(false);
-  // Внешние источники аудио (Интеграции, Фаза 3): статус + флоу подключения
-  // Яндекса. Токен вставляется как ListenBrainz, плюс галка «есть Плюс».
-  const [provs, setProvs] = useState<ProvidersStatus | null>(null);
-  const [yaOpen, setYaOpen] = useState(false);
-  const [yaToken, setYaToken] = useState("");
-  const [yaPremium, setYaPremium] = useState(true);
-  const [yaErr, setYaErr] = useState<string | null>(null);
-  const [yaBusy, setYaBusy] = useState(false);
-  // VK — та же модель, но без Плюса (MP3) и с предупреждением о нестабильности
-  const [vkOpen, setVkOpen] = useState(false);
-  const [vkToken, setVkToken] = useState("");
-  const [vkErr, setVkErr] = useState<string | null>(null);
-  const [vkBusy, setVkBusy] = useState(false);
-  // Deezer — ARL-cookie; предупреждение об обходе защиты (юр-риск)
-  const [dzOpen, setDzOpen] = useState(false);
-  const [dzToken, setDzToken] = useState("");
-  const [dzErr, setDzErr] = useState<string | null>(null);
-  const [dzBusy, setDzBusy] = useState(false);
   // Сервер может быть ещё не поднят — честно говорим и перепроверяем сами,
   // пока вкладка открыта (иначе «Проверяем статус…» висело бы вечно)
   useEffect(() => {
@@ -1771,10 +1753,9 @@ export function SettingsView({
     let iv: ReturnType<typeof setInterval> | null = null;
     const load = async () => {
       try {
-        const [s, p] = await Promise.all([api.getScrobbling(), api.getProviders()]);
+        const s = await api.getScrobbling();
         if (dead) return;
         setScrob(s);
-        setProvs(p);
         setScrobErr(false);
         if (iv) clearInterval(iv);
         iv = null;
@@ -1869,103 +1850,6 @@ export function SettingsView({
     }
   };
 
-  /** Яндекс: вставленный токен → сервер (шифрует, наружу не отдаёт). Плюс —
-   *  влияет на доступ к lossless (сервер проверяет при добыче). */
-  const yaConnect = async () => {
-    const token = yaToken.trim();
-    if (token.length < 8) {
-      setYaErr(t("settings.integrations.yandex.errors.pasteToken"));
-      return;
-    }
-    setYaBusy(true);
-    setYaErr(null);
-    try {
-      await api.connectProvider("yandex", token, yaPremium);
-      setProvs((p) => (p ? { ...p, providers: { ...p.providers, yandex: { connected: true, premium: yaPremium } } } : p));
-      setYaOpen(false);
-      setYaToken("");
-      onNotify(t("settings.integrations.yandex.connected"), "music");
-    } catch (e) {
-      setYaErr(e instanceof ApiError ? e.message : t("settings.integrations.yandex.errors.connectFailed"));
-    } finally {
-      setYaBusy(false);
-    }
-  };
-
-  const yaDisconnect = async () => {
-    try {
-      await api.disconnectProvider("yandex");
-      setProvs((p) => (p ? { ...p, providers: { ...p.providers, yandex: { connected: false, premium: false } } } : p));
-      onNotify(t("settings.integrations.yandex.disconnected"), "music");
-    } catch {
-      onNotify(t("settings.integrations.yandex.errors.disconnectFailed"), "x");
-    }
-  };
-
-  /** VK: вставленный токен «доверенного» клиента (Kate). Плюса нет — premium=false. */
-  const vkConnect = async () => {
-    const token = vkToken.trim();
-    if (token.length < 8) {
-      setVkErr(t("settings.integrations.vk.errors.pasteToken"));
-      return;
-    }
-    setVkBusy(true);
-    setVkErr(null);
-    try {
-      await api.connectProvider("vk", token, false);
-      setProvs((p) => (p ? { ...p, providers: { ...p.providers, vk: { connected: true, premium: false } } } : p));
-      setVkOpen(false);
-      setVkToken("");
-      onNotify(t("settings.integrations.vk.connected"), "music");
-    } catch (e) {
-      setVkErr(e instanceof ApiError ? e.message : t("settings.integrations.vk.errors.connectFailed"));
-    } finally {
-      setVkBusy(false);
-    }
-  };
-
-  const vkDisconnect = async () => {
-    try {
-      await api.disconnectProvider("vk");
-      setProvs((p) => (p ? { ...p, providers: { ...p.providers, vk: { connected: false, premium: false } } } : p));
-      onNotify(t("settings.integrations.vk.disconnected"), "music");
-    } catch {
-      onNotify(t("settings.integrations.vk.errors.disconnectFailed"), "x");
-    }
-  };
-
-  /** Deezer: ARL-cookie аккаунта. Premium — не хранится отдельно (нужна платная
-   *  подписка для форматов; сервер сам вернёт null без неё). */
-  const dzConnect = async () => {
-    const token = dzToken.trim();
-    if (token.length < 8) {
-      setDzErr(t("settings.integrations.deezer.errors.pasteToken"));
-      return;
-    }
-    setDzBusy(true);
-    setDzErr(null);
-    try {
-      await api.connectProvider("deezer", token, false);
-      setProvs((p) => (p ? { ...p, providers: { ...p.providers, deezer: { connected: true, premium: false } } } : p));
-      setDzOpen(false);
-      setDzToken("");
-      onNotify(t("settings.integrations.deezer.connected"), "music");
-    } catch (e) {
-      setDzErr(e instanceof ApiError ? e.message : t("settings.integrations.deezer.errors.connectFailed"));
-    } finally {
-      setDzBusy(false);
-    }
-  };
-
-  const dzDisconnect = async () => {
-    try {
-      await api.disconnectProvider("deezer");
-      setProvs((p) => (p ? { ...p, providers: { ...p.providers, deezer: { connected: false, premium: false } } } : p));
-      onNotify(t("settings.integrations.deezer.disconnected"), "music");
-    } catch {
-      onNotify(t("settings.integrations.deezer.errors.disconnectFailed"), "x");
-    }
-  };
   const set = (patch: Partial<Prefs>) => setPrefs({ ...prefs, ...patch });
 
   // Кэш добычи (Stage 4): реальные цифры + живая очистка (пины переживают)
@@ -4363,115 +4247,6 @@ export function SettingsView({
             <RowValue>{t("settings.integrations.notConnected")}</RowValue>
           )}
         </SettingRow>
-        <SettingRow
-          title={t("settings.integrations.yandex.title")}
-          hint={
-            !serverSession
-              ? t("settings.integrations.needsAccount")
-              : !provs
-                ? scrobErr
-                  ? t("settings.integrations.serverUnavailable")
-                  : t("settings.integrations.checkingStatus")
-                : !provs.available
-                  ? t("settings.integrations.yandex.unavailable")
-                  : provs.providers.yandex.connected
-                    ? t("settings.integrations.yandex.connectedState")
-                    : t("settings.integrations.yandex.hint")
-          }
-        >
-          {serverSession && provs?.providers.yandex.connected ? (
-            <Button variant="ghost" icon="unlink" onClick={() => void yaDisconnect()}>
-              {t("common.disconnect")}
-            </Button>
-          ) : serverSession && provs?.available ? (
-            <Button
-              variant="secondary"
-              icon="link"
-              onClick={() => {
-                setYaErr(null);
-                setYaToken("");
-                setYaPremium(true);
-                setYaOpen(true);
-              }}
-            >
-              {t("common.connect")}
-            </Button>
-          ) : (
-            <RowValue>{serverSession && provs ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
-          )}
-        </SettingRow>
-        <SettingRow
-          title={t("settings.integrations.vk.title")}
-          hint={
-            !serverSession
-              ? t("settings.integrations.needsAccount")
-              : !provs
-                ? scrobErr
-                  ? t("settings.integrations.serverUnavailable")
-                  : t("settings.integrations.checkingStatus")
-                : !provs.available
-                  ? t("settings.integrations.vk.unavailable")
-                  : provs.providers.vk.connected
-                    ? t("settings.integrations.vk.connectedState")
-                    : t("settings.integrations.vk.hint")
-          }
-        >
-          {serverSession && provs?.providers.vk.connected ? (
-            <Button variant="ghost" icon="unlink" onClick={() => void vkDisconnect()}>
-              {t("common.disconnect")}
-            </Button>
-          ) : serverSession && provs?.available ? (
-            <Button
-              variant="secondary"
-              icon="link"
-              onClick={() => {
-                setVkErr(null);
-                setVkToken("");
-                setVkOpen(true);
-              }}
-            >
-              {t("common.connect")}
-            </Button>
-          ) : (
-            <RowValue>{serverSession && provs ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
-          )}
-        </SettingRow>
-        <SettingRow
-          title={t("settings.integrations.deezer.title")}
-          hint={
-            !serverSession
-              ? t("settings.integrations.needsAccount")
-              : !provs
-                ? scrobErr
-                  ? t("settings.integrations.serverUnavailable")
-                  : t("settings.integrations.checkingStatus")
-                : !provs.available
-                  ? t("settings.integrations.deezer.unavailable")
-                  : provs.providers.deezer.connected
-                    ? t("settings.integrations.deezer.connectedState")
-                    : t("settings.integrations.deezer.hint")
-          }
-        >
-          {serverSession && provs?.providers.deezer.connected ? (
-            <Button variant="ghost" icon="unlink" onClick={() => void dzDisconnect()}>
-              {t("common.disconnect")}
-            </Button>
-          ) : serverSession && provs?.available ? (
-            <Button
-              variant="secondary"
-              icon="link"
-              onClick={() => {
-                setDzErr(null);
-                setDzToken("");
-                setDzOpen(true);
-              }}
-            >
-              {t("common.connect")}
-            </Button>
-          ) : (
-            <RowValue>{serverSession && provs ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
-          )}
-        </SettingRow>
         <SettingRow title={t("settings.integrations.mediaKeys.title")} hint={t("settings.integrations.mediaKeys.hint")}>
           <Switch checked={prefs.mediaKeys} onChange={(mediaKeys: boolean) => set({ mediaKeys })} label={t("settings.integrations.mediaKeys.title")} />
         </SettingRow>
@@ -4987,120 +4762,6 @@ export function SettingsView({
           </Button>
           <SettingInput value={lbToken} onChange={setLbToken} placeholder={t("settings.integrations.listenbrainz.tokenPlaceholder")} width={320} />
           {lbErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{lbErr}</div> : null}
-        </div>
-      </Dialog>
-
-      {/* Яндекс.Музыка: OAuth-токен аккаунта + признак Плюса (Фаза 3) */}
-      <Dialog
-        open={yaOpen}
-        title={t("settings.integrations.yandex.dialogTitle")}
-        onClose={() => setYaOpen(false)}
-        actions={
-          <>
-            <Button variant="ghost" onClick={() => setYaOpen(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button variant="primary" icon="link" disabled={yaBusy} onClick={() => void yaConnect()}>
-              {yaBusy ? t("settings.integrations.yandex.checking") : t("common.connect")}
-            </Button>
-          </>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.yandex.dialogBody")}</div>
-          <Button
-            variant="ghost"
-            icon="external-link"
-            onClick={() => void openExternal("https://yandex-music.readthedocs.io/en/main/token.html")}
-            style={{ alignSelf: "flex-start" }}
-          >
-            {t("settings.integrations.yandex.howToGetToken")}
-          </Button>
-          <SettingInput value={yaToken} onChange={setYaToken} placeholder={t("settings.integrations.yandex.tokenPlaceholder")} width={320} />
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--sp-3)" }}>
-            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>{t("settings.integrations.yandex.premium")}</span>
-            <Switch checked={yaPremium} onChange={setYaPremium} label={t("settings.integrations.yandex.premium")} />
-          </div>
-          {yaErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{yaErr}</div> : null}
-        </div>
-      </Dialog>
-
-      {/* VK: токен «доверенного» клиента (Kate). С предупреждением о риске
-          заморозки аккаунта (VK закрыл аудио-API 27.04.2025). */}
-      <Dialog
-        open={vkOpen}
-        title={t("settings.integrations.vk.dialogTitle")}
-        onClose={() => setVkOpen(false)}
-        actions={
-          <>
-            <Button variant="ghost" onClick={() => setVkOpen(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button variant="primary" icon="link" disabled={vkBusy} onClick={() => void vkConnect()}>
-              {vkBusy ? t("settings.integrations.vk.checking") : t("common.connect")}
-            </Button>
-          </>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
-          <div
-            style={{
-              display: "flex",
-              gap: "var(--sp-2)",
-              padding: "var(--sp-3)",
-              borderRadius: "var(--radius-sm, 8px)",
-              background: "var(--warning-bg, rgba(200,140,0,0.12))",
-              border: "1px solid var(--warning, #c88c00)",
-              fontSize: "var(--fs-caption)",
-              color: "var(--text-1)",
-              lineHeight: 1.5,
-            }}
-          >
-            <Icon name="alert-triangle" size={16} />
-            <span>{t("settings.integrations.vk.warning")}</span>
-          </div>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.vk.dialogBody")}</div>
-          <SettingInput value={vkToken} onChange={setVkToken} placeholder={t("settings.integrations.vk.tokenPlaceholder")} width={320} />
-          {vkErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{vkErr}</div> : null}
-        </div>
-      </Dialog>
-
-      {/* Deezer: ARL-cookie. Предупреждение об обходе защиты (DMCA-риск). */}
-      <Dialog
-        open={dzOpen}
-        title={t("settings.integrations.deezer.dialogTitle")}
-        onClose={() => setDzOpen(false)}
-        actions={
-          <>
-            <Button variant="ghost" onClick={() => setDzOpen(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button variant="primary" icon="link" disabled={dzBusy} onClick={() => void dzConnect()}>
-              {dzBusy ? t("settings.integrations.deezer.checking") : t("common.connect")}
-            </Button>
-          </>
-        }
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
-          <div
-            style={{
-              display: "flex",
-              gap: "var(--sp-2)",
-              padding: "var(--sp-3)",
-              borderRadius: "var(--radius-sm, 8px)",
-              background: "var(--warning-bg, rgba(200,140,0,0.12))",
-              border: "1px solid var(--warning, #c88c00)",
-              fontSize: "var(--fs-caption)",
-              color: "var(--text-1)",
-              lineHeight: 1.5,
-            }}
-          >
-            <Icon name="alert-triangle" size={16} />
-            <span>{t("settings.integrations.deezer.warning")}</span>
-          </div>
-          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.deezer.dialogBody")}</div>
-          <SettingInput value={dzToken} onChange={setDzToken} placeholder={t("settings.integrations.deezer.tokenPlaceholder")} width={320} />
-          {dzErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{dzErr}</div> : null}
         </div>
       </Dialog>
 

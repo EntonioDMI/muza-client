@@ -42,8 +42,6 @@ import {
   type RecsSettings,
   type RegisterStatus,
   type ScrobblingStatus,
-  type ProvidersStatus,
-  type ExtProvider,
   type SearchScope,
   type Session,
   type SessionInfo,
@@ -1039,23 +1037,6 @@ export class HttpMuzaApi implements MuzaApi {
 
   async listenbrainzDisconnect(): Promise<void> {
     await this.authedRequest("/me/scrobbling/listenbrainz", { method: "DELETE" });
-  }
-
-  // ---------- Внешние источники аудио (Фаза 3: Яндекс) ----------
-
-  async getProviders(): Promise<ProvidersStatus> {
-    return this.authedRequest<ProvidersStatus>("/me/providers");
-  }
-
-  async connectProvider(provider: ExtProvider, token: string, premium: boolean): Promise<void> {
-    await this.authedRequest(`/me/providers/${provider}`, {
-      method: "PUT",
-      body: JSON.stringify({ token, premium }),
-    });
-  }
-
-  async disconnectProvider(provider: ExtProvider): Promise<void> {
-    await this.authedRequest(`/me/providers/${provider}`, { method: "DELETE" });
   }
 
   // ---------- Тексты и рецепт (Stage 2, слайсы 5–6) ----------

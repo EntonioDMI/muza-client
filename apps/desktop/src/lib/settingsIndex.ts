@@ -192,9 +192,6 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("integrations", "discord", "settings.integrations.discord.btnUrl"),
   e("integrations", null, "settings.integrations.lastfm", ["last.fm", "скробблинг", "scrobble"]),
   e("integrations", null, "settings.integrations.listenbrainz", ["listenbrainz", "скробблинг"]),
-  e("integrations", null, "settings.integrations.yandex", ["яндекс", "yandex", "музыка", "плюс", "plus", "источник"]),
-  e("integrations", null, "settings.integrations.vk", ["vk", "вк", "вконтакте", "музыка", "источник"]),
-  e("integrations", null, "settings.integrations.deezer", ["deezer", "дизер", "музыка", "источник"]),
   e("integrations", null, "settings.integrations.mediaKeys", ["медиа-клавиши", "клавиатура", "media keys"]),
   // ── Горячие клавиши ───────────────────────────────────────────────────
   e("hotkeys", null, "settings.hotkeys.help", ["горячие клавиши", "хоткеи", "shortcuts", "hotkeys"]),
