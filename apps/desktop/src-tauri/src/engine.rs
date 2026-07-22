@@ -845,7 +845,13 @@ fn wait_with_timeout(
                     let _ = child.wait();
                     return Err("yt-dlp не уложился в таймаут".into());
                 }
-                std::thread::sleep(Duration::from_millis(120));
+                // Адаптивный шаг (И3 2026-07-22): прежний фикс-шаг 120 мс
+                // добавлял в среднем ~60 мс к КАЖДОМУ ladder-резолву чисто на
+                // детект завершения процесса. Первые 2 с опрашиваем часто
+                // (быстрые прогоны — simulate, probe — ловятся за единицы мс),
+                // дальше крупнее: длинные закачки не жгут CPU опросом.
+                let step = if started.elapsed() < Duration::from_secs(2) { 5 } else { 60 };
+                std::thread::sleep(Duration::from_millis(step));
             }
             Err(e) => return Err(format!("ожидание yt-dlp: {e}")),
         }
@@ -2093,17 +2099,39 @@ fn build_innertube_body(
     video_id: &str,
     visitor: Option<&str>,
 ) -> serde_json::Value {
-    let mut client = serde_json::json!({
-        "clientName": cfg.client_name,
-        "clientVersion": cfg.client_version,
-        "deviceMake": "Oculus",
-        "deviceModel": "Quest 3",
-        "androidSdkVersion": 32,
-        "osName": "Android",
-        "osVersion": "12L",
-        "hl": "en",
-        "gl": "US",
-    });
+    // Контекст устройства зависит от клиента (ступень 0.5, 2026-07-22):
+    // android_vr — прежний Oculus-профиль (проверен живьём 19.07), фолбэки
+    // IOS/TVHTML5 несут свои поля — android-поля в чужом контексте YouTube
+    // отвергает.
+    let mut client = match cfg.client_name.as_str() {
+        "IOS" => serde_json::json!({
+            "clientName": cfg.client_name,
+            "clientVersion": cfg.client_version,
+            "deviceMake": "Apple",
+            "deviceModel": "iPhone16,2",
+            "osName": "iOS",
+            "osVersion": "18.1.0.22B83",
+            "hl": "en",
+            "gl": "US",
+        }),
+        "TVHTML5" => serde_json::json!({
+            "clientName": cfg.client_name,
+            "clientVersion": cfg.client_version,
+            "hl": "en",
+            "gl": "US",
+        }),
+        _ => serde_json::json!({
+            "clientName": cfg.client_name,
+            "clientVersion": cfg.client_version,
+            "deviceMake": "Oculus",
+            "deviceModel": "Quest 3",
+            "androidSdkVersion": 32,
+            "osName": "Android",
+            "osVersion": "12L",
+            "hl": "en",
+            "gl": "US",
+        }),
+    };
     if let Some(v) = visitor {
         client["visitorData"] = serde_json::Value::String(v.to_string());
     }
@@ -2191,6 +2219,44 @@ where
     resolve_innertube_with_parse(state, call, |raw| parse_innertube_player(raw, itag_priority)).await
 }
 
+/// User-Agent под клиента: android_vr — Oculus-профиль (проверен живьём),
+/// фолбэки — свои (ступень 0.5).
+fn innertube_ua(cfg: &InnertubeConfig) -> String {
+    match cfg.client_name.as_str() {
+        "IOS" => format!(
+            "com.google.ios.youtube/{} (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            cfg.client_version
+        ),
+        "TVHTML5" => "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version".to_string(),
+        _ => format!(
+            "com.google.android.apps.youtube.vr.oculus/{} (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            cfg.client_version
+        ),
+    }
+}
+
+/// Ступень 0.5 (отчёт G, 2026-07-22): SABR-only у android_vr раскатывается
+/// региональными A/B-тестами — прежде чем сдаться лестнице yt-dlp (~4.5с),
+/// пробуем ещё два клиента, которым по ресёрчу не нужен PoToken/n-sig.
+/// Версии дрейфуют — провал любого МОЛЧА уступает дальше (лестница остаётся
+/// страховкой), поэтому устаревание констант безопасно: ноль вреда, просто
+/// перестанет выручать. Порядок: tv по ресёрчу стабильнее; ios — под
+/// вопросом (местами требует PoToken), идёт вторым.
+fn innertube_fallback_configs() -> [InnertubeConfig; 2] {
+    [
+        InnertubeConfig {
+            client_name: "TVHTML5".into(),
+            client_version: "7.20250312.16.00".into(),
+            client_name_id: 7,
+        },
+        InnertubeConfig {
+            client_name: "IOS".into(),
+            client_version: "19.45.4".into(),
+            client_name_id: 5,
+        },
+    ]
+}
+
 /// Сетевой транспорт ступени 0: один POST /player клиентом из рецепта.
 /// Форма запроса проверена живьём 2026-07-19 (~171 мс медианы); UA и
 /// заголовки X-YouTube-* обязательны. reqwest собран без фичи gzip —
@@ -2201,10 +2267,7 @@ async fn innertube_player_call(
     visitor: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let body = build_innertube_body(cfg, video_id, visitor);
-    let ua = format!(
-        "com.google.android.apps.youtube.vr.oculus/{} (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-        cfg.client_version
-    );
+    let ua = innertube_ua(cfg);
     let mut req = warm_http_client()
         .post(INNERTUBE_ENDPOINT)
         .header("Content-Type", "application/json")
@@ -2233,9 +2296,9 @@ async fn innertube_player_call(
     serde_json::from_slice(&bytes).map_err(|e| format!("ответ /player не JSON: {e}"))
 }
 
-/// Боевая ступень 0 целиком: POST → разбор → WarmEntry той же формы, что у
-/// прогрева. Err любого класса = «молча уступи лестнице» у вызывающего.
-async fn resolve_via_innertube(
+/// Один клиент ступени 0: POST → разбор → WarmEntry той же формы, что у
+/// прогрева.
+async fn resolve_via_innertube_client(
     state: &EngineState,
     cfg: &InnertubeConfig,
     video_id: &str,
@@ -2256,6 +2319,43 @@ async fn resolve_via_innertube(
         .await
         .map_err(|e| InnertubeFail::Other(format!("spawn_blocking: {e}")))?
         .map_err(InnertubeFail::Other)
+}
+
+/// Боевая ступень 0 целиком: клиент рецепта, при SABR-only — фолбэк-клиенты
+/// (ступень 0.5). Err любого класса = «молча уступи лестнице» у вызывающего.
+async fn resolve_via_innertube(
+    state: &EngineState,
+    cfg: &InnertubeConfig,
+    video_id: &str,
+    itag_priority: &[u64],
+) -> Result<WarmEntry, InnertubeFail> {
+    match resolve_via_innertube_client(state, cfg, video_id, itag_priority).await {
+        Err(InnertubeFail::Sabr(detail)) => {
+            for fb in innertube_fallback_configs() {
+                if let Ok(entry) =
+                    resolve_via_innertube_client(state, &fb, video_id, itag_priority).await
+                {
+                    // KPI fail_sabr фиксируем и при спасении: это маркер
+                    // деградации ОСНОВНОГО клиента (при полном провале его
+                    // посчитает classify_innertube_failure у вызывающего —
+                    // здесь не дублируем).
+                    state.stats.lock().unwrap().fail_sabr += 1;
+                    stage0_log(
+                        state,
+                        SystemTime::now(),
+                        format!(
+                            "YouTube перевёл основной путь на новый формат — выручил запасной клиент {}",
+                            fb.client_name
+                        ),
+                    );
+                    return Ok(entry);
+                }
+                // провал фолбэка — молча к следующему: лестница остаётся страховкой
+            }
+            Err(InnertubeFail::Sabr(detail))
+        }
+        other => other,
+    }
 }
 
 // ── Видео трека для «Сейчас играет» (2026-07-21) ──────────────────
@@ -2491,8 +2591,13 @@ fn sc_pick_progressive(track: &serde_json::Value) -> Result<(String, &'static st
         };
         return Ok((url.to_string(), ext));
     }
+    // SC мигрирует на AAC HLS (progressive удалён из API 31.12.2025, отчёт H;
+    // у части каталога прямой mp3 ещё жив — журнал покажет реальную долю).
+    // Родной HLS-загрузчик ступени 0 сознательно отложен: запасная дорога
+    // (yt-dlp ≥2026.06) AAC HLS умеет, просто медленнее. Триггер строить —
+    // рост этого маркера в журнале диагностики.
     Err(SoundcloudFail::Other(
-        "нет progressive-транскодинга (только HLS)".into(),
+        "у трека остался только AAC HLS (SC удаляет прямой mp3) — качаем запасной дорогой".into(),
     ))
 }
 
@@ -3219,6 +3324,21 @@ pub async fn engine_stream_start(
                 }
             }
         };
+        // MP4/AAC (m4a) НЕ стримится с первых байт (отчёт J, И3 2026-07-22):
+        // у сырого MP4 индекс-атом moov лежит В КОНЦЕ файла, Chromium не
+        // начинает декод, пока не получит его целиком, — «стрим» такого файла
+        // молчал бы до конца закачки, держа UI в состоянии «играет». Opus/webm
+        // и mp3 декодируются с первых килобайт. m4a честно уходит no_stream —
+        // обычная дорога докачает файл и заиграет из кэша. (Если появится
+        // источник с fMP4 — тому moov-в-начале, пересмотреть точечно.)
+        if entry.ext == "m4a" {
+            stage0_log(
+                &state,
+                SystemTime::now(),
+                "аудио пришло в MP4 (m4a) — играем после полной закачки (стрим для него не работает)",
+            );
+            return no_stream;
+        }
         let part = dir.join(format!("{track_id}.{}.part", entry.ext));
         let final_path = dir.join(format!("{track_id}.{}", entry.ext));
         let (tx, rx) = tokio::sync::watch::channel(StreamProgress {
@@ -3314,6 +3434,19 @@ pub async fn engine_stream_start(
             // мгновенно (первый чанк уже на диске).
             state.streams.lock().unwrap().remove(&key);
             handle.cancel.notify_one();
+            // Видимость тихого хвоста (живая поимка 22.07: 19-мин трек висел
+            // «играющим» на 0:00 минуты без единой строки в журнале): фронт
+            // сейчас уйдёт обычной дорогой и будет КАЧАТЬ ФАЙЛ ЦЕЛИКОМ — для
+            // длинного трека это заметное ожидание, пользователь должен мочь
+            // увидеть его причину в диагностике.
+            stage0_log(
+                &state,
+                SystemTime::now(),
+                format!(
+                    "стрим не завёлся за {}с — трек докачивается целиком, запасной дорогой (это дольше)",
+                    STREAM_START_TIMEOUT.as_secs()
+                ),
+            );
             no_stream
         }
     }
