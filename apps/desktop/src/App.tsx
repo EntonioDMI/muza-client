@@ -2312,6 +2312,28 @@ function Player({
         onSleep={cycleSleep}
         jamActive={jam.active}
         onJam={() => setJamOpen(true)}
+        // Вывод на устройства (2026-07-22): быстрый переключатель — эксклюзивный
+        // выбор (одно устройство / профиль / системное); тонкая настройка — в
+        // под-экране настроек (intent, как у эквалайзера)
+        outputRoutes={prefs.audioOutputs}
+        outputProfiles={prefs.outputProfiles}
+        activeOutputProfile={prefs.activeOutputProfile}
+        onOutputSystem={() => setPrefs({ ...prefs, audioOutputs: [], activeOutputProfile: undefined })}
+        onOutputDevice={(d) =>
+          setPrefs({
+            ...prefs,
+            audioOutputs: [{ deviceId: d.deviceId, label: d.label, volume: 100, followsMaster: true }],
+            activeOutputProfile: undefined,
+          })
+        }
+        onOutputProfile={(id) => {
+          const p = prefs.outputProfiles.find((x) => x.id === id);
+          if (p) setPrefs({ ...prefs, audioOutputs: p.outputs.map((r) => ({ ...r })), activeOutputProfile: p.id });
+        }}
+        onOutputSettings={() => {
+          navigate("settings");
+          setSettingsIntent({ sub: "outputs", nonce: Date.now() });
+        }}
         // drag-out: обложка утаскивается на рабочий стол файлом из кэша
         onCoverDragOut={
           engineAvailable() && track

@@ -141,6 +141,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("playback", null, "settings.playback.gapless", ["без пауз", "gapless", "стык"]),
   e("playback", null, "settings.playback.equalizer", ["эквалайзер", "eq", "частоты", "басы"], { title: "settings.playback.equalizer.rowTitle", hint: "settings.playback.equalizer.rowHint" }),
   e("playback", "equalizer", "settings.equalizer.enable", ["эквалайзер", "eq"]),
+  e("playback", null, "settings.playback.outputs", ["вывод", "устройства", "наушники", "колонки", "микрофон", "кабель", "динамики", "output", "devices", "headphones", "speakers", "microphone", "cable"], {
+    title: "settings.playback.outputs.rowTitle",
+    hint: "settings.playback.outputs.rowHint",
+  }),
   e("playback", null, "settings.playback.normalize", ["громкость", "выравнивание", "normalize"]),
   e("playback", null, "settings.playback.speedSteps", ["скорость", "1.5x", "2x", "speed"]),
   e("playback", null, "settings.playback.radioEndless", ["радио", "бесконечно", "radio"]),

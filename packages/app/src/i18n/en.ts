@@ -399,6 +399,31 @@ export const en = {
       bandAria: "Band {freq} Hz",
     },
 
+    // ── Устройства вывода (под-экран, 2026-07-22) ─────────────────────
+    outputs: {
+      title: "Output devices",
+      intro: "Where the music plays. Nothing picked — it follows the system output, as usual. Pick devices and the music plays to all of them at once, each with its own volume, separate from the app volume slider. A virtual cable (like VB-Cable) shows up here too: route music into it and pick it as the microphone in a game or Discord.",
+      devicesGroup: "Devices",
+      loading: "Looking for devices…",
+      empty: "No devices found. Check they're connected and refresh the list.",
+      refresh: "Refresh",
+      device: {
+        linkedHint: "Follows the app volume slider.",
+        independentHint: "Own volume — the app slider doesn't affect it.",
+        link: "Follow the app volume",
+        unlink: "Make volume independent",
+        volumeAria: "{name} volume",
+        missingHint: "Device not found — plug it back in and the music returns to it on its own.",
+      },
+      profilesGroup: "Profiles",
+      profileSystem: "System output",
+      profileActive: "Active",
+      profileApply: "Apply",
+      profileDelete: "Delete profile",
+      profileSave: "Save current as profile",
+      profileDialog: { title: "Profile name", placeholder: "e.g. Game" },
+    },
+
     // ── Discord Rich Presence (под-экран) ─────────────────────────────
     integrations: {
       needsAccount: "Needs a Muza account (anonymous users don't sync)",
@@ -673,6 +698,12 @@ export const en = {
         rowTitle: "Equalizer",
         rowHint: "Ready-made profiles and your own bands. The sound changes right away, as it plays.",
         kiloSuffix: "k",
+      },
+      outputs: {
+        rowTitle: "Output devices",
+        rowHint: "Headphones, speakers or several devices at once — each with its own volume.",
+        system: "System",
+        count: "{n} devices",
       },
       normalize: { title: "Volume leveling", hint: "Quiet and loud tracks play at roughly the same volume." },
       speedSteps: { title: "Speed steps", hint: "The \"1×\" button in the player cycles through these values. List your own steps comma-separated, from 0.25 to 4." },
@@ -1207,6 +1238,13 @@ export const en = {
     unmute: "Unmute",
     mute: "Mute",
     volume: "Volume",
+    output: {
+      tooltip: "Output device",
+      header: "Play to",
+      system: "System output",
+      loading: "Looking for devices…",
+      configure: "Set up…",
+    },
     fullscreen: "Fullscreen",
     lyricsSearching: "Looking for lyrics…",
     lyricsNotFound: "Lyrics not found",

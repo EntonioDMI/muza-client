@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
-import { Cover, IconButton, Slider, Tooltip } from "@muza/ui";
+import { Cover, IconButton, Menu, Slider, Tooltip } from "@muza/ui";
 import type { PlayerTrack } from "../player/types";
-import type { BarButtonKey, RepeatMode } from "../types";
+import type { AudioOutputRoute, BarButtonKey, OutputProfile, RepeatMode } from "../types";
+import { listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
 import { normalizeBarButtons, type BarButtonPref } from "../lib/barButtons";
 import { isPluginKey } from "../lib/pluginSlots";
 import { fmtTime } from "../lib/format";
@@ -94,6 +95,13 @@ export function PlayerBar({
   pluginButtons = [],
   pluginKeys = [],
   onPluginButton,
+  outputRoutes = [],
+  outputProfiles = [],
+  activeOutputProfile,
+  onOutputSystem,
+  onOutputDevice,
+  onOutputProfile,
+  onOutputSettings,
 }: {
   /** null — ничего не играет: бар остаётся на месте, но с плейсхолдером
    *  вместо трека и выключенным транспортом. */
@@ -144,6 +152,16 @@ export function PlayerBar({
   pluginKeys?: readonly string[];
   /** T44: клик по плагинной кнопке — уведомить плагин. */
   onPluginButton?: (pluginId: string, slotId: string) => void;
+  /** Вывод на устройства (2026-07-22): быстрый переключатель у громкости.
+   *  Меню — эксклюзивный выбор (одно устройство/профиль/системное); тонкая
+   *  настройка (несколько устройств, их громкости) — в под-экране настроек. */
+  outputRoutes?: AudioOutputRoute[];
+  outputProfiles?: OutputProfile[];
+  activeOutputProfile?: string;
+  onOutputSystem?: () => void;
+  onOutputDevice?: (device: OutputDeviceInfo) => void;
+  onOutputProfile?: (id: string) => void;
+  onOutputSettings?: () => void;
 }) {
   const { t } = useT();
   const repeatLabel = repeat === "one" ? t("player.repeat.one") : repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
@@ -157,6 +175,48 @@ export function PlayerBar({
   // запускает нативный драг, клик без движения — обычный «Режим прослушивания»
   const dragRef = useRef<{ x: number; y: number; file: Promise<string | null>; started: boolean } | null>(null);
   const draggedRef = useRef(false);
+  // Быстрый переключатель вывода: меню открывается над кнопкой (Menu сам
+  // клампится к вьюпорту), устройства перечисляются на каждое открытие —
+  // список мог измениться (наушники воткнули только что).
+  const outputActive = outputRoutes.length > 0;
+  const [outMenu, setOutMenu] = useState<{ x: number; y: number } | null>(null);
+  const [outMenuDevices, setOutMenuDevices] = useState<OutputDeviceInfo[] | null>(null);
+  const outBtnRef = useRef<HTMLSpanElement | null>(null);
+  const openOutputMenu = () => {
+    const rect = outBtnRef.current?.getBoundingClientRect();
+    setOutMenu({ x: rect?.left ?? 0, y: rect?.top ?? 0 });
+    setOutMenuDevices(null);
+    void listOutputDevices().then(setOutMenuDevices);
+  };
+  const deviceRouted = (d: OutputDeviceInfo) =>
+    outputRoutes.some((r) => r.deviceId === d.deviceId || r.label === d.label);
+  const outMenuItems = [
+    { header: t("player.output.header") },
+    {
+      icon: outputActive ? "monitor-speaker" : "check",
+      label: t("player.output.system"),
+      onClick: () => onOutputSystem?.(),
+    },
+    ...(outMenuDevices === null
+      ? [{ label: t("player.output.loading"), disabled: true }]
+      : outMenuDevices.map((d) => ({
+          icon: deviceRouted(d) ? "check" : "speaker",
+          label: d.label,
+          onClick: () => onOutputDevice?.(d),
+        }))),
+    ...(outputProfiles.length > 0
+      ? [
+          "-" as const,
+          ...outputProfiles.map((p) => ({
+            icon: p.id === activeOutputProfile ? "check" : "bookmark",
+            label: p.name,
+            onClick: () => onOutputProfile?.(p.id),
+          })),
+        ]
+      : []),
+    "-" as const,
+    { icon: "settings-2", label: t("player.output.configure"), onClick: () => onOutputSettings?.() },
+  ];
   return (
     <div
       style={{
@@ -378,6 +438,17 @@ export function PlayerBar({
               // клик по иконке — mute (нативный жест), колесо на слайдере — ±громкость
               return (
                 <div key={key} style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                  {onOutputDevice ? (
+                    <span ref={outBtnRef} style={{ display: "inline-flex" }}>
+                      <IconButton
+                        icon="speaker"
+                        size="sm"
+                        active={outputActive}
+                        label={t("player.output.tooltip")}
+                        onClick={openOutputMenu}
+                      />
+                    </span>
+                  ) : null}
                   <IconButton
                     icon={vol === 0 ? "volume-x" : vol < 40 ? "volume-1" : "volume-2"}
                     size="sm"
@@ -421,6 +492,9 @@ export function PlayerBar({
           }
         })}
       </div>
+      {outMenu ? (
+        <Menu open x={outMenu.x} y={outMenu.y} items={outMenuItems} onClose={() => setOutMenu(null)} />
+      ) : null}
     </div>
   );
 }

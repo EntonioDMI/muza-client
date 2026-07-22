@@ -60,6 +60,28 @@ export type BarButtonKey = (typeof BAR_BUTTON_KEYS)[number];
 export const NAV_ITEM_KEYS = ["home", "search", "library", "stats"] as const;
 export type NavItemKey = (typeof NAV_ITEM_KEYS)[number];
 
+/** Маршрут аудио-вывода: одно устройство из настроек «Вывод звука».
+ *  label хранится как фолбэк сопоставления: deviceId в Chromium может смениться
+ *  при переподключении устройства — тогда ищем по имени (audioEngine.setOutputs
+ *  получает уже сопоставлённые id, сопоставление — в usePlayback). */
+export interface AudioOutputRoute {
+  deviceId: string;
+  /** Имя устройства на момент выбора (для фолбэка и подписи «недоступно»). */
+  label: string;
+  /** Громкость этого устройства 0–100, НЕЗАВИСИМА от слайдера приложения. */
+  volume: number;
+  /** true — устройство слушается за мастером (слайдер приложения его ведёт).
+   *  Основные наушники: followsMaster; микрофон/кабель для трансляции — нет. */
+  followsMaster?: boolean;
+}
+
+/** Именованный пресет маршрутизации («Игра», «Вечеринка» — один клик). */
+export interface OutputProfile {
+  id: string;
+  name: string;
+  outputs: AudioOutputRoute[];
+}
+
 export interface Prefs {
   /** Тема оформления: тёмная (дефолт ДС) / светлая (инверсия слоёв). */
   theme: "dark" | "light";
@@ -272,6 +294,14 @@ export interface Prefs {
   eqPreset: string;
   /** 10 полос, дБ −12..+12 (31 Гц … 16 кГц). */
   eqBands: number[];
+  /** Вывод звука на устройства (W6): активная маршрутизация. Пустой массив =
+   *  поведение по умолчанию (системное устройство, как раньше) — движок графа
+   *  не перестраивает. Несколько маршрутов = одновременный вывод на все. */
+  audioOutputs: AudioOutputRoute[];
+  /** Сохранённые профили маршрутизации. */
+  outputProfiles: OutputProfile[];
+  /** id активного профиля (подсветка в UI; сама маршрутизация — audioOutputs). */
+  activeOutputProfile?: string;
   /** Шаги кнопки скорости в баре — настраиваются целиком (правка владельца). */
   speedSteps: number[];
   /** Пресеты таймера сна в минутах (цикл луны: выкл → пресеты → конец трека). */
@@ -493,6 +523,8 @@ export const DEFAULT_PREFS: Prefs = {
   eqOn: false,
   eqPreset: "Ровный",
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  audioOutputs: [],
+  outputProfiles: [],
   speedSteps: [1, 1.25, 1.5, 2, 0.75],
   sleepPresets: [15, 30, 60],
   radioEndless: true,

@@ -18,7 +18,8 @@ import {
 import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
-import { AudioEngine } from "./audioEngine";
+import { AudioEngine, type OutputRoute } from "./audioEngine";
+import { deviceAccessUnlocked, listOutputDevices, resolveRoutes, type OutputDeviceInfo } from "./outputDevices";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
 import { getCachedSources, invalidateCachedSources, putCachedSources } from "./sourcesCache";
 import { shouldSilenceBeforeResolve } from "./startPlan";
@@ -249,6 +250,10 @@ export function usePlayback({
           if (stateRef.current.playing && !startPendingRef.current) void healCurrent();
         },
       }, t);
+      // Маршруты вывода задаются prefs-эффектом при монтировании — раньше,
+      // чем ленивая фабрика создаст движок. Догоняем при создании (сам граф
+      // подхватит их в ensureGraph).
+      if (resolvedRoutesRef.current.length > 0) engineRef.current.setOutputs(resolvedRoutesRef.current);
     }
     return engineRef.current;
   };
@@ -888,6 +893,57 @@ export function usePlayback({
     engineRef.current?.setEq(prefs.eqOn, prefs.eqBands);
   }, [prefs.eqOn, prefs.eqBands]);
 
+  // ── Вывод на устройства (2026-07-22): prefs.audioOutputs → движок ──
+  const [outputDevices, setOutputDevices] = useState<OutputDeviceInfo[]>([]);
+  /** Живые (сопоставленные) маршруты: фабрика engine() применяет их при
+   *  создании движка — он ленивый (первое воспроизведение), а prefs
+   *  применяются при монтировании, раньше него. */
+  const resolvedRoutesRef = useRef<OutputRoute[]>([]);
+
+  /** Обновить список устройств (разблокирует enumerateDevices при первом
+   *  вызове — тихо при флаге --use-fake-ui-for-media-stream, см.
+   *  outputDevices.ts). Пустой список = устройств нет ИЛИ разрешение не дали. */
+  const refreshOutputDevices = async (): Promise<OutputDeviceInfo[]> => {
+    const list = await listOutputDevices();
+    setOutputDevices(list);
+    return list;
+  };
+
+  /** Пересопоставить сохранённые маршруты с живыми устройствами и применить
+   *  на движок. Единая точка: и эффект по prefs, и devicechange. */
+  const applyOutputRoutes = async () => {
+    const stored = prefsRef.current.audioOutputs;
+    if (stored.length === 0) {
+      resolvedRoutesRef.current = [];
+      engineRef.current?.setOutputs([]);
+      return;
+    }
+    const devices = await refreshOutputDevices();
+    const routes = resolveRoutes(prefsRef.current.audioOutputs, devices);
+    resolvedRoutesRef.current = routes;
+    engineRef.current?.setOutputs(routes);
+  };
+
+  useEffect(() => {
+    void applyOutputRoutes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.audioOutputs]);
+
+  // Устройство воткнули/выдернули — пересопоставить маршруты на лету.
+  // Без разблокировки и без маршрутов не трогаем: enumeration дёрнула бы
+  // getUserMedia, а он тут не нужен (список обновит сам экран настроек).
+  useEffect(() => {
+    const md = navigator.mediaDevices;
+    if (!md?.addEventListener) return;
+    const onChange = () => {
+      if (prefsRef.current.audioOutputs.length === 0 && !deviceAccessUnlocked()) return;
+      void applyOutputRoutes();
+    };
+    md.addEventListener("devicechange", onChange);
+    return () => md.removeEventListener("devicechange", onChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Сторож замершего звука (аудит 2026-07-17): ловит класс отказов, у которых
   // нет НИ 'ended', НИ 'error' — элемент просто перестал двигаться (уснувший
   // и проснувшийся ноут, пропавшее аудио-устройство, задушенный тракт
@@ -968,8 +1024,11 @@ export function usePlayback({
       enqueue,
       reorderQueue,
       clearQueue,
+      // Вывод на устройства (2026-07-22)
+      outputDevices,
+      refreshOutputDevices,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [queue, track, index, playing, buffering, pos, vol, speed, repeat, shuffle],
+    [queue, track, index, playing, buffering, pos, vol, speed, repeat, shuffle, outputDevices],
   );
 }

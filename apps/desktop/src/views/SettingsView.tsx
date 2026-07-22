@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, SearchInput, Select, Slider, Switch, Tabs, Tooltip } from "@muza/ui";
 import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type ProvidersStatus, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
-import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
+import {
+  DEFAULT_PREFS,
+  RADIUS_OVERRIDE_OFF,
+  type AudioOutputRoute,
+  type BarButtonKey,
+  type NavItemKey,
+  type OutputProfile,
+  type Prefs,
+  type StatsBlockKey,
+} from "../types";
+import { listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
 import { useT, type TParams, type TranslationKey } from "../i18n";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
 import { barButtonLabel, normalizeBarButtons } from "../lib/barButtons";
@@ -977,6 +987,7 @@ function SettingsNav({ value, onChange }: { value: string; onChange: (key: Setti
 type Sub =
   | "customize"
   | "equalizer"
+  | "outputs"
   | "discord"
   | "market"
   | "data"
@@ -1034,6 +1045,7 @@ export interface SettingsIntent {
 const SUB_HOME_TAB: Record<Exclude<Sub, null>, string> = {
   customize: "appearance",
   equalizer: "playback",
+  outputs: "playback",
   discord: "integrations",
   market: "extensions",
   data: "account",
@@ -3002,6 +3014,191 @@ export function SettingsView({
     </div>
   );
 
+  // ── Вывод на устройства (2026-07-22) ─────────────────────────────
+  // Экран сам перечисляет устройства (player/outputDevices.ts) — прокидывать
+  // pb сюда не нужно: применением маршрутов на движок владеет usePlayback
+  // через эффект по prefs.audioOutputs. Здесь только редактирование prefs.
+  const [outDevices, setOutDevices] = useState<OutputDeviceInfo[] | null>(null);
+  const refreshOutDevices = () => {
+    void listOutputDevices().then(setOutDevices);
+  };
+  useEffect(() => {
+    if (sub !== "outputs") return;
+    refreshOutDevices();
+    const md = navigator.mediaDevices;
+    const onChange = () => refreshOutDevices();
+    md?.addEventListener?.("devicechange", onChange);
+    return () => md?.removeEventListener?.("devicechange", onChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub]);
+
+  const outRoutes = prefs.audioOutputs;
+  /** Маршрут устройства: по id, затем по имени (id мог смениться — см. types.ts). */
+  const routeForDevice = (dev: OutputDeviceInfo) =>
+    outRoutes.find((r) => r.deviceId === dev.deviceId) ?? outRoutes.find((r) => r.label === dev.label);
+  /** Ручная правка маршрутов уходит от применённого профиля — снимаем отметку. */
+  const setDeviceRoute = (dev: OutputDeviceInfo, on: boolean) => {
+    const rest = outRoutes.filter((r) => r.deviceId !== dev.deviceId && r.label !== dev.label);
+    set({
+      audioOutputs: on
+        ? [...rest, { deviceId: dev.deviceId, label: dev.label, volume: 100, followsMaster: true }]
+        : rest,
+      activeOutputProfile: undefined,
+    });
+  };
+  const patchRoute = (target: AudioOutputRoute, patch: Partial<AudioOutputRoute>) => {
+    set({
+      audioOutputs: outRoutes.map((r) => (r === target ? { ...r, ...patch } : r)),
+      activeOutputProfile: undefined,
+    });
+  };
+  /** Сохранённые маршруты устройств, которых сейчас нет в системе, — видимы
+   *  строками «недоступно»: и понятно, куда делся звук, и можно убрать. */
+  const orphanRoutes =
+    outDevices === null
+      ? []
+      : outRoutes.filter((r) => !outDevices.some((d) => d.deviceId === r.deviceId || d.label === r.label));
+  const [profileNameDraft, setProfileNameDraft] = useState<string | null>(null);
+  const saveOutputProfile = (name: string) => {
+    const id = `p${Date.now().toString(36)}`;
+    set({
+      outputProfiles: [...prefs.outputProfiles, { id, name, outputs: outRoutes.map((r) => ({ ...r })) }],
+      activeOutputProfile: id,
+    });
+  };
+  const applyOutputProfile = (p: OutputProfile) =>
+    set({ audioOutputs: p.outputs.map((r) => ({ ...r })), activeOutputProfile: p.id });
+  const deleteOutputProfile = (id: string) =>
+    set({
+      outputProfiles: prefs.outputProfiles.filter((p) => p.id !== id),
+      activeOutputProfile: prefs.activeOutputProfile === id ? undefined : prefs.activeOutputProfile,
+    });
+
+  const outDeviceRow = (dev: OutputDeviceInfo) => {
+    const r = routeForDevice(dev);
+    return (
+      <SettingRow
+        key={dev.deviceId}
+        title={dev.label}
+        hint={r ? (r.followsMaster ? t("settings.outputs.device.linkedHint") : t("settings.outputs.device.independentHint")) : undefined}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          {r ? (
+            <>
+              <IconButton
+                icon={r.followsMaster ? "link" : "unlink"}
+                size="sm"
+                active={!!r.followsMaster}
+                label={r.followsMaster ? t("settings.outputs.device.unlink") : t("settings.outputs.device.link")}
+                onClick={() => patchRoute(r, { followsMaster: !r.followsMaster })}
+              />
+              <Slider
+                value={r.volume}
+                onChange={(v: number) => patchRoute(r, { volume: Math.round(v) })}
+                ariaLabel={t("settings.outputs.device.volumeAria", { name: dev.label })}
+                valueText={`${r.volume} %`}
+                style={{ width: 110 }}
+              />
+            </>
+          ) : null}
+          <Switch checked={!!r} onChange={(on: boolean) => setDeviceRoute(dev, on)} label={dev.label} />
+        </div>
+      </SettingRow>
+    );
+  };
+
+  const outputsPane = (
+    <div key="outputs" className={paneClass} style={paneStyle}>
+      <SubHeader title={t("settings.outputs.title")} onBack={() => setSub(null)} />
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+        {t("settings.outputs.intro")}
+      </div>
+
+      <GroupTitle>{t("settings.outputs.devicesGroup")}</GroupTitle>
+      {outDevices === null ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.outputs.loading")}</div>
+      ) : outDevices.length === 0 ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.outputs.empty")}</div>
+      ) : (
+        outDevices.map(outDeviceRow)
+      )}
+      {orphanRoutes.map((r) => (
+        <SettingRow key={`orphan-${r.deviceId}`} title={r.label} hint={t("settings.outputs.device.missingHint")}>
+          <Switch
+            checked
+            onChange={() => set({ audioOutputs: outRoutes.filter((x) => x !== r), activeOutputProfile: undefined })}
+            label={r.label}
+          />
+        </SettingRow>
+      ))}
+      <div>
+        <Button variant="ghost" icon="refresh-cw" onClick={refreshOutDevices}>
+          {t("settings.outputs.refresh")}
+        </Button>
+      </div>
+
+      <GroupTitle>{t("settings.outputs.profilesGroup")}</GroupTitle>
+      {prefs.outputProfiles.map((p) => (
+        <SettingRow
+          key={p.id}
+          title={p.name}
+          hint={p.outputs.map((o) => o.label).join(" · ") || t("settings.outputs.profileSystem")}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+            {prefs.activeOutputProfile === p.id ? (
+              <span style={{ fontSize: "var(--fs-caption)", color: "var(--accent-text, var(--accent))" }}>
+                {t("settings.outputs.profileActive")}
+              </span>
+            ) : (
+              <Button variant="ghost" onClick={() => applyOutputProfile(p)}>
+                {t("settings.outputs.profileApply")}
+              </Button>
+            )}
+            <IconButton
+              icon="trash-2"
+              size="sm"
+              label={t("settings.outputs.profileDelete")}
+              onClick={() => deleteOutputProfile(p.id)}
+            />
+          </div>
+        </SettingRow>
+      ))}
+      <div>
+        <Button icon="plus" disabled={outRoutes.length === 0} onClick={() => setProfileNameDraft("")}>
+          {t("settings.outputs.profileSave")}
+        </Button>
+      </div>
+
+      <Dialog
+        open={profileNameDraft !== null}
+        title={t("settings.outputs.profileDialog.title")}
+        onClose={() => setProfileNameDraft(null)}
+        actions={
+          <>
+            <Button onClick={() => setProfileNameDraft(null)}>{t("common.cancel")}</Button>
+            <Button
+              variant="primary"
+              disabled={!profileNameDraft?.trim()}
+              onClick={() => {
+                if (profileNameDraft?.trim()) saveOutputProfile(profileNameDraft.trim());
+                setProfileNameDraft(null);
+              }}
+            >
+              {t("common.save")}
+            </Button>
+          </>
+        }
+      >
+        <SettingInput
+          value={profileNameDraft ?? ""}
+          onChange={(v) => setProfileNameDraft(v)}
+          placeholder={t("settings.outputs.profileDialog.placeholder")}
+          width={300}
+        />
+      </Dialog>
+    </div>
+  );
+
   const equalizerPane = (
     <div key="equalizer" className={paneClass} style={paneStyle}>
       <SubHeader title={t("settings.equalizer.title")} onBack={() => setSub(null)} />
@@ -3615,6 +3812,8 @@ export function SettingsView({
       statsPane
     ) : sub === "equalizer" ? (
       equalizerPane
+    ) : sub === "outputs" ? (
+      outputsPane
     ) : sub === "discord" ? (
       discordPane
     ) : sub === "market" ? (
@@ -3801,6 +4000,15 @@ export function SettingsView({
         <GroupTitle>{t("settings.playback.soundGroup")}</GroupTitle>
         <SettingRow title={t("settings.playback.equalizer.rowTitle")} hint={t("settings.playback.equalizer.rowHint")} onClick={() => setSub("equalizer")} chevron>
           <RowValue>{eqOn ? eqPreset : t("common.off")}</RowValue>
+        </SettingRow>
+        <SettingRow title={t("settings.playback.outputs.rowTitle")} hint={t("settings.playback.outputs.rowHint")} onClick={() => setSub("outputs")} chevron>
+          <RowValue>
+            {prefs.audioOutputs.length === 0
+              ? t("settings.playback.outputs.system")
+              : prefs.audioOutputs.length === 1
+                ? prefs.audioOutputs[0].label
+                : t("settings.playback.outputs.count", { n: prefs.audioOutputs.length })}
+          </RowValue>
         </SettingRow>
         <SettingRow title={t("settings.playback.normalize.title")} hint={t("settings.playback.normalize.hint")}>
           <Switch checked={prefs.normalize} onChange={(v: boolean) => set({ normalize: v })} label={t("settings.playback.normalize.title")} />

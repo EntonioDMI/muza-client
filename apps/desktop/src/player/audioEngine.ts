@@ -2,6 +2,12 @@
  *  следующего трека) → Web Audio-граф (пер-слотовый гейн = фейд × нормализация
  *  лаудности → преамп → общий 10-полосный EQ → мастер-громкость → лимитер).
  *
+ *  Вывод на устройства (2026-07-22): после analyser сигнал может ветвиться на
+ *  «тапы» — по одному на выбранное устройство (gain → MediaStreamDestination →
+ *  скрытый <audio> c setSinkId). Пустые маршруты = граф как раньше. Отдельный
+ *  <audio> Muza Wrapped (wrappedAmbient.ts) вне графа — маршрутизация его
+ *  сознательно не трогает. Спайк/гочи WebView2 — docs/notes/2026-07-22.
+ *
  *  Gain staging (ресёрч 2026-07-12, отчёт #9): преамп ПЕРЕД EQ даёт хедрум под
  *  буст полос (авто = −макс.положительный гейн, приём Wavelet), лимитер ПОСЛЕ
  *  мастера — страховка от клиппинга (буст EQ + буст нормализации лаудности
@@ -52,6 +58,29 @@ interface Slot {
   url: string | null;
 }
 
+/** Маршрут вывода на конкретное устройство (фича «вывод на устройства»).
+ *  volume 0–100 — громкость устройства, НЕЗАВИСИМАЯ от слайдера приложения;
+ *  followsMaster — устройство дополнительно ведётся слайдером приложения
+ *  (основные наушники), без него — нет (виртуальный кабель «в микрофон»). */
+export interface OutputRoute {
+  deviceId: string;
+  volume: number;
+  followsMaster?: boolean;
+}
+
+/** Тап фан-аута: ответвление финального сигнала на одно устройство.
+ *  analyser → gain (громкость устройства) → MediaStreamAudioDestinationNode →
+ *  скрытый <audio> с setSinkId(deviceId). Все тапы кормятся ОДНИМ analyser —
+ *  выходы взаимно синхронны (нет эха между наушниками и кабелем). */
+interface OutputTap {
+  deviceId: string;
+  gain: GainNode;
+  dest: MediaStreamAudioDestinationNode;
+  el: HTMLAudioElement;
+  /** setSinkId+play прошли — тап реально звучит (до того gain держится в 0). */
+  ok: boolean;
+}
+
 export interface EngineCallbacks {
   onTime: (sec: number) => void;
   onEnded: () => void;
@@ -68,6 +97,18 @@ export class AudioEngine {
   private limiter: DynamicsCompressorNode | null = null;
   private analyserNode: AnalyserNode | null = null;
   private mode: "unknown" | "webaudio" | "plain" = "unknown";
+
+  // ── Вывод на устройства (2026-07-22) ─────────────────────────────
+  /** Желаемые маршруты (уже сопоставленные с живыми устройствами —
+   *  outputDevices.resolveRoutes). Пусто = системный выход, граф как раньше. */
+  private routes: OutputRoute[] = [];
+  private taps: OutputTap[] = [];
+  /** analyser → ctx.destination подключён (истинно, пока нет живых тапов). */
+  private defaultOut = true;
+  /** Серийная очередь реконсиляций тапов: setSinkId/play асинхронны, а
+   *  setOutputs может прилетать чаще (слайдеры) — без очереди интерливинг
+   *  двух реконсиляций плодил бы тапы-сироты. */
+  private tapWork: Promise<void> = Promise.resolve();
 
   private volume = 64;
   private speed = 1;
@@ -171,6 +212,105 @@ export class AudioEngine {
       slot.gain.connect(this.preamp);
     }
     this.applyEq();
+    // Маршруты вывода могли быть заданы ДО постройки графа (prefs применяются
+    // при монтировании, граф строится при первом воспроизведении) — догоняем.
+    if (this.routes.length > 0) this.queueTapReconcile();
+  }
+
+  // ── Вывод на устройства: фан-аут финального сигнала ──────────────
+
+  /** Задать маршруты вывода. Пустой массив — вернуться к системному выходу.
+   *  Безопасно звать до постройки графа (запомним и применим в ensureGraph)
+   *  и сколь угодно часто (реконсиляции сериализованы). В plain-режиме
+   *  маршрутизация недоступна — молча остаёмся на системном выходе. */
+  setOutputs(routes: OutputRoute[]): void {
+    this.routes = routes;
+    if (!this.ctx || !this.analyserNode) return;
+    this.queueTapReconcile();
+  }
+
+  private queueTapReconcile(): void {
+    this.tapWork = this.tapWork.then(() => this.reconcileTaps()).catch(() => {});
+  }
+
+  private async reconcileTaps(): Promise<void> {
+    const ctx = this.ctx;
+    const analyser = this.analyserNode;
+    if (!ctx || !analyser) return;
+    // 1) убрать тапы устройств, которых больше нет в маршрутах
+    for (const tap of [...this.taps]) {
+      if (!this.routes.some((r) => r.deviceId === tap.deviceId)) this.destroyTap(tap);
+    }
+    // 2) создать недостающие
+    for (const route of this.routes) {
+      if (this.taps.some((t) => t.deviceId === route.deviceId)) continue;
+      const gain = ctx.createGain();
+      gain.gain.value = 0; // до успешного setSinkId — тишина (не дублить в дефолт)
+      const dest = ctx.createMediaStreamDestination();
+      analyser.connect(gain);
+      gain.connect(dest);
+      const el = new Audio();
+      el.dataset.muzaTap = route.deviceId.slice(0, 10); // видно в инспекторе
+      el.style.display = "none";
+      document.body.appendChild(el);
+      el.srcObject = dest.stream;
+      const tap: OutputTap = { deviceId: route.deviceId, gain, dest, el, ok: false };
+      this.taps.push(tap);
+      try {
+        await el.setSinkId(route.deviceId);
+        await el.play();
+        tap.ok = true;
+      } catch {
+        // устройство пропало/отказало — тап выпадает; маршрут остаётся в
+        // prefs, вернётся вместе с устройством (resolveRoutes + devicechange)
+        this.destroyTap(tap);
+      }
+    }
+    // 3) системный выход: подключён ⇔ нет ни одного живого тапа. Все тапы
+    // отказали при непустых маршрутах → остаёмся на дефолте (страховка от
+    // полной тишины), а не глушим юзера.
+    const live = this.taps.filter((t) => t.ok);
+    const wantDefault = live.length === 0;
+    if (wantDefault !== this.defaultOut) {
+      if (wantDefault) analyser.connect(ctx.destination);
+      else analyser.disconnect(ctx.destination);
+      this.defaultOut = wantDefault;
+    }
+    this.applyOutputLevels();
+  }
+
+  private destroyTap(tap: OutputTap): void {
+    const i = this.taps.indexOf(tap);
+    if (i >= 0) this.taps.splice(i, 1);
+    try {
+      this.analyserNode?.disconnect(tap.gain);
+    } catch {
+      /* уже отключён */
+    }
+    try {
+      tap.gain.disconnect();
+    } catch {
+      /* уже отключён */
+    }
+    tap.el.pause();
+    tap.el.srcObject = null;
+    tap.el.remove();
+  }
+
+  /** Громкости фан-аута. Мастер при живых тапах нейтрален (1): громкость
+   *  приложения применяется ПЕР-ТАПОВО и только к followsMaster-маршрутам —
+   *  так слайдер приложения ведёт наушники, не трогая уровень «в микрофон»
+   *  (независимость громкостей — суть фичи). Без тапов мастер = слайдер,
+   *  ровно как до фичи. */
+  private applyOutputLevels(): void {
+    if (!this.master) return;
+    const live = this.taps.filter((t) => t.ok);
+    this.master.gain.value = live.length > 0 ? 1 : volCurve(this.volume);
+    for (const tap of live) {
+      const route = this.routes.find((r) => r.deviceId === tap.deviceId);
+      if (!route) continue;
+      tap.gain.gain.value = volCurve(route.volume) * (route.followsMaster ? volCurve(this.volume) : 1);
+    }
   }
 
   private applyEq(): void {
@@ -313,7 +453,9 @@ export class AudioEngine {
   setVolume(vol: number): void {
     this.volume = vol;
     if (this.master) {
-      this.master.gain.value = volCurve(vol);
+      // applyOutputLevels сам решает, куда идёт слайдер: без тапов — в мастер
+      // (как всегда было), с тапами — пер-тапово в followsMaster-маршруты.
+      this.applyOutputLevels();
     } else {
       const slot = this.slots[this.active];
       if (slot) this.applySlotLevel(slot, 1);
