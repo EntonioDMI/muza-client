@@ -106,7 +106,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.layout.navTabs", ["навигация", "меню", "разделы"]),
   e("appearance", "customize", "settings.customize.layout.rowCover", ["обложка", "строка трека"]),
   e("appearance", "customize", "settings.customize.layout.rowDuration", ["длительность", "строка трека"]),
-  e("appearance", "customize", "settings.customize.layout.rowAlbum", ["альбом", "строка трека", "album"]),
+  // «Альбом» скрыт вместе с рядом (аудит 22.07) — вернуть с серверными данными.
   e("appearance", "customize", "settings.customize.layout.rowSource", ["источник", "строка трека", "source", "soundcloud", "youtube"]),
   e("appearance", "customize", "settings.customize.layout.playerHeight", ["высота плеера", "полоса плеера", "player height"]),
   e("appearance", "customize", "settings.customize.layout.playerCover", ["обложка в плеере", "размер обложки", "cover"]),
@@ -172,7 +172,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("lyrics", null, "settings.lyrics.endNote", ["нотка", "конец текста"]),
   e("lyrics", null, "settings.lyrics.videoNowPlaying", ["видео", "клип", "обложка", "video"]),
   e("lyrics", null, "settings.lyrics.karaokeSize", ["караоке", "размер строки"]),
-  e("lyrics", null, "settings.lyrics.translation", ["перевод", "translation"]),
+  // «Перевод» из индекса убран (аудит 22.07): фича ещё не существует —
+  // поиск не должен приводить к ряду-заглушке. Вернуть вместе с фичей.
   e("lyrics", null, "settings.lyrics.meaningMode", ["смысл", "значение", "meaning"]),
   // ── Медиатека ─────────────────────────────────────────────────────────
   e("library", null, "settings.library.localFiles", ["локальные файлы", "папки", "folders"]),

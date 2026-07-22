@@ -743,7 +743,7 @@ export const en = {
       },
       karaokeSize: { title: "Karaoke text size", hint: "Size of the lyrics line in listening mode." },
       understandingGroup: "Understanding",
-      translation: { title: "Translation", hint: "Translates lines into a chosen language. Coming later." },
+      translation: { title: "Translation", hint: "Translates lines into a chosen language. Coming later.", soon: "Coming soon" },
       meaningMode: { title: "Meaning mode", hint: "Lines with explanations get a dotted underline — a click opens the meaning card." },
     },
 

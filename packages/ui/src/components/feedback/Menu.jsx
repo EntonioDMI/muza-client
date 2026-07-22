@@ -142,6 +142,12 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           left: pos.left,
           top: pos.top,
           minWidth: 220,
+          /* max-content: у края экрана shrink-to-fit сжимал панель до щели и
+             метки переносились в фикс-высоте рядов, наезжая друг на друга
+             (аудит 22.07: длинные имена аудио-устройств в «Куда играть»).
+             Потолок держит меню читаемым, перенос ловит min-height ряда. */
+          width: "max-content",
+          maxWidth: "min(92vw, 360px)",
           padding: "var(--sp-2)",
           borderRadius: "var(--r-md)",
           /* зональная прозрачность: своё стекло меню, фолбэк — общее */
@@ -191,8 +197,11 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
                 display: "flex",
                 alignItems: "center",
                 gap: "var(--sp-3)",
-                height: 42,
-                padding: "0 var(--sp-3)",
+                /* min-height, не height: многострочная метка растит ряд, а не
+                   вылезает на соседей (аудит 22.07) */
+                minHeight: 42,
+                lineHeight: 1.3,
+                padding: "var(--sp-2) var(--sp-3)",
                 border: "none",
                 borderRadius: "var(--r-xs)",
                 background: hoverIdx === i && !it.disabled ? "var(--surface-3)" : "transparent",

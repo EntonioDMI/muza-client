@@ -2447,16 +2447,12 @@ export function SettingsView({
           label={t("settings.customize.layout.rowDuration.title")}
         />
       </SettingRow>
-      {/* Зона 4 спеки 19.07: состав строки трека расширен. Оба — дефолт выкл:
-          у существующих пользователей строка не меняется. Альбом появится,
-          когда его начнёт отдавать сервер (поле в контракте уже готово). */}
-      <SettingRow title={t("settings.customize.layout.rowAlbum.title")} hint={t("settings.customize.layout.rowAlbum.hint")}>
-        <Switch
-          checked={prefs.rowShow.album}
-          onChange={(on: boolean) => set({ rowShow: { ...prefs.rowShow, album: on } })}
-          label={t("settings.customize.layout.rowAlbum.title")}
-        />
-      </SettingRow>
+      {/* Зона 4 спеки 19.07: состав строки трека расширен, дефолт выкл.
+          Тумблер «Альбом» СКРЫТ до серверных данных (аудит 22.07): сервер поле
+          album пока не отдаёт, включённый тумблер ничего не менял — тумблер
+          без эффекта хуже отсутствующего. Форвард-путь готов (prefs.rowShow.
+          album + чтение tr.album во вьюхах) — вернуть ряд, когда каталог
+          начнёт отдавать альбом. */}
       <SettingRow title={t("settings.customize.layout.rowSource.title")} hint={t("settings.customize.layout.rowSource.hint")}>
         <Switch
           checked={prefs.rowShow.source}
@@ -4189,8 +4185,10 @@ export function SettingsView({
           />
         </SettingRow>
         <GroupTitle>{t("settings.lyrics.understandingGroup")}</GroupTitle>
+        {/* «Скоро», а не «Выкл»: рядом с невключаемой функцией «Выкл»
+            подразумевал несуществующий переключатель (аудит 22.07) */}
         <SettingRow title={t("settings.lyrics.translation.title")} hint={t("settings.lyrics.translation.hint")}>
-          <RowValue>{t("common.off")}</RowValue>
+          <RowValue>{t("settings.lyrics.translation.soon")}</RowValue>
         </SettingRow>
         <SettingRow title={t("settings.lyrics.meaningMode.title")} hint={t("settings.lyrics.meaningMode.hint")}>
           <Switch checked={prefs.meaningMode} onChange={(meaningMode: boolean) => set({ meaningMode })} label={t("settings.lyrics.meaningMode.title")} />
