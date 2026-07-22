@@ -396,13 +396,17 @@ export const viewsEn = {
       versionCol: "Version",
     },
     users: {
-      piiNote:
-        "Total {count}. PII minimum: email isn't shown — only whether one exists. Admin rights are granted manually on the server.",
+      piiNote: "Total {count}. PII minimum: email isn't shown — only whether one exists.",
       userCol: "User",
       createdCol: "Created",
       plays30dCol: "Plays (30d)",
       lastCol: "Last seen",
       adminSuffix: " · admin",
+      // Granting rights from the panel (2026-07-21, reversal of the 11.07 decision)
+      adminCol: "Rights",
+      grantAdmin: "Make admin",
+      revokeAdmin: "Revoke admin",
+      adminToggleFailed: "Couldn't change rights",
     },
     growth: {
       d7: "7 days",

@@ -33,7 +33,8 @@ export function IconButton({
         : hover ? "var(--surface-2)" : "transparent";
   const fg =
     variant === "accent"
-      ? "var(--text-on-accent)"
+      /* пара к ролевому фону: иконка от яркости цвета play-роли, фолбэк — общий on-accent */
+      ? "var(--text-on-accent-play, var(--text-on-accent))"
       : active
         ? "var(--accent-text)"
         : hover ? "var(--text-1)" : "var(--text-2)";

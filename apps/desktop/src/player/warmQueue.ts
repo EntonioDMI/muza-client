@@ -40,10 +40,6 @@ export const WARM_FAIL_COOLDOWN_MS = 60_000;
 export const WARM_DONE_TTL_MS = 30 * 60_000;
 
 const PRIORITY: Record<WarmSignal, number> = { hover: 0, visible: 1, queue: 2 };
-/** Обратное соответствие приоритет → сигнал: run получает сигнал ПОБЕДИВШЕЙ
- *  заявки (Rust в кулдауне breaker'а глушит yt-dlp-фолбэк только для visible —
- *  массового сигнала; hover/queue — единичные намерения). */
-const SIGNAL_BY_PRIORITY: WarmSignal[] = ["hover", "visible", "queue"];
 
 export class WarmQueue {
   private run: (id: string, signal: WarmSignal) => Promise<WarmOutcome>;
@@ -52,8 +48,10 @@ export class WarmQueue {
   private ratePerHour: number;
   /** Ждущие заявки в порядке поступления; выбор — по приоритету, внутри
    *  приоритета FIFO (для видимых это и есть «сверху вниз» — useWarmer подаёт
-   *  их в порядке строк). */
-  private pending: { id: string; priority: number }[] = [];
+   *  их в порядке строк). Сигнал хранится НА заявке: run получает сигнал
+   *  победившей заявки (Rust в кулдауне breaker'а глушит yt-dlp-фолбэк только
+   *  для visible — массового сигнала; hover/queue — единичные намерения). */
+  private pending: { id: string; priority: number; signal: WarmSignal }[] = [];
   private inflight = new Set<string>();
   /** id → момент, до которого трек не трогаем (успех/кэш/ошибка). */
   private coolUntil = new Map<string, number>();
@@ -76,18 +74,25 @@ export class WarmQueue {
     this.ratePerHour = opts?.ratePerHour ?? WARM_RATE_PER_HOUR;
   }
 
-  request(id: string, signal: WarmSignal): void {
+  /** urgent — «предсказанный следующий» (Фаза 2, отчёт пре-резолва: index+1
+   *  почти наверняка сыграет): заявка идёт с наивысшим приоритетом, обгоняя
+   *  visible-шум скролла, но сигнал остаётся честным (queue). */
+  request(id: string, signal: WarmSignal, urgent = false): void {
     if (this.disposed || this.inflight.has(id)) return;
     const until = this.coolUntil.get(id);
     if (until !== undefined) {
       if (Date.now() < until) return;
       this.coolUntil.delete(id);
     }
-    const priority = PRIORITY[signal];
+    const priority = urgent ? PRIORITY.hover : PRIORITY[signal];
     const existing = this.pending.find((p) => p.id === id);
     if (existing) {
-      // повторный сигнал важнее — поднимаем заявку (hover по ждущему в очереди)
-      if (priority < existing.priority) existing.priority = priority;
+      // повторный сигнал важнее — поднимаем заявку (hover по ждущему в очереди);
+      // сигнал берётся у победившей заявки
+      if (priority < existing.priority) {
+        existing.priority = priority;
+        existing.signal = signal;
+      }
       this.clearDwell(id);
       this.pump();
       return;
@@ -100,7 +105,7 @@ export class WarmQueue {
           id,
           setTimeout(() => {
             this.dwell.delete(id);
-            this.enqueue(id, PRIORITY.visible);
+            this.enqueue(id, PRIORITY.visible, "visible");
           }, WARM_VISIBLE_DWELL_MS),
         );
       }
@@ -108,7 +113,7 @@ export class WarmQueue {
     }
     // hover/queue — прямое намерение: ждущий dwell (если был) поглощается
     this.clearDwell(id);
-    this.enqueue(id, priority);
+    this.enqueue(id, priority, signal);
   }
 
   /** Строка ушла с экрана — ждущая заявка (и dwell-выдержка) снимается
@@ -141,11 +146,11 @@ export class WarmQueue {
 
   /** Заявка становится реальной. Проверки повторяются: пока dwell тикал,
    *  трек мог прогреться сигналом queue (coolUntil) или уйти в полёт. */
-  private enqueue(id: string, priority: number): void {
+  private enqueue(id: string, priority: number, signal: WarmSignal): void {
     if (this.disposed || this.inflight.has(id)) return;
     const until = this.coolUntil.get(id);
     if (until !== undefined && Date.now() < until) return;
-    if (!this.pending.some((p) => p.id === id)) this.pending.push({ id, priority });
+    if (!this.pending.some((p) => p.id === id)) this.pending.push({ id, priority, signal });
     this.pump();
   }
 
@@ -169,13 +174,13 @@ export class WarmQueue {
       this.starts.push(now);
       this.hourStarts.push(now);
       this.inflight.add(next.id);
-      this.run(next.id, SIGNAL_BY_PRIORITY[next.priority])
+      this.run(next.id, next.signal)
         .then((outcome) => this.settle(next.id, outcome))
         .catch(() => this.settle(next.id, "failed"));
     }
   }
 
-  private takeNext(): { id: string; priority: number } | null {
+  private takeNext(): { id: string; priority: number; signal: WarmSignal } | null {
     if (this.pending.length === 0) return null;
     let best = 0;
     for (let i = 1; i < this.pending.length; i++) {

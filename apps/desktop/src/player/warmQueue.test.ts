@@ -77,6 +77,26 @@ describe("WarmQueue: приоритет", () => {
     q.dispose();
   });
 
+  /** Фаза 2 «мгновенность» (21.07): предсказанный следующий трек (index+1)
+   *  сыграет почти наверняка — его заявка обгоняет visible-шум скролла, но
+   *  сигнал остаётся честным queue (Rust различает только visible в кулдауне
+   *  breaker'а). */
+  it("срочная queue-заявка (предсказанный следующий) обгоняет видимое, сигнал — queue", async () => {
+    const t = testRuns();
+    const q = new WarmQueue(t.run, { parallelism: 1 });
+    q.request("block", "queue");
+    await vi.advanceTimersByTimeAsync(0);
+    q.request("видимый", "visible");
+    await vi.advanceTimersByTimeAsync(WARM_VISIBLE_DWELL_MS);
+    q.request("следующий", "queue", true); // urgent: предсказание index+1
+    await t.finish("block");
+    await t.finish("следующий");
+    await t.finish("видимый");
+    expect(t.started).toEqual(["block", "следующий", "видимый"]);
+    expect(t.run).toHaveBeenCalledWith("следующий", "queue");
+    q.dispose();
+  });
+
   it("hover по уже ждущему треку поднимает его в голову", async () => {
     const t = testRuns();
     const q = new WarmQueue(t.run, { parallelism: 1 });

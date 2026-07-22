@@ -58,6 +58,8 @@ function makeCtx(over: Partial<MenuContext> = {}): MenuContext {
     savePlaylistOffline: vi.fn(),
     renamePlaylist: vi.fn(),
     changePlaylistIcon: vi.fn(),
+    playlistPinned: () => false,
+    togglePlaylistPinned: vi.fn(),
     deletePlaylist: vi.fn(),
     unfollowPlaylist: vi.fn(),
     openCreatePlaylist: vi.fn(),
@@ -69,6 +71,7 @@ function makeCtx(over: Partial<MenuContext> = {}): MenuContext {
     addManyToPlaylist: vi.fn(),
     likeMany: vi.fn(),
     pinMany: vi.fn(),
+    copyText: vi.fn(),
     pluginMenuItems: () => [],
     notifyPlugin: vi.fn(),
     ...over,
@@ -241,12 +244,20 @@ describe("buildMenuItems: плейлист", () => {
       "-",
       "menu.catalog.share",
       "menu.catalog.saveOffline",
+      "menu.playlist.pin",
       "menu.playlist.rename",
       "menu.playlist.changeIcon",
       "-",
       "menu.playlist.delete",
     ]);
     expect(item(items, "menu.playlist.delete").danger).toBe(true);
+  });
+
+  it("владелец: закреплённый плейлист — пункт «Открепить» вместо «Закрепить»", () => {
+    const items = buildMenuItems({ kind: "playlist", ...pl }, makeCtx({ playlistPinned: () => true }), t);
+    const ls = labels(items);
+    expect(ls).toContain("menu.playlist.unpin");
+    expect(ls).not.toContain("menu.playlist.pin");
   });
 
   it("подписка (follower): игровые действия есть, правок нет, «Убрать из библиотеки» в хвосте", () => {
@@ -344,6 +355,41 @@ describe("buildMenuItems: пустое место плейлиста", () => {
     expect(labels(items)).toEqual(["menu.selection.enter", "menu.selection.all"]);
     item(items, "menu.selection.enter").onClick?.();
     expect(enterSelect).toHaveBeenCalled();
+  });
+});
+
+describe("buildMenuItems: текст песни (ПКМ, 2026-07-21)", () => {
+  const base = { kind: "lyrics" as const, allText: "line1\nline2", ctl: { explain: vi.fn() } };
+
+  it("ПКМ по строке с note: все три пункта — весь текст, строка, смысл", () => {
+    const target: ContextTarget = { ...base, lineText: "line2", lineIndex: 1, hasNote: true };
+    expect(labels(buildMenuItems(target, makeCtx(), t))).toEqual([
+      "menu.lyrics.copyAll",
+      "menu.lyrics.copyLine",
+      "menu.lyrics.meaning",
+    ]);
+  });
+
+  it("ПКМ мимо строк (lineText=null): только «весь текст»", () => {
+    const target: ContextTarget = { ...base, lineText: null, lineIndex: null, hasNote: false };
+    expect(labels(buildMenuItems(target, makeCtx(), t))).toEqual(["menu.lyrics.copyAll"]);
+  });
+
+  it("строка без note: без пункта «Смысл»", () => {
+    const target: ContextTarget = { ...base, lineText: "line1", lineIndex: 0, hasNote: false };
+    expect(labels(buildMenuItems(target, makeCtx(), t))).toEqual(["menu.lyrics.copyAll", "menu.lyrics.copyLine"]);
+  });
+
+  it("копирование идёт через ctx.copyText с текстом и ключом тоста", () => {
+    const ctx = makeCtx();
+    const target: ContextTarget = { ...base, lineText: "line2", lineIndex: 1, hasNote: true };
+    const items = buildMenuItems(target, ctx, t);
+    item(items, "menu.lyrics.copyAll").onClick?.();
+    expect(ctx.copyText).toHaveBeenCalledWith("line1\nline2", "toast.lyrics.copiedAll");
+    item(items, "menu.lyrics.copyLine").onClick?.();
+    expect(ctx.copyText).toHaveBeenCalledWith("line2", "toast.lyrics.copiedLine");
+    item(items, "menu.lyrics.meaning").onClick?.();
+    expect(target.ctl.explain).toHaveBeenCalledWith(1);
   });
 });
 

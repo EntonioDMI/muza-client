@@ -279,7 +279,9 @@ export function LibraryView({
   // gridInsertionIndex). «Любимое» закреплено первым и в ids не входит;
   // подписки (role follower, 2026-07-17) — тоже: их позиции сервер не хранит.
   const reorder = useLocalReorder({
-    ids: srvPlaylists.filter((p) => p.role !== "follower").map((p) => p.id),
+    // закреплённые (2026-07-20) тоже вне реордера: смысл закрепа —
+    // «случайно не сдвинуть»; серверная сортировка держит их сверху
+    ids: srvPlaylists.filter((p) => p.role !== "follower" && !p.pinned).map((p) => p.id),
     resolveTo: (rects, _from, x, y) => gridInsertionIndex(rects, x, y),
     onCommit: (id, to) => onReorderPlaylists?.(id, to),
   });
@@ -552,6 +554,9 @@ export function LibraryView({
             // владельцем — гаснет; открыть нельзя, только убрать через меню.
             const followed = p.role === "follower";
             const hidden = followed && p.available === false;
+            // закреплён (2026-07-20): не тащится и не принимает случайный дроп,
+            // как follower; намеренные действия (меню, выделение) — работают
+            const locked = followed || p.pinned;
             return (
               <PlaylistDropTile
                 key={p.id}
@@ -583,11 +588,11 @@ export function LibraryView({
                         }
                       }
                 }
-                onDropTrack={followed ? undefined : onDropTrack}
-                grip={onReorderPlaylists && !followed ? reorder.grip(p.id) : undefined}
-                tileRef={followed ? undefined : reorder.itemRef(p.id)}
-                shift={followed ? null : reorder.shiftFor(p.id)}
-                dragged={!followed && reorder.draggingId === p.id}
+                onDropTrack={locked ? undefined : onDropTrack}
+                grip={onReorderPlaylists && !locked ? reorder.grip(p.id) : undefined}
+                tileRef={locked ? undefined : reorder.itemRef(p.id)}
+                shift={locked ? null : reorder.shiftFor(p.id)}
+                dragged={!locked && reorder.draggingId === p.id}
                 settling={reorder.settling}
               />
             );

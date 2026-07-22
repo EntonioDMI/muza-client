@@ -1,12 +1,36 @@
 "use client";
 
 import { LanguageProvider } from "@muza/app";
+import { ThemeRoot } from "@muza/app/theme/ThemeRoot";
 import { LikesProvider } from "./likes";
 import { PlayerProvider } from "./player";
 import { PlaylistsProvider } from "./playlists";
-import { PrefsProvider } from "./prefs";
+import { PrefsProvider, usePrefs } from "./prefs";
 import { SessionProvider } from "./session";
 import { ToastProvider } from "./toast";
+
+/** Э1 веб-паритета: тема из prefs применяется общим ThemeRoot (@muza/app) —
+ *  та же механика data-атрибутов + CSS-переменных, что на десктопе. Внутри
+ *  PrefsProvider, поверх всего видимого дерева (включая /login). */
+function ThemedTree({ children }: { children: React.ReactNode }) {
+  const { prefs } = usePrefs();
+  return (
+    <ThemeRoot
+      theme={{
+        theme: prefs.theme,
+        accent: prefs.accent,
+        customAccent: prefs.customAccent,
+        radius: prefs.radius,
+        blur: prefs.blur,
+        glassOpacity: prefs.glassOpacity,
+        textDim: prefs.textDim,
+        fontUi: prefs.fontUi,
+      }}
+    >
+      {children}
+    </ThemeRoot>
+  );
+}
 
 /** Клиентские провайдеры поверх всего дерева (в т.ч. /login — сессия нужна
  *  и там, чтобы уже вошедшего сразу увести на /home). Prefs — выше плеера:
@@ -27,15 +51,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
       <PrefsProvider>
-        <LanguageProvider lang="ru">
-          <LikesProvider>
-            <PlaylistsProvider>
-              <PlayerProvider>
-                <ToastProvider>{children}</ToastProvider>
-              </PlayerProvider>
-            </PlaylistsProvider>
-          </LikesProvider>
-        </LanguageProvider>
+        <ThemedTree>
+          <LanguageProvider lang="ru">
+            <LikesProvider>
+              <PlaylistsProvider>
+                <PlayerProvider>
+                  <ToastProvider>{children}</ToastProvider>
+                </PlayerProvider>
+              </PlaylistsProvider>
+            </LikesProvider>
+          </LanguageProvider>
+        </ThemedTree>
       </PrefsProvider>
     </SessionProvider>
   );

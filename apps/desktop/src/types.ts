@@ -292,6 +292,9 @@ export interface Prefs {
   discordBtnUrl: string;
   /** Обложка трека в активности Discord. */
   discordShowCover: boolean;
+  /** Нативная прогресс-линия Discord (start+end timestamps): полоска от начала
+   *  до конца трека в статусе. Выкл — только счётчик «слушает N минут». */
+  discordProgressOn: boolean;
   /** Шаблоны строк активности; подстановки {track} {artist} {album}. */
   discordLine1: string;
   discordLine2: string;
@@ -359,6 +362,10 @@ export interface Prefs {
   /** Декоративная нотка в самом низу текста песни (по умолчанию вкл). Мелочь
    *  оформления — но поведенческий преф пользователя, НЕ THEME_KEYS. */
   lyricsEndNote: boolean;
+  /** Видео трека вместо обложки в «Сейчас играет» (2026-07-21): только у
+   *  YouTube-треков, muted-слой поверх позиции аудио. По умолчанию ВЫКЛ —
+   *  «может не всем зайти» (владелец); поведенческий преф, НЕ THEME_KEYS. */
+  videoNowPlaying: boolean;
   /** Текст в режиме прослушивания показан (кнопка mic-vocal в слое
    *  авто-прячущихся контролов оверлея + клавиша T). false — «только
    *  обложка/визуализатор»: блок текста плавно скрыт, обложка по центру.
@@ -428,7 +435,9 @@ export const DEFAULT_PREFS: Prefs = {
   seekStepSec: 5,
   hPlayerBar: 92,
   coverBarSize: 60,
-  warmAhead: 10,
+  // Фаза 2 «мгновенность» (21.07): предсказание вместо широкого окна — дефолт
+  // был 10, стал 3; первый предстоящий греется срочно (см. useWarmer)
+  warmAhead: 3,
   preloadAheadSec: 20,
   bassSharp: 50,
   bassReach: 50,
@@ -494,6 +503,7 @@ export const DEFAULT_PREFS: Prefs = {
   discordBtnLabel: "Открыть в Muza",
   discordBtnUrl: "https://muza.lol",
   discordShowCover: true,
+  discordProgressOn: true,
   discordLine1: "{track}",
   discordLine2: "{artist}",
   barButtons: BAR_BUTTON_KEYS.map((key) => ({ key, on: true })),
@@ -514,6 +524,7 @@ export const DEFAULT_PREFS: Prefs = {
   syncedLyrics: true,
   lyricsAutoScroll: true,
   lyricsEndNote: true,
+  videoNowPlaying: false,
   listeningLyricsShown: true,
   wrappedAmbientVol: 20,
   streamQuality: "auto",

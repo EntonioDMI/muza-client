@@ -48,7 +48,9 @@ import { usePlayback } from "./player/usePlayback";
 import { useWarmer, WarmerProvider } from "./player/useWarmer";
 import { useWheelScroll } from "./lib/useWheelScroll";
 import { fontFamily } from "./lib/fonts";
+import { applyCustomFont } from "./lib/customFont";
 import { useLyrics } from "./player/useLyrics";
+import { useTrackVideo } from "./player/useTrackVideo";
 import { useAnnotations } from "./player/useAnnotations";
 import { decorateLyrics, shouldFetchAnnotations } from "./player/annotations";
 import { useMediaSession } from "./player/useMediaSession";
@@ -583,6 +585,26 @@ function Player({
       void reloadServerPlaylists(); // не сохранилось — вернём серверный порядок
     }
   };
+
+  /** Закреп плейлиста (2026-07-20): оптимистично флипаем и пересобираем
+   *  список серверным правилом (закреплённые сверху, внутри полос порядок
+   *  цел), затем PATCH; ошибка — откат перечиткой. НЕ офлайн-пин. */
+  const togglePlaylistPinned = async (id: string) => {
+    let next = false;
+    setSrvPlaylists((ps) => {
+      const target = ps.find((p) => p.id === id);
+      if (!target) return ps;
+      next = !target.pinned;
+      const flipped = ps.map((p) => (p.id === id ? { ...p, pinned: next } : p));
+      // стабильная пересборка: pinned-полоса первой, взаимный порядок не трогаем
+      return [...flipped.filter((p) => p.pinned), ...flipped.filter((p) => !p.pinned)];
+    });
+    try {
+      await api.setPlaylistPinned(id, next);
+    } catch {
+      void reloadServerPlaylists();
+    }
+  };
   useEffect(() => {
     if (!canSearch) return;
     void reloadServerPlaylists();
@@ -781,11 +803,14 @@ function Player({
       return;
     }
     const vars = { track: track.title, artist: track.artist, album: track.album };
+    const startTs = Math.floor(Date.now() / 1000 - pos);
     void updateDiscordActivity({
       details: formatTemplate(prefs.discordLine1, vars) || track.title,
       state: formatTemplate(prefs.discordLine2, vars) || track.artist,
       coverUrl: prefs.discordShowCover ? discordCoverUrl(rawCover) : null,
-      startTs: Math.floor(Date.now() / 1000 - pos),
+      startTs,
+      // start+end = нативная прогресс-линия Discord; длительности нет (0) — не врём
+      endTs: prefs.discordProgressOn && track.duration > 0 ? startTs + Math.round(track.duration) : null,
       buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
       buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
     });
@@ -800,9 +825,16 @@ function Player({
     prefs.discordBtnLabel,
     prefs.discordBtnUrl,
     prefs.discordShowCover,
+    prefs.discordProgressOn,
     prefs.discordLine1,
     prefs.discordLine2,
   ]);
+
+  // Свой шрифт (2026-07-20): @font-face из localStorage поднимается один раз
+  // на старте — дальше ключ "custom" работает как обычный шрифт (--font-ui)
+  useEffect(() => {
+    applyCustomFont();
+  }, []);
 
   // Таймер сна: луна в баре циклит выкл → пресеты из настроек → конец трека
   // (mode: "off" | "track" | число минут из prefs.sleepPresets)
@@ -861,6 +893,15 @@ function Player({
 
   // Тексты — LRCLIB с сервера
   const { lines: rawLyrics, trackId: lyricsTrackId, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(api, track, canSearch);
+
+  // Видео вместо обложки в «Сейчас играет» (2026-07-21, преф videoNowPlaying):
+  // резолв лениво и только при включённом тумблере; провал = обложка
+  const { videoUrl: trackVideoUrl, refreshVideo: refreshTrackVideo } = useTrackVideo(
+    api,
+    track,
+    prefs.videoNowPlaying && showNowPlaying,
+    canSearch,
+  );
 
   // «Режим смысла» (Stage 5): настоящие Genius-аннотации каталожного трека —
   // строкам с аннотацией ставится note (пунктир в Lyrics, карточка в панели);
@@ -1392,8 +1433,10 @@ function Player({
                 : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
         // 2026-07-17: подписки в реордер не входят (их позиции сервер не
-        // хранит), скрытые владельцем — гаснут
-        fixed: p.role === "follower",
+        // хранит), скрытые владельцем — гаснут. 2026-07-20: закреплённые тоже
+        // fixed — смысл закрепа «случайно не сдвинуть».
+        fixed: p.role === "follower" || p.pinned,
+        pinned: p.pinned,
         dimmed: p.role === "follower" && p.available === false,
         // T47b: иконка-обложка из манифеста @muza/core; T47c: track-иконка —
         // готовой ссылкой iconCoverUrl; нет/невалидна — PlaylistRow сама
@@ -1904,8 +1947,17 @@ function Player({
       setPlRename(pl);
     },
     changePlaylistIcon: (id) => openIconPicker(id),
+    playlistPinned: (id) => srvPlaylists.find((x) => x.id === id)?.pinned ?? false,
+    togglePlaylistPinned: (id) => void togglePlaylistPinned(id),
     deletePlaylist: (pl) => setPlDelete(pl),
     unfollowPlaylist: (pl) => void unfollowFromMenu(pl),
+    // буфер обмена: паттерн ShareDialog (navigator.clipboard, не Tauri-плагин)
+    copyText: (text, doneToast) => {
+      navigator.clipboard
+        .writeText(text)
+        .then(() => showToast(doneToast, "copy"))
+        .catch(() => showToast(t("dialogs.copyFailed"), "x"));
+    },
     pluginMenuItems: (kind) => plugins.menuItems(kind),
     notifyPlugin: (pluginId, slotId, payload) => plugins.notifySlot(pluginId, slotId, "click", payload),
   };
@@ -2145,6 +2197,13 @@ function Player({
                 onOpenHotkeys={openHotkeys}
                 onPluginsChanged={plugins.refresh}
                 intent={settingsIntent}
+                // Живой трек для честного предпросмотра Discord RPC: обложка —
+                // СЫРАЯ (rawCover, как в реальной активности), не кроп useCoverArt
+                nowPlaying={
+                  track
+                    ? { title: track.title, artist: track.artist, album: track.album, cover: rawCover, duration: track.duration }
+                    : null
+                }
               />
             )}
           </div>
@@ -2161,6 +2220,11 @@ function Player({
             lyricsEndNote={prefs.lyricsEndNote}
             onSeekLine={seekLine}
             onExplain={setMeaningLine}
+            videoUrl={trackVideoUrl}
+            pos={pos}
+            playing={playing}
+            speed={pb.speed}
+            onVideoError={refreshTrackVideo}
           />
         ) : null}
       </div>

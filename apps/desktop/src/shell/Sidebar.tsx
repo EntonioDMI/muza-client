@@ -29,10 +29,13 @@ export interface SidebarPlaylist {
   cover?: string;
   /** Stage 7: совместный плейлист — иконка «люди» вместо нот. */
   shared?: boolean;
-  /** 2026-07-17: подписка (follower) — в реордер не входит. */
+  /** 2026-07-17: подписка (follower) — в реордер не входит. 2026-07-20:
+   *  закреплённые тоже fixed («случайно не сдвинуть/не добавить»). */
   fixed?: boolean;
   /** 2026-07-17: скрытая владельцем подписка — строка гаснет. */
   dimmed?: boolean;
+  /** 2026-07-20: закреплён — булавка-индикатор, всегда сверху (под «Любимым»). */
+  pinned?: boolean;
 }
 
 const NAV_H = 48;
@@ -121,6 +124,7 @@ function PlaylistRow({
   settling = false,
   reordering = false,
   dimmed = false,
+  pinned = false,
 }: {
   playlistId: string;
   cover?: string;
@@ -145,6 +149,8 @@ function PlaylistRow({
   reordering?: boolean;
   /** 2026-07-17: скрытая владельцем подписка — строка гаснет. */
   dimmed?: boolean;
+  /** 2026-07-20: закреплён — булавка в слоте ручки (у fixed-строк ручки нет). */
+  pinned?: boolean;
 }) {
   const [hover, setHover] = useState(false);
   const { t } = useT();
@@ -194,8 +200,8 @@ function PlaylistRow({
         boxSizing: "border-box",
         gap: "var(--sp-3)",
         padding: "var(--sp-2)",
-        // не дать длинному имени лечь под ручку-⠿
-        paddingRight: grip ? 30 : "var(--sp-2)",
+        // не дать длинному имени лечь под ручку-⠿ (или булавку закрепа)
+        paddingRight: grip ? 30 : pinned ? 26 : "var(--sp-2)",
         border: "none",
         borderRadius: "var(--r-sm)",
         background: dropLit ? "var(--accent-soft)" : hover ? "var(--surface-2)" : "transparent",
@@ -278,6 +284,24 @@ function PlaylistRow({
         }}
       >
         <Icon name="grip-vertical" size={16} />
+      </span>
+    ) : null}
+    {pinned ? (
+      // булавка закрепа: строка не тащится и не принимает случайный дроп —
+      // индикатор объясняет, почему (место ручки свободно: fixed → grip нет)
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          top: "50%",
+          right: 8,
+          transform: "translateY(-50%)",
+          display: "grid",
+          placeItems: "center",
+          color: "var(--text-3)",
+        }}
+      >
+        <Icon name="pin" size={13} />
       </span>
     ) : null}
     </div>
@@ -556,6 +580,7 @@ export function Sidebar({
             meta={p.meta}
             shared={p.shared}
             dimmed={p.dimmed}
+            pinned={p.pinned}
             onClick={() => onOpenPlaylist(p.id)}
             onMenu={onPlaylistMenu ? (e) => onPlaylistMenu(p, e) : undefined}
             onDropTrack={onDropTrack && !p.fixed ? (trackId) => onDropTrack(p.id, trackId) : undefined}

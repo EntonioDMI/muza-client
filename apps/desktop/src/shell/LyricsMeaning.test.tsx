@@ -67,4 +67,25 @@ describe("Lyrics meaning interaction", () => {
     fireEvent.keyDown(annotated, { key: "Enter" });
     expect(onExplain).toHaveBeenCalledTimes(2);
   });
+
+  it("ПКМ (2026-07-21): по строке — её индекс, мимо строк — null", () => {
+    const onLineContextMenu = vi.fn();
+    render(
+      <Lyrics
+        lines={[
+          { t: 0, text: "Первая строка" },
+          { t: 5, text: "Вторая строка" },
+        ]}
+        activeIndex={0}
+        onLineContextMenu={onLineContextMenu}
+      />,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Вторая строка"));
+    expect(onLineContextMenu).toHaveBeenLastCalledWith(expect.anything(), 1);
+
+    // край/промежуток: ПКМ по отбивке всплывает до обёртки → index=null
+    fireEvent.contextMenu(screen.getAllByTestId("lyrics-edge-pad")[0]);
+    expect(onLineContextMenu).toHaveBeenLastCalledWith(expect.anything(), null);
+  });
 });

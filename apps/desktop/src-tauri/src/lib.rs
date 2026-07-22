@@ -81,6 +81,7 @@ pub fn run() {
             engine::recipe_apply,
             engine::recipe_current,
             engine::engine_resolve,
+            engine::engine_resolve_video,
             engine::engine_warm,
             engine::engine_stream_start,
             engine::engine_cache_stats,

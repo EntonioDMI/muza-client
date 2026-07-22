@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import type { ComponentProps } from "react";
 import { ListeningMode } from "./ListeningMode";
 import type { PlayerTrack } from "../player/types";
+import { TestMenuProvider } from "./menuTestUtils";
 
 afterEach(cleanup);
 
@@ -28,23 +29,27 @@ function loudAnalyser(): AnalyserNode {
 }
 
 function renderMode(props: Partial<ComponentProps<typeof ListeningMode>> = {}) {
+  // ListeningMode зовёт useContextMenu (ПКМ по тексту) — рендер строго внутри
+  // провайдера меню (правило menuTestUtils)
   return render(
-    <ListeningMode
-      open
-      track={track}
-      lyrics={[]}
-      playing={false}
-      pos={0}
-      activeLine={-1}
-      onTogglePlay={noop}
-      onPrev={noop}
-      onNext={noop}
-      onSeek={noop}
-      onSeekLine={noop}
-      onExplain={noop}
-      onClose={noop}
-      {...props}
-    />,
+    <TestMenuProvider>
+      <ListeningMode
+        open
+        track={track}
+        lyrics={[]}
+        playing={false}
+        pos={0}
+        activeLine={-1}
+        onTogglePlay={noop}
+        onPrev={noop}
+        onNext={noop}
+        onSeek={noop}
+        onSeekLine={noop}
+        onExplain={noop}
+        onClose={noop}
+        {...props}
+      />
+    </TestMenuProvider>,
   );
 }
 

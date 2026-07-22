@@ -9,6 +9,8 @@
  *  детект по курируемому списку: ширина эталонной строки шрифтом X против
  *  запасного; совпала до пикселя — шрифта X в системе нет. */
 
+import { CUSTOM_FONT_FAMILY } from "./customFont";
+
 export interface FontChoice {
   key: string;
   /** Человеческое имя — в Select оно же рисуется САМИМ шрифтом (мгновенное превью). */
@@ -37,8 +39,18 @@ export const FONT_CHOICES: FontChoice[] = [
   { key: "sys-times", label: "Times New Roman", family: `"Times New Roman", ${TAIL}`, systemProbe: true },
 ];
 
+/** Свой шрифт пользователя (2026-07-20): ключ "custom" живёт вне FONT_CHOICES —
+ *  появляется в списке только когда файл реально загружен (lib/customFont.ts).
+ *  Тема с ключом "custom" на машине без файла честно падает в Golos. */
+export const CUSTOM_FONT_CHOICE_KEY = "custom";
+
 /** family по ключу; неизвестный ключ (тема из будущей версии) — дефолт Golos. */
 export function fontFamily(key: string): string {
+  if (key === CUSTOM_FONT_CHOICE_KEY) {
+    // без загруженного файла family не зарегистрирована — браузер сам
+    // падает в TAIL (Segoe), интерфейс не ломается
+    return `"${CUSTOM_FONT_FAMILY}", ${TAIL}`;
+  }
   return (FONT_CHOICES.find((f) => f.key === key) ?? FONT_CHOICES[0]).family;
 }
 

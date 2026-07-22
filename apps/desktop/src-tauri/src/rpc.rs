@@ -40,8 +40,11 @@ pub struct RpcPayload {
     pub state: String,
     /// https-URL обложки (Discord умеет внешние URL); None — без картинки.
     pub cover_url: Option<String>,
-    /// Unix-время старта трека (прогресс-бар «слушает N минут»).
+    /// Unix-время старта трека (счётчик «слушает N минут»).
     pub start_ts: Option<i64>,
+    /// Unix-время конца трека: вместе со start Discord рисует нативную
+    /// прогресс-линию начала/конца (prefs.discordProgressOn). None — только счётчик.
+    pub end_ts: Option<i64>,
     /// Настраиваемая кнопка активности (prefs.discordBtn*).
     pub button_label: Option<String>,
     pub button_url: Option<String>,
@@ -67,8 +70,31 @@ pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
     }
     let client = guard.as_mut().unwrap();
 
+    let buttons: Vec<activity::Button> = match (&payload.button_label, &payload.button_url) {
+        // Полная схема, а не голое "http": Discord прячет активность с кривым
+        // URL кнопки. Зеркало isValidButtonUrl (lib/discord.ts) — предпросмотр
+        // и реальная отправка обязаны сходиться.
+        (Some(label), Some(url))
+            if !label.is_empty()
+                && (url.starts_with("http://") || url.starts_with("https://")) =>
+        {
+            vec![activity::Button::new(label, url)]
+        }
+        _ => vec![],
+    };
+    // ⚠️ Кнопки Discord рендерит только у Playing-активности. Кнопка на
+    // Listening (type 2) — известная ломающая комбинация: автор видит свой
+    // статус (без кнопки — своих кнопок не видно by design), а у ОСТАЛЬНЫХ
+    // presence не отображается вовсе (жалоба 2026-07-20). Поэтому: кнопка
+    // включена → честный Playing («Играет в Muza»), выключена → Listening.
+    // Предпросмотр в настройках зеркалит это переключение (SettingsView).
+    let activity_type = if buttons.is_empty() {
+        activity::ActivityType::Listening
+    } else {
+        activity::ActivityType::Playing
+    };
     let mut act = activity::Activity::new()
-        .activity_type(activity::ActivityType::Listening)
+        .activity_type(activity_type)
         .details(&payload.details)
         .state(&payload.state);
     // Обложка трека (каталог/iTunes) как large_image; нет её — фолбэк на арт-ассет
@@ -81,14 +107,14 @@ pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
             .large_text("Muza"),
     );
     if let Some(ts) = payload.start_ts {
-        act = act.timestamps(activity::Timestamps::new().start(ts));
-    }
-    let buttons: Vec<activity::Button> = match (&payload.button_label, &payload.button_url) {
-        (Some(label), Some(url)) if !label.is_empty() && url.starts_with("http") => {
-            vec![activity::Button::new(label, url)]
+        let mut timestamps = activity::Timestamps::new().start(ts);
+        // start+end = нативная прогресс-линия трека (у Listening); один start —
+        // просто счётчик «N минут». Управляется prefs.discordProgressOn на фронте.
+        if let Some(end) = payload.end_ts {
+            timestamps = timestamps.end(end);
         }
-        _ => vec![],
-    };
+        act = act.timestamps(timestamps);
+    }
     if !buttons.is_empty() {
         act = act.buttons(buttons);
     }

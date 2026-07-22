@@ -19,7 +19,7 @@ import { Icon } from "../core/Icon.jsx";
  *    строки) и давало ровно тот эффект, на который пожаловался владелец:
  *    скрытая строка получает opacity:0, но ОСТАЁТСЯ В ПОТОКЕ и держит своё
  *    место пустым — панель читалась как три строки посреди пустоты. */
-export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, autoScroll = true, endNote = false, style }) {
+export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, onLineContextMenu, autoScroll = true, endNote = false, style }) {
   const wrapRef = useRef(null);
   const activeRef = useRef(null);
   // Пользователь листает сам: показываем весь текст и не дёргаем автоскролл
@@ -72,6 +72,9 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
       ref={wrapRef}
       onWheel={wake}
       onTouchMove={wake}
+      // ПКМ мимо строк (края/промежутки): меню текста без строки (index=null).
+      // ПКМ по строке сюда не всплывает — обработчик строки гасит всплытие сам.
+      onContextMenu={onLineContextMenu ? (e) => onLineContextMenu(e, null) : undefined}
       style={{
         overflowY: "auto",
         scrollbarWidth: "none",
@@ -131,6 +134,11 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
               }
             }}
             onDoubleClick={hasNote && onSeek ? () => onExplain(i) : undefined}
+            onContextMenu={onLineContextMenu ? (e) => {
+              // не всплывать до обёртки — иначе меню открылось бы дважды (index → null)
+              e.stopPropagation();
+              onLineContextMenu(e, i);
+            } : undefined}
             onKeyDown={(e) => {
               if (hasNote && (e.key === "Enter" || e.key === " ")) {
                 e.preventDefault();

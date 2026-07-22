@@ -5,6 +5,7 @@ import {
   GROUP_LIMIT_MAX,
   GROUP_LIMIT_STEP,
   loadMoreScope,
+  mergeGroupedResults,
   nextGroupLimit,
   pluralVersions,
   variantLabel,
@@ -145,6 +146,58 @@ describe("nextGroupLimit (T37 — «Загрузить ещё» в grouped-ре�
 
   it("значение вне шага не ломает лестницу — просто следующий шаг от него", () => {
     expect(nextGroupLimit(45)).toBe(75);
+  });
+});
+
+describe("mergeGroupedResults — стабильный порядок «Загрузить ещё»", () => {
+  const single = (id: string): GroupedSearchResult => ({ kind: "single", track: track(id) });
+  const group = (canonId: string, variantIds: string[] = []): GroupedSearchResult => ({
+    kind: "group",
+    canonical: track(canonId),
+    hasOriginal: true,
+    canonicalVariantType: null,
+    variants: variantIds.map((id) => ({ track: track(id), variantType: "remix" as const })),
+  });
+  const keys = (rs: GroupedSearchResult[]) => rs.map((r) => (r.kind === "single" ? r.track.id : r.canonical.id));
+
+  it("сервер пересортировал старые + добавил новые → старый порядок цел, новые в конце", () => {
+    const prev = [single("a"), single("b"), single("c")];
+    // сервер над бОльшим пулом переранжировал: c поднялся, между ними вклинились новые
+    const next = [single("c"), single("x"), single("a"), single("y"), single("b")];
+    expect(keys(mergeGroupedResults(prev, next))).toEqual(["a", "b", "c", "x", "y"]);
+  });
+
+  it("совпавшая карточка берёт СВЕЖИЕ данные на старом месте (группа подросла вариантами)", () => {
+    const prev = [group("g1", ["v1"]), single("s1")];
+    const next = [single("s1"), group("g1", ["v1", "v2"])];
+    const merged = mergeGroupedResults(prev, next);
+    expect(keys(merged)).toEqual(["g1", "s1"]);
+    const g = merged[0];
+    expect(g.kind === "group" && g.variants.map((v) => v.track.id)).toEqual(["v1", "v2"]);
+  });
+
+  it("карточка пропала из next, но её треки нигде не всплыли → остаётся (пользователь её видел)", () => {
+    const prev = [single("a"), single("b")];
+    const next = [single("a"), single("x")];
+    expect(keys(mergeGroupedResults(prev, next))).toEqual(["a", "b", "x"]);
+  });
+
+  it("одиночка поглощена группой next → убрана, трек не задваивается", () => {
+    const prev = [single("a"), single("v9")];
+    const next = [single("a"), group("g1", ["v9"])];
+    const merged = mergeGroupedResults(prev, next);
+    expect(keys(merged)).toEqual(["a", "g1"]);
+    expect(flattenGroupedResults(merged).map((t) => t.id)).toEqual(["a", "g1", "v9"]);
+  });
+
+  it("первый «ещё» после пустого прошлого — просто выдача next", () => {
+    expect(keys(mergeGroupedResults([], [single("a"), group("g", ["v"])]))).toEqual(["a", "g"]);
+  });
+
+  it("ничего нового (источники исчерпаны) → длина не растёт", () => {
+    const prev = [single("a"), single("b")];
+    const merged = mergeGroupedResults(prev, [single("b"), single("a")]);
+    expect(flattenGroupedResults(merged).length).toBe(2);
   });
 });
 

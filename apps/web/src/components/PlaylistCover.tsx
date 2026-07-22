@@ -15,16 +15,18 @@ interface PlaylistCoverProps {
   size: number;
   radius?: string;
   iconSize?: number;
+  /** Плиточный режим (библиотека): тянется на ширину колонки, квадрат.
+   *  `size` тогда — только масштаб иконки-фолбэка. */
+  fluid?: boolean;
 }
 
-export function PlaylistCover({ icon, shared, size, radius = "var(--r-xs)", iconSize }: PlaylistCoverProps) {
+export function PlaylistCover({ icon, shared, size, radius = "var(--r-xs)", iconSize, fluid = false }: PlaylistCoverProps) {
   const src = playlistIconSrc(icon);
   return (
     <span
       aria-hidden="true"
       style={{
-        width: size,
-        height: size,
+        ...(fluid ? { width: "100%", aspectRatio: "1" } : { width: size, height: size }),
         borderRadius: radius,
         flex: "none",
         background: "var(--accent-soft)",

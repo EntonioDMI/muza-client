@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Cover, IconButton, Lyrics, Slider } from "@muza/ui";
 import type { LyricLine } from "../player/types";
 import type { PlayerTrack } from "../player/types";
@@ -6,6 +6,7 @@ import { fmtTime } from "../lib/format";
 import { Visualizer } from "./Visualizer";
 import type { VisualizerTuning } from "./visualizerMath";
 import { useT } from "../i18n";
+import { useContextMenu } from "./ContextMenu";
 
 /** OS-уровень «уменьшить анимацию» — жёсткий выключатель качания независимо
  *  от пользовательского прefa bassShake (как и общий anims); им же гасится
@@ -115,6 +116,17 @@ export function ListeningMode({
   anims?: boolean;
 }) {
   const { t } = useT();
+  const { openMenu } = useContextMenu();
+  // ПКМ по тексту (2026-07-21): та же цель "lyrics", что в NowPlayingPanel
+  const openLyricsMenu = (e: ReactMouseEvent, i: number | null) =>
+    openMenu(e, {
+      kind: "lyrics",
+      allText: lyrics.map((l) => l.text).join("\n"),
+      lineText: i !== null ? lyrics[i]?.text || null : null,
+      lineIndex: i,
+      hasNote: i !== null && !!lyrics[i]?.note,
+      ctl: { explain: onExplain },
+    });
   // OS «уменьшить анимацию» для схлопывания колонки текста. Не state: пока
   // оверлей открыт, пользователь системные настройки не крутит, а на
   // следующий рендер (тумблер и есть рендер) значение перечитается.
@@ -367,7 +379,7 @@ export function ListeningMode({
           }}
         >
           {lyrics.length > 0 ? (
-            <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" autoScroll={lyricsAutoScroll} endNote={lyricsEndNote} onSeek={onSeekLine} onExplain={onExplain} style={{ height: "100%" }} />
+            <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" autoScroll={lyricsAutoScroll} endNote={lyricsEndNote} onSeek={onSeekLine} onExplain={onExplain} onLineContextMenu={openLyricsMenu} style={{ height: "100%" }} />
           ) : (
             <div
               style={{

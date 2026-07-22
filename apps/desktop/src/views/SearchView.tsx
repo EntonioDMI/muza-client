@@ -6,7 +6,7 @@ import { trackRowL10n } from "../lib/dsLabels";
 import { useWarmRow } from "../player/useWarmer";
 import { useDrag } from "../shell/DragLayer";
 import { exportCachedTrack, maybeAltFileDrag } from "../lib/dragOut";
-import { flattenGroupedResults, loadMoreScope, nextGroupLimit } from "../lib/searchGrouping";
+import { flattenGroupedResults, loadMoreScope, mergeGroupedResults, nextGroupLimit } from "../lib/searchGrouping";
 import { parsePlaylistCode, parsePlaylistHandle } from "../lib/playlistCode";
 import { PublicPlaylistCard } from "./PublicPlaylistCard";
 import { PlaylistResultCard } from "./PlaylistResultCard";
@@ -280,8 +280,12 @@ export function SearchView({
       const found = await api.searchGrouped(query, { scope: loadMoreScope(searchScope), limit: next });
       if (seqRef.current === seq) {
         const prevCount = groupedFlat.length;
-        const nextCount = flattenGroupedResults(found).length;
-        setGroupedResults(found);
+        // Стабильное слияние вместо голой замены: сервер пересобирает
+        // ранжирование над бОльшим пулом, и замена перемешивала показанные
+        // строки с новыми — теперь порядок показанного цел, новое в конце.
+        const merged = mergeGroupedResults(groupedResults ?? [], found);
+        const nextCount = flattenGroupedResults(merged).length;
+        setGroupedResults(merged);
         setGroupLimit(next);
         if (nextCount <= prevCount) setGroupExhausted(true);
       }

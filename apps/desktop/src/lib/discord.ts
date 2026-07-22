@@ -8,10 +8,19 @@ export interface DiscordActivity {
   state: string;
   /** Только https (Discord тянет внешние URL сам); локальные обложки не отдаём. */
   coverUrl: string | null;
-  /** Unix-секунды старта трека — прогресс «слушает N минут». */
+  /** Unix-секунды старта трека — счётчик «слушает N минут». */
   startTs: number | null;
+  /** Unix-секунды конца трека: вместе со start Discord рисует нативную
+   *  прогресс-линию (prefs.discordProgressOn); null — только счётчик. */
+  endTs: number | null;
   buttonLabel: string | null;
   buttonUrl: string | null;
+}
+
+/** Кнопку реально шлём только с валидным http(s)-URL — Rust (rpc.rs) молча
+ *  отбрасывает прочее, и предпросмотр обязан показывать ту же правду. */
+export function isValidButtonUrl(url: string): boolean {
+  return /^https?:\/\/\S+$/.test(url.trim());
 }
 
 /** Шаблон строки активности: подстановки {track}/{artist}/{album}. Пустые

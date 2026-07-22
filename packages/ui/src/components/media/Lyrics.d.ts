@@ -14,6 +14,9 @@ export interface LyricsProps {
   /** Объяснение смысла (Genius): ДВОЙНОЙ клик по строке с note (одиночный —
    *  перемотка, как у всех). Без onSeek (plain-текст) — одиночным кликом. */
   onExplain?: (index: number) => void;
+  /** ПКМ по тексту (2026-07-21): index — строка под курсором, null — мимо
+   *  строк. Хозяин открывает контекстное меню (копировать текст/строку). */
+  onLineContextMenu?: (e: React.MouseEvent, index: number | null) => void;
   /** false — не следовать за активной строкой (весь текст, свободный скролл). */
   autoScroll?: boolean;
   /** Декоративная нотка в самом низу текста (prefs.lyricsEndNote). */

@@ -53,6 +53,10 @@ export interface MenuContext {
   savePlaylistOffline: (id: string) => void;
   renamePlaylist: (pl: { id: string; name: string }) => void;
   changePlaylistIcon: (id: string) => void;
+  /** Закреп СВЕРХУ СПИСКА (2026-07-20). ⚠️ Не путать с офлайн-пином
+   *  (isPinned/pinMany/toggleOffline — «Сохранить офлайн», другой смысл). */
+  playlistPinned: (id: string) => boolean;
+  togglePlaylistPinned: (id: string) => void;
   deletePlaylist: (pl: { id: string; name: string }) => void;
   unfollowPlaylist: (pl: { id: string; name: string }) => void;
   // — медиатека (пустое место) —
@@ -68,6 +72,10 @@ export interface MenuContext {
    *  (урок favoritesDrop 20.07). */
   likeMany: (ids: string[]) => void;
   pinMany: (tracks: Track[]) => void;
+  // — текст песни (2026-07-21) —
+  /** Копировать в буфер + тост подтверждения (панель «Сейчас играет» и
+   *  режим прослушивания — одно действие на оба места). */
+  copyText: (text: string, doneToast: string) => void;
   // — плагины (T44) —
   pluginMenuItems: (kind: PluginMenuKind) => PluginMenuItem[];
   notifyPlugin: (pluginId: string, slotId: string, payload: unknown) => void;
@@ -94,7 +102,25 @@ export function buildMenuItems(target: ContextTarget, ctx: MenuContext, t: T): M
       return playlistSelectionItems(target, t);
     case "localTrack":
       return localTrackItems(target.ctl, t);
+    case "lyrics":
+      return lyricsItems(target, ctx, t);
   }
+}
+
+/** ПКМ по тексту песни (2026-07-21): копировать весь текст — всегда; строку —
+ *  когда ПКМ пришёлся на строку с текстом; «Смысл» — только у строк с
+ *  объяснением (дубль двойного клика, для находимости). */
+function lyricsItems(target: Extract<ContextTarget, { kind: "lyrics" }>, ctx: MenuContext, t: T): MenuItem[] {
+  const { allText, lineText, lineIndex, hasNote, ctl } = target;
+  return [
+    { icon: "copy", label: t("menu.lyrics.copyAll"), onClick: () => ctx.copyText(allText, t("toast.lyrics.copiedAll")) },
+    ...(lineText !== null
+      ? [{ icon: "text", label: t("menu.lyrics.copyLine"), onClick: () => ctx.copyText(lineText, t("toast.lyrics.copiedLine")) }]
+      : []),
+    ...(hasNote && lineIndex !== null
+      ? [{ icon: "sparkles", label: t("menu.lyrics.meaning"), onClick: () => ctl.explain(lineIndex) }]
+      : []),
+  ];
 }
 
 /** Меню выделения (ПКМ по выделенному): заголовок-счётчик + массовые
@@ -266,6 +292,10 @@ function playlistItems(pl: { id: string; name: string }, ctx: MenuContext, t: T)
     { icon: "download", label: t("menu.catalog.saveOffline"), onClick: () => ctx.savePlaylistOffline(pl.id) },
     ...(role === "owner"
       ? ([
+          // закреп сверху списка (НЕ офлайн): фиксирует от случайного сдвига/дропа
+          ctx.playlistPinned(pl.id)
+            ? { icon: "pin-off", label: t("menu.playlist.unpin"), onClick: () => ctx.togglePlaylistPinned(pl.id) }
+            : { icon: "pin", label: t("menu.playlist.pin"), onClick: () => ctx.togglePlaylistPinned(pl.id) },
           { icon: "pencil", label: t("menu.playlist.rename"), onClick: () => ctx.renamePlaylist(pl) },
           { icon: "image", label: t("menu.playlist.changeIcon"), onClick: () => ctx.changePlaylistIcon(pl.id) },
           "-",

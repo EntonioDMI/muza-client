@@ -34,9 +34,16 @@ export const PRESETS_BG: Record<string, Partial<Prefs>> = {
 
 /** Зона 3 — подготовка очереди (прогрев + преднагрузка). «normal» РАВЕН
  *  дефолтам полей: экономный режим бережёт трафик, максимум — мгновенный
- *  старт почти всей головы очереди. */
+ *  старт головы очереди.
+ *
+ *  Фаза 2 «мгновенность» (21.07, отчёт пре-резолва): окна сужены (3/10/25 →
+ *  1/3/10) — предсказание вместо широкого окна. Каждый сдвиг index заново
+ *  греет горизонт, а срочная заявка на первый предстоящий (useWarmer) держит
+ *  скип мгновенным; широкое окно лишь выгорало бюджет 30/мин на хвосте,
+ *  который пользователь мог не дослушать, и поднимало velocity-сигнатуру
+ *  для бот-детекта YouTube. */
 export const PRESETS_WARM: Record<string, Partial<Prefs>> = {
-  eco: { warmAhead: 3, preloadAheadSec: 30 },
-  normal: { warmAhead: 10, preloadAheadSec: 20 },
-  max: { warmAhead: 25, preloadAheadSec: 10 },
+  eco: { warmAhead: 1, preloadAheadSec: 30 },
+  normal: { warmAhead: 3, preloadAheadSec: 20 },
+  max: { warmAhead: 10, preloadAheadSec: 10 },
 };

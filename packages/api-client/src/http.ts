@@ -42,6 +42,8 @@ import {
   type RecsSettings,
   type RegisterStatus,
   type ScrobblingStatus,
+  type ProvidersStatus,
+  type ExtProvider,
   type SearchScope,
   type Session,
   type SessionInfo,
@@ -169,6 +171,7 @@ interface PlaylistMetaWire {
   available?: boolean;
   icon?: string | null;
   icon_cover_url?: string | null;
+  pinned?: boolean;
 }
 
 function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
@@ -183,6 +186,7 @@ function playlistMetaFromWire(w: PlaylistMetaWire): PlaylistMeta {
     available: w.available ?? true,
     icon: w.icon ?? null,
     iconCoverUrl: w.icon_cover_url ?? null,
+    pinned: w.pinned ?? false,
   });
 }
 
@@ -742,6 +746,14 @@ export class HttpMuzaApi implements MuzaApi {
     });
   }
 
+  /** Закрепить/открепить плейлист (2026-07-20): владелец; закреплённые сверху. */
+  async setPlaylistPinned(id: string, pinned: boolean): Promise<void> {
+    await this.authedRequest(`/me/playlists/${encodeURIComponent(id)}/pinned`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    });
+  }
+
   async getPlaylist(id: string): Promise<PlaylistDetail> {
     const p = await this.authedRequest<{
       id: string;
@@ -1027,6 +1039,23 @@ export class HttpMuzaApi implements MuzaApi {
 
   async listenbrainzDisconnect(): Promise<void> {
     await this.authedRequest("/me/scrobbling/listenbrainz", { method: "DELETE" });
+  }
+
+  // ---------- Внешние источники аудио (Фаза 3: Яндекс) ----------
+
+  async getProviders(): Promise<ProvidersStatus> {
+    return this.authedRequest<ProvidersStatus>("/me/providers");
+  }
+
+  async connectProvider(provider: ExtProvider, token: string, premium: boolean): Promise<void> {
+    await this.authedRequest(`/me/providers/${provider}`, {
+      method: "PUT",
+      body: JSON.stringify({ token, premium }),
+    });
+  }
+
+  async disconnectProvider(provider: ExtProvider): Promise<void> {
+    await this.authedRequest(`/me/providers/${provider}`, { method: "DELETE" });
   }
 
   // ---------- Тексты и рецепт (Stage 2, слайсы 5–6) ----------
@@ -1499,6 +1528,14 @@ export class HttpMuzaApi implements MuzaApi {
       byApp: hl.by_app.map((r) => ({ appVersion: r.app_version, reports: r.reports, ok: r.ok, fail: r.fail })),
       recipeVersion: hl.recipe.version,
     };
+  }
+
+  /** Выдать/снять админку (2026-07-21): только для админов; рубеж — сервер. */
+  async setAdminUser(id: string, isAdmin: boolean): Promise<void> {
+    await this.authedRequest(`/admin/users/${encodeURIComponent(id)}/admin`, {
+      method: "POST",
+      body: JSON.stringify({ is_admin: isAdmin }),
+    });
   }
 
   async getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers> {

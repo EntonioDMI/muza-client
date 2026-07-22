@@ -197,6 +197,9 @@ export const PlaylistMetaSchema = z.object({
   icon: z.string().nullable().default(null),
   /** T47c: cover_url трека для icon="track:<id>"; иначе null. */
   iconCoverUrl: z.string().nullable().default(null),
+  /** Закреплён (2026-07-20): всегда сверху списка (под «Избранным»),
+   *  из drag-реордера исключён. Только свои плейлисты. */
+  pinned: z.boolean().default(false),
 });
 export type PlaylistMeta = z.infer<typeof PlaylistMetaSchema>;
 
@@ -388,6 +391,22 @@ export interface ScrobblingStatus {
   lastfm: { available: boolean; connected: boolean; username: string | null };
   listenbrainz: { connected: boolean; username: string | null };
 }
+
+/** Статус подключённых внешних источников аудио (настройки → Интеграции,
+ *  Фаза 3). available=false — на сервере не настроен ключ шифрования токенов
+ *  (подключение источников выключено). Токены наружу НЕ отдаются — только
+ *  факт подключения и признак подписки. */
+export interface ProvidersStatus {
+  available: boolean;
+  providers: {
+    yandex: { connected: boolean; premium: boolean };
+    vk: { connected: boolean; premium: boolean };
+    deezer: { connected: boolean; premium: boolean };
+  };
+}
+
+/** Провайдеры внешних источников, которые умеет подключать клиент. */
+export type ExtProvider = "yandex" | "vk" | "deezer";
 
 // ── Рекомендации и лента (Stage 5) ─────────────────────────────────
 

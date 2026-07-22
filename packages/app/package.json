@@ -8,7 +8,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./i18n": "./src/i18n/index.tsx",
-    "./shell/*": "./src/shell/*.tsx"
+    "./shell/*": "./src/shell/*.tsx",
+    "./theme/accent": "./src/theme/accent.ts",
+    "./theme/themeVars": "./src/theme/themeVars.ts",
+    "./theme/ThemeRoot": "./src/theme/ThemeRoot.tsx",
+    "./components/DesktopOnly": "./src/components/DesktopOnly.tsx"
   },
   "sideEffects": [
     "*.css"

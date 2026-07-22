@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Annotation } from "@muza/api-client";
 import { MeaningDialog } from "./MeaningDialog";
 import { ListeningMode } from "./ListeningMode";
+import { TestMenuProvider } from "./menuTestUtils";
 
 afterEach(cleanup);
 
@@ -118,7 +119,8 @@ describe("MeaningDialog", () => {
     function Harness() {
       const [dialogOpen, setDialogOpen] = useState(true);
       const [listeningOpen, setListeningOpen] = useState(true);
-      return <>
+      // ListeningMode зовёт useContextMenu (ПКМ по тексту) — рендер внутри провайдера
+      return <TestMenuProvider>
         <ListeningMode
           open={listeningOpen}
           track={{ id: "t3", kind: "catalog", title: "Стеклянный дом", artist: "Мира", album: "Тише", duration: 234, cover: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", explicit: false, loudness: null }}
@@ -140,7 +142,7 @@ describe("MeaningDialog", () => {
           annotation={annotation}
           onClose={() => setDialogOpen(false)}
         />
-      </>;
+      </TestMenuProvider>;
     }
     render(<Harness />);
 

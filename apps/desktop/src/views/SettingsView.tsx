@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Badge, Button, ChipGroup, ColorPicker, Dialog, Fader, Icon, IconButton, Kbd, SearchInput, Select, Slider, Switch, Tabs, Tooltip } from "@muza/ui";
-import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
+import { ApiError, type MarketPlugin, type MarketTheme, type MuzaApi, type ProvidersStatus, type RecsSettings, type ScrobblingStatus, type SessionInfo } from "@muza/api-client";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BarButtonKey, type NavItemKey, type Prefs, type StatsBlockKey } from "../types";
 import { useT, type TParams, type TranslationKey } from "../i18n";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
@@ -26,7 +26,9 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
 import { cacheClear, cacheStats, engineAvailable, engineStage0Status, type CacheStats, type Stage0Status } from "../lib/engine";
-import { formatTemplate, rpcAvailable } from "../lib/discord";
+import { discordCoverUrl, formatTemplate, isValidButtonUrl, rpcAvailable } from "../lib/discord";
+import { fmtTime } from "../lib/format";
+import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { openExternal } from "../lib/system";
 import { checkForUpdate, updaterAvailable, type FoundUpdate } from "../lib/updater";
 import {
@@ -51,7 +53,8 @@ import {
 } from "../lib/themes";
 import { matchPreset, PRESETS_BG, PRESETS_WARM } from "../lib/presets";
 import { searchSettings, type SettingsSearchHit } from "../lib/settingsIndex";
-import { availableFonts } from "../lib/fonts";
+import { availableFonts, CUSTOM_FONT_CHOICE_KEY, fontFamily } from "../lib/fonts";
+import { applyCustomFont, installCustomFontFile, removeCustomFont } from "../lib/customFont";
 // Редизайн раскладки (колонки во всю высоту зоны, текучие ширины) — перекрывает
 // габариты каркаса .muza-settings* из app.css; подробности в самом файле.
 import "./SettingsView.layout.css";
@@ -1084,6 +1087,7 @@ export function SettingsView({
   onOpenHotkeys,
   onPluginsChanged,
   intent,
+  nowPlaying,
 }: {
   api: MuzaApi;
   /** false у анонима: серверные функции аккаунта (смена пароля) недоступны. */
@@ -1102,6 +1106,9 @@ export function SettingsView({
    *  (слоты/iframe) БЕЗ перезагрузки приложения. См. docs/notes про gap T45b. */
   onPluginsChanged?: () => void;
   intent?: SettingsIntent | null;
+  /** Играющий трек — честный предпросмотр Discord RPC (обложка — сырая,
+   *  как в реальной активности); null — демо-значения. */
+  nowPlaying?: { title: string; artist: string; album: string; cover: string | null; duration: number } | null;
 }) {
   const { t, lang } = useT();
   const [tab, setTab] = useState("appearance");
@@ -1726,6 +1733,24 @@ export function SettingsView({
   const [lbToken, setLbToken] = useState("");
   const [lbErr, setLbErr] = useState<string | null>(null);
   const [lbBusy, setLbBusy] = useState(false);
+  // Внешние источники аудио (Интеграции, Фаза 3): статус + флоу подключения
+  // Яндекса. Токен вставляется как ListenBrainz, плюс галка «есть Плюс».
+  const [provs, setProvs] = useState<ProvidersStatus | null>(null);
+  const [yaOpen, setYaOpen] = useState(false);
+  const [yaToken, setYaToken] = useState("");
+  const [yaPremium, setYaPremium] = useState(true);
+  const [yaErr, setYaErr] = useState<string | null>(null);
+  const [yaBusy, setYaBusy] = useState(false);
+  // VK — та же модель, но без Плюса (MP3) и с предупреждением о нестабильности
+  const [vkOpen, setVkOpen] = useState(false);
+  const [vkToken, setVkToken] = useState("");
+  const [vkErr, setVkErr] = useState<string | null>(null);
+  const [vkBusy, setVkBusy] = useState(false);
+  // Deezer — ARL-cookie; предупреждение об обходе защиты (юр-риск)
+  const [dzOpen, setDzOpen] = useState(false);
+  const [dzToken, setDzToken] = useState("");
+  const [dzErr, setDzErr] = useState<string | null>(null);
+  const [dzBusy, setDzBusy] = useState(false);
   // Сервер может быть ещё не поднят — честно говорим и перепроверяем сами,
   // пока вкладка открыта (иначе «Проверяем статус…» висело бы вечно)
   useEffect(() => {
@@ -1734,9 +1759,10 @@ export function SettingsView({
     let iv: ReturnType<typeof setInterval> | null = null;
     const load = async () => {
       try {
-        const s = await api.getScrobbling();
+        const [s, p] = await Promise.all([api.getScrobbling(), api.getProviders()]);
         if (dead) return;
         setScrob(s);
+        setProvs(p);
         setScrobErr(false);
         if (iv) clearInterval(iv);
         iv = null;
@@ -1830,6 +1856,104 @@ export function SettingsView({
       onNotify(t("settings.integrations.listenbrainz.errors.disconnectFailed"), "x");
     }
   };
+
+  /** Яндекс: вставленный токен → сервер (шифрует, наружу не отдаёт). Плюс —
+   *  влияет на доступ к lossless (сервер проверяет при добыче). */
+  const yaConnect = async () => {
+    const token = yaToken.trim();
+    if (token.length < 8) {
+      setYaErr(t("settings.integrations.yandex.errors.pasteToken"));
+      return;
+    }
+    setYaBusy(true);
+    setYaErr(null);
+    try {
+      await api.connectProvider("yandex", token, yaPremium);
+      setProvs((p) => (p ? { ...p, providers: { ...p.providers, yandex: { connected: true, premium: yaPremium } } } : p));
+      setYaOpen(false);
+      setYaToken("");
+      onNotify(t("settings.integrations.yandex.connected"), "music");
+    } catch (e) {
+      setYaErr(e instanceof ApiError ? e.message : t("settings.integrations.yandex.errors.connectFailed"));
+    } finally {
+      setYaBusy(false);
+    }
+  };
+
+  const yaDisconnect = async () => {
+    try {
+      await api.disconnectProvider("yandex");
+      setProvs((p) => (p ? { ...p, providers: { ...p.providers, yandex: { connected: false, premium: false } } } : p));
+      onNotify(t("settings.integrations.yandex.disconnected"), "music");
+    } catch {
+      onNotify(t("settings.integrations.yandex.errors.disconnectFailed"), "x");
+    }
+  };
+
+  /** VK: вставленный токен «доверенного» клиента (Kate). Плюса нет — premium=false. */
+  const vkConnect = async () => {
+    const token = vkToken.trim();
+    if (token.length < 8) {
+      setVkErr(t("settings.integrations.vk.errors.pasteToken"));
+      return;
+    }
+    setVkBusy(true);
+    setVkErr(null);
+    try {
+      await api.connectProvider("vk", token, false);
+      setProvs((p) => (p ? { ...p, providers: { ...p.providers, vk: { connected: true, premium: false } } } : p));
+      setVkOpen(false);
+      setVkToken("");
+      onNotify(t("settings.integrations.vk.connected"), "music");
+    } catch (e) {
+      setVkErr(e instanceof ApiError ? e.message : t("settings.integrations.vk.errors.connectFailed"));
+    } finally {
+      setVkBusy(false);
+    }
+  };
+
+  const vkDisconnect = async () => {
+    try {
+      await api.disconnectProvider("vk");
+      setProvs((p) => (p ? { ...p, providers: { ...p.providers, vk: { connected: false, premium: false } } } : p));
+      onNotify(t("settings.integrations.vk.disconnected"), "music");
+    } catch {
+      onNotify(t("settings.integrations.vk.errors.disconnectFailed"), "x");
+    }
+  };
+
+  /** Deezer: ARL-cookie аккаунта. Premium — не хранится отдельно (нужна платная
+   *  подписка для форматов; сервер сам вернёт null без неё). */
+  const dzConnect = async () => {
+    const token = dzToken.trim();
+    if (token.length < 8) {
+      setDzErr(t("settings.integrations.deezer.errors.pasteToken"));
+      return;
+    }
+    setDzBusy(true);
+    setDzErr(null);
+    try {
+      await api.connectProvider("deezer", token, false);
+      setProvs((p) => (p ? { ...p, providers: { ...p.providers, deezer: { connected: true, premium: false } } } : p));
+      setDzOpen(false);
+      setDzToken("");
+      onNotify(t("settings.integrations.deezer.connected"), "music");
+    } catch (e) {
+      setDzErr(e instanceof ApiError ? e.message : t("settings.integrations.deezer.errors.connectFailed"));
+    } finally {
+      setDzBusy(false);
+    }
+  };
+
+  const dzDisconnect = async () => {
+    try {
+      await api.disconnectProvider("deezer");
+      setProvs((p) => (p ? { ...p, providers: { ...p.providers, deezer: { connected: false, premium: false } } } : p));
+      onNotify(t("settings.integrations.deezer.disconnected"), "music");
+    } catch {
+      onNotify(t("settings.integrations.deezer.errors.disconnectFailed"), "x");
+    }
+  };
   const set = (patch: Partial<Prefs>) => setPrefs({ ...prefs, ...patch });
 
   // Кэш добычи (Stage 4): реальные цифры + живая очистка (пины переживают)
@@ -1911,9 +2035,41 @@ export function SettingsView({
   };
   const searchHits = searchQ.trim() ? searchSettings(searchQ, (key) => t(key as TranslationKey)) : [];
 
+  // Свой шрифт (2026-07-20): applyCustomFont идемпотентен — лениво поднимает
+  // @font-face и отдаёт имя (null — не загружен). Дальше состояние ведёт UI.
+  const [customFontName, setCustomFontName] = useState<string | null>(() => applyCustomFont());
+  const fontFileRef = useRef<HTMLInputElement>(null);
+  const customFontFamily = fontFamily(CUSTOM_FONT_CHOICE_KEY);
+  const onCustomFontFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const stored = await installCustomFontFile(file);
+      setCustomFontName(stored.name);
+      onNotify(t("settings.customize.typography.customFont.installed", { name: stored.name }), "type");
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "readFailed";
+      onNotify(t(`settings.customize.typography.customFont.errors.${reason}` as TranslationKey), "x");
+    }
+  };
+  const onRemoveCustomFont = () => {
+    removeCustomFont();
+    setCustomFontName(null);
+    // выбранный «custom» без файла честно падал бы в Segoe — возвращаем дефолты
+    const patch: Partial<Prefs> = {};
+    if (prefs.fontUi === CUSTOM_FONT_CHOICE_KEY) patch.fontUi = "golos";
+    if (prefs.fontDisplay === CUSTOM_FONT_CHOICE_KEY) patch.fontDisplay = "unbounded";
+    if (Object.keys(patch).length > 0) set(patch);
+  };
+
   // Шрифты для двух Select типографики: канвас-детект системных — один раз
-  // на маунт (список не меняется, пока открыты настройки).
-  const fonts = useMemo(() => availableFonts(), []);
+  // на маунт (список не меняется, пока открыты настройки); свой шрифт —
+  // первой строкой, когда загружен.
+  const fonts = useMemo(() => {
+    const base = availableFonts();
+    return customFontName
+      ? [{ key: CUSTOM_FONT_CHOICE_KEY, label: customFontName, family: customFontFamily }, ...base]
+      : base;
+  }, [customFontName, customFontFamily]);
 
   const presets = [
     {
@@ -2208,6 +2364,49 @@ export function SettingsView({
           value={prefs.fontDisplay}
           onChange={(fontDisplay: string) => set({ fontDisplay })}
         />
+      </SettingRow>
+      {/* Свой шрифт (2026-07-20): файл через <input type=file> — работает и в
+          Tauri, и в вебе; хранение/инжект — lib/customFont.ts */}
+      <SettingRow title={t("settings.customize.typography.customFont.title")} hint={t("settings.customize.typography.customFont.hint")}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          {customFontName ? (
+            <>
+              <span
+                style={{
+                  fontFamily: customFontFamily,
+                  fontSize: "var(--fs-body)",
+                  color: "var(--text-2)",
+                  maxWidth: 150,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {customFontName}
+              </span>
+              <IconButton
+                icon="trash-2"
+                size="sm"
+                label={t("settings.customize.typography.customFont.remove")}
+                onClick={onRemoveCustomFont}
+              />
+            </>
+          ) : null}
+          <Button variant="secondary" icon="upload" onClick={() => fontFileRef.current?.click()}>
+            {t(customFontName ? "settings.customize.typography.customFont.replace" : "settings.customize.typography.customFont.pick")}
+          </Button>
+          <input
+            ref={fontFileRef}
+            type="file"
+            accept=".ttf,.otf,.woff,.woff2"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ""; // повторный выбор того же файла снова даёт change
+              void onCustomFontFile(file);
+            }}
+          />
+        </div>
       </SettingRow>
       <SettingRow title={t("settings.customize.typography.fontScale.title")} hint={t("settings.customize.typography.fontScale.hint")}>
         <LiveSlider
@@ -2863,6 +3062,20 @@ export function SettingsView({
     </div>
   );
 
+  // Предпросмотр Discord = зеркало реальной активности (App.tsx → rpc.rs):
+  // играет трек — его данные и сырая обложка; кнопка показывается только когда
+  // реально уйдёт (валидный URL + текст); кнопка включена → тип Playing (Discord
+  // рендерит кнопки только там), прогресс-линия — только у Listening.
+  const dcVars = nowPlaying
+    ? { track: nowPlaying.title, artist: nowPlaying.artist, album: nowPlaying.album }
+    : discordPreviewVars(t);
+  const dcCover = prefs.discordShowCover && nowPlaying?.cover ? discordCoverUrl(nowPlaying.cover) : null;
+  const dcBtnUrlInvalid = prefs.discordBtnUrl.trim() !== "" && !isValidButtonUrl(prefs.discordBtnUrl);
+  const dcBtnShown = prefs.discordBtnOn && prefs.discordBtnLabel.trim() !== "" && isValidButtonUrl(prefs.discordBtnUrl);
+  const dcDuration = nowPlaying && nowPlaying.duration > 0 ? Math.round(nowPlaying.duration) : 204;
+  const dcElapsed = Math.round(dcDuration / 3);
+  const dcShowBar = prefs.discordProgressOn && !dcBtnShown;
+
   const discordPane = (
     <div key="discord" className={paneClass} style={paneStyle}>
       <SubHeader title={t("settings.integrations.discord.title")} onBack={() => setSub(null)} />
@@ -2875,6 +3088,9 @@ export function SettingsView({
       <GroupTitle>{t("settings.integrations.discord.whatToShow")}</GroupTitle>
       <SettingRow title={t("settings.integrations.discord.cover.title")} hint={t("settings.integrations.discord.cover.hint")}>
         <Switch checked={prefs.discordShowCover} onChange={(discordShowCover: boolean) => set({ discordShowCover })} label={t("settings.integrations.discord.cover.ariaLabel")} />
+      </SettingRow>
+      <SettingRow title={t("settings.integrations.discord.progress.title")} hint={t("settings.integrations.discord.progress.hint")}>
+        <Switch checked={prefs.discordProgressOn} onChange={(discordProgressOn: boolean) => set({ discordProgressOn })} label={t("settings.integrations.discord.progress.ariaLabel")} />
       </SettingRow>
       <SettingRow title={t("settings.integrations.discord.line1.title")} hint={t("settings.integrations.discord.line1.hint")}>
         <SettingInput value={prefs.discordLine1} placeholder="{track}" onChange={(v) => set({ discordLine1: v.slice(0, 128) })} />
@@ -2901,6 +3117,12 @@ export function SettingsView({
           onChange={(v) => set({ discordBtnUrl: v })}
         />
       </SettingRow>
+      {dcBtnUrlInvalid ? (
+        // без валидной ссылки кнопка молча не уходит (rpc.rs) — говорим об этом
+        <div style={{ margin: "calc(var(--sp-2) * -1) 0 0", fontSize: "var(--fs-caption)", color: "var(--danger)" }}>
+          {t("settings.integrations.discord.btnUrl.invalid")}
+        </div>
+      ) : null}
       <GroupTitle>{t("settings.integrations.discord.previewGroup")}</GroupTitle>
       {/* Карточка активности как в профиле Discord */}
       <div
@@ -2915,33 +3137,59 @@ export function SettingsView({
         }}
       >
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-3)" }}>
-          {t("settings.integrations.discord.preview.listeningTo")}
+          {/* кнопка переключает активность на Playing (rpc.rs) — заголовок честный */}
+          {t(dcBtnShown ? "settings.integrations.discord.preview.playingTo" : "settings.integrations.discord.preview.listeningTo")}
         </div>
         <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center" }}>
-          <div
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: "var(--r-sm)",
-              background: "var(--accent-soft)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flex: "none",
-            }}
-          >
-            <Icon name="disc-3" size={24} color="var(--accent-text)" />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)" }}>
-              {formatTemplate(prefs.discordLine1, discordPreviewVars(t)) || t("settings.integrations.discord.preview.track")}
+          {dcCover ? (
+            // реальная обложка играющего трека — та же, что уйдёт в Discord
+            <img
+              src={dcCover}
+              alt=""
+              style={{ width: 48, height: 48, borderRadius: "var(--r-sm)", objectFit: "cover", flex: "none" }}
+            />
+          ) : (
+            // нет обложки → стоковая иконка приложения (= арт-ассет logo в Discord)
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: "var(--r-sm)",
+                background: "var(--surface-3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "none",
+              }}
+            >
+              <img src={glyph} alt="" style={{ width: 28, height: 28 }} />
             </div>
-            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
-              {formatTemplate(prefs.discordLine2, discordPreviewVars(t)) || t("settings.integrations.discord.preview.artist")}
+          )}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {formatTemplate(prefs.discordLine1, dcVars) || t("settings.integrations.discord.preview.track")}
             </div>
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {formatTemplate(prefs.discordLine2, dcVars) || t("settings.integrations.discord.preview.artist")}
+            </div>
+            {dcShowBar ? (
+              // нативная прогресс-линия Discord (start+end): полоска + таймкоды
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", marginTop: 4 }}>
+                <span style={{ fontSize: 10, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{fmtTime(dcElapsed)}</span>
+                <div style={{ flex: 1, height: 3, borderRadius: 2, background: "var(--surface-4)", overflow: "hidden" }}>
+                  <div style={{ width: `${Math.round((dcElapsed / dcDuration) * 100)}%`, height: "100%", background: "var(--text-2)" }} />
+                </div>
+                <span style={{ fontSize: 10, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{fmtTime(dcDuration)}</span>
+              </div>
+            ) : (
+              // без линии Discord показывает счётчик прослушанного
+              <div style={{ marginTop: 4, fontSize: 10, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+                {fmtTime(dcElapsed)}
+              </div>
+            )}
           </div>
         </div>
-        {prefs.discordBtnOn ? (
+        {dcBtnShown ? (
           // без title: URL и так виден в поле ввода рядом, а нативная плашка
           // WebView2 выбивалась из языка ДС (жалоба 2026-07-16)
           <div
@@ -3733,6 +3981,13 @@ export function SettingsView({
         <SettingRow title={t("settings.lyrics.endNote.title")} hint={t("settings.lyrics.endNote.hint")}>
           <Switch checked={prefs.lyricsEndNote} onChange={(lyricsEndNote: boolean) => set({ lyricsEndNote })} label={t("settings.lyrics.endNote.title")} />
         </SettingRow>
+        <SettingRow title={t("settings.lyrics.videoNowPlaying.title")} hint={t("settings.lyrics.videoNowPlaying.hint")}>
+          <Switch
+            checked={prefs.videoNowPlaying}
+            onChange={(videoNowPlaying: boolean) => set({ videoNowPlaying })}
+            label={t("settings.lyrics.videoNowPlaying.title")}
+          />
+        </SettingRow>
         <SettingRow title={t("settings.lyrics.karaokeSize.title")} hint={t("settings.lyrics.karaokeSize.hint")}>
           <LiveSlider
             value={prefs.karaokeSize - 36}
@@ -3852,6 +4107,115 @@ export function SettingsView({
             </Button>
           ) : (
             <RowValue>{t("settings.integrations.notConnected")}</RowValue>
+          )}
+        </SettingRow>
+        <SettingRow
+          title={t("settings.integrations.yandex.title")}
+          hint={
+            !serverSession
+              ? t("settings.integrations.needsAccount")
+              : !provs
+                ? scrobErr
+                  ? t("settings.integrations.serverUnavailable")
+                  : t("settings.integrations.checkingStatus")
+                : !provs.available
+                  ? t("settings.integrations.yandex.unavailable")
+                  : provs.providers.yandex.connected
+                    ? t("settings.integrations.yandex.connectedState")
+                    : t("settings.integrations.yandex.hint")
+          }
+        >
+          {serverSession && provs?.providers.yandex.connected ? (
+            <Button variant="ghost" icon="unlink" onClick={() => void yaDisconnect()}>
+              {t("common.disconnect")}
+            </Button>
+          ) : serverSession && provs?.available ? (
+            <Button
+              variant="secondary"
+              icon="link"
+              onClick={() => {
+                setYaErr(null);
+                setYaToken("");
+                setYaPremium(true);
+                setYaOpen(true);
+              }}
+            >
+              {t("common.connect")}
+            </Button>
+          ) : (
+            <RowValue>{serverSession && provs ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
+          )}
+        </SettingRow>
+        <SettingRow
+          title={t("settings.integrations.vk.title")}
+          hint={
+            !serverSession
+              ? t("settings.integrations.needsAccount")
+              : !provs
+                ? scrobErr
+                  ? t("settings.integrations.serverUnavailable")
+                  : t("settings.integrations.checkingStatus")
+                : !provs.available
+                  ? t("settings.integrations.vk.unavailable")
+                  : provs.providers.vk.connected
+                    ? t("settings.integrations.vk.connectedState")
+                    : t("settings.integrations.vk.hint")
+          }
+        >
+          {serverSession && provs?.providers.vk.connected ? (
+            <Button variant="ghost" icon="unlink" onClick={() => void vkDisconnect()}>
+              {t("common.disconnect")}
+            </Button>
+          ) : serverSession && provs?.available ? (
+            <Button
+              variant="secondary"
+              icon="link"
+              onClick={() => {
+                setVkErr(null);
+                setVkToken("");
+                setVkOpen(true);
+              }}
+            >
+              {t("common.connect")}
+            </Button>
+          ) : (
+            <RowValue>{serverSession && provs ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
+          )}
+        </SettingRow>
+        <SettingRow
+          title={t("settings.integrations.deezer.title")}
+          hint={
+            !serverSession
+              ? t("settings.integrations.needsAccount")
+              : !provs
+                ? scrobErr
+                  ? t("settings.integrations.serverUnavailable")
+                  : t("settings.integrations.checkingStatus")
+                : !provs.available
+                  ? t("settings.integrations.deezer.unavailable")
+                  : provs.providers.deezer.connected
+                    ? t("settings.integrations.deezer.connectedState")
+                    : t("settings.integrations.deezer.hint")
+          }
+        >
+          {serverSession && provs?.providers.deezer.connected ? (
+            <Button variant="ghost" icon="unlink" onClick={() => void dzDisconnect()}>
+              {t("common.disconnect")}
+            </Button>
+          ) : serverSession && provs?.available ? (
+            <Button
+              variant="secondary"
+              icon="link"
+              onClick={() => {
+                setDzErr(null);
+                setDzToken("");
+                setDzOpen(true);
+              }}
+            >
+              {t("common.connect")}
+            </Button>
+          ) : (
+            <RowValue>{serverSession && provs ? t("settings.integrations.unavailable") : t("settings.integrations.notConnected")}</RowValue>
           )}
         </SettingRow>
         <SettingRow title={t("settings.integrations.mediaKeys.title")} hint={t("settings.integrations.mediaKeys.hint")}>
@@ -4369,6 +4733,120 @@ export function SettingsView({
           </Button>
           <SettingInput value={lbToken} onChange={setLbToken} placeholder={t("settings.integrations.listenbrainz.tokenPlaceholder")} width={320} />
           {lbErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{lbErr}</div> : null}
+        </div>
+      </Dialog>
+
+      {/* Яндекс.Музыка: OAuth-токен аккаунта + признак Плюса (Фаза 3) */}
+      <Dialog
+        open={yaOpen}
+        title={t("settings.integrations.yandex.dialogTitle")}
+        onClose={() => setYaOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setYaOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" icon="link" disabled={yaBusy} onClick={() => void yaConnect()}>
+              {yaBusy ? t("settings.integrations.yandex.checking") : t("common.connect")}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.yandex.dialogBody")}</div>
+          <Button
+            variant="ghost"
+            icon="external-link"
+            onClick={() => void openExternal("https://yandex-music.readthedocs.io/en/main/token.html")}
+            style={{ alignSelf: "flex-start" }}
+          >
+            {t("settings.integrations.yandex.howToGetToken")}
+          </Button>
+          <SettingInput value={yaToken} onChange={setYaToken} placeholder={t("settings.integrations.yandex.tokenPlaceholder")} width={320} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--sp-3)" }}>
+            <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>{t("settings.integrations.yandex.premium")}</span>
+            <Switch checked={yaPremium} onChange={setYaPremium} label={t("settings.integrations.yandex.premium")} />
+          </div>
+          {yaErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{yaErr}</div> : null}
+        </div>
+      </Dialog>
+
+      {/* VK: токен «доверенного» клиента (Kate). С предупреждением о риске
+          заморозки аккаунта (VK закрыл аудио-API 27.04.2025). */}
+      <Dialog
+        open={vkOpen}
+        title={t("settings.integrations.vk.dialogTitle")}
+        onClose={() => setVkOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setVkOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" icon="link" disabled={vkBusy} onClick={() => void vkConnect()}>
+              {vkBusy ? t("settings.integrations.vk.checking") : t("common.connect")}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "var(--sp-2)",
+              padding: "var(--sp-3)",
+              borderRadius: "var(--radius-sm, 8px)",
+              background: "var(--warning-bg, rgba(200,140,0,0.12))",
+              border: "1px solid var(--warning, #c88c00)",
+              fontSize: "var(--fs-caption)",
+              color: "var(--text-1)",
+              lineHeight: 1.5,
+            }}
+          >
+            <Icon name="alert-triangle" size={16} />
+            <span>{t("settings.integrations.vk.warning")}</span>
+          </div>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.vk.dialogBody")}</div>
+          <SettingInput value={vkToken} onChange={setVkToken} placeholder={t("settings.integrations.vk.tokenPlaceholder")} width={320} />
+          {vkErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{vkErr}</div> : null}
+        </div>
+      </Dialog>
+
+      {/* Deezer: ARL-cookie. Предупреждение об обходе защиты (DMCA-риск). */}
+      <Dialog
+        open={dzOpen}
+        title={t("settings.integrations.deezer.dialogTitle")}
+        onClose={() => setDzOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setDzOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" icon="link" disabled={dzBusy} onClick={() => void dzConnect()}>
+              {dzBusy ? t("settings.integrations.deezer.checking") : t("common.connect")}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 320 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: "var(--sp-2)",
+              padding: "var(--sp-3)",
+              borderRadius: "var(--radius-sm, 8px)",
+              background: "var(--warning-bg, rgba(200,140,0,0.12))",
+              border: "1px solid var(--warning, #c88c00)",
+              fontSize: "var(--fs-caption)",
+              color: "var(--text-1)",
+              lineHeight: 1.5,
+            }}
+          >
+            <Icon name="alert-triangle" size={16} />
+            <span>{t("settings.integrations.deezer.warning")}</span>
+          </div>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>{t("settings.integrations.deezer.dialogBody")}</div>
+          <SettingInput value={dzToken} onChange={setDzToken} placeholder={t("settings.integrations.deezer.tokenPlaceholder")} width={320} />
+          {dzErr ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{dzErr}</div> : null}
         </div>
       </Dialog>
 

@@ -67,6 +67,52 @@ export function nextGroupLimit(current: number): number | null {
   return next <= GROUP_LIMIT_MAX ? next : null;
 }
 
+/** Идентичность результата в выдаче: группа — по канону, одиночка — по треку. */
+function resultKey(r: GroupedSearchResult): string {
+  return r.kind === "single" ? `s-${r.track.id}` : `g-${r.canonical.id}`;
+}
+
+/** Все track id, которые карточка показывает (канон + варианты | одиночка). */
+function resultTrackIds(r: GroupedSearchResult): string[] {
+  return r.kind === "single" ? [r.track.id] : [r.canonical.id, ...r.variants.map((v) => v.track.id)];
+}
+
+/** Стабильное слияние «Загрузить ещё»: сервер на рост limit пересобирает
+ *  ранжирование/группировку над бОльшим пулом (offset всегда 0), и голая
+ *  замена состояния перемешивала УЖЕ ПОКАЗАННЫЕ строки с новыми — владелец:
+ *  «не понимаешь, что новое, а что старое». Правило: порядок показанного
+ *  неприкосновенен, новое — строго В КОНЕЦ.
+ *
+ *  - карточка есть в обеих выдачах → СВЕЖИЕ данные (группа могла подрасти
+ *    вариантами — это внутри карточки, список не дёргает) на СТАРОМ месте;
+ *  - карточка только в prev → остаётся (пользователь её видел), кроме случая,
+ *    когда её треки поглощены другой карточкой next (одиночка стала вариантом
+ *    группы) — тогда убираем, чтобы трек не задвоился;
+ *  - карточка только в next → в конец, во внутреннем порядке next. */
+export function mergeGroupedResults(
+  prev: GroupedSearchResult[],
+  next: GroupedSearchResult[],
+): GroupedSearchResult[] {
+  const nextByKey = new Map(next.map((r) => [resultKey(r), r]));
+  const nextCoverage = new Set(next.flatMap(resultTrackIds));
+  const kept = new Set<string>();
+  const merged: GroupedSearchResult[] = [];
+  for (const p of prev) {
+    const key = resultKey(p);
+    const fresh = nextByKey.get(key);
+    if (fresh) {
+      merged.push(fresh);
+      kept.add(key);
+    } else if (!resultTrackIds(p).some((id) => nextCoverage.has(id))) {
+      merged.push(p);
+    }
+  }
+  for (const n of next) {
+    if (!kept.has(resultKey(n))) merged.push(n);
+  }
+  return merged;
+}
+
 /** Куда идёт «Загрузить ещё» при настройке «Где искать» = `searchScope`.
  *
  *  Мгновенный ввод намеренно ищет по каталогу (`scope:"catalog"` — быстро, без

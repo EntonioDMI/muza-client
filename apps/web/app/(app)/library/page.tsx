@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, Dialog, EmptyState, SearchInput, Tabs } from "@muza/ui";
+import { Button, Dialog, EmptyState, Icon, SearchInput, Tabs } from "@muza/ui";
 import { pickRandomPlaylistIcon } from "@muza/core";
-import { ApiError, type HistoryItem } from "@muza/api-client";
+import { ApiError, type HistoryItem, type PlaylistMeta } from "@muza/api-client";
 import { getApi } from "../../../src/api";
+import { tracksLabel } from "../../../src/format";
+import { useLikes } from "../../../src/likes";
 import { usePlaylists } from "../../../src/playlists";
 import { PlaylistCover } from "../../../src/components/PlaylistCover";
 import { TrackList } from "../../../src/components/TrackList";
@@ -15,9 +17,112 @@ import { useToast } from "../../../src/toast";
 /** Библиотека веба: плейлисты (создание/переименование/удаление — на
  *  странице плейлиста, здесь создание + вход по инвайт-коду) + история.
  *  Импорт по ссылке и локальные файлы — в десктопе, веб лёгкий. */
+/** Плитка «Любимое» — всегда первая в сетке, фирменный градиент глифа
+ *  (зеркало FavoritesTile десктопа, LibraryView.tsx:31). */
+function FavoritesTile({ count }: { count: number }) {
+  const [lit, setLit] = useState(false);
+  return (
+    <Link
+      href="/favorites"
+      aria-label="Любимое"
+      onMouseEnter={() => setLit(true)}
+      onMouseLeave={() => setLit(false)}
+      style={{
+        display: "block",
+        padding: "var(--sp-3)",
+        borderRadius: "var(--r-md)",
+        background: lit ? "var(--surface-3)" : "var(--surface-2)",
+        textDecoration: "none",
+        transition: "background var(--dur-base) var(--ease-out)",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          display: "grid",
+          placeItems: "center",
+          aspectRatio: "1",
+          marginBottom: "var(--sp-3)",
+          borderRadius: "var(--r-sm)",
+          overflow: "hidden",
+          // градиент логотипа (glyph.svg: #F76967 → #3B82F6) — как в приложении
+          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
+        }}
+      >
+        <Icon name="heart" size={96} color="#fff" filled style={{ width: "58%", height: "58%" }} />
+      </span>
+      <span
+        style={{
+          display: "block",
+          fontFamily: "var(--font-ui)",
+          fontWeight: 600,
+          fontSize: "var(--fs-body)",
+          color: "var(--text-1)",
+        }}
+      >
+        Любимое
+      </span>
+      <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>
+        {tracksLabel(count)}
+      </span>
+    </Link>
+  );
+}
+
+/** Квадратная плитка плейлиста (было — строка): иконка на всю ширину
+ *  колонки, имя и счётчик под ней — раскладка плитки десктопа. */
+function PlaylistTile({ p }: { p: PlaylistMeta }) {
+  const [lit, setLit] = useState(false);
+  return (
+    <Link
+      href={`/playlist?id=${p.id}`}
+      onMouseEnter={() => setLit(true)}
+      onMouseLeave={() => setLit(false)}
+      style={{
+        display: "block",
+        padding: "var(--sp-3)",
+        borderRadius: "var(--r-md)",
+        background: lit ? "var(--surface-3)" : "var(--surface-2)",
+        textDecoration: "none",
+        transition: "background var(--dur-base) var(--ease-out)",
+      }}
+    >
+      <span style={{ display: "block", marginBottom: "var(--sp-3)" }}>
+        <PlaylistCover
+          icon={p.icon}
+          shared={p.collaboratorsCount > 0 || p.role === "collaborator"}
+          size={0}
+          iconSize={48}
+          fluid
+          radius="var(--r-sm)"
+        />
+      </span>
+      <span
+        style={{
+          display: "block",
+          fontFamily: "var(--font-ui)",
+          fontWeight: 600,
+          fontSize: "var(--fs-body)",
+          color: "var(--text-1)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {p.name}
+      </span>
+      <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>
+        {tracksLabel(p.trackCount)}
+        {p.role === "collaborator" ? ` · от ${p.ownerUsername}` : ""}
+      </span>
+    </Link>
+  );
+}
+
 export default function LibraryPage() {
   const router = useRouter();
   const notify = useToast();
+  const { favorites } = useLikes();
   const { playlists, loaded, refresh } = usePlaylists();
   const [tab, setTab] = useState("playlists");
   const [history, setHistory] = useState<HistoryItem[] | null>(null);
@@ -114,50 +219,13 @@ export default function LibraryPage() {
       {tab === "playlists" ? (
         !loaded ? (
           <p style={noteStyle}>Загрузка…</p>
-        ) : playlists.length === 0 ? (
-          <EmptyState
-            icon="list-music"
-            title="Плейлистов пока нет"
-            hint="Создай первый кнопкой выше — или войди по коду в совместный плейлист друга."
-          />
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "var(--sp-3)" }}>
+          /* Сетка КВАДРАТНЫХ плиток, как в приложении (было — строки);
+             «Любимое» всегда первой, даже без единого плейлиста */
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--sp-3)" }}>
+            <FavoritesTile count={favorites.length} />
             {playlists.map((p) => (
-              <Link
-                key={p.id}
-                href={`/playlist?id=${p.id}`}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--sp-3)",
-                  padding: "var(--sp-3)",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--surface-2)",
-                  textDecoration: "none",
-                }}
-              >
-                <PlaylistCover icon={p.icon} shared={p.collaboratorsCount > 0 || p.role === "collaborator"} size={52} iconSize={22} />
-                <span style={{ minWidth: 0 }}>
-                  <span
-                    style={{
-                      display: "block",
-                      fontFamily: "var(--font-ui)",
-                      fontWeight: 600,
-                      fontSize: "var(--fs-body)",
-                      color: "var(--text-1)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {p.name}
-                  </span>
-                  <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-                    {p.trackCount} трек(ов)
-                    {p.role === "collaborator" ? ` · от ${p.ownerUsername}` : ""}
-                  </span>
-                </span>
-              </Link>
+              <PlaylistTile key={p.id} p={p} />
             ))}
           </div>
         )

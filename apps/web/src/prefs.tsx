@@ -7,8 +7,17 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
  *  остальная кастомизация — фишка десктопа. */
 
 export interface WebPrefs {
-  /** Акцент ДС: blue (дефолт токенов) | red (пламя лого) | bolt (глубокий синий). */
-  accent: "blue" | "red" | "bolt";
+  /** Э1 веб-паритета (2026-07-21): тема — общее подмножество Prefs десктопа
+   *  (имена/типы 1-в-1, см. @muza/app theme/themeVars.ts). Применяет ThemeRoot
+   *  в providers.tsx. Акцент расширен значением "custom" (+customAccent). */
+  theme: "dark" | "light";
+  accent: "blue" | "red" | "bolt" | "custom";
+  customAccent: string;
+  radius: "mild" | "soft" | "round";
+  blur: number;
+  glassOpacity: number;
+  textDim: number;
+  fontUi: "golos" | "unbounded" | "system";
   /** Сценография: размытая обложка текущего трека фоном (фирменный вид Muza). */
   bgCover: boolean;
   /** Правая панель «Сейчас играет» открывается сама при старте трека (≥1200px). */
@@ -22,7 +31,14 @@ export interface WebPrefs {
 }
 
 export const DEFAULT_WEB_PREFS: WebPrefs = {
+  theme: "dark",
   accent: "blue",
+  customAccent: "#22c55e",
+  radius: "soft",
+  blur: 28,
+  glassOpacity: 62,
+  textDim: 62,
+  fontUi: "golos",
   bgCover: true,
   npOpen: true,
   eqOn: false,

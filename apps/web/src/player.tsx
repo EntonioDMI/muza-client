@@ -173,16 +173,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (dt > 0 && dt < 2) playedMsRef.current += dt * 1000;
       lastTimeRef.current = t;
       setPosition(t);
-      // прогрев следующего трека: с середины текущего дёргаем /stream первым
-      // байтом — сервер добывает заранее, переход почти мгновенный
-      const { queue: q, index: i } = stateRef.current;
-      const upNext = q[i + 1];
+      // Прогрев следующего трека (политика десктопного useWarmer: очередь
+      // греется заранее, не на клике). Через ~2с честного воспроизведения
+      // дёргаем /stream следующего первым байтом — сервер добывает файл в кэш
+      // ПОКА играет текущий, и «дальше» не платит за yt-dlp (замер 2026-07-21:
+      // холодный резолв 3.5–10с, тёплый ~5мс). Ранний прогрев важнее «с
+      // середины»: пользователь щёлкает «дальше» и в первые полминуты.
+      // 2с паузы — защита от лавины при перещёлкивании; один заход на id
+      // (prefetchedRef), байты клиенту не качаются (экономия: Range 0-1).
+      // Заодно кэшируется stream-url (urlsRef) — клик не платит и за RTT токена.
+      const { queue: q, index: i, repeat: r } = stateRef.current;
+      const upNext = q[i + 1] ?? (r === "all" ? q[0] : undefined);
       if (
         upNext &&
         !upNext.localHash &&
+        upNext.id !== currentRef.current?.id &&
         prefetchedRef.current !== upNext.id &&
-        el.duration > 0 &&
-        (t > el.duration * 0.5 || el.duration - t < 45)
+        t > 2
       ) {
         prefetchedRef.current = upNext.id;
         void streamUrl(upNext.id)

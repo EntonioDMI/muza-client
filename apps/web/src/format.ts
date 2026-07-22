@@ -5,3 +5,13 @@ export function fmtTime(sec: number): string {
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 }
+
+/** «N трек/трека/треков» — вместо канцелярского «трек(ов)» (паритет 21.07). */
+export function tracksLabel(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return `${n} треков`;
+  const mod10 = n % 10;
+  if (mod10 === 1) return `${n} трек`;
+  if (mod10 >= 2 && mod10 <= 4) return `${n} трека`;
+  return `${n} треков`;
+}

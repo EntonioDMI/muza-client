@@ -22,6 +22,7 @@ const meta = (over: Partial<PlaylistMeta> = {}): PlaylistMeta => ({
   available: true,
   icon: null,
   iconCoverUrl: null,
+  pinned: false,
   ...over,
 });
 

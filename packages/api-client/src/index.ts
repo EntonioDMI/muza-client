@@ -35,6 +35,8 @@ import type {
   RecsSettings,
   RegisterStatus,
   ScrobblingStatus,
+  ProvidersStatus,
+  ExtProvider,
   SearchScope,
   Session,
   SessionInfo,
@@ -157,6 +159,8 @@ export interface MuzaApi {
   renamePlaylist(id: string, name: string): Promise<void>;
   /** Сменить иконку-обложку (T47, ПКМ → «Сменить иконку»); только владелец. */
   setPlaylistIcon(id: string, icon: string): Promise<void>;
+  /** Закрепить/открепить сверху списка (2026-07-20); только владелец. */
+  setPlaylistPinned(id: string, pinned: boolean): Promise<void>;
   deletePlaylist(id: string): Promise<void>;
   addPlaylistTrack(playlistId: string, trackId: string): Promise<void>;
   removePlaylistTrack(playlistId: string, trackId: string): Promise<void>;
@@ -186,6 +190,14 @@ export interface MuzaApi {
   /** ListenBrainz: user token со страницы listenbrainz.org/settings. */
   listenbrainzConnect(token: string): Promise<{ username: string }>;
   listenbrainzDisconnect(): Promise<void>;
+
+  // Внешние источники аудио (Фаза 3: Яндекс). Пользователь подключает СВОЙ
+  // аккаунт; токен уходит на сервер, шифруется и больше не показывается —
+  // клиент к API источника напрямую не ходит (иначе токен утёк бы в бинарник).
+  getProviders(): Promise<ProvidersStatus>;
+  /** Подключить источник: токен + признак подписки (Плюс — нужен для lossless). */
+  connectProvider(provider: ExtProvider, token: string, premium: boolean): Promise<void>;
+  disconnectProvider(provider: ExtProvider): Promise<void>;
 
   /** Горячий рецепт добычи (Stage 2, слайс 6); применяется клиентом в Stage 3. */
   getRecipe(): Promise<RecipeEnvelope>;
@@ -323,6 +335,8 @@ export interface MuzaApi {
   getAdminContent(): Promise<AdminContent>;
   getAdminHealth(hours?: number): Promise<AdminHealth>;
   getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers>;
+  /** Выдать/снять админку (2026-07-21, разворот решения 11.07): рубеж — сервер. */
+  setAdminUser(id: string, isAdmin: boolean): Promise<void>;
   /** Кусок C: метрики роста (регистрации/посещения/скачивания по дням). */
   getAdminGrowth(days?: number): Promise<AdminGrowth>;
   /** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры kind/версия. */

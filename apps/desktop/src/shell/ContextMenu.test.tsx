@@ -47,6 +47,8 @@ function makeCtx(over: Partial<MenuContext> = {}): MenuContext {
     savePlaylistOffline: vi.fn(),
     renamePlaylist: vi.fn(),
     changePlaylistIcon: vi.fn(),
+    playlistPinned: () => false,
+    togglePlaylistPinned: vi.fn(),
     deletePlaylist: vi.fn(),
     unfollowPlaylist: vi.fn(),
     openCreatePlaylist: vi.fn(),
@@ -58,6 +60,7 @@ function makeCtx(over: Partial<MenuContext> = {}): MenuContext {
     addManyToPlaylist: vi.fn(),
     likeMany: vi.fn(),
     pinMany: vi.fn(),
+    copyText: vi.fn(),
     pluginMenuItems: () => [],
     notifyPlugin: vi.fn(),
     ...over,
@@ -118,7 +121,8 @@ describe("ContextMenu — транспорт", () => {
       apiRef.current?.openMenu({ clientX: 10, clientY: 10, ...ctx }, { kind: "playlist", id: "pl1", name: "P" });
     });
     // владелец: открыть/играть/следующим/в очередь/поделиться/оффлайн/
-    // переименовать/иконка/удалить = 9 пунктов (разделители — не menuitem)
-    expect(screen.getAllByRole("menuitem")).toHaveLength(9);
+    // закрепить (2026-07-20)/переименовать/иконка/удалить = 10 пунктов
+    // (разделители — не menuitem)
+    expect(screen.getAllByRole("menuitem")).toHaveLength(10);
   });
 });

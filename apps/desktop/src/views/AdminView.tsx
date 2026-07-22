@@ -58,7 +58,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ cells, header }: { cells: (string | number)[]; header?: boolean }) {
+function Row({ cells, header }: { cells: React.ReactNode[]; header?: boolean }) {
   return (
     <div
       style={{
@@ -385,15 +385,36 @@ function HealthTab({ api }: { api: MuzaApi }) {
 
 function UsersTab({ api }: { api: MuzaApi }) {
   const { t, lang } = useT();
-  const { data, error } = useAdminData<AdminUsers>(() => api.getAdminUsers({ limit: 100 }), [api]);
+  // Выдача/снятие админки (2026-07-21, разворот решения 11.07): реальный рубеж —
+  // сервер (guard'ы + запись роли только из БД); UI лишь дёргает эндпоинт.
+  const [rev, setRev] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const { data, error } = useAdminData<AdminUsers>(() => api.getAdminUsers({ limit: 100 }), [api, rev]);
   if (!data) return <Loading error={error} />;
+  const toggleAdmin = async (u: AdminUsers["users"][number]) => {
+    setBusyId(u.id);
+    setActionError(null);
+    try {
+      await api.setAdminUser(u.id, !u.isAdmin);
+      setRev((r) => r + 1);
+    } catch (e) {
+      // сервер не даёт снять права с самого себя — показываем его причину
+      setActionError(e instanceof Error ? e.message : t("views.admin.users.adminToggleFailed"));
+    } finally {
+      setBusyId(null);
+    }
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
       <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
         {t("views.admin.users.piiNote", { count: data.total })}
       </div>
+      {actionError ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{actionError}</div>
+      ) : null}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <Row header cells={[t("views.admin.users.userCol"), t("views.admin.users.createdCol"), t("views.admin.users.plays30dCol"), t("views.admin.users.lastCol")]} />
+        <Row header cells={[t("views.admin.users.userCol"), t("views.admin.users.createdCol"), t("views.admin.users.plays30dCol"), t("views.admin.users.lastCol"), t("views.admin.users.adminCol")]} />
         {data.users.map((u) => (
           <Row
             key={u.id}
@@ -402,6 +423,30 @@ function UsersTab({ api }: { api: MuzaApi }) {
               dt(u.createdAt, lang),
               u.plays30d,
               dt(u.lastPlayAt, lang),
+              <button
+                key="admin"
+                type="button"
+                disabled={busyId === u.id}
+                onClick={() => void toggleAdmin(u)}
+                style={{
+                  justifySelf: "start",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "4px var(--sp-3)",
+                  border: "none",
+                  borderRadius: "var(--r-sm)",
+                  background: u.isAdmin ? "color-mix(in srgb, var(--danger) 12%, transparent)" : "var(--accent-soft)",
+                  color: u.isAdmin ? "var(--danger)" : "var(--accent-text)",
+                  fontSize: "var(--fs-caption)",
+                  fontWeight: "var(--fw-medium)",
+                  cursor: busyId === u.id ? "default" : "pointer",
+                  opacity: busyId === u.id ? 0.5 : 1,
+                }}
+              >
+                <Icon name={u.isAdmin ? "shield-off" : "shield"} size={13} />
+                {t(u.isAdmin ? "views.admin.users.revokeAdmin" : "views.admin.users.grantAdmin")}
+              </button>,
             ]}
           />
         ))}
@@ -581,9 +626,10 @@ function ErrorGroupRow({
               gap: 6,
               marginTop: 2,
               padding: "6px var(--sp-3)",
-              border: "1px solid var(--danger)",
+              // ДС: слои вместо рамок — мягкая danger-заливка, не обводка
+              border: "none",
               borderRadius: "var(--r-sm)",
-              background: "transparent",
+              background: "color-mix(in srgb, var(--danger) 14%, transparent)",
               color: "var(--danger)",
               fontSize: "var(--fs-caption)",
               fontWeight: "var(--fw-medium)",
@@ -712,9 +758,10 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
                       disabled={busy}
                       style={{
                         padding: "8px var(--sp-4)",
-                        border: "1px solid var(--surface-4)",
+                        // ДС: слои вместо рамок
+                        border: "none",
                         borderRadius: "var(--r-sm)",
-                        background: "transparent",
+                        background: "var(--surface-2)",
                         color: "var(--text-2)",
                         fontSize: "var(--fs-caption)",
                         cursor: "pointer",
@@ -732,9 +779,10 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
                       alignItems: "center",
                       gap: 6,
                       padding: "8px var(--sp-4)",
-                      border: "1px solid var(--danger)",
+                      // ДС: слои вместо рамок — мягкая danger-заливка
+                      border: "none",
                       borderRadius: "var(--r-sm)",
-                      background: "transparent",
+                      background: "color-mix(in srgb, var(--danger) 14%, transparent)",
                       color: "var(--danger)",
                       fontSize: "var(--fs-caption)",
                       fontWeight: "var(--fw-medium)",
@@ -803,7 +851,9 @@ export function AdminView({ api }: { api: MuzaApi }) {
     { key: "users", label: t("views.admin.tabs.users") },
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6)", maxWidth: 860, margin: "0 auto" }}>
+    // на всю доступную ширину (жалоба 2026-07-20 «бар не растянут»):
+    // прежний maxWidth 860 оставлял пустые поля на широких мониторах
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6)", width: "100%", boxSizing: "border-box" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <Icon name="shield" size={22} color="var(--accent-text)" />
         <h1

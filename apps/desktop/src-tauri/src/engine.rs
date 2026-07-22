@@ -2122,14 +2122,18 @@ fn build_innertube_body(
 ///  3) LOGIN_REQUIRED лечится ровно ОДНИМ повтором с новым visitor
 ///     (замер 2026-07-19: с ним 5/6 OK) — нечем повторять или снова отказ →
 ///     наружу, фолбэк решает вызывающий.
-async fn resolve_via_innertube_with<F, Fut>(
+/// Разбор ответа параметризован (2026-07-21): аудио-путь даёт
+/// parse_innertube_player, видео-путь «Сейчас играет» — parse_innertube_video;
+/// сама оркестрация от содержимого не зависит.
+async fn resolve_innertube_with_parse<T, F, Fut, P>(
     state: &EngineState,
-    itag_priority: &[u64],
     mut call: F,
-) -> Result<InnertubeFormat, InnertubeFail>
+    parse: P,
+) -> Result<T, InnertubeFail>
 where
     F: FnMut(Option<String>) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+    P: Fn(&serde_json::Value) -> Result<T, InnertubeFail>,
 {
     let now = SystemTime::now();
     let visitor = {
@@ -2151,7 +2155,7 @@ where
             obtained_at: SystemTime::now(),
         });
     }
-    match parse_innertube_player(&resp, itag_priority) {
+    match parse(&resp) {
         Err(InnertubeFail::LoginRequired(msg)) => {
             // повторяем только если появился ДРУГОЙ visitor — слать тот же
             // значит получить тот же отказ
@@ -2168,10 +2172,23 @@ where
                     obtained_at: SystemTime::now(),
                 });
             }
-            parse_innertube_player(&resp2, itag_priority)
+            parse(&resp2)
         }
         other => other,
     }
+}
+
+/// Аудио-обёртка прежней сигнатуры: вся ступень 0 и её тесты живут как жили.
+async fn resolve_via_innertube_with<F, Fut>(
+    state: &EngineState,
+    itag_priority: &[u64],
+    call: F,
+) -> Result<InnertubeFormat, InnertubeFail>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+{
+    resolve_innertube_with_parse(state, call, |raw| parse_innertube_player(raw, itag_priority)).await
 }
 
 /// Сетевой транспорт ступени 0: один POST /player клиентом из рецепта.
@@ -2239,6 +2256,135 @@ async fn resolve_via_innertube(
         .await
         .map_err(|e| InnertubeFail::Other(format!("spawn_blocking: {e}")))?
         .map_err(InnertubeFail::Other)
+}
+
+// ── Видео трека для «Сейчас играет» (2026-07-21) ──────────────────
+// Тот же InnerTube-путь, что ступень 0 аудио, но БЕЗ скачивания: наружу
+// уходит удалённый googlevideo-URL видео-дорожки, его играет muted <video>
+// (слейв к позиции аудио, App/useVideoSync). Аудио-инвариант «video/* — не
+// кандидаты» (parse_ignores_video_formats) НЕ ослабляется: это параллельный
+// разбор с зеркальным фильтром, аудио-путь не тронут.
+
+/// Приоритет видео-itag (video-only с прямым url): H.264 (avc1) впереди —
+/// WebView2 декодирует его аппаратно на любой машине; VP9 (webm) — фолбэк.
+/// Панель узкая (~300–420 px): 480p (135) достаточно и бережёт трафик,
+/// 720p/1080p — запас, 4K (313 и пр.) сознательно НЕ берём.
+const INNERTUBE_VIDEO_ITAGS: &[u64] = &[135, 136, 134, 137, 244, 247, 243];
+
+/// Разбор ответа /player для ВИДЕО-дорожки: зеркало parse_innertube_player
+/// (тот же playability-гейт, та же SABR-диагностика), фильтр — "video/".
+/// contentLength не требуем: поток не качается, размер не важен.
+fn parse_innertube_video(
+    raw: &serde_json::Value,
+    itag_priority: &[u64],
+) -> Result<(String, u64), InnertubeFail> {
+    let status = raw["playabilityStatus"]["status"]
+        .as_str()
+        .unwrap_or("НЕТ_СТАТУСА");
+    if status != "OK" {
+        let reason = raw["playabilityStatus"]["reason"].as_str().unwrap_or("");
+        let msg = format!("{status}: {reason}");
+        return Err(if status == "LOGIN_REQUIRED" {
+            InnertubeFail::LoginRequired(msg)
+        } else {
+            InnertubeFail::Other(msg)
+        });
+    }
+    let formats = raw["streamingData"]["adaptiveFormats"]
+        .as_array()
+        .ok_or_else(|| InnertubeFail::Sabr("нет adaptiveFormats".into()))?;
+    for want in itag_priority {
+        for f in formats {
+            if f["itag"].as_u64() != Some(*want) {
+                continue;
+            }
+            if !f["mimeType"].as_str().unwrap_or("").starts_with("video/") {
+                continue;
+            }
+            let Some(url) = f["url"].as_str().filter(|u| !u.is_empty()) else {
+                continue;
+            };
+            return Ok((url.to_string(), *want));
+        }
+    }
+    let any_url = formats
+        .iter()
+        .any(|f| f["url"].as_str().map(|u| !u.is_empty()).unwrap_or(false));
+    if !formats.is_empty() && !any_url {
+        return Err(InnertubeFail::Sabr(
+            "adaptiveFormats без прямых url (SABR-сессия)".into(),
+        ));
+    }
+    Err(InnertubeFail::Other(
+        "нет подходящего видеоформата с прямым url".into(),
+    ))
+}
+
+/// Ответ engine_resolve_video: удалённый URL для <video> + срок жизни ссылки
+/// (googlevideo ~6ч, IP-bound) — клиент по нему решает, когда ре-резолвить.
+#[derive(Serialize)]
+pub struct VideoResolveOut {
+    pub url: String,
+    pub itag: u64,
+    pub expires_at_ms: u64,
+}
+
+/// Видео трека для «Сейчас играет». Провал не критичен по определению —
+/// панель показывает обложку; поэтому видео-путь кулдаун breaker'а УВАЖАЕТ
+/// на чтение (не долбит бот-гейт ради картинки), но сам НЕ пишет ни провалы,
+/// ни успехи — визуальный сахар не имеет права глушить добычу аудио.
+#[tauri::command]
+pub async fn engine_resolve_video(
+    state: State<'_, EngineState>,
+    video_id: String,
+) -> Result<VideoResolveOut, String> {
+    if !valid_youtube_id(&video_id) {
+        return Err("некорректный id видео".into());
+    }
+    let Some(cfg) = innertube_from_recipe(&state.recipe.lock().unwrap()) else {
+        return Err("видео недоступно: InnerTube выключен рецептом".into());
+    };
+    if stage0_in_cooldown(&state, SystemTime::now()) {
+        return Err("видео недоступно: кулдаун InnerTube".into());
+    }
+    let cfg_owned = cfg.clone();
+    let vid = video_id.clone();
+    let (url, itag) = resolve_innertube_with_parse(
+        &state,
+        move |visitor| {
+            let cfg = cfg_owned.clone();
+            let vid = vid.clone();
+            async move { innertube_player_call(&cfg, &vid, visitor.as_deref()).await }
+        },
+        |raw| parse_innertube_video(raw, INNERTUBE_VIDEO_ITAGS),
+    )
+    .await
+    .map_err(|e| {
+        let (InnertubeFail::LoginRequired(m)
+        | InnertubeFail::Sabr(m)
+        | InnertubeFail::Network(m)
+        | InnertubeFail::Other(m)) = e;
+        format!("видео не разрешилось: {m}")
+    })?;
+    // не качаем, но и мусор в <video> не отдаём: только https + googlevideo
+    let parsed = Url::parse(&url).map_err(|e| format!("видео-URL не парсится: {e}"))?;
+    let host_ok = parsed.scheme() == "https"
+        && parsed
+            .host_str()
+            .map(|h| h == "googlevideo.com" || h.ends_with(".googlevideo.com"))
+            .unwrap_or(false);
+    if !host_ok {
+        return Err("видео-URL с неожиданного хоста".into());
+    }
+    let expires_at_ms = warm_expires_at(&parsed, SystemTime::now())
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(VideoResolveOut {
+        url,
+        itag,
+        expires_at_ms,
+    })
 }
 
 // ── Ступень 0 SoundCloud: прямой api-v2-резолв (2026-07-19) ───────
@@ -5859,6 +6005,65 @@ mod innertube_tests {
         match err {
             InnertubeFail::Other(msg) => assert!(msg.contains("UNPLAYABLE"), "{msg}"),
             other => panic!("ожидали Other(UNPLAYABLE), получили {other:?}"),
+        }
+    }
+
+    // ── Видео-разбор («Сейчас играет», 2026-07-21) ────────────────
+
+    /// Фикстура с видео нужного itag: у живой в adaptiveFormats только 313
+    /// (4K VP9, сознательно вне приоритета) — патчим его в 136 (720p H.264).
+    fn video_fixture(itag: u64, mime: &str) -> serde_json::Value {
+        let mut raw = ok_fixture();
+        let f = &mut raw["streamingData"]["adaptiveFormats"][0];
+        assert!(f["mimeType"].as_str().unwrap().starts_with("video/"));
+        f["itag"] = serde_json::json!(itag);
+        f["mimeType"] = serde_json::json!(mime);
+        raw
+    }
+
+    /// Видео-парсер берёт видео-дорожку по приоритету и отдаёт url+itag.
+    #[test]
+    fn video_parse_picks_h264_from_priority() {
+        let raw = video_fixture(136, "video/mp4; codecs=\"avc1.4d401f\"");
+        let (url, itag) = parse_innertube_video(&raw, INNERTUBE_VIDEO_ITAGS).unwrap();
+        assert_eq!(itag, 136);
+        assert!(!url.is_empty());
+    }
+
+    /// Зеркальный инвариант parse_ignores_video_formats: аудио-форматы — не
+    /// кандидаты видео-разбора, даже когда видео в ответе нет вовсе.
+    #[test]
+    fn video_parse_ignores_audio_formats() {
+        let mut raw = ok_fixture();
+        raw["streamingData"]["adaptiveFormats"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|f| {
+                f["mimeType"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("audio/")
+            });
+        assert!(parse_innertube_video(&raw, INNERTUBE_VIDEO_ITAGS).is_err());
+    }
+
+    /// 4K (313) живой фикстуры вне приоритета: тянуть его в узкую панель —
+    /// зря жечь трафик; честный провал (обложка), не «какое-нибудь видео».
+    #[test]
+    fn video_parse_skips_itags_outside_priority() {
+        assert!(parse_innertube_video(&ok_fixture(), INNERTUBE_VIDEO_ITAGS).is_err());
+    }
+
+    /// Видео без прямого url (SABR) — провал с SABR-диагностикой.
+    #[test]
+    fn video_parse_without_urls_is_sabr() {
+        let mut raw = video_fixture(136, "video/mp4");
+        for f in raw["streamingData"]["adaptiveFormats"].as_array_mut().unwrap() {
+            f.as_object_mut().unwrap().remove("url");
+        }
+        match parse_innertube_video(&raw, INNERTUBE_VIDEO_ITAGS).unwrap_err() {
+            InnertubeFail::Sabr(_) => {}
+            other => panic!("ожидали Sabr, получили {other:?}"),
         }
     }
 

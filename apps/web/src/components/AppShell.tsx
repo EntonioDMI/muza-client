@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { Badge, Icon } from "@muza/ui";
 import type { PlaylistMeta } from "@muza/api-client";
 import { getApi } from "../api";
+import { tracksLabel } from "../format";
+import { useLikes } from "../likes";
 import { usePlayer } from "../player";
 import { usePlaylists } from "../playlists";
 import { usePrefs } from "../prefs";
@@ -27,13 +29,18 @@ import { TRACK_DND_MIME } from "./TrackList";
  *  now-playing; ландшафт высотой ≤480px — .bottomnav превращается в левый
  *  иконный рельс, мини-бар ужат. */
 
+/* «Любимое» — НЕ пункт навигации, а особая первая строка блока плейлистов
+   (как FavoritesRow десктопа) — паритет шелла 2026-07-21 */
 const NAV = [
   { href: "/home", icon: "home", label: "Главная" },
   { href: "/search", icon: "search", label: "Поиск" },
-  { href: "/favorites", icon: "heart", label: "Любимое" },
   { href: "/library", icon: "library-big", label: "Библиотека" },
   { href: "/stats", icon: "bar-chart-3", label: "Статистика" },
 ];
+
+/** Заливаемые глифы активной вкладки — зеркало NAV_FILLABLE десктопа
+ *  (lib/navItems.ts): lucide рисует штрихом, активная вкладка — ЗАЛИТАЯ. */
+const NAV_FILLABLE = new Set(["heart", "home", "house", "library-big", "library"]);
 
 function NavLink({ href, icon, label, active }: { href: string; icon: string; label: string; active: boolean }) {
   const [hover, setHover] = useState(false);
@@ -58,8 +65,71 @@ function NavLink({ href, icon, label, active }: { href: string; icon: string; la
         transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
       }}
     >
-      <Icon name={icon} size={20} color={active ? "var(--accent-text)" : "currentColor"} />
+      {/* активная вкладка — залитая иконка, как в десктопе (Sidebar.tsx) */}
+      <Icon
+        name={icon}
+        size={20}
+        color={active ? "var(--accent-text)" : "currentColor"}
+        filled={active && NAV_FILLABLE.has(icon)}
+      />
       {label}
+    </Link>
+  );
+}
+
+/** «Любимое» над плейлистами: сердце на фирменном градиенте глифа —
+ *  зеркало FavoritesRow десктопа (Sidebar.tsx:296). */
+function FavoritesRow({ count, active }: { count: number; active: boolean }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <Link
+      href="/favorites"
+      aria-label="Любимое"
+      aria-current={active ? "page" : undefined}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--sp-3)",
+        padding: "var(--sp-2)",
+        borderRadius: "var(--r-sm)",
+        textDecoration: "none",
+        background: active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
+        transition: "background var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <span
+        style={{
+          width: 40,
+          height: 40,
+          flex: "none",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: "var(--r-xs)",
+          // тот же фирменный градиент, что в десктопе и у глифа лого
+          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
+        }}
+      >
+        <Icon name="heart" size={20} color="#fff" filled />
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span
+          style={{
+            display: "block",
+            fontFamily: "var(--font-ui)",
+            fontSize: "var(--fs-body)",
+            fontWeight: 500,
+            color: "var(--text-1)",
+          }}
+        >
+          Любимое
+        </span>
+        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+          {tracksLabel(count)}
+        </span>
+      </span>
     </Link>
   );
 }
@@ -68,6 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { session, ready } = useSession();
   const { prefs, set } = usePrefs();
   const { current } = usePlayer();
+  const { favorites } = useLikes();
   const { playlists, refresh: reloadPlaylists } = usePlaylists();
   const notify = useToast();
   const router = useRouter();
@@ -101,10 +172,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const npVisible = prefs.npOpen && Boolean(current);
-  const accentAttr = prefs.accent === "blue" ? undefined : prefs.accent;
 
   return (
-    <div className="shell" data-accent={accentAttr}>
+    // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь
+    <div className="shell">
       {/* Сценография: фирменный вид Muza — размытая обложка за интерфейсом */}
       {prefs.bgCover && current?.coverUrl ? (
         <>
@@ -149,6 +220,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             Плейлисты
           </span>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", minHeight: 0, scrollbarWidth: "none" }}>
+            {/* «Любимое» — всегда первой строкой, как в приложении */}
+            <FavoritesRow count={favorites.length} active={pathname === "/favorites"} />
             {playlists.length === 0 ? (
               <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", padding: "0 var(--sp-3)" }}>
                 Создаются в приложении
@@ -196,7 +269,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       {p.name}
                     </span>
                     <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-                      {p.trackCount} трек(ов)
+                      {tracksLabel(p.trackCount)}
                     </span>
                   </span>
                 </Link>
@@ -223,11 +296,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         onOpenMobile={() => setMobileNp(true)}
       />
 
-      {/* Нижняя навигация (<900px) */}
+      {/* Нижняя навигация (<900px): «Любимое» здесь остаётся пунктом —
+          сайдбара с FavoritesRow на телефоне нет */}
       <nav className="bottomnav" aria-label="Основная навигация">
-        {[...NAV, { href: "/settings", icon: "settings", label: "Настройки" }].map((n) => (
+        {[
+          NAV[0],
+          NAV[1],
+          { href: "/favorites", icon: "heart", label: "Любимое" },
+          NAV[2],
+          NAV[3],
+          { href: "/settings", icon: "settings", label: "Настройки" },
+        ].map((n) => (
           <Link key={n.href} href={n.href} className={pathname === n.href ? "active" : undefined}>
-            <Icon name={n.icon} size={22} />
+            <Icon name={n.icon} size={22} filled={pathname === n.href && NAV_FILLABLE.has(n.icon)} />
             {n.label}
           </Link>
         ))}
