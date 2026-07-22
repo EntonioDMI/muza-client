@@ -14,7 +14,7 @@
 import { act, renderHook, type RenderHookResult } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuzaApi, TrackSource } from "@muza/api-client";
-import { DEFAULT_PREFS, type Prefs } from "../types";
+import { DEFAULT_PREFS, type AudioOutputRoute, type Prefs } from "../types";
 import type { EngineCallbacks } from "./audioEngine";
 import type { PlayerTrack } from "./types";
 import { invalidateCachedSources } from "./sourcesCache";
@@ -57,6 +57,19 @@ vi.mock("../lib/engine", () => ({
   cacheRemove: h.cacheRemove,
   engineStreamStart: h.engineStreamStart,
   engineStreamUrl: (id: string) => `http://muza-stream.localhost/testns/${id}`,
+}));
+
+// Пропускаем реальный listOutputDevices/resolveRoutes (require navigator.
+// mediaDevices, которого в jsdom нет — ensureDeviceAccess проглотил бы отказ
+// и вернул [], а resolveRoutes([], stored) всегда дал бы пусто, что не
+// доказало бы прокладку prefs.audioOutputs → engine.setOutputs). Мок —
+// детерминированный pass-through: сопоставление deviceId/label — забота
+// outputDevices.test.ts, здесь важен только маршрут prefs → движок.
+vi.mock("./outputDevices", () => ({
+  deviceAccessUnlocked: () => true,
+  listOutputDevices: vi.fn(async () => []),
+  resolveRoutes: (stored: AudioOutputRoute[]) =>
+    stored.map((r) => ({ deviceId: r.deviceId, volume: r.volume, followsMaster: r.followsMaster, mixMic: r.mixMic })),
 }));
 
 vi.mock("./audioEngine", () => ({
@@ -832,5 +845,83 @@ describe("стрим с первых килобайт (Фаза 2, muza-stream)"
       expect.arrayContaining([expect.objectContaining({ sourceId: "dQw4w9WgXcQ" })]),
       expect.anything(),
     );
+  });
+});
+
+/** Вывод на устройства (2026-07-22) + голос (v2): моки setOutputs/setMicConfig
+ *  существовали в h.engine с самого начала файла, но были "captured, без
+ *  единого expect" (аудит 22.07) — обе прокладки prefs → движок стояли без
+ *  сторожа. Оба пути ленивы (engineRef.current создаётся только startAt'ом),
+ *  поэтому каждый тест сначала заводит движок playContext'ом, и только потом
+ *  проверяет реакцию на смену prefs. */
+describe("usePlayback: вывод на устройства и голос → движок", () => {
+  const flushEffects = async () => {
+    // applyOutputRoutes асинхронна (await listOutputDevices()) — даём эффекту
+    // после rerender долиться до engineRef.setOutputs без гонки на микрозадачах.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  it("смена prefs.audioOutputs доезжает до движка через setOutputs", async () => {
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+    const { result, rerender } = renderHook(
+      (p: Partial<Prefs>) =>
+        usePlayback({ api, initialQueue: [A, B], prefs: { ...DEFAULT_PREFS, ...p }, onError: h.onError }),
+      { initialProps: {} as Partial<Prefs> },
+    );
+    await act(async () => {
+      result.current.playContext([A, B], "a"); // движок создаётся только тут (ленивая фабрика engine())
+    });
+    h.engine.setOutputs.mockClear();
+
+    const outputs: AudioOutputRoute[] = [{ deviceId: "dev1", label: "Наушники", volume: 70, followsMaster: true }];
+    await act(async () => {
+      rerender({ audioOutputs: outputs });
+      await flushEffects();
+    });
+
+    expect(h.engine.setOutputs).toHaveBeenCalledWith([
+      { deviceId: "dev1", volume: 70, followsMaster: true, mixMic: undefined },
+    ]);
+  });
+
+  it("префы audioOutputs очищены (пусто) — движок возвращается к системному выходу", async () => {
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+    const outputs: AudioOutputRoute[] = [{ deviceId: "dev1", label: "Наушники", volume: 70 }];
+    const { result, rerender } = renderHook(
+      (p: Partial<Prefs>) =>
+        usePlayback({ api, initialQueue: [A, B], prefs: { ...DEFAULT_PREFS, ...p }, onError: h.onError }),
+      { initialProps: { audioOutputs: outputs } as Partial<Prefs> },
+    );
+    await act(async () => {
+      result.current.playContext([A, B], "a");
+      await flushEffects();
+    });
+    h.engine.setOutputs.mockClear();
+
+    await act(async () => {
+      rerender({ audioOutputs: [] });
+      await flushEffects();
+    });
+
+    expect(h.engine.setOutputs).toHaveBeenCalledWith([]);
+  });
+
+  it("смена prefs.micDeviceId/micGain доезжает до движка через setMicConfig", async () => {
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+    const { result, rerender } = renderHook(
+      (p: Partial<Prefs>) =>
+        usePlayback({ api, initialQueue: [A, B], prefs: { ...DEFAULT_PREFS, ...p }, onError: h.onError }),
+      { initialProps: {} as Partial<Prefs> },
+    );
+    await act(async () => {
+      result.current.playContext([A, B], "a"); // движок создан — дальше эффект реально доедет до него
+    });
+    h.engine.setMicConfig.mockClear();
+
+    act(() => {
+      rerender({ micDeviceId: "mic-1", micGain: 42 });
+    });
+
+    expect(h.engine.setMicConfig).toHaveBeenCalledWith({ deviceId: "mic-1", gain: 42 });
   });
 });
