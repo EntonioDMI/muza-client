@@ -25,6 +25,10 @@ export const ru: typeof en = {
     like: "Нравится",
     showAll: "Показать всё",
     namePlaceholder: "Название",
+    // И5-веб (2026-07-22): общий i18n для веб-клиента.
+    download: "Скачать",
+    busy: "Секунду…",
+    pluralTracks: { one: "трек", few: "трека", many: "треков" },
   },
   settings: {
     title: "Настройки",
@@ -1485,6 +1489,98 @@ export const ru: typeof en = {
       cssRejected: "CSS плагина отклонён: {reason}",
     },
   },
+
+  web: {
+    nav: {
+      playlistsEmptyHint: "Создаются в приложении",
+      bottomNavAria: "Основная навигация",
+    },
+    favorites: {
+      emptyTitle: "Здесь будет твоё любимое",
+      emptyHint: "Жми сердечко у любого трека — в списке, плеере или панели «Сейчас играет». Лайки синхронизируются с приложением.",
+    },
+    home: {
+      serverDown: "Сервер недоступен — обнови страницу, когда он вернётся.",
+      emptyHint: "Послушай что-нибудь — лента соберётся из твоих прослушиваний.",
+    },
+    library: {
+      haveCode: "У меня есть код",
+      createPlaylist: "Создать плейлист",
+      tabHistory: "История",
+      historyEmptyTitle: "История пуста",
+      historyEmptyHint: "Всё, что послушаешь, будет здесь — с любого устройства.",
+      joinCodeHint: "Друг вводит код у себя: Библиотека → «У меня есть код».",
+    },
+    playlist: {
+      notFound: "Плейлист не найден",
+      noId: "Плейлист не указан.",
+      empty: "Плейлист пуст.",
+      actionsAria: "Действия с плейлистом",
+      leaveDialogTitle: "Покинуть плейлист?",
+      leaveDialogBody: "Ты перестанешь видеть «{name}» и не сможешь добавлять треки — пока владелец не пришлёт код снова.",
+      ownerSuffix: "(владелец)",
+    },
+    search: {
+      catalogEmptyHint: "В каталоге пусто — попробуй «Искать в источниках».",
+      nothingFound: "Ничего не нашлось.",
+      searchFailed: "Поиск не удался",
+      searchingSources: "Ищем в источниках — это до полуминуты…",
+      emptyTitle: "Найди что угодно",
+      emptyHint: "Каталог отвечает мгновенно, пока ты печатаешь. Не нашлось — «Искать в источниках» достанет трек из YouTube и SoundCloud.",
+    },
+    stats: {
+      serverDown: "Сервер недоступен — обнови страницу, когда он вернётся.",
+      emptyTitle: "Пока нечего показать",
+      emptyHint: "Послушай что-нибудь — минуты, топы и серии появятся здесь после первых прослушиваний.",
+      topHour: "Любимый час — {hour}:00",
+      noTopHour: "Пока без любимого часа",
+    },
+    settings: {
+      tabs: { sound: "Звук", search: "Поиск", offline: "Оффлайн", customizePlus: "Кастомизация+" },
+      lightTheme: { title: "Светлая тема", hint: "Тёплый светлый интерфейс вместо графита" },
+      npPanelRow: { title: "Панель «Сейчас играет»", hint: "Открывается сама при старте трека (на широком экране)" },
+      backgroundHint: "Размытая обложка трека за интерфейсом — фирменный вид Muza",
+      fontHint: "Подписи и тексты всего веб-плеера",
+      fontSystem: "Системный",
+      eqHint: "10 полос, как в приложении. Работает на играющем треке.",
+      offlineSaveTitle: "Сохранять треки офлайн",
+      offlineSaveHint: "Слушать без интернета; старые треки удаляются сами, когда лимит исчерпан",
+      bgTitle: "Фон интерфейса",
+      marketplaceHint: "Готовые темы других пользователей — в один клик",
+      openMarketplace: "Открыть маркетплейс",
+      accountHint: "Полные настройки аккаунта и оффлайн — в приложении для Windows",
+    },
+    desktopOnly: {
+      defaultHint: "Работает в приложении для Windows",
+      childrenFallback: "Это работает в приложении для Windows.",
+      download: "Скачать Muza",
+      downloadTitle: "Скачать Muza для Windows",
+      inApp: "в приложении",
+    },
+    trackList: {
+      fileOnOtherDevice: "{title} — файл на другом устройстве",
+      downloadStarted: "Скачивание началось",
+      downloadFailed: "Не удалось скачать",
+      choosePlaylist: "В какой плейлист?",
+      noPlaylistsHint: "Плейлистов пока нет — создай первый в библиотеке.",
+    },
+    player: {
+      queueHint: "Выбери трек — очередь появится сама",
+      npPanelAria: "Панель «Сейчас играет»",
+      openNowPlayingAria: "Открыть «Сейчас играет»",
+    },
+    mobileNowPlaying: {
+      collapseAria: "Свернуть",
+      coverAria: "Обложка",
+    },
+    lyrics: {
+      emptyNoTrack: "Включи трек — текст появится здесь.",
+    },
+    login: {
+      footerNote: "Почта, восстановление пароля и оффлайн — в приложении для Windows.",
+    },
+  },
+
   views: viewsRu,
   media: mediaRu,
 };

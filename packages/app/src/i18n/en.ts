@@ -39,6 +39,10 @@ export const en = {
     like: "Like",
     showAll: "Show all",
     namePlaceholder: "Name",
+    // И5-веб (2026-07-22): общий i18n для веб-клиента.
+    download: "Download",
+    busy: "Just a sec…",
+    pluralTracks: { one: "track", few: "tracks", many: "tracks" },
   },
   settings: {
     title: "Settings",
@@ -1546,6 +1550,101 @@ export const en = {
       cssRejected: "Plugin CSS rejected: {reason}",
     },
   },
+
+  // ── Веб-клиент (И5-веб, 2026-07-22): apps/web зона, строки без десктопного
+  //    аналога. Общие действия/тосты/пустые состояния переиспользуют settings.*/
+  //    menu.*/toast.*/views.*/dialogs.* выше — здесь только то, чему пары нет. ──
+  web: {
+    nav: {
+      playlistsEmptyHint: "Created in the app",
+      bottomNavAria: "Main navigation",
+    },
+    favorites: {
+      emptyTitle: "Your favorites will show up here",
+      emptyHint: "Tap the heart on any track — in a list, the player or the Now Playing panel. Likes sync with the app.",
+    },
+    home: {
+      serverDown: "Server unavailable — refresh the page once it's back.",
+      emptyHint: "Listen to something — your feed will build from what you play.",
+    },
+    library: {
+      haveCode: "I have a code",
+      createPlaylist: "Create playlist",
+      tabHistory: "History",
+      historyEmptyTitle: "History is empty",
+      historyEmptyHint: "Everything you listen to will show up here — from any device.",
+      joinCodeHint: "A friend enters the code on their side: Library → \"I have a code\".",
+    },
+    playlist: {
+      notFound: "Playlist not found.",
+      noId: "No playlist specified.",
+      empty: "This playlist is empty.",
+      actionsAria: "Playlist actions",
+      leaveDialogTitle: "Leave playlist?",
+      leaveDialogBody: "You'll stop seeing \"{name}\" and won't be able to add tracks — until the owner sends the code again.",
+      ownerSuffix: "(owner)",
+    },
+    search: {
+      catalogEmptyHint: 'The catalog is empty for now — try "Search in sources".',
+      nothingFound: "Nothing found.",
+      searchFailed: "Search failed",
+      searchingSources: "Searching in sources — up to half a minute…",
+      emptyTitle: "Find anything",
+      emptyHint: 'The catalog answers instantly as you type. Nothing found? "Search in sources" fetches the track from YouTube and SoundCloud.',
+    },
+    stats: {
+      serverDown: "Server unavailable — refresh the page once it's back.",
+      emptyTitle: "Nothing to show yet",
+      emptyHint: "Listen to something — minutes, tops and streaks will show up here after your first plays.",
+      topHour: "Favorite hour — {hour}:00",
+      noTopHour: "No favorite hour yet",
+    },
+    settings: {
+      tabs: { sound: "Sound", search: "Search", offline: "Offline", customizePlus: "Customize+" },
+      lightTheme: { title: "Light theme", hint: "Warm light interface instead of graphite" },
+      npPanelRow: { title: "\"Now Playing\" panel", hint: "Opens on its own when a track starts (on a wide screen)" },
+      backgroundHint: "Muza's signature look: a blurred track cover behind the interface",
+      fontHint: "Labels and text across the whole web player",
+      fontSystem: "System",
+      eqHint: "10 bands, like in the app. Works on the currently playing track.",
+      offlineSaveTitle: "Save tracks offline",
+      offlineSaveHint: "Listen without internet; old tracks are removed automatically once the limit is reached",
+      bgTitle: "Interface background",
+      marketplaceHint: "Ready-made themes from other users — in one click",
+      openMarketplace: "Open marketplace",
+      accountHint: "Full account settings and offline — in the Windows app",
+    },
+    desktopOnly: {
+      defaultHint: "Works in the Windows app",
+      childrenFallback: "This works in the Windows app.",
+      download: "Download Muza",
+      downloadTitle: "Download Muza for Windows",
+      inApp: "in the app",
+    },
+    trackList: {
+      fileOnOtherDevice: "{title} — file on another device",
+      downloadStarted: "Download started",
+      downloadFailed: "Couldn't download",
+      choosePlaylist: "Which playlist?",
+      noPlaylistsHint: "No playlists yet — create the first one in the Library.",
+    },
+    player: {
+      queueHint: "Pick a track — the queue will appear on its own",
+      npPanelAria: "\"Now Playing\" panel",
+      openNowPlayingAria: "Open \"Now Playing\"",
+    },
+    mobileNowPlaying: {
+      collapseAria: "Collapse",
+      coverAria: "Cover",
+    },
+    lyrics: {
+      emptyNoTrack: "Play a track — lyrics will show up here.",
+    },
+    login: {
+      footerNote: "Email, password recovery and offline — in the Windows app.",
+    },
+  },
+
   views: viewsEn,
   media: mediaEn,
 };

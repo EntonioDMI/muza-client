@@ -3,25 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Dialog, Icon, Menu, TrackRow } from "@muza/ui";
 import type { GroupedSearchResult, GroupSearchResult, PlaylistMeta, Track } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "../api";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
 import { usePlaylists } from "../playlists";
 import { useToast } from "../toast";
-import { variantLabel } from "../variantLabels";
+import { pluralVersions, variantLabel } from "../variantLabels";
 import { TRACK_DND_MIME, setTrackDragImage } from "./TrackList";
-
-/** Склонение «версия» под число — используется в бейдже карточки-группы
- *  («1 версия» / «2 версии» / «5 версий»), как в живом прогоне T36. */
-function pluralVersions(n: number): string {
-  const mod100 = n % 100;
-  if (mod100 >= 11 && mod100 <= 14) return "версий";
-  const mod10 = n % 10;
-  if (mod10 === 1) return "версия";
-  if (mod10 >= 2 && mod10 <= 4) return "версии";
-  return "версий";
-}
 
 /** Список результатов поиска с группировкой ремиксов/версий (T41, ?group=1
  *  сервера T36): "single" — обычная строка, "group" — карточка канона с
@@ -34,6 +24,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
   const { current, playing, playContext } = usePlayer();
   const { playlists, loaded, refresh: refreshPlaylists } = usePlaylists();
   const notify = useToast();
+  const { t, lang } = useT();
   const [menu, setMenu] = useState<{ x: number; y: number; track: Track } | null>(null);
   const [plPick, setPlPick] = useState<Track | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -75,10 +66,10 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
     setPlPick(null);
     try {
       await getApi().addPlaylistTrack(pl.id, track.id);
-      notify(`Добавлено в «${pl.name}»`, "list-music");
+      notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
       void refreshPlaylists();
     } catch (e) {
-      notify(e instanceof Error ? e.message : "Не удалось добавить", "x");
+      notify(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x");
     }
   };
 
@@ -91,9 +82,9 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
       document.body.appendChild(a);
       a.click();
       a.remove();
-      notify("Скачивание началось", "download");
+      notify(t("web.trackList.downloadStarted"), "download");
     } catch (e) {
-      notify(e instanceof Error ? e.message : "Не удалось скачать", "x");
+      notify(e instanceof Error ? e.message : t("web.trackList.downloadFailed"), "x");
     }
   };
 
@@ -123,7 +114,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
   const trackRowFor = (track: Track) => (
     <TrackRow
       cover={track.coverUrl ?? undefined}
-      title={track.localHash ? `${track.title} — файл на другом устройстве` : track.title}
+      title={track.localHash ? t("web.trackList.fileOnOtherDevice", { title: track.title }) : track.title}
       artist={track.artist}
       duration={fmtTime(track.durationSec)}
       active={current?.id === track.id}
@@ -138,7 +129,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
   const groupCard = (r: GroupSearchResult, i: number) => {
     const isExpanded = expanded.has(i);
     const versionCount = r.variants.length;
-    const canonLabel = !r.hasOriginal ? variantLabel(r.canonicalVariantType) : null;
+    const canonLabel = !r.hasOriginal ? variantLabel(r.canonicalVariantType, lang) : null;
     return (
       <div key={`g-${r.canonical.id}-${i}`}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-1)" }}>
@@ -147,7 +138,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
             type="button"
             onClick={() => toggleExpand(i)}
             aria-expanded={isExpanded}
-            aria-label={`${versionCount} ${pluralVersions(versionCount)} — ${isExpanded ? "свернуть" : "развернуть"}`}
+            aria-label={`${versionCount} ${pluralVersions(versionCount, lang)} — ${isExpanded ? t("views.search.groupCard.collapse") : t("views.search.groupCard.expand")}`}
             style={{
               display: "flex",
               alignItems: "center",
@@ -161,7 +152,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
             }}
           >
             <Badge tone={r.hasOriginal ? "accent" : "neutral"}>
-              {versionCount} {pluralVersions(versionCount)}
+              {versionCount} {pluralVersions(versionCount, lang)}
             </Badge>
             <Icon
               name="chevron-down"
@@ -180,7 +171,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
               color: "var(--text-3)",
             }}
           >
-            Оригинал не найден в выдаче — показан лучший вариант ({canonLabel})
+            {t("views.search.groupCard.noOriginal", { label: canonLabel })}
           </div>
         ) : null}
         {isExpanded ? (
@@ -201,7 +192,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
                     padding: "var(--sp-1) 0 0 var(--sp-2)",
                   }}
                 >
-                  {variantLabel(v.variantType)}
+                  {variantLabel(v.variantType, lang)}
                 </span>
                 {rowWrap(v.track, `gv-row-${v.track.id}`, trackRowFor(v.track))}
               </div>
@@ -226,27 +217,27 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
         items={
           menu
             ? [
-                { icon: "play", label: "Играть", onClick: () => playTrack(menu.track) },
+                { icon: "play", label: t("menu.playlist.play"), onClick: () => playTrack(menu.track) },
                 {
                   icon: "heart",
-                  label: likedIds.has(menu.track.id) ? "Убрать из любимого" : "В любимое",
+                  label: likedIds.has(menu.track.id) ? t("menu.catalog.unlike") : t("menu.catalog.like"),
                   onClick: () => toggle(menu.track),
                 },
                 "-",
-                { icon: "list-music", label: "В плейлист…", onClick: () => openPlaylistPick(menu.track) },
-                { icon: "download", label: "Скачать", onClick: () => void download(menu.track) },
+                { icon: "list-music", label: t("menu.addToPlaylist"), onClick: () => openPlaylistPick(menu.track) },
+                { icon: "download", label: t("common.download"), onClick: () => void download(menu.track) },
               ]
             : []
         }
       />
 
-      <Dialog open={plPick !== null} title="В какой плейлист?" onClose={() => setPlPick(null)}>
+      <Dialog open={plPick !== null} title={t("web.trackList.choosePlaylist")} onClose={() => setPlPick(null)}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 300, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
           {!loaded ? (
-            <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>Загрузка…</span>
+            <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>{t("common.loading")}</span>
           ) : playlists.length === 0 ? (
             <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>
-              Плейлистов пока нет — создай первый в библиотеке.
+              {t("web.trackList.noPlaylistsHint")}
             </span>
           ) : (
             playlists.map((p) => (

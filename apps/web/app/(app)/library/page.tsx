@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button, Dialog, EmptyState, Icon, SearchInput, Tabs } from "@muza/ui";
 import { pickRandomPlaylistIcon } from "@muza/core";
 import { ApiError, type HistoryItem, type PlaylistMeta } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "../../../src/api";
 import { tracksLabel } from "../../../src/format";
 import { useLikes } from "../../../src/likes";
@@ -20,11 +21,12 @@ import { useToast } from "../../../src/toast";
 /** Плитка «Любимое» — всегда первая в сетке, фирменный градиент глифа
  *  (зеркало FavoritesTile десктопа, LibraryView.tsx:31). */
 function FavoritesTile({ count }: { count: number }) {
+  const { t, lang } = useT();
   const [lit, setLit] = useState(false);
   return (
     <Link
       href="/favorites"
-      aria-label="Любимое"
+      aria-label={t("media.nav.favorites")}
       onMouseEnter={() => setLit(true)}
       onMouseLeave={() => setLit(false)}
       style={{
@@ -60,10 +62,10 @@ function FavoritesTile({ count }: { count: number }) {
           color: "var(--text-1)",
         }}
       >
-        Любимое
+        {t("media.nav.favorites")}
       </span>
       <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>
-        {tracksLabel(count)}
+        {tracksLabel(count, lang)}
       </span>
     </Link>
   );
@@ -72,6 +74,7 @@ function FavoritesTile({ count }: { count: number }) {
 /** Квадратная плитка плейлиста (было — строка): иконка на всю ширину
  *  колонки, имя и счётчик под ней — раскладка плитки десктопа. */
 function PlaylistTile({ p }: { p: PlaylistMeta }) {
+  const { t, lang } = useT();
   const [lit, setLit] = useState(false);
   return (
     <Link
@@ -112,8 +115,9 @@ function PlaylistTile({ p }: { p: PlaylistMeta }) {
         {p.name}
       </span>
       <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>
-        {tracksLabel(p.trackCount)}
-        {p.role === "collaborator" ? ` · от ${p.ownerUsername}` : ""}
+        {p.role === "collaborator"
+          ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername ?? "" })
+          : tracksLabel(p.trackCount, lang)}
       </span>
     </Link>
   );
@@ -122,6 +126,7 @@ function PlaylistTile({ p }: { p: PlaylistMeta }) {
 export default function LibraryPage() {
   const router = useRouter();
   const notify = useToast();
+  const { t } = useT();
   const { favorites } = useLikes();
   const { playlists, loaded, refresh } = usePlaylists();
   const [tab, setTab] = useState("playlists");
@@ -161,7 +166,7 @@ export default function LibraryPage() {
       closeCreate();
       router.push(`/playlist?id=${playlist.id}`);
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось создать плейлист", "x");
+      notify(e instanceof ApiError ? e.message : t("toast.playlist.createFailed"), "x");
     } finally {
       setCreateBusy(false);
     }
@@ -176,7 +181,7 @@ export default function LibraryPage() {
   const join = async () => {
     const code = joinCode.trim().toUpperCase();
     if (code.length < 4) {
-      setJoinError("Код короче 4 символов — проверь его");
+      setJoinError(t("dialogs.codeTooShort"));
       return;
     }
     setJoinBusy(true);
@@ -187,7 +192,7 @@ export default function LibraryPage() {
       closeJoin();
       router.push(`/playlist?id=${playlist.id}`);
     } catch (e) {
-      setJoinError(e instanceof ApiError ? e.message : "Не удалось войти по коду");
+      setJoinError(e instanceof ApiError ? e.message : t("dialogs.joinPlaylist.joinFailed"));
     } finally {
       setJoinBusy(false);
     }
@@ -197,28 +202,28 @@ export default function LibraryPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--sp-3)", flexWrap: "wrap" }}>
         <h1 className="page-title" style={{ margin: 0 }}>
-          Библиотека
+          {t("media.nav.library")}
         </h1>
         <div style={{ display: "flex", gap: "var(--sp-2)" }}>
           <Button variant="ghost" size="lg" icon="users" onClick={() => setJoinOpen(true)}>
-            У меня есть код
+            {t("web.library.haveCode")}
           </Button>
           <Button variant="primary" size="lg" icon="plus" onClick={() => setCreateOpen(true)}>
-            Создать плейлист
+            {t("web.library.createPlaylist")}
           </Button>
         </div>
       </div>
       <Tabs
         items={[
-          { key: "playlists", label: "Плейлисты" },
-          { key: "history", label: "История" },
+          { key: "playlists", label: t("views.library.chips.playlists") },
+          { key: "history", label: t("web.library.tabHistory") },
         ]}
         value={tab}
         onChange={setTab}
       />
       {tab === "playlists" ? (
         !loaded ? (
-          <p style={noteStyle}>Загрузка…</p>
+          <p style={noteStyle}>{t("common.loading")}</p>
         ) : (
           /* Сетка КВАДРАТНЫХ плиток, как в приложении (было — строки);
              «Любимое» всегда первой, даже без единого плейлиста */
@@ -230,24 +235,24 @@ export default function LibraryPage() {
           </div>
         )
       ) : history === null ? (
-        <p style={noteStyle}>Загрузка…</p>
+        <p style={noteStyle}>{t("common.loading")}</p>
       ) : history.length === 0 ? (
-        <EmptyState icon="history" title="История пуста" hint="Всё, что послушаешь, будет здесь — с любого устройства." />
+        <EmptyState icon="history" title={t("web.library.historyEmptyTitle")} hint={t("web.library.historyEmptyHint")} />
       ) : (
         <TrackList tracks={history.map((h) => h.track)} />
       )}
 
       <Dialog
         open={createOpen}
-        title="Новый плейлист"
+        title={t("app.newPlaylistName")}
         onClose={closeCreate}
         actions={
           <>
             <Button variant="ghost" size="lg" onClick={closeCreate}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" size="lg" icon="check" disabled={createBusy || !createName.trim()} onClick={() => void create()}>
-              {createBusy ? "Секунду…" : "Создать"}
+              {createBusy ? t("common.busy") : t("app.newPlaylistDialog.create")}
             </Button>
           </>
         }
@@ -258,21 +263,21 @@ export default function LibraryPage() {
             if (e.key === "Enter") void create();
           }}
         >
-          <SearchInput value={createName} onChange={setCreateName} placeholder="Название" icon="list-music" autoFocus />
+          <SearchInput value={createName} onChange={setCreateName} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
         </div>
       </Dialog>
 
       <Dialog
         open={joinOpen}
-        title="Плейлист по коду"
+        title={t("dialogs.joinPlaylist.title")}
         onClose={closeJoin}
         actions={
           <>
             <Button variant="ghost" size="lg" onClick={closeJoin}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" size="lg" icon="users" disabled={joinBusy} onClick={() => void join()}>
-              {joinBusy ? "Входим…" : "Войти"}
+              {joinBusy ? t("dialogs.joinPlaylist.joining") : t("dialogs.joinPlaylist.join")}
             </Button>
           </>
         }
@@ -284,7 +289,7 @@ export default function LibraryPage() {
           }}
         >
           <p style={{ margin: 0, fontFamily: "var(--font-ui)", color: "var(--text-2)", lineHeight: 1.5 }}>
-            Введи код, который прислал владелец плейлиста, — и добавляйте треки вместе.
+            {t("dialogs.joinPlaylist.hint")}
           </p>
           <SearchInput
             value={joinCode}
@@ -292,7 +297,7 @@ export default function LibraryPage() {
               setJoinCode(v.toUpperCase());
               setJoinError(null);
             }}
-            placeholder="Например: 7WQK2M9T"
+            placeholder={t("dialogs.joinPlaylist.codePlaceholder")}
             icon="users"
             autoFocus
           />

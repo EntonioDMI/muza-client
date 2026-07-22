@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { LanguageProvider } from "@muza/app";
 import { ThemeRoot } from "@muza/app/theme/ThemeRoot";
 import { LikesProvider } from "./likes";
@@ -41,18 +42,28 @@ function ThemedTree({ children }: { children: React.ReactNode }) {
  *  DEFAULT_LANG="en". Первым таким компонентом стал PlaylistIconPicker, у
  *  которого в веб-копии строки были захардкожены по-русски.
  *
- *  lang прибит к "ru" НАМЕРЕННО, а не взят из prefs: сегодня весь UI веба —
- *  русский хардкодом (~3600 кириллических вхождений), и переключатель показал
- *  бы наполовину переведённый интерфейс. "ru" сохраняет ровно текущее
- *  поведение. Живым он станет в Э8, когда переводить будет уже нечего:
- *  остальные строки живут в компонентах, которые к тому времени заменятся
- *  общими из @muza/app. */
+ *  И5-веб (2026-07-22): lang теперь берётся из prefs.language, а не прибит к
+ *  "ru" — весь apps/web переведён на общий словарь (settings/page.tsx и
+ *  компоненты страниц читают useT()), переключатель живёт в Настройках →
+ *  Внешний вид ("Язык интерфейса", те же ключи, что у десктопа). */
+function LocalizedTree({ children }: { children: React.ReactNode }) {
+  const { prefs } = usePrefs();
+  // <html lang="ru"> в app/layout.tsx фиксирован на билде (статический
+  // экспорт не знает prefs.language до гидратации) — держим атрибут в
+  // синхроне с реальным языком интерфейса руками, иначе скринридер и
+  // переводчик браузера будут ошибаться на английском UI.
+  useEffect(() => {
+    document.documentElement.lang = prefs.language;
+  }, [prefs.language]);
+  return <LanguageProvider lang={prefs.language}>{children}</LanguageProvider>;
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
       <PrefsProvider>
         <ThemedTree>
-          <LanguageProvider lang="ru">
+          <LocalizedTree>
             <LikesProvider>
               <PlaylistsProvider>
                 <PlayerProvider>
@@ -60,7 +71,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
                 </PlayerProvider>
               </PlaylistsProvider>
             </LikesProvider>
-          </LanguageProvider>
+          </LocalizedTree>
         </ThemedTree>
       </PrefsProvider>
     </SessionProvider>

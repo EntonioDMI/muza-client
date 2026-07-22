@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Lyrics } from "@muza/ui";
 import type { Lyrics as LyricsData } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "../api";
 import { usePlayer, usePosition } from "../player";
 
@@ -13,6 +14,7 @@ import { usePlayer, usePosition } from "../player";
 export function LyricsBlock({ karaoke = false }: { karaoke?: boolean }) {
   const { current, seek } = usePlayer();
   const { position } = usePosition();
+  const { t } = useT();
   const [data, setData] = useState<LyricsData | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -56,7 +58,7 @@ export function LyricsBlock({ karaoke = false }: { karaoke?: boolean }) {
   if (lines.length === 0) {
     return (
       <p style={{ margin: 0, fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-3)", padding: "var(--sp-2)" }}>
-        {!current ? "Включи трек — текст появится здесь." : loading ? "Ищем текст…" : "Текст не найден."}
+        {!current ? t("web.lyrics.emptyNoTrack") : loading ? t("player.lyricsSearching") : t("player.lyricsNotFound")}
       </p>
     );
   }

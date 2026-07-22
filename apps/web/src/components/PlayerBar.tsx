@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon, IconButton, Slider, Spinner, Tooltip } from "@muza/ui";
+import { useT } from "@muza/app";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer, usePosition } from "../player";
@@ -8,12 +9,13 @@ import { usePlayer, usePosition } from "../player";
 /** Сердце с «пульсом» при лайке: key по liked — remount перезапускает
  *  анимацию muza-like-pop ровно в момент переключения. */
 function LikeButton({ liked, onToggle, size = "sm" as const }: { liked: boolean; onToggle: () => void; size?: "sm" | "md" }) {
+  const { t } = useT();
   return (
     <span key={liked ? "on" : "off"} className={liked ? "muza-like-pop" : undefined} style={{ display: "inline-flex" }}>
       <IconButton
         icon="heart"
         size={size}
-        label={liked ? "Убрать из любимого" : "В любимое"}
+        label={liked ? t("menu.catalog.unlike") : t("menu.catalog.like")}
         filled={liked}
         onClick={onToggle}
       />
@@ -58,17 +60,18 @@ export function PlayerBar({
   const p = usePlayer();
   const { position, duration } = usePosition();
   const { likedIds, toggle } = useLikes();
-  const t = p.current;
+  const { t } = useT();
+  const current = p.current;
 
   const volumeIcon = p.muted || p.volume === 0 ? "volume-x" : p.volume < 0.5 ? "volume-1" : "volume-2";
-  const subtitle = p.error ?? (p.loading ? "Загрузка…" : (t?.artist ?? "Выбери трек — очередь появится сама"));
+  const subtitle = p.error ?? (p.loading ? t("common.loading") : (current?.artist ?? t("web.player.queueHint")));
 
   return (
     <>
       {/* ── Десктоп ── */}
       <footer className="playerbar">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
-          <CoverThumb url={t?.coverUrl ?? null} size={52} />
+          <CoverThumb url={current?.coverUrl ?? null} size={52} />
           <span style={{ minWidth: 0 }}>
             <span
               style={{
@@ -82,7 +85,7 @@ export function PlayerBar({
                 textOverflow: "ellipsis",
               }}
             >
-              {t ? t.title : "Ничего не играет"}
+              {current ? current.title : t("player.empty.title")}
             </span>
             <span
               style={{
@@ -101,28 +104,28 @@ export function PlayerBar({
               {subtitle}
             </span>
           </span>
-          {t ? <LikeButton liked={likedIds.has(t.id)} onToggle={() => toggle(t)} /> : null}
+          {current ? <LikeButton liked={likedIds.has(current.id)} onToggle={() => toggle(current)} /> : null}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--sp-1)", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-            <Tooltip label="Перемешать">
-              <IconButton icon="shuffle" size="sm" label="Перемешать" active={p.shuffle} onClick={p.toggleShuffle} />
+            <Tooltip label={t("player.shuffle")}>
+              <IconButton icon="shuffle" size="sm" label={t("player.shuffle")} active={p.shuffle} onClick={p.toggleShuffle} />
             </Tooltip>
-            <IconButton icon="skip-back" label="Предыдущий" onClick={p.prev} disabled={!t} />
+            <IconButton icon="skip-back" label={t("player.previous")} onClick={p.prev} disabled={!current} />
             <IconButton
               icon={p.playing ? "pause" : "play"}
               variant="accent"
-              label={p.playing ? "Пауза" : "Играть"}
+              label={p.playing ? t("player.pause") : t("player.play")}
               onClick={p.toggle}
-              disabled={!t}
+              disabled={!current}
             />
-            <IconButton icon="skip-forward" label="Следующий" onClick={p.next} disabled={!t} />
-            <Tooltip label={p.repeat === "one" ? "Повтор трека" : p.repeat === "all" ? "Повтор очереди" : "Повтор выключен"}>
+            <IconButton icon="skip-forward" label={t("player.next")} onClick={p.next} disabled={!current} />
+            <Tooltip label={p.repeat === "one" ? t("player.repeat.one") : p.repeat === "all" ? t("player.repeat.all") : t("player.repeat.off")}>
               <IconButton
                 icon={p.repeat === "one" ? "repeat-1" : "repeat"}
                 size="sm"
-                label="Повтор"
+                label={p.repeat === "one" ? t("player.repeat.one") : p.repeat === "all" ? t("player.repeat.all") : t("player.repeat.off")}
                 active={p.repeat !== "off"}
                 onClick={p.cycleRepeat}
               />
@@ -135,8 +138,8 @@ export function PlayerBar({
               max={Math.max(duration, 1)}
               onChange={p.seek}
               rate={p.playing ? 1 : 0}
-              ariaLabel="Позиция"
-              valueText={`${fmtTime(position)} из ${fmtTime(duration)}`}
+              ariaLabel={t("player.progress")}
+              valueText={t("player.progressValueText", { pos: fmtTime(position), duration: fmtTime(duration) })}
               hoverLabel={fmtTime}
               style={{ flex: 1 }}
             />
@@ -145,15 +148,22 @@ export function PlayerBar({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}>
-          <Tooltip label="Сейчас играет">
-            <IconButton icon="panel-right" size="sm" label="Панель «Сейчас играет»" active={npOpen} onClick={onToggleNp} disabled={!t} />
+          <Tooltip label={t("nowPlaying.heading")}>
+            <IconButton
+              icon="panel-right"
+              size="sm"
+              label={t("web.player.npPanelAria")}
+              active={npOpen}
+              onClick={onToggleNp}
+              disabled={!current}
+            />
           </Tooltip>
-          <IconButton icon={volumeIcon} size="sm" label={p.muted ? "Включить звук" : "Выключить звук"} onClick={p.toggleMute} />
+          <IconButton icon={volumeIcon} size="sm" label={p.muted ? t("player.unmute") : t("player.mute")} onClick={p.toggleMute} />
           <Slider
             value={p.muted ? 0 : Math.round(p.volume * 100)}
             max={100}
             onChange={(v) => p.setVolume(v / 100)}
-            ariaLabel="Громкость"
+            ariaLabel={t("player.volume")}
             valueText={`${Math.round((p.muted ? 0 : p.volume) * 100)}%`}
             style={{ width: 110 }}
           />
@@ -164,7 +174,7 @@ export function PlayerBar({
           отдельная растянутая кнопка, контент лежит поверх с pointer-events:
           none (кроме транспорта). ── */}
       <div className="minibar">
-        <button type="button" className="minibar-open" aria-label="Открыть «Сейчас играет»" onClick={onOpenMobile} />
+        <button type="button" className="minibar-open" aria-label={t("web.player.openNowPlayingAria")} onClick={onOpenMobile} />
         <span className="minibar-progress" style={{ width: duration > 0 ? `${(position / duration) * 100}%` : 0 }} />
         <span
           style={{
@@ -178,7 +188,7 @@ export function PlayerBar({
             boxSizing: "border-box",
           }}
         >
-          <CoverThumb url={t?.coverUrl ?? null} size={44} />
+          <CoverThumb url={current?.coverUrl ?? null} size={44} />
           <span style={{ flex: 1, minWidth: 0 }}>
             <span
               style={{
@@ -192,7 +202,7 @@ export function PlayerBar({
                 textOverflow: "ellipsis",
               }}
             >
-              {t ? t.title : "Ничего не играет"}
+              {current ? current.title : t("player.empty.title")}
             </span>
             <span
               style={{
@@ -213,11 +223,11 @@ export function PlayerBar({
               icon={p.playing ? "pause" : "play"}
               variant="accent"
               size="sm"
-              label={p.playing ? "Пауза" : "Играть"}
+              label={p.playing ? t("player.pause") : t("player.play")}
               onClick={p.toggle}
-              disabled={!t}
+              disabled={!current}
             />
-            <IconButton icon="skip-forward" size="sm" label="Следующий" onClick={p.next} disabled={!t} />
+            <IconButton icon="skip-forward" size="sm" label={t("player.next")} onClick={p.next} disabled={!current} />
           </span>
         </span>
       </div>

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, ChipGroup, Fader, Icon, Switch } from "@muza/ui";
 import { DesktopOnlyOverlay } from "@muza/app/components/DesktopOnly";
+import { LANGS, useT, type Lang } from "@muza/app";
 import { EQ_PRESETS } from "../../../src/audioFx";
 import { usePrefs } from "../../../src/prefs";
 import { useSession } from "../../../src/session";
@@ -19,26 +20,57 @@ import { useSession } from "../../../src/session";
 
 const EQ_LABELS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
 
-const ACCENTS: { key: "blue" | "red" | "bolt"; color: string; label: string }[] = [
-  { key: "blue", color: "#3b82f6", label: "Небесный (дефолт)" },
-  { key: "bolt", color: "#327ad9", label: "Молния логотипа" },
-  { key: "red", color: "#f76967", label: "Пламя логотипа" },
+/** Ключи, цвета и иконки переиспользуют desktop-словарь (settings.appearance.accent.*
+ *  — тот же набор blue/red/bolt) — подписи собираются в рендере через t(). */
+const ACCENTS: { key: "blue" | "red" | "bolt"; color: string }[] = [
+  { key: "blue", color: "#3b82f6" },
+  { key: "bolt", color: "#327ad9" },
+  { key: "red", color: "#f76967" },
 ];
+
+type TFn = ReturnType<typeof useT>["t"];
+
+/** Подпись акцента — реюз desktop-ключей settings.appearance.accent.*. */
+function accentLabel(key: "blue" | "red" | "bolt", t: TFn): string {
+  if (key === "blue") return t("settings.appearance.accent.blue");
+  if (key === "red") return t("settings.appearance.accent.red");
+  return t("settings.appearance.accent.bolt");
+}
 
 /** Категории настроек — зеркало десктопной модели (SETTINGS_TAB_KEYS +
  *  SETTINGS_TAB_ICONS в SettingsView.tsx), состав веба: порядок массива =
- *  порядок пунктов навигации. */
+ *  порядок пунктов навигации. Подписи — в sectionLabel() ниже (часть реюзает
+ *  settings.tabs.* десктопа, часть — свои web.settings.tabs.* без аналога). */
 const SECTIONS = [
-  { key: "appearance", icon: "paintbrush", label: "Внешний вид" },
-  { key: "sound", icon: "audio-lines", label: "Звук" },
-  { key: "search", icon: "search", label: "Поиск" },
-  { key: "integrations", icon: "plug", label: "Интеграции" },
-  { key: "offline", icon: "hard-drive", label: "Оффлайн" },
-  { key: "customize", icon: "sparkles", label: "Кастомизация+" },
-  { key: "account", icon: "user", label: "Аккаунт" },
+  { key: "appearance", icon: "paintbrush" },
+  { key: "sound", icon: "audio-lines" },
+  { key: "search", icon: "search" },
+  { key: "integrations", icon: "plug" },
+  { key: "offline", icon: "hard-drive" },
+  { key: "customize", icon: "sparkles" },
+  { key: "account", icon: "user" },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
+
+function sectionLabel(key: SectionKey, t: TFn): string {
+  switch (key) {
+    case "appearance":
+      return t("settings.tabs.appearance");
+    case "integrations":
+      return t("settings.tabs.integrations");
+    case "account":
+      return t("settings.tabs.account");
+    case "sound":
+      return t("web.settings.tabs.sound");
+    case "search":
+      return t("web.settings.tabs.search");
+    case "offline":
+      return t("web.settings.tabs.offline");
+    case "customize":
+      return t("web.settings.tabs.customizePlus");
+  }
+}
 
 /** id пункта навигации — на него ссылается aria-labelledby панели. */
 const sectionTabId = (key: string) => `settings-tab-${key}`;
@@ -103,22 +135,31 @@ function PaneTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-const RADII = [
-  { key: "mild" as const, label: "Сдержанные" },
-  { key: "soft" as const, label: "Мягкие" },
-  { key: "round" as const, label: "Круглые" },
-];
+/** Те же ключи mild/soft/round, что prefs.radius десктопа — подписи реюзают
+ *  settings.appearance.radius.* (десктопный ChipGroup того же значения). */
+const RADIUS_KEYS = ["mild", "soft", "round"] as const;
 
-const FONTS = [
-  { key: "golos" as const, label: "Golos" },
-  { key: "unbounded" as const, label: "Unbounded" },
-  { key: "system" as const, label: "Системный" },
-];
+function radiusLabel(key: (typeof RADIUS_KEYS)[number], t: TFn): string {
+  if (key === "mild") return t("settings.appearance.radius.mild");
+  if (key === "round") return t("settings.appearance.radius.round");
+  return t("settings.appearance.radius.soft");
+}
+
+/** Golos/Unbounded — имена шрифтов, не переводятся ни в одном языке (как в
+ *  десктопе); «Системный» — единственная переводимая подпись этого чипа. */
+const FONT_KEYS = ["golos", "unbounded", "system"] as const;
+
+function fontLabel(key: (typeof FONT_KEYS)[number], t: TFn): string {
+  if (key === "golos") return "Golos";
+  if (key === "unbounded") return "Unbounded";
+  return t("web.settings.fontSystem");
+}
 
 export default function SettingsPage() {
   const { prefs, set } = usePrefs();
   const { session, logout } = useSession();
   const router = useRouter();
+  const { t, lang } = useT();
   const colorRef = useRef<HTMLInputElement>(null);
   const [section, setSection] = useState<SectionKey>("appearance");
 
@@ -130,20 +171,32 @@ export default function SettingsPage() {
   const setBand = (i: number, v: number) => {
     const bands = [...prefs.eqBands];
     bands[i] = Math.round(v);
+    // Значение — персистентный ключ prefs.eqPreset (см. EQ_PRESETS в audioFx.ts),
+    // сознательно не переведён, как и на десктопе (SettingsView.tsx:1070).
     set({ eqBands: bands, eqPreset: "Свой" });
   };
 
   const appearancePane = (
     <>
-      <PaneTitle>Внешний вид</PaneTitle>
-      <Row title="Светлая тема" hint="Тёплый светлый интерфейс вместо графита">
+      <PaneTitle>{t("settings.tabs.appearance")}</PaneTitle>
+      <Row title={t("web.settings.lightTheme.title")} hint={t("web.settings.lightTheme.hint")}>
         <Switch
           checked={prefs.theme === "light"}
           onChange={(on: boolean) => set({ theme: on ? "light" : "dark" })}
-          label="Светлая тема"
+          label={t("web.settings.lightTheme.title")}
         />
       </Row>
-      <Row title="Акцентный цвет" hint="Красит кнопки, активные строки и караоке; пипетка — любой свой">
+      <Row title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
+        <ChipGroup
+          items={LANGS.map((l) => ({
+            key: l,
+            label: l === "ru" ? t("settings.appearance.language.optionRu") : t("settings.appearance.language.optionEn"),
+          }))}
+          value={lang}
+          onChange={(key: string) => set({ language: key as Lang })}
+        />
+      </Row>
+      <Row title={t("settings.appearance.accent.title")} hint={t("settings.appearance.accent.hint")}>
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
           {ACCENTS.map((a) => (
             <button
@@ -151,7 +204,7 @@ export default function SettingsPage() {
               type="button"
               className={prefs.accent === a.key ? "swatch active" : "swatch"}
               style={{ background: a.color }}
-              aria-label={a.label}
+              aria-label={accentLabel(a.key, t)}
               aria-pressed={prefs.accent === a.key}
               onClick={() => set({ accent: a.key })}
             />
@@ -160,7 +213,7 @@ export default function SettingsPage() {
             type="button"
             className={prefs.accent === "custom" ? "swatch active" : "swatch"}
             style={{ background: prefs.accent === "custom" ? prefs.customAccent : "var(--surface-3)" }}
-            aria-label="Свой цвет"
+            aria-label={t("settings.appearance.accent.customLabel")}
             aria-pressed={prefs.accent === "custom"}
             onClick={() => colorRef.current?.click()}
           />
@@ -175,55 +228,69 @@ export default function SettingsPage() {
           />
         </div>
       </Row>
-      <Row title="Скругления" hint="Форма плиток, панелей и кнопок">
+      <Row title={t("settings.appearance.radius.title")} hint={t("settings.appearance.radius.hint")}>
         <ChipGroup
-          items={RADII.map((r) => r.label)}
-          value={RADII.find((r) => r.key === prefs.radius)?.label ?? "Мягкие"}
-          onChange={(label: string) => set({ radius: RADII.find((r) => r.label === label)?.key ?? "soft" })}
+          items={RADIUS_KEYS.map((k) => ({ key: k, label: radiusLabel(k, t) }))}
+          value={prefs.radius}
+          onChange={(key: string) =>
+            set({ radius: (RADIUS_KEYS as readonly string[]).includes(key) ? (key as (typeof RADIUS_KEYS)[number]) : "soft" })
+          }
         />
       </Row>
-      <Row title="Шрифт интерфейса" hint="Подписи и тексты всего веб-плеера">
+      <Row title={t("settings.customize.typography.fontUi.title")} hint={t("web.settings.fontHint")}>
         <ChipGroup
-          items={FONTS.map((f) => f.label)}
-          value={FONTS.find((f) => f.key === prefs.fontUi)?.label ?? "Golos"}
-          onChange={(label: string) => set({ fontUi: FONTS.find((f) => f.label === label)?.key ?? "golos" })}
+          items={FONT_KEYS.map((k) => ({ key: k, label: fontLabel(k, t) }))}
+          value={prefs.fontUi}
+          onChange={(key: string) =>
+            set({ fontUi: (FONT_KEYS as readonly string[]).includes(key) ? (key as (typeof FONT_KEYS)[number]) : "golos" })
+          }
         />
       </Row>
-      <Row title="Плотность стекла" hint="Насколько плотное матовое стекло у панелей">
+      <Row title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
         <input
           type="range"
           min={30}
           max={90}
           value={prefs.glassOpacity}
-          aria-label="Плотность стекла"
+          aria-label={t("settings.appearance.glass.title")}
           aria-valuetext={`${prefs.glassOpacity}%`}
           style={{ width: 200, accentColor: "var(--accent)" }}
           onChange={(e) => set({ glassOpacity: Number(e.target.value) })}
         />
       </Row>
-      <Row title="Фон из обложки" hint="Размытая обложка трека за интерфейсом — фирменный вид Muza">
-        <Switch checked={prefs.bgCover} onChange={(bgCover: boolean) => set({ bgCover })} label="Фон из обложки" />
+      <Row title={t("settings.appearance.background.ariaLabel")} hint={t("web.settings.backgroundHint")}>
+        <Switch checked={prefs.bgCover} onChange={(bgCover: boolean) => set({ bgCover })} label={t("settings.appearance.background.ariaLabel")} />
       </Row>
-      <Row title="Панель «Сейчас играет»" hint="Открывается сама при старте трека (на широком экране)">
-        <Switch checked={prefs.npOpen} onChange={(npOpen: boolean) => set({ npOpen })} label="Панель «Сейчас играет»" />
+      <Row title={t("web.settings.npPanelRow.title")} hint={t("web.settings.npPanelRow.hint")}>
+        <Switch checked={prefs.npOpen} onChange={(npOpen: boolean) => set({ npOpen })} label={t("web.settings.npPanelRow.title")} />
       </Row>
     </>
   );
 
   const soundPane = (
     <>
-      <PaneTitle>Звук</PaneTitle>
-      <Row title="Эквалайзер" hint="10 полос, как в приложении. Работает на играющем треке">
-        <Switch checked={prefs.eqOn} onChange={(eqOn: boolean) => set({ eqOn })} label="Эквалайзер" />
+      <PaneTitle>{t("web.settings.tabs.sound")}</PaneTitle>
+      <Row title={t("settings.equalizer.title")} hint={t("web.settings.eqHint")}>
+        <Switch checked={prefs.eqOn} onChange={(eqOn: boolean) => set({ eqOn })} label={t("settings.equalizer.title")} />
       </Row>
       <div style={prefs.eqOn ? undefined : { opacity: 0.4, pointerEvents: "none" }}>
         <div className="eq-faders" style={{ margin: "var(--sp-2) 0 var(--sp-3)", padding: 0 }}>
+          {/* Ключи EQ_PRESETS (рус. слова) — персистентные значения prefs.eqPreset,
+              как и "Свой": сознательно не переведены, см. audioFx.ts и SettingsView.tsx
+              десктопа (та же договорённость, чтобы не разъехаться по клиентам). */}
           <ChipGroup items={[...Object.keys(EQ_PRESETS), "Свой"]} value={prefs.eqPreset} onChange={applyPreset} />
         </div>
         <div className="eq-faders">
           {prefs.eqBands.map((v, i) => (
             <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--sp-1)" }}>
-              <Fader value={v} min={-12} max={12} height={120} onChange={(nv: number) => setBand(i, nv)} ariaLabel={`Полоса ${EQ_LABELS[i]} Гц`} />
+              <Fader
+                value={v}
+                min={-12}
+                max={12}
+                height={120}
+                onChange={(nv: number) => setBand(i, nv)}
+                ariaLabel={t("settings.equalizer.bandAria", { freq: EQ_LABELS[i] })}
+              />
               <span style={{ fontFamily: "var(--font-ui)", fontSize: 11, color: "var(--text-3)" }}>{EQ_LABELS[i]}</span>
             </div>
           ))}
@@ -234,12 +301,13 @@ export default function SettingsPage() {
 
   const searchPane = (
     <>
-      <PaneTitle>Поиск</PaneTitle>
-      <Row
-        title="Группировать версии и ремиксы"
-        hint="Оригинал и его ремиксы/спидапы/каверы — под одной карточкой вместо отдельных строк"
-      >
-        <Switch checked={prefs.searchGrouping} onChange={(searchGrouping: boolean) => set({ searchGrouping })} label="Группировать версии и ремиксы" />
+      <PaneTitle>{t("web.settings.tabs.search")}</PaneTitle>
+      <Row title={t("settings.sources.searchGrouping.title")} hint={t("settings.sources.searchGrouping.hint")}>
+        <Switch
+          checked={prefs.searchGrouping}
+          onChange={(searchGrouping: boolean) => set({ searchGrouping })}
+          label={t("settings.sources.searchGrouping.title")}
+        />
       </Row>
     </>
   );
@@ -248,14 +316,14 @@ export default function SettingsPage() {
      функция отрисована и понятна, но менять — в приложении */
   const integrationsPane = (
     <>
-      <PaneTitle>Интеграции</PaneTitle>
+      <PaneTitle>{t("settings.tabs.integrations")}</PaneTitle>
       <GroupTitle>Discord</GroupTitle>
-      <DesktopOnlyOverlay hint="Discord-статус ведёт приложение для Windows">
-        <Row title="Rich Presence" hint="Discord показывает трек, обложку и кнопку у тебя в профиле">
-          <Switch checked onChange={() => {}} label="Rich Presence" />
+      <DesktopOnlyOverlay hint={t("settings.integrations.discord.rowHint")}>
+        <Row title={t("settings.integrations.discord.title")} hint={t("settings.integrations.discord.rowHint")}>
+          <Switch checked onChange={() => {}} label={t("settings.integrations.discord.title")} />
         </Row>
-        <Row title="Кнопка в статусе" hint="Своя надпись и ссылка под треком">
-          <Switch checked onChange={() => {}} label="Кнопка в статусе" />
+        <Row title={t("settings.integrations.discord.buttonGroup")} hint={t("settings.integrations.discord.btnOn.hint")}>
+          <Switch checked onChange={() => {}} label={t("settings.integrations.discord.buttonGroup")} />
         </Row>
       </DesktopOnlyOverlay>
     </>
@@ -263,13 +331,17 @@ export default function SettingsPage() {
 
   const offlinePane = (
     <>
-      <PaneTitle>Оффлайн</PaneTitle>
-      <DesktopOnlyOverlay hint="Оффлайн-кэш — в приложении для Windows">
-        <Row title="Сохранять треки офлайн" hint="Слушать без интернета; кэш чистится сам по лимиту">
-          <Switch checked onChange={() => {}} label="Сохранять треки офлайн" />
+      <PaneTitle>{t("web.settings.tabs.offline")}</PaneTitle>
+      <DesktopOnlyOverlay hint={t("web.settings.offlineSaveHint")}>
+        <Row title={t("web.settings.offlineSaveTitle")} hint={t("web.settings.offlineSaveHint")}>
+          <Switch checked onChange={() => {}} label={t("web.settings.offlineSaveTitle")} />
         </Row>
-        <Row title="Лимит кэша" hint="Сколько места отдать под музыку">
-          <ChipGroup items={["2 ГБ", "5 ГБ", "10 ГБ"]} value="5 ГБ" onChange={() => {}} />
+        <Row title={t("settings.library.cache.limitLabel")}>
+          <ChipGroup
+            items={[2, 5, 10].map((n) => t("settings.library.units.gb", { n }))}
+            value={t("settings.library.units.gb", { n: 5 })}
+            onChange={() => {}}
+          />
         </Row>
       </DesktopOnlyOverlay>
     </>
@@ -277,16 +349,24 @@ export default function SettingsPage() {
 
   const customizePane = (
     <>
-      <PaneTitle>Кастомизация+</PaneTitle>
-      <DesktopOnlyOverlay hint="Глубокая кастомизация — в приложении для Windows">
-        <Row title="Фон интерфейса" hint="Цвет, градиент, картинка или живая анимированная сцена">
-          <ChipGroup items={["Обложка", "Градиент", "Живой"]} value="Обложка" onChange={() => {}} />
+      <PaneTitle>{t("web.settings.tabs.customizePlus")}</PaneTitle>
+      <DesktopOnlyOverlay hint={t("web.settings.bgTitle")}>
+        <Row title={t("web.settings.bgTitle")} hint={t("settings.customize.background.type.hint")}>
+          <ChipGroup
+            items={[
+              t("settings.customize.background.type.cover"),
+              t("settings.customize.background.type.gradient"),
+              t("settings.customize.background.type.animated"),
+            ]}
+            value={t("settings.customize.background.type.cover")}
+            onChange={() => {}}
+          />
         </Row>
-        <Row title="Свой CSS" hint="Дописать стили поверх любой темы">
-          <Switch checked={false} onChange={() => {}} label="Свой CSS" />
+        <Row title={t("settings.customize.css.toggle.title")} hint={t("settings.customize.css.toggle.hint")}>
+          <Switch checked={false} onChange={() => {}} label={t("settings.customize.css.toggle.title")} />
         </Row>
-        <Row title="Темы из маркетплейса" hint="Готовые темы других пользователей — в один клик">
-          <Button variant="secondary">Открыть маркетплейс</Button>
+        <Row title={t("settings.customize.themes.marketRow.title")} hint={t("web.settings.marketplaceHint")}>
+          <Button variant="secondary">{t("web.settings.openMarketplace")}</Button>
         </Row>
       </DesktopOnlyOverlay>
     </>
@@ -294,8 +374,8 @@ export default function SettingsPage() {
 
   const accountPane = (
     <>
-      <PaneTitle>Аккаунт</PaneTitle>
-      <Row title={session?.user.username ?? ""} hint="Полные настройки аккаунта и оффлайн — в приложении для Windows">
+      <PaneTitle>{t("settings.tabs.account")}</PaneTitle>
+      <Row title={session?.user.username ?? ""} hint={t("web.settings.accountHint")}>
         <Button
           variant="ghost"
           icon="log-out"
@@ -303,7 +383,7 @@ export default function SettingsPage() {
             void logout().then(() => router.replace("/login"));
           }}
         >
-          Выйти
+          {t("settings.account.profile.signOut")}
         </Button>
       </Row>
     </>
@@ -322,10 +402,10 @@ export default function SettingsPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       <h1 className="page-title" style={{ marginBottom: "var(--sp-5)" }}>
-        Настройки
+        {t("settings.title")}
       </h1>
       <div className="settings-layout">
-        <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Разделы настроек">
+        <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label={t("settings.title")}>
           {SECTIONS.map((s) => {
             const active = s.key === section;
             return (
@@ -341,7 +421,7 @@ export default function SettingsPage() {
               >
                 {/* активная категория — акцентная иконка, как пункты сайдбара */}
                 <Icon name={s.icon} size={20} color={active ? "var(--accent-text)" : "currentColor"} />
-                {s.label}
+                {sectionLabel(s.key, t)}
               </button>
             );
           })}

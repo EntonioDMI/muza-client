@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Tabs } from "@muza/ui";
 import { ApiError, CredentialsSchema } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "../../src/api";
 import { useSession } from "../../src/session";
 
@@ -56,6 +57,7 @@ function Field({
 export default function LoginPage() {
   const { session, ready, setSession } = useSession();
   const router = useRouter();
+  const { t } = useT();
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -70,7 +72,7 @@ export default function LoginPage() {
     setError(null);
     const parsed = CredentialsSchema.safeParse({ username, password });
     if (!parsed.success) {
-      setError("Имя — от 3 символов, пароль — от 8.");
+      setError(t("auth.errors.credsTooShort"));
       return;
     }
     setBusy(true);
@@ -80,7 +82,7 @@ export default function LoginPage() {
       setSession(s);
       router.replace("/home");
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Что-то пошло не так — попробуй ещё раз");
+      setError(e instanceof ApiError ? e.message : t("auth.errors.somethingWrong"));
     } finally {
       setBusy(false);
     }
@@ -126,23 +128,23 @@ export default function LoginPage() {
         </div>
         <Tabs
           items={[
-            { key: "login", label: "Вход" },
-            { key: "register", label: "Регистрация" },
+            { key: "login", label: t("auth.tabs.login") },
+            { key: "register", label: t("auth.tabs.register") },
           ]}
           value={mode}
           onChange={setMode}
           stretch
         />
-        <Field value={username} onChange={setUsername} placeholder="Имя пользователя" autoFocus />
-        <Field value={password} onChange={setPassword} placeholder="Пароль" type="password" onEnter={submit} />
+        <Field value={username} onChange={setUsername} placeholder={t("auth.fields.username")} autoFocus />
+        <Field value={password} onChange={setPassword} placeholder={t("auth.fields.password")} type="password" onEnter={submit} />
         {error ? (
           <p style={{ margin: 0, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "#e5484d" }}>{error}</p>
         ) : null}
         <Button variant="primary" size="lg" disabled={busy} onClick={() => void submit()}>
-          {busy ? "Секунду…" : mode === "login" ? "Войти" : "Создать аккаунт"}
+          {busy ? t("common.busy") : mode === "login" ? t("auth.submit.login") : t("auth.submit.register")}
         </Button>
         <p style={{ margin: 0, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", textAlign: "center" }}>
-          Почта, восстановление пароля и оффлайн — в приложении для Windows.
+          {t("web.login.footerNote")}
         </p>
       </div>
     </div>

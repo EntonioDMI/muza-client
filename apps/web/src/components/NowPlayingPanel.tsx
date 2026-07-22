@@ -1,6 +1,7 @@
 "use client";
 
 import { IconButton } from "@muza/ui";
+import { useT } from "@muza/app";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
 import { Cover } from "./Cover";
@@ -12,6 +13,7 @@ import { LyricsBlock } from "./LyricsPanel";
 export function NowPlayingPanel({ onClose }: { onClose: () => void }) {
   const { current } = usePlayer();
   const { likedIds, toggle } = useLikes();
+  const { t } = useT();
   if (!current) return null;
 
   return (
@@ -26,9 +28,9 @@ export function NowPlayingPanel({ onClose }: { onClose: () => void }) {
             color: "var(--text-3)",
           }}
         >
-          Сейчас играет
+          {t("nowPlaying.heading")}
         </span>
-        <IconButton icon="x" size="sm" label="Скрыть панель" iconSize={16} style={{ width: 30, height: 30 }} onClick={onClose} />
+        <IconButton icon="x" size="sm" label={t("plugins.closePanel")} iconSize={16} style={{ width: 30, height: 30 }} onClick={onClose} />
       </div>
       <Cover url={current.coverUrl} style={{ width: "100%", flex: "none" }} />
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
@@ -62,7 +64,7 @@ export function NowPlayingPanel({ onClose }: { onClose: () => void }) {
         <IconButton
           icon="heart"
           size="sm"
-          label={likedIds.has(current.id) ? "Убрать из любимого" : "В любимое"}
+          label={likedIds.has(current.id) ? t("menu.catalog.unlike") : t("menu.catalog.like")}
           filled={likedIds.has(current.id)}
           onClick={() => toggle(current)}
         />

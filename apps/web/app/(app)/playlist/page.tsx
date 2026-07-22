@@ -9,7 +9,7 @@ import { usePlayer } from "../../../src/player";
 import { usePlaylists } from "../../../src/playlists";
 import { useSession } from "../../../src/session";
 import { PlaylistCover } from "../../../src/components/PlaylistCover";
-import { PlaylistIconPicker } from "@muza/app";
+import { PlaylistIconPicker, useT } from "@muza/app";
 import { TrackList } from "../../../src/components/TrackList";
 import { useToast } from "../../../src/toast";
 
@@ -23,6 +23,7 @@ function PlaylistBody() {
   const id = params.get("id");
   const router = useRouter();
   const notify = useToast();
+  const { t } = useT();
   const { session } = useSession();
   const { playContext } = usePlayer();
   const { refresh: refreshPlaylists } = usePlaylists();
@@ -48,8 +49,8 @@ function PlaylistBody() {
     getApi()
       .getPlaylist(id)
       .then(setDetail)
-      .catch((e) => setError(e instanceof Error ? e.message : "Плейлист не найден"));
-  }, [id]);
+      .catch((e) => setError(e instanceof Error ? e.message : t("web.playlist.notFound")));
+  }, [id, t]);
 
   useEffect(() => {
     setDetail(null);
@@ -57,11 +58,11 @@ function PlaylistBody() {
     load();
   }, [id, load]);
 
-  if (!id) return <p style={noteStyle}>Плейлист не указан.</p>;
+  if (!id) return <p style={noteStyle}>{t("web.playlist.noId")}</p>;
   if (error) return <p style={noteStyle}>{error}</p>;
-  if (!detail) return <p style={noteStyle}>Загрузка…</p>;
+  if (!detail) return <p style={noteStyle}>{t("common.loading")}</p>;
 
-  const playable = detail.tracks.filter((t) => !t.localHash);
+  const playable = detail.tracks.filter((tr) => !tr.localHash);
 
   const rename = async () => {
     const name = renameValue.trim();
@@ -73,7 +74,7 @@ function PlaylistBody() {
       setRenameOpen(false);
       void refreshPlaylists();
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось переименовать", "x");
+      notify(e instanceof ApiError ? e.message : t("toast.playlist.renameFailed"), "x");
     } finally {
       setRenameBusy(false);
     }
@@ -83,11 +84,11 @@ function PlaylistBody() {
     setDeleteBusy(true);
     try {
       await getApi().deletePlaylist(id);
-      notify("Плейлист удалён", "trash-2");
+      notify(t("toast.playlist.deleted"), "trash-2");
       await refreshPlaylists();
       router.replace("/library");
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось удалить", "x");
+      notify(e instanceof ApiError ? e.message : t("toast.playlist.deleteFailed"), "x");
       setDeleteBusy(false);
     }
   };
@@ -95,11 +96,11 @@ function PlaylistBody() {
   const removeTrack = async (trackId: string) => {
     try {
       await getApi().removePlaylistTrack(id, trackId);
-      notify("Убрано из плейлиста", "list-x");
+      notify(t("views.playlist.removedFromPlaylist"), "list-x");
       load();
       void refreshPlaylists();
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось убрать трек", "x");
+      notify(e instanceof ApiError ? e.message : t("views.playlist.removeTrackFailed"), "x");
     }
   };
 
@@ -109,10 +110,10 @@ function PlaylistBody() {
       await getApi().setPlaylistIcon(id, icon);
       setDetail((d) => (d ? { ...d, icon } : d));
       setIconOpen(false);
-      notify("Иконка изменена", "image");
+      notify(t("toast.playlist.iconChanged"), "image");
       void refreshPlaylists();
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось сменить иконку", "x");
+      notify(e instanceof ApiError ? e.message : t("toast.playlist.iconChangeFailed"), "x");
     } finally {
       setIconBusy(false);
     }
@@ -124,7 +125,7 @@ function PlaylistBody() {
       const { code } = await getApi().createPlaylistInvite(id);
       setDetail((d) => (d ? { ...d, inviteCode: code } : d));
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось создать код", "x");
+      notify(e instanceof ApiError ? e.message : t("dialogs.collab.createFailed"), "x");
     } finally {
       setShareBusy(false);
     }
@@ -135,9 +136,9 @@ function PlaylistBody() {
     try {
       await getApi().revokePlaylistInvite(id);
       setDetail((d) => (d ? { ...d, inviteCode: null } : d));
-      notify("Код отозван — новые не войдут", "shield");
+      notify(t("dialogs.collab.codeRevoked"), "shield");
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось отозвать код", "x");
+      notify(e instanceof ApiError ? e.message : t("dialogs.collab.revokeFailed"), "x");
     } finally {
       setShareBusy(false);
     }
@@ -147,9 +148,9 @@ function PlaylistBody() {
     if (!detail.inviteCode) return;
     try {
       await navigator.clipboard.writeText(detail.inviteCode);
-      notify("Код скопирован — отправь другу", "copy");
+      notify(t("dialogs.collab.codeCopied"), "copy");
     } catch {
-      notify("Не удалось скопировать", "x");
+      notify(t("dialogs.copyFailed"), "x");
     }
   };
 
@@ -158,11 +159,11 @@ function PlaylistBody() {
     setLeaveBusy(true);
     try {
       await getApi().removePlaylistMember(id, session.user.id);
-      notify("Ты покинул плейлист", "log-out");
+      notify(t("dialogs.collab.left"), "log-out");
       await refreshPlaylists();
       router.replace("/library");
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : "Не удалось выйти", "x");
+      notify(e instanceof ApiError ? e.message : t("dialogs.collab.leaveFailed"), "x");
       setLeaveBusy(false);
     }
   };
@@ -187,21 +188,22 @@ function PlaylistBody() {
             {detail.name}
           </h1>
           <p style={{ margin: "4px 0 0", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-            {detail.tracks.length} трек(ов)
-            {!detail.isOwner && detail.ownerUsername ? ` · от ${detail.ownerUsername}` : ""}
+            {!detail.isOwner && detail.ownerUsername
+              ? t("sidebar.playlistMeta.collabFrom", { count: detail.tracks.length, owner: detail.ownerUsername })
+              : t("views.playlist.trackCount", { count: detail.tracks.length })}
           </p>
         </div>
         <Button variant="primary" icon="play" disabled={playable.length === 0} onClick={() => playContext(detail.tracks, 0)}>
-          Слушать
+          {t("player.play")}
         </Button>
         <div ref={menuAnchorRef}>
-          <IconButton icon="ellipsis" label="Действия с плейлистом" onClick={openMenu} />
+          <IconButton icon="ellipsis" label={t("web.playlist.actionsAria")} onClick={openMenu} />
         </div>
       </div>
       {detail.tracks.length === 0 ? (
-        <p style={noteStyle}>Плейлист пуст.</p>
+        <p style={noteStyle}>{t("web.playlist.empty")}</p>
       ) : (
-        <TrackList tracks={detail.tracks} onRemoveFromPlaylist={(t) => void removeTrack(t.id)} />
+        <TrackList tracks={detail.tracks} onRemoveFromPlaylist={(tr) => void removeTrack(tr.id)} />
       )}
 
       <Menu
@@ -214,18 +216,18 @@ function PlaylistBody() {
             ? [
                 {
                   icon: "pencil",
-                  label: "Переименовать",
+                  label: t("menu.playlist.rename"),
                   onClick: () => {
                     setRenameValue(detail.name);
                     setRenameOpen(true);
                   },
                 },
-                { icon: "image", label: "Сменить иконку", onClick: () => setIconOpen(true) },
-                { icon: "share-2", label: "Поделиться", onClick: () => setShareOpen(true) },
+                { icon: "image", label: t("menu.playlist.changeIcon"), onClick: () => setIconOpen(true) },
+                { icon: "share-2", label: t("menu.catalog.share"), onClick: () => setShareOpen(true) },
                 "-",
-                { icon: "trash-2", label: "Удалить плейлист", danger: true, onClick: () => setDeleteOpen(true) },
+                { icon: "trash-2", label: t("menu.playlist.delete"), danger: true, onClick: () => setDeleteOpen(true) },
               ]
-            : [{ icon: "log-out", label: "Покинуть плейлист", danger: true, onClick: () => setLeaveOpen(true) }]
+            : [{ icon: "log-out", label: t("dialogs.collab.leavePlaylist"), danger: true, onClick: () => setLeaveOpen(true) }]
         }
       />
 
@@ -239,15 +241,15 @@ function PlaylistBody() {
 
       <Dialog
         open={renameOpen}
-        title="Переименовать плейлист"
+        title={t("app.renamePlaylistDialog.title")}
         onClose={() => setRenameOpen(false)}
         actions={
           <>
             <Button variant="ghost" size="lg" onClick={() => setRenameOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" size="lg" icon="check" disabled={renameBusy || !renameValue.trim()} onClick={() => void rename()}>
-              {renameBusy ? "Секунду…" : "Сохранить"}
+              {renameBusy ? t("common.busy") : t("common.save")}
             </Button>
           </>
         }
@@ -258,49 +260,60 @@ function PlaylistBody() {
             if (e.key === "Enter") void rename();
           }}
         >
-          <SearchInput value={renameValue} onChange={setRenameValue} placeholder="Название" icon="list-music" autoFocus />
+          <SearchInput value={renameValue} onChange={setRenameValue} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
         </div>
       </Dialog>
 
       <Dialog
         open={deleteOpen}
-        title="Удалить плейлист?"
+        title={t("app.deletePlaylistDialog.title")}
         onClose={() => setDeleteOpen(false)}
         actions={
           <>
             <Button variant="ghost" size="lg" onClick={() => setDeleteOpen(false)}>
-              Отмена
+              {t("common.cancel")}
             </Button>
             <Button variant="primary" size="lg" icon="trash-2" disabled={deleteBusy} onClick={() => void remove()}>
-              {deleteBusy ? "Секунду…" : "Удалить"}
-            </Button>
-          </>
-        }
-      >
-        <div style={{ fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>«{detail.name}» исчезнет со всех устройств. Треки останутся в каталоге.</div>
-      </Dialog>
-
-      <Dialog
-        open={leaveOpen}
-        title="Покинуть плейлист?"
-        onClose={() => setLeaveOpen(false)}
-        actions={
-          <>
-            <Button variant="ghost" size="lg" onClick={() => setLeaveOpen(false)}>
-              Отмена
-            </Button>
-            <Button variant="primary" size="lg" icon="log-out" disabled={leaveBusy} onClick={() => void leave()}>
-              {leaveBusy ? "Секунду…" : "Покинуть"}
+              {deleteBusy ? t("common.busy") : t("app.deletePlaylistDialog.confirm")}
             </Button>
           </>
         }
       >
         <div style={{ fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
-          Ты перестанешь видеть «{detail.name}» и не сможешь добавлять треки — пока владелец не пришлёт код снова.
+          {t("app.deletePlaylistDialog.bodyServer", { name: detail.name })}
         </div>
       </Dialog>
 
-      <Dialog open={shareOpen} title="Поделиться плейлистом" onClose={() => setShareOpen(false)} actions={<Button variant="ghost" size="lg" onClick={() => setShareOpen(false)}>Готово</Button>}>
+      <Dialog
+        open={leaveOpen}
+        title={t("web.playlist.leaveDialogTitle")}
+        onClose={() => setLeaveOpen(false)}
+        actions={
+          <>
+            <Button variant="ghost" size="lg" onClick={() => setLeaveOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" size="lg" icon="log-out" disabled={leaveBusy} onClick={() => void leave()}>
+              {leaveBusy ? t("common.busy") : t("dialogs.collab.leavePlaylist")}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
+          {t("web.playlist.leaveDialogBody", { name: detail.name })}
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={shareOpen}
+        title={t("dialogs.shareVisibility.title")}
+        onClose={() => setShareOpen(false)}
+        actions={
+          <Button variant="ghost" size="lg" onClick={() => setShareOpen(false)}>
+            {t("dialogs.collab.done")}
+          </Button>
+        }
+      >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", minWidth: 280 }}>
           {detail.inviteCode ? (
             <>
@@ -321,24 +334,22 @@ function PlaylistBody() {
                 >
                   {detail.inviteCode}
                 </code>
-                <IconButton icon="copy" label="Скопировать код" onClick={() => void copyInvite()} />
+                <IconButton icon="copy" label={t("dialogs.shareVisibility.copy")} onClick={() => void copyInvite()} />
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
                 <span style={{ flex: 1, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-                  Друг вводит код у себя: Библиотека → «У меня есть код».
+                  {t("web.library.joinCodeHint")}
                 </span>
                 <Button variant="ghost" size="lg" icon="shield-off" disabled={shareBusy} onClick={() => void revokeInvite()}>
-                  Отозвать
+                  {t("dialogs.collab.revoke")}
                 </Button>
               </div>
             </>
           ) : (
             <>
-              <p style={{ margin: 0, fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
-                Создай код и отправь другу — он сможет добавлять и убирать треки вместе с тобой.
-              </p>
+              <p style={{ margin: 0, fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>{t("dialogs.collab.createCodeHint")}</p>
               <Button variant="primary" size="lg" icon="users" disabled={shareBusy} onClick={() => void createInvite()}>
-                Создать код
+                {t("dialogs.collab.createCode")}
               </Button>
             </>
           )}
@@ -354,10 +365,11 @@ function PlaylistBody() {
                   color: "var(--text-3)",
                 }}
               >
-                Участники · {detail.collaborators.length + 1}
+                {t("dialogs.collab.membersHeading", { count: detail.collaborators.length + 1 })}
               </span>
               <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
-                {detail.ownerUsername || "владелец"} (владелец){detail.collaborators.length ? ", " : ""}
+                {detail.ownerUsername || t("dialogs.collab.ownerFallback")} {t("web.playlist.ownerSuffix")}
+                {detail.collaborators.length ? ", " : ""}
                 {detail.collaborators.map((c) => c.username).join(", ")}
               </span>
             </div>
@@ -369,9 +381,10 @@ function PlaylistBody() {
 }
 
 export default function PlaylistPage() {
+  const { t } = useT();
   // useSearchParams в статическом экспорте обязан жить под Suspense
   return (
-    <Suspense fallback={<p style={noteStyle}>Загрузка…</p>}>
+    <Suspense fallback={<p style={noteStyle}>{t("common.loading")}</p>}>
       <PlaylistBody />
     </Suspense>
   );

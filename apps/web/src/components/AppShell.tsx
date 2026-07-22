@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Badge, Icon } from "@muza/ui";
 import type { PlaylistMeta } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "../api";
 import { tracksLabel } from "../format";
 import { useLikes } from "../likes";
@@ -30,12 +31,13 @@ import { TRACK_DND_MIME } from "./TrackList";
  *  иконный рельс, мини-бар ужат. */
 
 /* «Любимое» — НЕ пункт навигации, а особая первая строка блока плейлистов
-   (как FavoritesRow десктопа) — паритет шелла 2026-07-21 */
-const NAV = [
-  { href: "/home", icon: "home", label: "Главная" },
-  { href: "/search", icon: "search", label: "Поиск" },
-  { href: "/library", icon: "library-big", label: "Библиотека" },
-  { href: "/stats", icon: "bar-chart-3", label: "Статистика" },
+   (как FavoritesRow десктопа) — паритет шелла 2026-07-21. Подписи — media.nav.*
+   (реюз десктопного словаря, И5-веб 22.07), собираются в AppShell() ниже. */
+const NAV_KEYS = [
+  { href: "/home", icon: "home", labelKey: "home" as const },
+  { href: "/search", icon: "search", labelKey: "search" as const },
+  { href: "/library", icon: "library-big", labelKey: "library" as const },
+  { href: "/stats", icon: "bar-chart-3", labelKey: "stats" as const },
 ];
 
 /** Заливаемые глифы активной вкладки — зеркало NAV_FILLABLE десктопа
@@ -80,11 +82,12 @@ function NavLink({ href, icon, label, active }: { href: string; icon: string; la
 /** «Любимое» над плейлистами: сердце на фирменном градиенте глифа —
  *  зеркало FavoritesRow десктопа (Sidebar.tsx:296). */
 function FavoritesRow({ count, active }: { count: number; active: boolean }) {
+  const { t, lang } = useT();
   const [hover, setHover] = useState(false);
   return (
     <Link
       href="/favorites"
-      aria-label="Любимое"
+      aria-label={t("media.nav.favorites")}
       aria-current={active ? "page" : undefined}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -124,10 +127,10 @@ function FavoritesRow({ count, active }: { count: number; active: boolean }) {
             color: "var(--text-1)",
           }}
         >
-          Любимое
+          {t("media.nav.favorites")}
         </span>
         <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-          {tracksLabel(count)}
+          {tracksLabel(count, lang)}
         </span>
       </span>
     </Link>
@@ -143,6 +146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const notify = useToast();
   const router = useRouter();
   const pathname = usePathname();
+  const { t, lang } = useT();
   const [mobileNp, setMobileNp] = useState(false);
   /** плейлист под перетаскиваемым треком — подсветка drop-таргета */
   const [dropPl, setDropPl] = useState<string | null>(null);
@@ -160,10 +164,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (!raw) return;
       const { id } = JSON.parse(raw) as { id: string };
       await getApi().addPlaylistTrack(pl.id, id);
-      notify(`Добавлено в «${pl.name}»`, "list-music");
+      notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
       void reloadPlaylists();
     } catch (err) {
-      notify(err instanceof Error ? err.message : "Не удалось добавить", "x");
+      notify(err instanceof Error ? err.message : t("toast.playlist.addFailed"), "x");
     }
   };
 
@@ -203,8 +207,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Badge>web</Badge>
           </div>
           <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {NAV.map((n) => (
-              <NavLink key={n.href} {...n} active={pathname === n.href} />
+            {NAV_KEYS.map((n) => (
+              <NavLink key={n.href} href={n.href} icon={n.icon} label={t(`media.nav.${n.labelKey}`)} active={pathname === n.href} />
             ))}
           </nav>
           <span
@@ -217,14 +221,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               padding: "var(--sp-5) var(--sp-3) var(--sp-2)",
             }}
           >
-            Плейлисты
+            {t("sidebar.playlistsHeading")}
           </span>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", minHeight: 0, scrollbarWidth: "none" }}>
             {/* «Любимое» — всегда первой строкой, как в приложении */}
             <FavoritesRow count={favorites.length} active={pathname === "/favorites"} />
             {playlists.length === 0 ? (
               <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", padding: "0 var(--sp-3)" }}>
-                Создаются в приложении
+                {t("web.nav.playlistsEmptyHint")}
               </span>
             ) : (
               playlists.map((p) => (
@@ -269,7 +273,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       {p.name}
                     </span>
                     <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-                      {tracksLabel(p.trackCount)}
+                      {tracksLabel(p.trackCount, lang)}
                     </span>
                   </span>
                 </Link>
@@ -277,7 +281,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </div>
           <div style={{ marginTop: "auto", paddingTop: "var(--sp-3)" }}>
-            <NavLink href="/settings" icon="settings" label="Настройки" active={pathname === "/settings"} />
+            <NavLink href="/settings" icon="settings" label={t("settings.title")} active={pathname === "/settings"} />
           </div>
         </aside>
 
@@ -298,14 +302,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Нижняя навигация (<900px): «Любимое» здесь остаётся пунктом —
           сайдбара с FavoritesRow на телефоне нет */}
-      <nav className="bottomnav" aria-label="Основная навигация">
+      <nav className="bottomnav" aria-label={t("web.nav.bottomNavAria")}>
         {[
-          NAV[0],
-          NAV[1],
-          { href: "/favorites", icon: "heart", label: "Любимое" },
-          NAV[2],
-          NAV[3],
-          { href: "/settings", icon: "settings", label: "Настройки" },
+          { href: NAV_KEYS[0].href, icon: NAV_KEYS[0].icon, label: t(`media.nav.${NAV_KEYS[0].labelKey}`) },
+          { href: NAV_KEYS[1].href, icon: NAV_KEYS[1].icon, label: t(`media.nav.${NAV_KEYS[1].labelKey}`) },
+          { href: "/favorites", icon: "heart", label: t("media.nav.favorites") },
+          { href: NAV_KEYS[2].href, icon: NAV_KEYS[2].icon, label: t(`media.nav.${NAV_KEYS[2].labelKey}`) },
+          { href: NAV_KEYS[3].href, icon: NAV_KEYS[3].icon, label: t(`media.nav.${NAV_KEYS[3].labelKey}`) },
+          { href: "/settings", icon: "settings", label: t("settings.title") },
         ].map((n) => (
           <Link key={n.href} href={n.href} className={pathname === n.href ? "active" : undefined}>
             <Icon name={n.icon} size={22} filled={pathname === n.href && NAV_FILLABLE.has(n.icon)} />

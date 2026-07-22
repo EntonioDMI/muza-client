@@ -1,10 +1,21 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { DEFAULT_LANG, resolveMigratedLanguage, type Lang } from "@muza/app";
 
 /** Настройки веба (мини-версия десктопных Prefs): живут в localStorage,
  *  применяются мгновенно. Скоуп сознательно узкий — «минимальные настройки»,
  *  остальная кастомизация — фишка десктопа. */
+
+/** Язык интерфейса по умолчанию для СОВСЕМ нового посетителя (localStorage
+ *  пуст): смотрим `navigator.language`, ru* → ru, иначе EN (И5-веб, 22.07).
+ *  Для профилей, сохранённых ДО этой правки (language нет, но prefs уже
+ *  есть), сохраняем привычный русский — см. `resolveMigratedLanguage` ниже,
+ *  та же логика, что у десктопа (i18n/index.tsx), веб был русским хардкодом. */
+function detectBrowserLanguage(): Lang {
+  if (typeof navigator === "undefined") return DEFAULT_LANG;
+  return navigator.language.toLowerCase().startsWith("ru") ? "ru" : DEFAULT_LANG;
+}
 
 export interface WebPrefs {
   /** Э1 веб-паритета (2026-07-21): тема — общее подмножество Prefs десктопа
@@ -28,6 +39,9 @@ export interface WebPrefs {
   /** T41: группировка ремиксов/версий в поиске — оригинал + версии одной
    *  карточкой (?group=1 сервера, T36). Default true (дизайн-док). */
   searchGrouping: boolean;
+  /** И5-веб (2026-07-22): язык интерфейса, общий i18n-модуль @muza/app —
+   *  см. providers.tsx (LanguageProvider) и detectBrowserLanguage выше. */
+  language: Lang;
 }
 
 export const DEFAULT_WEB_PREFS: WebPrefs = {
@@ -45,6 +59,9 @@ export const DEFAULT_WEB_PREFS: WebPrefs = {
   eqPreset: "Ровный",
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   searchGrouping: true,
+  // Модульный дефолт — безопасен на сервере (SSR-пререндер статического
+  // экспорта); реальный язык посетителя подставляется в эффекте ниже.
+  language: DEFAULT_LANG,
 };
 
 const KEY = "muza.web.prefs.v1";
@@ -63,7 +80,20 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) setPrefs({ ...DEFAULT_WEB_PREFS, ...(JSON.parse(raw) as Partial<WebPrefs>) });
+      if (raw) {
+        const stored = JSON.parse(raw) as Partial<WebPrefs>;
+        setPrefs({
+          ...DEFAULT_WEB_PREFS,
+          ...stored,
+          // Профиль СУЩЕСТВОВАЛ до языковой настройки (raw уже был) — сохраняем
+          // привычный русский, а не подсовываем detectBrowserLanguage: это тот
+          // же манёвр, что resolveMigratedLanguage у десктопа (i18n/index.tsx).
+          language: resolveMigratedLanguage(stored.language),
+        });
+      } else {
+        // Совсем новый посетитель — язык браузера решает дефолт вкладки.
+        setPrefs({ ...DEFAULT_WEB_PREFS, language: detectBrowserLanguage() });
+      }
     } catch {
       /* битые сохранения — дефолты */
     }

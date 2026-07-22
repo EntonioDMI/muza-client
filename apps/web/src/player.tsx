@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { Track } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "./api";
 import { ensureEq, eqAttached, setEqBands } from "./audioFx";
 import { usePrefs } from "./prefs";
@@ -57,6 +58,7 @@ const Position = createContext<PositionCtx>({ position: 0, duration: 0 });
 const VOLUME_KEY = "muza.web.volume.v1";
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useT();
   const [queue, setQueue] = useState<Track[]>([]);
   const [index, setIndex] = useState(-1);
   const [playing, setPlaying] = useState(false);
@@ -140,11 +142,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (autoplay) await el.play();
       } catch (e) {
         // резолв первого запроса может идти десятки секунд — 503 честно скажет
-        setError(e instanceof Error ? e.message : "Не удалось воспроизвести");
+        setError(e instanceof Error ? e.message : t("media.player.errors.playFailed"));
         setLoading(false);
       }
     },
-    [audio, streamUrl],
+    [audio, streamUrl, t],
   );
 
   // смена текущего трека → загрузка; скроббл предыдущего — до переключения
@@ -250,7 +252,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       setLoading(false);
       setPlaying(false);
-      setError("Не удалось воспроизвести трек");
+      setError(t("media.player.errors.trackFetchFailed"));
     };
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("durationchange", onDuration);
@@ -270,7 +272,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       el.removeEventListener("ended", onEnded);
       el.removeEventListener("error", onError);
     };
-  }, [audio, scrobble, streamUrl]);
+  }, [audio, scrobble, streamUrl, t]);
 
   useEffect(() => {
     const el = audio();

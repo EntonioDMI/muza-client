@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Tile } from "@muza/ui";
 import type { HomeSection, Track } from "@muza/api-client";
+import { useT } from "@muza/app";
 import { getApi } from "../../../src/api";
 import { usePlayer } from "../../../src/player";
 import { useSession } from "../../../src/session";
@@ -35,6 +36,7 @@ function Shelf({ section }: { section: HomeSection }) {
 
 export default function HomePage() {
   const { session } = useSession();
+  const { t } = useT();
   const [sections, setSections] = useState<HomeSection[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -48,7 +50,14 @@ export default function HomePage() {
 
   const greeting = (() => {
     const h = new Date().getHours();
-    const word = h < 5 ? "Доброй ночи" : h < 12 ? "Доброе утро" : h < 18 ? "Добрый день" : "Добрый вечер";
+    const word =
+      h < 5
+        ? t("views.home.greeting.night")
+        : h < 12
+          ? t("views.home.greeting.morning")
+          : h < 18
+            ? t("views.home.greeting.day")
+            : t("views.home.greeting.evening");
     const name = session?.user.username;
     return name ? `${word}, ${name}!` : `${word}!`;
   })();
@@ -57,7 +66,7 @@ export default function HomePage() {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
       <h1 className="page-title">{greeting}</h1>
       {failed ? (
-        <p style={noteStyle}>Сервер недоступен — обнови страницу, когда он вернётся.</p>
+        <p style={noteStyle}>{t("web.home.serverDown")}</p>
       ) : sections === null ? (
         // спокойные плейсхолдеры (ДС запрещает мерцание)
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }} aria-hidden="true">
@@ -69,7 +78,7 @@ export default function HomePage() {
           <div className="ph" style={{ height: 180 }} />
         </div>
       ) : sections.length === 0 ? (
-        <p style={noteStyle}>Послушай что-нибудь — лента соберётся из твоих прослушиваний.</p>
+        <p style={noteStyle}>{t("web.home.emptyHint")}</p>
       ) : (
         sections.map((s, idx) => (
           <section key={s.key}>

@@ -10,14 +10,20 @@
  *  блоком под перечень возможностей — <DesktopOnly>описание</DesktopOnly>. */
 
 import type { ReactNode } from "react";
+import { useT } from "../i18n";
 
 const LANDING_URL = "https://muza.lol";
 
 /** Оверлей-вариант (по слову владельца, утро 21.07): функция ОТРИСОВАНА —
  *  видно, что это и как выглядит, — но перекрыта стеклом: менять нельзя,
  *  на плашке путь к полной версии. Таких плашек на вебе много — это норма,
- *  не исключение. */
+ *  не исключение.
+ *
+ *  И5-веб (2026-07-22): "Скачать Muza"/дефолтная подсказка переведены через
+ *  useT() (web.desktopOnly.*) — единственный потребитель компонента (web),
+ *  который к этому моменту уже обёрнут в LanguageProvider (providers.tsx). */
 export function DesktopOnlyOverlay({ children, hint }: { children: ReactNode; hint?: string }) {
+  const { t } = useT();
   return (
     <div style={{ position: "relative" }}>
       <div aria-hidden="true" style={{ opacity: 0.45, pointerEvents: "none", userSelect: "none" }}>
@@ -50,7 +56,7 @@ export function DesktopOnlyOverlay({ children, hint }: { children: ReactNode; hi
           }}
         >
           <span style={{ color: "var(--text-1)", fontSize: "var(--fs-body)", fontWeight: 600 }}>
-            {hint ?? "Работает в приложении для Windows"}
+            {hint ?? t("web.desktopOnly.defaultHint")}
           </span>
           <a
             href={LANDING_URL}
@@ -70,7 +76,7 @@ export function DesktopOnlyOverlay({ children, hint }: { children: ReactNode; hi
               whiteSpace: "nowrap",
             }}
           >
-            Скачать Muza
+            {t("web.desktopOnly.download")}
           </a>
         </div>
       </div>
@@ -79,13 +85,14 @@ export function DesktopOnlyOverlay({ children, hint }: { children: ReactNode; hi
 }
 
 export function DesktopOnly({ children, compact = false }: { children?: ReactNode; compact?: boolean }) {
+  const { t } = useT();
   if (compact) {
     return (
       <a
         href={LANDING_URL}
         target="_blank"
         rel="noopener noreferrer"
-        title="Скачать Muza для Windows"
+        title={t("web.desktopOnly.downloadTitle")}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -100,7 +107,7 @@ export function DesktopOnly({ children, compact = false }: { children?: ReactNod
           textDecoration: "none",
         }}
       >
-        в приложении
+        {t("web.desktopOnly.inApp")}
       </a>
     );
   }
@@ -117,7 +124,7 @@ export function DesktopOnly({ children, compact = false }: { children?: ReactNod
       }}
     >
       <div style={{ flex: 1, minWidth: 200, color: "var(--text-2)", fontSize: "var(--fs-body)" }}>
-        {children ?? "Это работает в приложении для Windows."}
+        {children ?? t("web.desktopOnly.childrenFallback")}
       </div>
       <a
         href={LANDING_URL}
@@ -137,7 +144,7 @@ export function DesktopOnly({ children, compact = false }: { children?: ReactNod
           whiteSpace: "nowrap",
         }}
       >
-        Скачать Muza
+        {t("web.desktopOnly.download")}
       </a>
     </div>
   );

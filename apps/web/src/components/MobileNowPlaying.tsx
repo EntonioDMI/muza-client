@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { IconButton, Slider } from "@muza/ui";
+import { useT } from "@muza/app";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer, usePosition } from "../player";
@@ -15,8 +16,9 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
   const p = usePlayer();
   const { position, duration } = usePosition();
   const { likedIds, toggle } = useLikes();
+  const { t } = useT();
   const [view, setView] = useState<"cover" | "lyrics">("cover");
-  const t = p.current;
+  const current = p.current;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -28,15 +30,17 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
 
   // трек кончился и очередь пуста — закрываемся сами
   useEffect(() => {
-    if (!t) onClose();
-  }, [t, onClose]);
+    if (!current) onClose();
+  }, [current, onClose]);
 
-  if (!t) return null;
+  if (!current) return null;
+
+  const repeatLabel = p.repeat === "one" ? t("player.repeat.one") : p.repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
 
   return (
-    <div className="np-overlay" role="dialog" aria-label="Сейчас играет">
+    <div className="np-overlay" role="dialog" aria-label={t("nowPlaying.heading")}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <IconButton icon="chevron-down" label="Свернуть" onClick={onClose} />
+        <IconButton icon="chevron-down" label={t("web.mobileNowPlaying.collapseAria")} onClick={onClose} />
         <span
           style={{
             fontSize: "var(--fs-caption)",
@@ -46,11 +50,11 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
             color: "var(--text-3)",
           }}
         >
-          Сейчас играет
+          {t("nowPlaying.heading")}
         </span>
         <IconButton
           icon="mic-vocal"
-          label={view === "cover" ? "Текст песни" : "Обложка"}
+          label={view === "cover" ? t("player.lyrics") : t("web.mobileNowPlaying.coverAria")}
           active={view === "lyrics"}
           onClick={() => setView((v) => (v === "cover" ? "lyrics" : "cover"))}
         />
@@ -60,7 +64,7 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "center", padding: "var(--sp-4) 0" }}>
         {view === "cover" ? (
           <div style={{ display: "flex", justifyContent: "center" }}>
-            <Cover url={t.coverUrl} style={{ width: "min(78vw, 46vh)" }} />
+            <Cover url={current.coverUrl} style={{ width: "min(78vw, 46vh)" }} />
           </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -83,17 +87,17 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
               textOverflow: "ellipsis",
             }}
           >
-            {t.title}
+            {current.title}
           </div>
           <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {p.error ?? t.artist}
+            {p.error ?? current.artist}
           </div>
         </div>
         <IconButton
           icon="heart"
-          label={likedIds.has(t.id) ? "Убрать из любимого" : "В любимое"}
-          filled={likedIds.has(t.id)}
-          onClick={() => toggle(t)}
+          label={likedIds.has(current.id) ? t("menu.catalog.unlike") : t("menu.catalog.like")}
+          filled={likedIds.has(current.id)}
+          onClick={() => toggle(current)}
         />
       </div>
 
@@ -104,8 +108,8 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
           max={Math.max(duration, 1)}
           onChange={p.seek}
           rate={p.playing ? 1 : 0}
-          ariaLabel="Позиция"
-          valueText={`${fmtTime(position)} из ${fmtTime(duration)}`}
+          ariaLabel={t("player.progress")}
+          valueText={t("player.progressValueText", { pos: fmtTime(position), duration: fmtTime(duration) })}
         />
         <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
           <span>{fmtTime(position)}</span>
@@ -115,14 +119,20 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
 
       {/* Транспорт */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--sp-4)" }}>
-        <IconButton icon="shuffle" size="sm" label="Перемешать" active={p.shuffle} onClick={p.toggleShuffle} />
-        <IconButton icon="skip-back" size="lg" label="Предыдущий" onClick={p.prev} />
-        <IconButton icon={p.playing ? "pause" : "play"} size="lg" variant="accent" label={p.playing ? "Пауза" : "Играть"} onClick={p.toggle} />
-        <IconButton icon="skip-forward" size="lg" label="Следующий" onClick={p.next} />
+        <IconButton icon="shuffle" size="sm" label={t("player.shuffle")} active={p.shuffle} onClick={p.toggleShuffle} />
+        <IconButton icon="skip-back" size="lg" label={t("player.previous")} onClick={p.prev} />
+        <IconButton
+          icon={p.playing ? "pause" : "play"}
+          size="lg"
+          variant="accent"
+          label={p.playing ? t("player.pause") : t("player.play")}
+          onClick={p.toggle}
+        />
+        <IconButton icon="skip-forward" size="lg" label={t("player.next")} onClick={p.next} />
         <IconButton
           icon={p.repeat === "one" ? "repeat-1" : "repeat"}
           size="sm"
-          label="Повтор"
+          label={repeatLabel}
           active={p.repeat !== "off"}
           onClick={p.cycleRepeat}
         />
