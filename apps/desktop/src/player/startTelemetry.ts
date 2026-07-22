@@ -22,7 +22,8 @@ export type StartPath = "stream" | "resolve" | "preloaded";
 export interface StartRecord {
   trackId: string;
   title: string;
-  /** Что запустило старт: click | next | prev | auto | resume-heal | … */
+  /** Что запустило старт: manual (клик/скип человека) | auto (авто-переход).
+   *  Строка, не union — детализация (next/prev/heal) добавится без ломки. */
   reason: string;
   /** Момент начала (Date.now) — для отображения времени в диагностике. */
   at: number;
