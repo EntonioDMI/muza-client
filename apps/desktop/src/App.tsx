@@ -2318,12 +2318,12 @@ function Player({
         outputRoutes={prefs.audioOutputs}
         outputProfiles={prefs.outputProfiles}
         activeOutputProfile={prefs.activeOutputProfile}
-        onOutputSystem={() => setPrefs({ ...prefs, audioOutputs: [], activeOutputProfile: undefined })}
+        onOutputSystem={() => setPrefs({ ...prefs, audioOutputs: [], activeOutputProfile: "" })}
         onOutputDevice={(d) =>
           setPrefs({
             ...prefs,
             audioOutputs: [{ deviceId: d.deviceId, label: d.label, volume: 100, followsMaster: true }],
-            activeOutputProfile: undefined,
+            activeOutputProfile: "",
           })
         }
         onOutputProfile={(id) => {

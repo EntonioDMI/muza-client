@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { discordCoverUrl, formatTemplate } from "./discord";
+import { describe, expect, it, vi } from "vitest";
+import { discordCoverUrl, formatTemplate, updateDiscordActivity } from "./discord";
+
+const invokeMock = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+  isTauri: () => true,
+}));
 
 // Обложка Discord-активности: ytimg-тумбы — через weserv center-crop (Discord
 // не кропает внешние URL сам, поля уезжали в статус), остальное — как есть.
@@ -35,5 +41,42 @@ describe("formatTemplate", () => {
   it("подстановки и подчистка висячих разделителей", () => {
     expect(formatTemplate("{artist} — {album}", { track: "T", artist: "A" })).toBe("A");
     expect(formatTemplate("{track} · {artist}", { track: "T", artist: "A" })).toBe("T · A");
+  });
+});
+
+// Мост к rpc.rs: КАЖДОЕ поле DiscordActivity обязано доехать до payload —
+// end_ts уже терялся молча (поле было в типах с обеих сторон, но не в
+// передаче), и вместо нативной прогресс-линии Discord показывал голый
+// счётчик минут (жалоба 2026-07-22).
+describe("updateDiscordActivity", () => {
+  it("start_ts + end_ts доезжают до rpc_update (прогресс-линия)", async () => {
+    invokeMock.mockResolvedValue(true);
+    await updateDiscordActivity({
+      details: "Track",
+      state: "Artist",
+      coverUrl: null,
+      startTs: 1_000,
+      endTs: 1_180,
+      buttonLabel: null,
+      buttonUrl: null,
+    });
+    expect(invokeMock).toHaveBeenCalledWith("rpc_update", {
+      payload: expect.objectContaining({ start_ts: 1_000, end_ts: 1_180 }),
+    });
+  });
+
+  it("прогресс-линия выключена — end_ts честный null, не undefined", async () => {
+    invokeMock.mockResolvedValue(true);
+    await updateDiscordActivity({
+      details: "Track",
+      state: "Artist",
+      coverUrl: null,
+      startTs: 1_000,
+      endTs: null,
+      buttonLabel: null,
+      buttonUrl: null,
+    });
+    const payload = invokeMock.mock.lastCall?.[1]?.payload as Record<string, unknown>;
+    expect(payload.end_ts).toBe(null);
   });
 });

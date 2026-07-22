@@ -3045,13 +3045,13 @@ export function SettingsView({
       audioOutputs: on
         ? [...rest, { deviceId: dev.deviceId, label: dev.label, volume: 100, followsMaster: true }]
         : rest,
-      activeOutputProfile: undefined,
+      activeOutputProfile: "",
     });
   };
   const patchRoute = (target: AudioOutputRoute, patch: Partial<AudioOutputRoute>) => {
     set({
       audioOutputs: outRoutes.map((r) => (r === target ? { ...r, ...patch } : r)),
-      activeOutputProfile: undefined,
+      activeOutputProfile: "",
     });
   };
   /** Сохранённые маршруты устройств, которых сейчас нет в системе, — видимы
@@ -3073,7 +3073,7 @@ export function SettingsView({
   const deleteOutputProfile = (id: string) =>
     set({
       outputProfiles: prefs.outputProfiles.filter((p) => p.id !== id),
-      activeOutputProfile: prefs.activeOutputProfile === id ? undefined : prefs.activeOutputProfile,
+      activeOutputProfile: prefs.activeOutputProfile === id ? "" : prefs.activeOutputProfile,
     });
 
   const outDeviceRow = (dev: OutputDeviceInfo) => {
@@ -3139,7 +3139,7 @@ export function SettingsView({
         <SettingRow key={`orphan-${r.deviceId}`} title={r.label} hint={t("settings.outputs.device.missingHint")}>
           <Switch
             checked
-            onChange={() => set({ audioOutputs: outRoutes.filter((x) => x !== r), activeOutputProfile: undefined })}
+            onChange={() => set({ audioOutputs: outRoutes.filter((x) => x !== r), activeOutputProfile: "" })}
             label={r.label}
           />
         </SettingRow>
@@ -3165,8 +3165,8 @@ export function SettingsView({
             const dev = inDevices.find((d) => d.deviceId === key);
             set(
               key === "default"
-                ? { micDeviceId: undefined, micDeviceLabel: undefined }
-                : { micDeviceId: key, micDeviceLabel: dev?.label },
+                ? { micDeviceId: "", micDeviceLabel: "" }
+                : { micDeviceId: key, micDeviceLabel: dev?.label ?? "" },
             );
           }}
           ariaLabel={t("settings.outputs.micDevice.title")}

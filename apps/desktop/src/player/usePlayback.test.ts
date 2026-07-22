@@ -37,6 +37,8 @@ const h = vi.hoisted(() => ({
     setVolume: vi.fn(),
     setSpeed: vi.fn(),
     setEq: vi.fn(),
+    setOutputs: vi.fn(),
+    setMicConfig: vi.fn(),
     analyser: vi.fn(),
   },
   /** Колбэки, которые usePlayback отдал движку — ими эмулируем timeupdate. */
@@ -70,6 +72,8 @@ vi.mock("./audioEngine", () => ({
     setVolume = h.engine.setVolume;
     setSpeed = h.engine.setSpeed;
     setEq = h.engine.setEq;
+    setOutputs = h.engine.setOutputs;
+    setMicConfig = h.engine.setMicConfig;
     analyser = h.engine.analyser;
     constructor(cb: EngineCallbacks) {
       h.cb.current = cb;

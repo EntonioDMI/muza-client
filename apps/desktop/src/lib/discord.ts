@@ -74,6 +74,10 @@ export async function updateDiscordActivity(a: DiscordActivity): Promise<boolean
         state: a.state,
         cover_url: a.coverUrl,
         start_ts: a.startTs,
+        // end_ts обязателен для прогресс-линии: поле уже терялось здесь молча
+        // (в типах обеих сторон было, в передаче — нет), Discord показывал
+        // счётчик минут вместо шкалы. Контракт закреплён discord.test.ts.
+        end_ts: a.endTs,
         button_label: a.buttonLabel,
         button_url: a.buttonUrl,
       },

@@ -304,18 +304,20 @@ export interface Prefs {
    *  поведение по умолчанию (системное устройство, как раньше) — движок графа
    *  не перестраивает. Несколько маршрутов = одновременный вывод на все. */
   audioOutputs: AudioOutputRoute[];
-  /** v2: какой микрофон подмешивать (deviceId; пусто = системный по умолчанию).
+  /** v2: какой микрофон подмешивать (deviceId; "" = системный по умолчанию).
    *  label — фолбэк, как у маршрутов вывода. Захват стартует ТОЛЬКО когда
    *  хотя бы у одного маршрута включён mixMic — иначе микрофон не трогаем. */
-  micDeviceId?: string;
-  micDeviceLabel?: string;
+  micDeviceId: string;
+  micDeviceLabel: string;
   /** Громкость голоса 0–100 — независима и от мастера, и от громкостей
    *  устройств («с какой силой голос выходит в кабель»). */
   micGain: number;
   /** Сохранённые профили маршрутизации. */
   outputProfiles: OutputProfile[];
-  /** id активного профиля (подсветка в UI; сама маршрутизация — audioOutputs). */
-  activeOutputProfile?: string;
+  /** id активного профиля, "" — нет (подсветка в UI; сама маршрутизация —
+   *  audioOutputs). Не optional: сторож themes.coverage требует каждый ключ
+   *  Prefs в юниверсе DEFAULT_PREFS. */
+  activeOutputProfile: string;
   /** Шаги кнопки скорости в баре — настраиваются целиком (правка владельца). */
   speedSteps: number[];
   /** Пресеты таймера сна в минутах (цикл луны: выкл → пресеты → конец трека). */
@@ -539,6 +541,9 @@ export const DEFAULT_PREFS: Prefs = {
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   audioOutputs: [],
   outputProfiles: [],
+  activeOutputProfile: "",
+  micDeviceId: "",
+  micDeviceLabel: "",
   micGain: 100,
   speedSteps: [1, 1.25, 1.5, 2, 0.75],
   sleepPresets: [15, 30, 60],

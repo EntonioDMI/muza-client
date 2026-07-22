@@ -112,6 +112,14 @@ export const THEME_EXCLUDED = [
   "eqOn",
   "eqPreset",
   "eqBands",
+  // Вывод на устройства (2026-07-22): deviceId привязаны к машине —
+  // в чужой системе таких устройств нет, тема их переносить не должна.
+  "audioOutputs",
+  "outputProfiles",
+  "activeOutputProfile",
+  "micDeviceId",
+  "micDeviceLabel",
+  "micGain",
   "speedSteps",
   "sleepPresets",
   "radioEndless",
