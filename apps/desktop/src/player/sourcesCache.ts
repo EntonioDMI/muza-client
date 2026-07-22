@@ -25,9 +25,13 @@
  *  перезапуск приложения.
  *
  *  TTL абсолютный, без продления на чтении: sliding-вариант под repeat-one
- *  держал бы одну и ту же запись живой вечно. In-flight дедупликации нет
- *  сознательно — гонка «два резолва одного трека до первого ответа» узкая, а
- *  тяжёлую часть (yt-dlp) и так single-flight'ит Rust. */
+ *  держал бы одну и ту же запись живой вечно.
+ *
+ *  In-flight дедуп (ensureSources, 2026-07-22): раньше его сознательно не
+ *  было («гонка узкая»), но pointerdown-прогрев (И3) сделал гонку ШТАТНОЙ —
+ *  клик прилетает через ~100 мс после pointerdown, и без дедупа каждый клик
+ *  платил бы второй RTT параллельно первому. Теперь клик ПОДХВАТЫВАЕТ уже
+ *  летящий запрос — это и есть выигрыш критического пути. */
 
 import type { TrackSource } from "@muza/api-client";
 
@@ -61,4 +65,32 @@ export function putCachedSources(trackId: string, sources: TrackSource[]): void 
  *  сменил выбор версии (VersionsDialog) — следующий резолв идёт за свежими. */
 export function invalidateCachedSources(trackId: string): void {
   cache.delete(trackId);
+}
+
+const inFlight = new Map<string, Promise<TrackSource[]>>();
+
+/** Источники со single-flight: свежий кэш → уже летящий запрос → новый.
+ *  `load` зовётся только на промахе. Ошибка НЕ кэшируется (следующий вызов
+ *  пробует заново) — семантика «кэшируем только успех» сохранена. */
+export function ensureSources(
+  trackId: string,
+  load: () => Promise<TrackSource[]>,
+): Promise<TrackSource[]> {
+  const cached = getCachedSources(trackId);
+  if (cached !== null) return Promise.resolve(cached);
+  const flying = inFlight.get(trackId);
+  if (flying) return flying;
+  const p = load().then(
+    (sources) => {
+      putCachedSources(trackId, sources);
+      inFlight.delete(trackId);
+      return sources;
+    },
+    (e: unknown) => {
+      inFlight.delete(trackId);
+      throw e;
+    },
+  );
+  inFlight.set(trackId, p);
+  return p;
 }

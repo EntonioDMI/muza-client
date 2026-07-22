@@ -12,6 +12,7 @@ import {
   type StatsBlockKey,
 } from "../types";
 import { listInputDevices, listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
+import { getStartLog, subscribeStartLog, type StartRecord } from "../player/startTelemetry";
 import { useT, type TParams, type TranslationKey } from "../i18n";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
 import { barButtonLabel, normalizeBarButtons } from "../lib/barButtons";
@@ -1873,6 +1874,10 @@ export function SettingsView({
   // входе во вкладку «Система» и при каждом открытии журнала (свежесть
   // важнее экономии: жалоба «стало медленно» разбирается именно тут).
   const [stage0, setStage0] = useState<Stage0Status | null>(null);
+  // Журнал стартов «клик→звук» (startTelemetry, И3): живёт в модуле плеера,
+  // экран лишь подписан на пополнения кольца.
+  const [startLog, setStartLog] = useState<StartRecord[]>(() => getStartLog());
+  useEffect(() => subscribeStartLog(() => setStartLog(getStartLog())), []);
   useEffect(() => {
     if ((tab === "system" || sub === "stage0") && engineAvailable()) {
       engineStage0Status()
@@ -3545,6 +3550,30 @@ export function SettingsView({
       minute: "2-digit",
       second: "2-digit",
     });
+  // Строка фаз старта: «источники 12 мс · URL 180 мс (стрим) · звук 215 мс».
+  // null-фазы пропускаются (локальный трек не ходит за источниками и т.п.).
+  const startMs = (n: number) => `${n} ${t("settings.system.stage0.starts.ms")}`;
+  const formatStartPhases = (r: StartRecord): string => {
+    if (r.error === "superseded") return t("settings.system.stage0.starts.superseded");
+    if (r.error) return r.error;
+    const parts: string[] = [];
+    if (r.sourcesMs !== null) parts.push(`${t("settings.system.stage0.starts.sources")} ${startMs(r.sourcesMs)}`);
+    if (r.urlMs !== null) {
+      const path =
+        r.path === "stream"
+          ? t("settings.system.stage0.starts.pathStream")
+          : r.path === "preloaded"
+            ? t("settings.system.stage0.starts.pathPreloaded")
+            : t("settings.system.stage0.starts.pathResolve");
+      parts.push(`${t("settings.system.stage0.starts.url")} ${startMs(r.urlMs)} (${path})`);
+    }
+    parts.push(
+      r.soundMs !== null
+        ? `${t("settings.system.stage0.starts.sound")} ${startMs(r.soundMs)}`
+        : t("settings.system.stage0.starts.noSound"),
+    );
+    return parts.join(" · ");
+  };
   const stage0Pane = (
     <div key="stage0" className={paneClass} style={paneStyle}>
       <SubHeader title={t("settings.system.stage0.title")} onBack={() => setSub(null)} />
@@ -3584,6 +3613,30 @@ export function SettingsView({
                 {fmtEventClock(e.at_ms)}
               </span>
               <span style={{ color: "var(--text-2)" }}>{e.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <SettingRow title={t("settings.system.stage0.starts.title")} hint={t("settings.system.stage0.starts.hint")} />
+      {startLog.length === 0 ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+          {t("settings.system.stage0.starts.empty")}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+          {startLog.map((r, i) => (
+            <div
+              key={`${r.at}-${i}`}
+              style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
+            >
+              <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                {fmtEventClock(r.at)}
+              </span>
+              <span style={{ color: "var(--text-2)", minWidth: 0 }}>
+                <span style={{ color: "var(--text-1)" }}>{r.title}</span>
+                {" — "}
+                {formatStartPhases(r)}
+              </span>
             </div>
           ))}
         </div>

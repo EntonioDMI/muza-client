@@ -21,7 +21,8 @@ import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine, type OutputRoute } from "./audioEngine";
 import { deviceAccessUnlocked, listOutputDevices, resolveRoutes, type OutputDeviceInfo } from "./outputDevices";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
-import { getCachedSources, invalidateCachedSources, putCachedSources } from "./sourcesCache";
+import { ensureSources, invalidateCachedSources } from "./sourcesCache";
+import { beginStart, markError, markPlayCall, markSound, markSources, markUrl } from "./startTelemetry";
 import { shouldSilenceBeforeResolve } from "./startPlan";
 import type { PlayerTrack } from "./types";
 
@@ -249,6 +250,8 @@ export function usePlayback({
           // лезем: стартом и его ошибками владеет startAt.
           if (stateRef.current.playing && !startPendingRef.current) void healCurrent();
         },
+        // «звук реально пошёл» — финальная фаза телеметрии клик→звук
+        onPlaying: () => markSound(),
       }, t);
       // Маршруты вывода задаются prefs-эффектом при монтировании — раньше,
       // чем ленивая фабрика создаст движок. Догоняем при создании (сам граф
@@ -303,16 +306,14 @@ export function usePlayback({
    *  фатален — стрим просто не заведётся, и resolveForTrack отработает свою
    *  оффлайн-ветку как раньше. */
   const streamSourcesFor = async (t: PlayerTrack): Promise<TrackSource[]> => {
-    let sources: TrackSource[] | null = getCachedSources(t.id);
-    if (sources === null) {
-      try {
-        sources = await api.getTrackSources(t.id);
-        putCachedSources(t.id, sources);
-      } catch {
-        return [];
-      }
+    try {
+      // single-flight: pointerdown-прогрев (useWarmer) почти всегда уже
+      // запустил этот запрос — клик подхватывает летящий промис (И3).
+      const sources = await ensureSources(t.id, () => api.getTrackSources(t.id));
+      return applySourcePolicy(sources, prefsRef.current);
+    } catch {
+      return [];
     }
-    return applySourcePolicy(sources, prefsRef.current);
   };
 
   const resolveForTrack = async (t: PlayerTrack): Promise<ResolveResult> => {
@@ -326,18 +327,16 @@ export function usePlayback({
     // резолв — включая повторный клик по треку, чей файл давно в Rust-кэше —
     // платил полный RTT до сервера. Кэшируется только УСПЕШНЫЙ ответ; отказ
     // сервера не кэшируем — оффлайн-ветка ниже должна отработать заново.
-    let sources: TrackSource[] | null = getCachedSources(t.id);
+    let sources: TrackSource[] | null = null;
     let sourcesError: unknown = null;
-    if (sources === null) {
-      // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
-      // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
-      // движок с пустой лестницей отвечал безликим «нет живых источников».
-      try {
-        sources = await api.getTrackSources(t.id);
-        putCachedSources(t.id, sources);
-      } catch (e) {
-        sourcesError = e;
-      }
+    // Причину отказа сервера ЗАПОМИНАЕМ: .catch(() => null) раньше уравнивал
+    // «нет сети» с 401/429/500, и любой из них уходил в оффлайн-ветку, где
+    // движок с пустой лестницей отвечал безликим «нет живых источников».
+    // ensureSources — single-flight с pointerdown-прогревом (И3).
+    try {
+      sources = await ensureSources(t.id, () => api.getTrackSources(t.id));
+    } catch (e) {
+      sourcesError = e;
     }
     const quality = prefsRef.current.streamQuality;
     if (sources === null) {
@@ -377,6 +376,9 @@ export function usePlayback({
     const t = s.queue[i];
     if (!t) return;
     flushPlayEnd(false);
+    // телеметрия «клик → звук» (startTelemetry): перебитый старт пометится
+    // superseded внутри beginStart — ровно как его перебивает playSeq ниже
+    beginStart(t.id, t.title, opts?.auto ? "auto" : "manual");
     const seq = ++playSeqRef.current;
     setIndex(i);
     setPos(0);
@@ -414,6 +416,7 @@ export function usePlayback({
       let url: string;
       if (preloadedUrl !== null) {
         url = preloadedUrl;
+        markUrl("preloaded");
       } else {
         setBuffering(true);
         // Стрим с первых килобайт (Фаза 2): Rust берёт метаданные из прогрева
@@ -425,13 +428,18 @@ export function usePlayback({
         // понадобятся (warm-запись важнее), у холодного — это и есть вход
         // ступени 0. До 19.07 стрим брал только прогретые, и обычный клик
         // ждал ПОЛНУЮ закачку — из-за чего ускорение не чувствовалось.
-        if (
-          t.kind === "catalog" &&
-          (await engineStreamStart(t.id, await streamSourcesFor(t), prefsRef.current.streamQuality))
-        ) {
+        let streamed = false;
+        if (t.kind === "catalog") {
+          const sources = await streamSourcesFor(t);
+          markSources();
+          streamed = await engineStreamStart(t.id, sources, prefsRef.current.streamQuality);
+        }
+        if (streamed) {
+          markUrl("stream");
           url = engineStreamUrl(t.id);
         } else {
           const resolved = await resolveForTrack(t);
+          markUrl("resolve");
           url = resolved.url;
         }
       }
@@ -442,6 +450,7 @@ export function usePlayback({
       preloadedRef.current = null;
       const norm = AudioEngine.normFactor(t.loudness, prefsRef.current.normalize);
       await engine().play(url, norm, opts?.fadeSec ?? 0);
+      markPlayCall();
       startedIdRef.current = t.id; // движок реально держит URL этого трека
       autoSkipsRef.current = 0; // цепочка авто-скипов мёртвых треков прервана успехом
       pollGapless(); // T19 fast-follow: точный прицел на конец нового трека
@@ -457,6 +466,7 @@ export function usePlayback({
     } catch (e) {
       if (playSeqRef.current !== seq) return;
       const msg = e instanceof Error ? e.message : translate(prefsRef.current.language, "media.player.errors.trackFetchFailed");
+      markError(msg);
       // Рантайм-петля DRM: yt-dlp сказал «This video is DRM protected» —
       // просим сервер перепроверить и похоронить источник, чтобы трек выпал
       // из выдачи ДЛЯ ВСЕХ (жалоба 2026-07-17: DRM пришёл в рекомендациях).

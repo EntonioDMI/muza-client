@@ -22,7 +22,7 @@ import type { MuzaApi } from "@muza/api-client";
 import type { Prefs } from "../types";
 import { engineAvailable, engineWarm } from "../lib/engine";
 import { applySourcePolicy } from "../lib/sources";
-import { getCachedSources, putCachedSources } from "./sourcesCache";
+import { ensureSources } from "./sourcesCache";
 import type { PlayerTrack } from "./types";
 import { WarmQueue, type WarmOutcome } from "./warmQueue";
 
@@ -45,6 +45,11 @@ export interface WarmRowProps {
   /** React 19 ref-cleanup: наблюдение снимается возвратом, ref(null) не ждём. */
   ref: (el: HTMLElement | null) => (() => void) | undefined;
   onMouseEnter: () => void;
+  /** Палец/кнопка легли на строку — клик почти неизбежен и прилетит через
+   *  ~100 мс. Мгновенно тянем ИСТОЧНИКИ (single-flight: клик подхватит этот
+   *  же промис — И3 2026-07-22, срез RTT с критического пути) и подаём
+   *  срочную заявку прогрева. Байты не качаем — это всё ещё дёшево. */
+  onPointerDown: () => void;
 }
 
 export interface Warmer {
@@ -55,7 +60,7 @@ export interface Warmer {
   dispose: () => void;
 }
 
-const NOOP_ROW: WarmRowProps = { ref: () => undefined, onMouseEnter: () => {} };
+const NOOP_ROW: WarmRowProps = { ref: () => undefined, onMouseEnter: () => {}, onPointerDown: () => {} };
 /** Вне Tauri (web-сборка, тесты без провайдера) прогрев — честный no-op. */
 const NOOP_WARMER: Warmer = { warmRow: () => NOOP_ROW, noteQueue: () => {}, dispose: () => {} };
 
@@ -81,11 +86,8 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
     if (!engineAvailable() || typeof IntersectionObserver === "undefined") return NOOP_WARMER;
 
     const queue = new WarmQueue(async (id, signal): Promise<WarmOutcome> => {
-      let sources = getCachedSources(id);
-      if (sources === null) {
-        sources = await apiRef.current.getTrackSources(id);
-        putCachedSources(id, sources);
-      }
+      // single-flight с pointerdown-префетчем и кликом (sourcesCache)
+      const sources = await ensureSources(id, () => apiRef.current.getTrackSources(id));
       const policy = applySourcePolicy(sources, prefsRef.current);
       const remotes = policy.filter((s) => s.provider !== "local");
       // сыграет с диска (local первым — так решит и resolvePlayable) или
@@ -150,6 +152,12 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
             };
           },
           onMouseEnter: () => queue.request(id, "hover"),
+          onPointerDown: () => {
+            // источники — мимо очереди (наш сервер, не бот-лимиты YouTube);
+            // ошибка молчит: клик повторит запрос своим путём и покажет свою
+            void ensureSources(id, () => apiRef.current.getTrackSources(id)).catch(() => {});
+            queue.request(id, "hover", true);
+          },
         };
         rowPropsById.set(id, props);
       }

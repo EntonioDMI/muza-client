@@ -95,6 +95,9 @@ export interface EngineCallbacks {
   onTime: (sec: number) => void;
   onEnded: () => void;
   onError: (message: string) => void;
+  /** 'playing' активного слота — звук реально пошёл (телеметрия «клик→звук»,
+   *  И3 2026-07-22). Опционален: тесты и старые вызовы не обязаны слушать. */
+  onPlaying?: () => void;
 }
 
 export class AudioEngine {
@@ -155,6 +158,9 @@ export class AudioEngine {
     el.addEventListener("timeupdate", () => {
       if (this.slots[this.active] === slot) this.cb.onTime(el.currentTime);
     });
+    el.addEventListener("playing", () => {
+      if (this.slots[this.active] === slot) this.cb.onPlaying?.();
+    });
     el.addEventListener("ended", () => {
       if (this.slots[this.active] === slot) this.cb.onEnded();
     });
@@ -167,15 +173,26 @@ export class AudioEngine {
   }
 
   /** Определить режим (webaudio/plain) по CORS-пробе первого источника
-   *  и построить граф. Зовётся при первом реальном воспроизведении. */
+   *  и построить граф. Зовётся при первом реальном воспроизведении.
+   *
+   *  Свои протоколы пробе НЕ подвергаются (И3 2026-07-22): asset.localhost и
+   *  muza-stream.localhost отдают CORS-заголовки НА КАЖДОМ ответе (инвариант
+   *  engine.rs, «CORS обязателен»), а проба до них — лишний последовательный
+   *  round-trip ПЕРЕД первым звуком сессии; для живого muza-stream она к тому
+   *  же дожидалась первых байт закачки, удваивая ожидание. Замер 22.07:
+   *  первый трек сессии платил её целиком. Чужие url (если появятся) — проба
+   *  как раньше: webaudio с не-CORS источником молчит навсегда, угадывать
+   *  нельзя. */
   private async ensureGraph(probeUrl: string): Promise<void> {
     if (this.mode !== "unknown") return;
-    let corsOk = false;
-    try {
-      const res = await fetch(probeUrl, { headers: { Range: "bytes=0-1" } });
-      corsOk = res.ok || res.status === 206;
-    } catch {
-      corsOk = false;
+    let corsOk = /^https?:\/\/(asset|muza-stream)\.localhost(?::\d+)?\//.test(probeUrl);
+    if (!corsOk) {
+      try {
+        const res = await fetch(probeUrl, { headers: { Range: "bytes=0-1" } });
+        corsOk = res.ok || res.status === 206;
+      } catch {
+        corsOk = false;
+      }
     }
     if (this.slots.length === 0) {
       this.slots = [this.makeSlot(), this.makeSlot()];
