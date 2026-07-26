@@ -1,0 +1,13 @@
+#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:10
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXT-X-MAP:URI="https://playback.media-streaming.soundcloud.cloud/SYNTH0000/aac_160k/00000000-1111-2222-3333-444444444444/init.mp4?expires=1784748261&Policy=SYNTHETIC&Signature=SYNTHETIC&Key-Pair-Id=SYNTH"
+#EXTINF:10.007800,
+https://playback.media-streaming.soundcloud.cloud/SYNTH0000/aac_160k/00000000-1111-2222-3333-444444444444/data000.m4s?expires=1784748261&Policy=SYNTHETIC&Signature=SYNTHETIC&Key-Pair-Id=SYNTH
+#EXTINF:10.007800,
+https://playback.media-streaming.soundcloud.cloud/SYNTH0000/aac_160k/00000000-1111-2222-3333-444444444444/data001.m4s?expires=1784748261&Policy=SYNTHETIC&Signature=SYNTHETIC&Key-Pair-Id=SYNTH
+#EXTINF:3.885170,
+https://playback.media-streaming.soundcloud.cloud/SYNTH0000/aac_160k/00000000-1111-2222-3333-444444444444/data002.m4s?expires=1784748261&Policy=SYNTHETIC&Signature=SYNTHETIC&Key-Pair-Id=SYNTH
+#EXT-X-ENDLIST

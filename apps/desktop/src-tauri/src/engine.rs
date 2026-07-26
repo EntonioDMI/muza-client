@@ -2605,33 +2605,151 @@ fn sc_ext_from_mime(mime: &str) -> Option<&'static str> {
     }
 }
 
-/// Выбор транскодинга: строго format.protocol == "progressive" (прямой файл).
-/// HLS не берём — манифест в кэше отравил бы его текстом вместо аудио (тот же
-/// инвариант, что у parse_simulate_output). Нет progressive — провал ступени.
-fn sc_pick_progressive(track: &serde_json::Value) -> Result<(String, &'static str), SoundcloudFail> {
+/// Протокол выбранного транскодинга: определяет, что лежит по CDN-URL —
+/// сам файл или манифест, аудио к которому надо собрать из сегментов.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ScProtocol {
+    /// Прямой файл — одним GET по CDN-URL (быстрый путь, пока SC его отдаёт).
+    Progressive,
+    /// AAC HLS: CDN-URL ведёт на m3u8, аудио лежит сегментами fMP4.
+    HlsAac,
+}
+
+/// Выбранный транскодинг: url запроса за CDN-ссылкой + расширение файла кэша
+/// + протокол (см. ScProtocol).
+#[derive(Debug, PartialEq)]
+struct ScTranscoding {
+    url: String,
+    ext: &'static str,
+    protocol: ScProtocol,
+}
+
+/// Порядок предпочтения среди AAC HLS: 160k лучше 96k, всё прочее AAC — в
+/// хвост. Ранг влияет ТОЛЬКО на порядок выбора; корректность (что это вообще
+/// AAC) определяется по mime, а не по имени пресета — пресеты SC
+/// переименовывает, см. sc_ext_from_mime.
+fn sc_aac_rank(preset: &str) -> u8 {
+    let p = preset.to_ascii_lowercase();
+    if p.contains("160") {
+        0
+    } else if p.contains("96") {
+        1
+    } else {
+        2
+    }
+}
+
+/// Выбор транскодинга. Приоритет прежний: progressive (прямой файл) — первым,
+/// он дешевле одной закачкой. Нет его — берём AAC HLS (отчёт H: SC удаляет
+/// progressive из API, у части каталога прямого mp3 уже нет): по CDN-URL там
+/// лежит m3u8, который разбирает sc_parse_m3u8, а не аудио.
+///
+/// HLS-mp3 сознательно НЕ берём, хотя SC его отдаёт: сегменты там — куски
+/// mp3-фреймов, склейка играбельна, но выигрыша против AAC нет, а веток
+/// становится вдвое больше. Нужен — добавляется рангом рядом с AAC.
+fn sc_pick_transcoding(track: &serde_json::Value) -> Result<ScTranscoding, SoundcloudFail> {
     let transcodings = track["media"]["transcodings"]
         .as_array()
         .ok_or_else(|| SoundcloudFail::Other("нет media.transcodings".into()))?;
+    let mut best_hls: Option<(u8, ScTranscoding)> = None;
     for t in transcodings {
-        if t["format"]["protocol"].as_str() != Some("progressive") {
-            continue;
-        }
         let Some(url) = t["url"].as_str().filter(|u| !u.is_empty()) else {
             continue;
         };
         let Some(ext) = sc_ext_from_mime(t["format"]["mime_type"].as_str().unwrap_or("")) else {
             continue;
         };
-        return Ok((url.to_string(), ext));
+        match t["format"]["protocol"].as_str() {
+            Some("progressive") => {
+                return Ok(ScTranscoding {
+                    url: url.to_string(),
+                    ext,
+                    protocol: ScProtocol::Progressive,
+                })
+            }
+            // ext=="m4a" ⇔ mime audio/mp4|audio/aac — это и есть «AAC»;
+            // HLS с audio/mpeg (mp3) сюда не попадает намеренно.
+            Some("hls") if ext == "m4a" => {
+                let rank = sc_aac_rank(t["preset"].as_str().unwrap_or(""));
+                if best_hls.as_ref().is_none_or(|(best, _)| rank < *best) {
+                    best_hls = Some((
+                        rank,
+                        ScTranscoding {
+                            url: url.to_string(),
+                            ext,
+                            protocol: ScProtocol::HlsAac,
+                        },
+                    ));
+                }
+            }
+            _ => {}
+        }
     }
-    // SC мигрирует на AAC HLS (progressive удалён из API 31.12.2025, отчёт H;
-    // у части каталога прямой mp3 ещё жив — журнал покажет реальную долю).
-    // Родной HLS-загрузчик ступени 0 сознательно отложен: запасная дорога
-    // (yt-dlp ≥2026.06) AAC HLS умеет, просто медленнее. Триггер строить —
-    // рост этого маркера в журнале диагностики.
+    if let Some((_, hls)) = best_hls {
+        return Ok(hls);
+    }
     Err(SoundcloudFail::Other(
-        "у трека остался только AAC HLS (SC удаляет прямой mp3) — качаем запасной дорогой".into(),
+        "у трека нет ни progressive, ни AAC HLS — качаем запасной дорогой".into(),
     ))
+}
+
+/// Разобранный медиаплейлист SC: init-сегмент (#EXT-X-MAP) и сегменты по
+/// порядку, все — абсолютными URL.
+#[derive(Debug, PartialEq)]
+struct ScHlsPlaylist {
+    /// У fMP4 init обязателен: без него склейка сегментов не играет (в ней
+    /// нет ни ftyp, ни moov). Отсутствует — плейлист не наш случай.
+    init: Option<String>,
+    segments: Vec<String>,
+}
+
+/// Значение атрибута URI="…" из строки-тега (#EXT-X-MAP и родня).
+fn sc_hls_attr_uri(line: &str) -> Option<&str> {
+    let rest = line.split_once("URI=\"")?.1;
+    rest.split_once('"').map(|(value, _)| value)
+}
+
+/// Разбор медиаплейлиста. Относительные ссылки резолвятся против URL самого
+/// плейлиста (живой SC отдаёт абсолютные с подписью, но грамматика HLS
+/// разрешает и относительные — на них ломался бы только прод).
+///
+/// `#EXT-X-KEY` ЛЮБОГО вида = сегменты зашифрованы: честный отказ ступени, а
+/// не попытка склеить мусор. Ключи SC не раздаёт, и обходить их мы не будем.
+fn sc_parse_m3u8(text: &str, base: &Url) -> Result<ScHlsPlaylist, SoundcloudFail> {
+    let mut init = None;
+    let mut segments = Vec::new();
+    let resolve = |raw: &str| -> Result<String, SoundcloudFail> {
+        base.join(raw)
+            .map(|u| u.to_string())
+            .map_err(|e| SoundcloudFail::Other(format!("ссылка сегмента не разбирается: {e}")))
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("#EXT-X-KEY") {
+            return Err(SoundcloudFail::Other(
+                "сегменты SC зашифрованы (#EXT-X-KEY) — ступень 0 их не берёт".into(),
+            ));
+        }
+        if line.starts_with("#EXT-X-MAP") {
+            if let Some(uri) = sc_hls_attr_uri(line) {
+                init = Some(resolve(uri)?);
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        segments.push(resolve(line)?);
+    }
+    if segments.is_empty() {
+        return Err(SoundcloudFail::Other(
+            "медиаплейлист SC без сегментов".into(),
+        ));
+    }
+    Ok(ScHlsPlaylist { init, segments })
 }
 
 /// URL JS-бандлов из HTML главной: подстроки https://a-v2.sndcdn.com/assets/…
@@ -2878,7 +2996,17 @@ where
     };
     let track: serde_json::Value = serde_json::from_str(&track_body)
         .map_err(|e| SoundcloudFail::Other(format!("ответ api-v2 не JSON: {e}")))?;
-    let (transcoding_url, ext) = sc_pick_progressive(&track)?;
+    let picked = sc_pick_transcoding(&track)?;
+    // Закачка сегментами ещё не подключена (часть B задачи И9): AAC HLS пока
+    // честно уступает лестнице тем же маркером журнала, что и до обобщения
+    // выбора — диагностика и её доля в отчётах не съезжают.
+    if picked.protocol == ScProtocol::HlsAac {
+        return Err(SoundcloudFail::Other(
+            "у трека остался только AAC HLS (SC удаляет прямой mp3) — качаем запасной дорогой"
+                .into(),
+        ));
+    }
+    let (transcoding_url, ext) = (picked.url, picked.ext);
 
     let with_id = sc_with_client_id(&transcoding_url, &client_id).map_err(SoundcloudFail::Other)?;
     let (status, body) = call(with_id).await.map_err(SoundcloudFail::Other)?;
@@ -6894,6 +7022,108 @@ mod soundcloud_tests {
         include_str!("../testdata/sc_transcoding_url.json").to_string()
     }
 
+    /// Живой медиаплейлист SC (форма ответа 22.07.2026: version 7, EXT-X-MAP с
+    /// init.mp4, сегменты .m4s — то есть fMP4; подписи заменены синтетикой).
+    fn sc_hls_playlist_fixture() -> &'static str {
+        include_str!("../testdata/sc_hls_playlist.m3u8")
+    }
+
+    fn sc_playlist_base() -> Url {
+        Url::parse(
+            "https://playback.media-streaming.soundcloud.cloud/SYNTH0000/aac_160k/00000000-1111-2222-3333-444444444444/playlist.m3u8",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pick_prefers_progressive_even_when_hls_stands_first() {
+        let track: serde_json::Value = serde_json::from_str(&sc_track_fixture()).unwrap();
+        let picked = sc_pick_transcoding(&track).unwrap();
+        assert_eq!(picked.protocol, ScProtocol::Progressive);
+    }
+
+    /// Отчёт H: у части каталога progressive уже нет — берём AAC HLS.
+    #[test]
+    fn pick_falls_back_to_aac_hls_and_ignores_hls_mp3() {
+        let track: serde_json::Value = serde_json::from_str(&sc_no_progressive_fixture()).unwrap();
+        let picked = sc_pick_transcoding(&track).unwrap();
+        assert_eq!(picked.protocol, ScProtocol::HlsAac);
+        assert_eq!(picked.ext, "m4a", "AAC HLS кэшируется как m4a");
+        assert!(
+            picked.url.contains("11112222"),
+            "выбран должен быть aac_160k-транскодинг, а не hls-mp3: {}",
+            picked.url
+        );
+    }
+
+    #[test]
+    fn pick_prefers_aac_160_over_96() {
+        let track: serde_json::Value = serde_json::json!({
+            "media": { "transcodings": [
+                { "url": "https://api-v2.soundcloud.com/x/96/stream/hls", "preset": "aac_96k",
+                  "format": { "protocol": "hls", "mime_type": "audio/mp4" } },
+                { "url": "https://api-v2.soundcloud.com/x/160/stream/hls", "preset": "aac_160k",
+                  "format": { "protocol": "hls", "mime_type": "audio/mp4" } },
+            ]}
+        });
+        assert!(sc_pick_transcoding(&track).unwrap().url.contains("/160/"));
+    }
+
+    #[test]
+    fn pick_without_any_supported_transcoding_fails() {
+        let track: serde_json::Value = serde_json::json!({
+            "media": { "transcodings": [
+                { "url": "https://api-v2.soundcloud.com/x/opus/stream/hls", "preset": "opus_0_0",
+                  "format": { "protocol": "hls", "mime_type": "audio/ogg" } },
+            ]}
+        });
+        assert!(matches!(
+            sc_pick_transcoding(&track),
+            Err(SoundcloudFail::Other(_))
+        ));
+    }
+
+    #[test]
+    fn parse_m3u8_reads_init_and_segments_in_order() {
+        let parsed = sc_parse_m3u8(sc_hls_playlist_fixture(), &sc_playlist_base()).unwrap();
+        assert!(
+            parsed.init.as_deref().unwrap().contains("init.mp4"),
+            "fMP4 без init-сегмента не играет"
+        );
+        assert_eq!(parsed.segments.len(), 3);
+        assert!(parsed.segments[0].contains("data000.m4s"));
+        assert!(parsed.segments[2].contains("data002.m4s"));
+    }
+
+    /// Живой SC отдаёт абсолютные подписанные ссылки, но грамматика HLS
+    /// разрешает относительные — на них ломался бы только прод.
+    #[test]
+    fn parse_m3u8_resolves_relative_uris_against_playlist() {
+        let text = "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:10,\ndata000.m4s\n#EXT-X-ENDLIST";
+        let parsed = sc_parse_m3u8(text, &sc_playlist_base()).unwrap();
+        assert_eq!(
+            parsed.init.as_deref(),
+            Some("https://playback.media-streaming.soundcloud.cloud/SYNTH0000/aac_160k/00000000-1111-2222-3333-444444444444/init.mp4")
+        );
+        assert!(parsed.segments[0].ends_with("/data000.m4s"));
+    }
+
+    #[test]
+    fn parse_m3u8_refuses_encrypted_segments() {
+        let text = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:10,\nd0.m4s";
+        let err = sc_parse_m3u8(text, &sc_playlist_base()).unwrap_err();
+        match err {
+            SoundcloudFail::Other(msg) => assert!(msg.contains("зашифрованы"), "{msg}"),
+            other => panic!("ожидался честный отказ по шифрованию, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_m3u8_without_segments_fails() {
+        let text = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-ENDLIST";
+        assert!(sc_parse_m3u8(text, &sc_playlist_base()).is_err());
+    }
+
     /// 32 строчно-алфанумерных символа — грамматика живого client_id.
     const SYNTH_CLIENT_ID: &str = "AAAABBBBCCCCDDDDEEEEFFFF00112233";
     const SYNTH_CLIENT_ID_2: &str = "ZZZZYYYYXXXXWWWWVVVVUUUU99887766";
@@ -6970,17 +7200,22 @@ mod soundcloud_tests {
     #[test]
     fn sc_picks_progressive_over_hls() {
         let track: serde_json::Value = serde_json::from_str(&sc_track_fixture()).unwrap();
-        let (url, ext) = sc_pick_progressive(&track).unwrap();
-        assert!(url.ends_with("/stream/progressive"), "{url}");
-        assert_eq!(ext, "mp3");
+        let picked = sc_pick_transcoding(&track).unwrap();
+        assert!(picked.url.ends_with("/stream/progressive"), "{}", picked.url);
+        assert_eq!(picked.ext, "mp3");
+        assert_eq!(picked.protocol, ScProtocol::Progressive);
     }
 
-    /// Только HLS — провал ступени (фолбэк на лестницу yt-dlp).
+    /// Только HLS — выбор теперь его находит (часть B), но закачка сегментами
+    /// ещё не подключена, поэтому ступень по-прежнему уступает лестнице.
     #[test]
-    fn sc_no_progressive_is_error() {
+    fn sc_no_progressive_picks_hls_but_stage_still_yields() {
         let track: serde_json::Value =
             serde_json::from_str(&sc_no_progressive_fixture()).unwrap();
-        assert!(sc_pick_progressive(&track).is_err());
+        assert_eq!(
+            sc_pick_transcoding(&track).unwrap().protocol,
+            ScProtocol::HlsAac
+        );
     }
 
     /// mime_type → расширение файла кэша (find_cached понимает mp3/m4a).
