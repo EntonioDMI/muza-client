@@ -178,6 +178,18 @@ pub fn init(app: &AppHandle) {
     // диагностика обязана жить и без recipe-cache.json
     *app.state::<EngineState>().stage0_log_path.lock().unwrap() =
         Some(dir.join("engine-events.log"));
+    // Системный прокси Windows (отчёт O, 22.07): обнаружение — ОДИН раз за
+    // сессию, здесь, а не на каждый реальный запрос (proxy_for сам не имеет
+    // доступа к EngineState/stage0_log нарочно — чистая функция без Tauri).
+    // Без прокси — молчание; хост:порт БЕЗ кредов (parse_proxy_string их и
+    // не несёт — WinHTTP отдаёт голый адрес).
+    if let Some(proxy) = crate::sysproxy::proxy_for("https://www.youtube.com/") {
+        stage0_log(
+            &app.state::<EngineState>(),
+            SystemTime::now(),
+            format!("сеть: найден системный прокси {proxy} — добыча идёт через него"),
+        );
+    }
     let path = dir.join("recipe-cache.json");
     let Ok(raw) = fs::read_to_string(&path) else {
         return;
@@ -980,6 +992,15 @@ fn build_ytdlp_args(
         args.push(OsString::from("--extractor-args"));
         args.push(OsString::from(format!("youtube:player_client={client}")));
     }
+    // Системный прокси Windows (отчёт O, 22.07): yt-dlp сам его не видит —
+    // без --proxy добыча падает у пользователей с DPI-обходчиком/прокси,
+    // хотя браузер (читающий ту же системную настройку через WinINET)
+    // работает штатно. Нет прокси/не-Windows — флаг не добавляется,
+    // поведение как раньше.
+    if let Some(proxy) = crate::sysproxy::proxy_for(attempt.url.as_str()) {
+        args.push(OsString::from("--proxy"));
+        args.push(OsString::from(proxy));
+    }
     args.push(OsString::from(attempt.url.as_str()));
     args
 }
@@ -1253,6 +1274,12 @@ fn build_ytdlp_simulate_args(
         args.push(OsString::from("--extractor-args"));
         args.push(OsString::from(format!("youtube:player_client={client}")));
     }
+    // Системный прокси Windows (отчёт O, 22.07) — та же дисциплина, что у
+    // build_ytdlp_args: прогрев бьёт по тому же хосту, что и боевая закачка.
+    if let Some(proxy) = crate::sysproxy::proxy_for(attempt.url.as_str()) {
+        args.push(OsString::from("--proxy"));
+        args.push(OsString::from(proxy));
+    }
     args.push(OsString::from(attempt.url.as_str()));
     args
 }
@@ -1514,11 +1541,17 @@ fn run_ytdlp_simulate(
 
 /// Общий HTTP-клиент прогрева: пул соединений/тлс-сессий между прогревом и
 /// кликом (тот же CDN-хост) экономит рукопожатие на пути «клик → звук».
+/// Единственный билдер reqwest во всём движке (InnerTube POST, SC api-v2/CDN,
+/// fetch_to_cache) — прокси из системных настроек Windows (отчёт O, 22.07)
+/// подключается здесь ОДИН раз и покрывает все три пути разом.
 fn warm_http_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
+            .proxy(reqwest::Proxy::custom(|url| {
+                crate::sysproxy::proxy_for(url.as_str())
+            }))
             .build()
             .expect("reqwest client строится")
     })

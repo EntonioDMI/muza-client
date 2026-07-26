@@ -54,8 +54,19 @@ tauri-plugin-drag = "2.1.1"
 # Cargo.lock, доп. компиляции почти нет). Парсинг URL для net_allow — крейт
 # `url` уже объявлен выше (SSRF-граница remediation), общий.
 zip = { version = "4", default-features = false, features = ["deflate"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# socks (отчёт O, 22.07): системный прокси Windows иногда приходит из PAC как
+# SOCKS-таргет (частый случай у DPI-обходчиков) — reqwest 0.13.4 реализует
+# CONNECT сам поверх уже разрешённых hyper/tokio, проверено: cargo check не
+# тянет ни одной новой строки в Cargo.lock (0 новых крейтов).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "socks"] }
 # CSPRNG для nonce/staging-токена плагинов (T44-fix: security review) — версия
 # зафиксирована на уже разрешённой в дереве (tauri сама тянет getrandom 0.3.4),
 # доп. компиляции почти нет
 getrandom = "0.3"
+
+# Системный прокси Windows для добычи (отчёт O, 22.07): sysproxy.rs, только
+# Windows-таргет. Версия 0.61 уже разрешена в дереве через tao/wry/tauri
+# (cargo tree -i windows@0.61.3) — вторую мажорную не плодим. Win32_Foundation
+# несёт GlobalFree/HGLOBAL (освобождение строк WinHTTP-конфига).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Networking_WinHttp", "Win32_Foundation"] }

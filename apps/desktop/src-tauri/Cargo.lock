@@ -2431,6 +2431,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "url",
+ "windows 0.61.3",
  "zip",
 ]
 

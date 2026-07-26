@@ -8,6 +8,7 @@ mod plugins;
 mod rpc;
 mod share;
 mod state_kv;
+mod sysproxy;
 mod tray;
 
 use tauri::Manager;
