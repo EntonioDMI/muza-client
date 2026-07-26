@@ -2660,6 +2660,12 @@ const SOUNDCLOUD_CID_BUNDLE_SCAN_MAX: usize = 12;
 /// фронт soundcloud.com, безликий reqwest-запрос выделялся бы сильнее.
 const SOUNDCLOUD_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+/// Потолок сегментов AAC HLS для ступени 0 (≈33 минуты при нарезке SC по 10с).
+/// Обычный трек — 20–30 кусков, это секунды последовательной закачки; длинные
+/// миксы (живой прогон 27.07 поймал 733 сегмента) уходят на лестницу, где
+/// yt-dlp качает фрагменты конкурентно.
+const SC_HLS_MAX_SEGMENTS: usize = 200;
+
 /// Провал SC-ступени. ClientId отделён от Other единственным поведенческим
 /// отличием: он означает «добыча client_id провалилась», и кулдаун добычи уже
 /// взведён — вызывающему остаётся молча уйти в лестницу (как и с Other).
@@ -3199,6 +3205,18 @@ where
     let init = playlist.init.ok_or_else(|| {
         SoundcloudFail::Other("медиаплейлист SC без init-сегмента (#EXT-X-MAP)".into())
     })?;
+
+    // Потолок длины (живой прогон 27.07): двухчасовой микс отдал 733 сегмента
+    // по ~10с. Ступень 0 качает их ПОСЛЕДОВАТЕЛЬНО — на таком треке это
+    // сотни рукопожатий подряд, то есть медленнее запасной дороги, где
+    // yt-dlp тянет фрагменты конкурентно. Ступень 0 — быстрый путь, а не
+    // универсальный: длинное честно уступаем лестнице.
+    if playlist.segments.len() > SC_HLS_MAX_SEGMENTS {
+        return Err(SoundcloudFail::Other(format!(
+            "AAC HLS слишком длинный для последовательной сборки ({} сегментов) — запасная дорога",
+            playlist.segments.len()
+        )));
+    }
 
     let mut segments = Vec::with_capacity(playlist.segments.len() + 1);
     segments.push(init);
@@ -7729,6 +7747,90 @@ mod soundcloud_tests {
             probes.is_empty(),
             "у манифеста нет Content-Length — Range-проба бессмысленна"
         );
+    }
+
+    /// Живой прогон против настоящего SoundCloud: резолв реального трека и,
+    /// если ступень выбрала AAC HLS, скачивание init+первого сегмента с
+    /// проверкой, что склейка начинается сигнатурой mp4 (`ftyp`) — то есть
+    /// Chromium её сыграет. Сеть и подписанные ссылки, поэтому ignored.
+    /// `cargo test --lib live_soundcloud_hls -- --ignored --nocapture`
+    #[test]
+    #[ignore = "живой SoundCloud: сеть, client_id и подписанные ссылки"]
+    fn live_soundcloud_hls_smoke() {
+        let state = EngineState::default();
+        let canonical = sc_canonical("https://soundcloud.com/not-rozshow/yara-yara-fonk-aura-farming");
+        let fmt = tauri::async_runtime::block_on(resolve_via_soundcloud_with(
+            &state,
+            &canonical,
+            sc_http_get,
+            sc_http_probe,
+        ))
+        .expect("живой SC обязан резолвиться");
+        println!(
+            "путь: {}, ext={}, оценка размера={} Б, кусков={}",
+            if fmt.segments.is_empty() { "progressive" } else { "AAC HLS" },
+            fmt.ext,
+            fmt.size,
+            fmt.segments.len()
+        );
+        if fmt.segments.is_empty() {
+            println!("у трека ещё жив progressive — HLS-ветка не проверялась");
+            return;
+        }
+        assert!(fmt.segments[0].contains("init"), "init обязан идти первым");
+        let head = tauri::async_runtime::block_on(async {
+            let mut buf: Vec<u8> = Vec::new();
+            for segment in fmt.segments.iter().take(2) {
+                let resp = warm_http_client()
+                    .get(segment)
+                    .header("User-Agent", SOUNDCLOUD_UA)
+                    .send()
+                    .await
+                    .expect("сегмент должен скачаться");
+                assert_eq!(resp.status().as_u16(), 200);
+                buf.extend_from_slice(&resp.bytes().await.expect("тело сегмента"));
+            }
+            buf
+        });
+        println!("склеено {} Б из двух кусков", head.len());
+        assert_eq!(
+            &head[4..8],
+            b"ftyp",
+            "склейка обязана начинаться боксом ftyp — иначе Chromium не сыграет"
+        );
+        assert!(
+            head.windows(4).any(|w| w == b"moov"),
+            "init-сегмент обязан нести moov"
+        );
+    }
+
+    /// Длинный микс (живой прогон 27.07 поймал 733 сегмента) уступает
+    /// лестнице: последовательная сборка сотен кусков медленнее yt-dlp с
+    /// конкурентными фрагментами.
+    #[test]
+    fn sc_orchestration_overlong_hls_yields_to_ladder() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let mut playlist = String::from("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n");
+        for i in 0..=SC_HLS_MAX_SEGMENTS {
+            playlist.push_str(&format!("#EXTINF:10,\ndata{i}.m4s\n"));
+        }
+        let (result, _calls, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, sc_no_progressive_fixture())),
+                Ok((200, format!(r#"{{"url":"{}"}}"#, sc_playlist_base()))),
+                Ok((200, playlist)),
+            ],
+            Ok(1),
+        );
+        match result {
+            Err(SoundcloudFail::Other(msg)) => {
+                assert!(msg.contains("слишком длинный"), "{msg}")
+            }
+            other => panic!("длинный HLS обязан уступать лестнице, получено {other:?}"),
+        }
     }
 
     /// Зашифрованный плейлист — честный отказ ступени, а не склейка мусора.
