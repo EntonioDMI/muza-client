@@ -1198,6 +1198,12 @@ struct WarmEntry {
     ext: String,
     provider: String,
     expires_at: SystemTime,
+    /// AAC HLS SoundCloud (отчёт H): непустой список = по `url` лежит
+    /// МАНИФЕСТ, а аудио собирается склейкой этих кусков по порядку
+    /// (init-сегмент уже первым). Пусто — прямой файл, как у всех прочих
+    /// провайдеров. `size` у HLS — ОЦЕНКА по длительности и битрейту
+    /// пресета: настоящий размер известен только после скачивания.
+    hls_segments: Vec<String>,
 }
 
 /// Разобранный выхлоп `--print` прогрева (см. build_ytdlp_simulate_args).
@@ -1591,6 +1597,10 @@ async fn fetch_to_cache_with_progress(
     if !content_length_ok(entry.size) {
         return Err(format!("warm-размер вне лимита: {}", entry.size));
     }
+    // AAC HLS SoundCloud: аудио не лежит одним файлом — собираем из кусков.
+    if !entry.hls_segments.is_empty() {
+        return fetch_hls_to_cache(dir, track_id, entry, progress, cancel).await;
+    }
     let send = warm_http_client()
         .get(entry.url.clone())
         .header("Range", format!("bytes=0-{}", entry.size - 1))
@@ -1704,6 +1714,96 @@ async fn write_body_to_part(
     }
     if written != total {
         return Err(format!("warm-скачивание неполное: {written} из {total}"));
+    }
+    file.flush().map_err(|e| format!("flush .part: {e}"))?;
+    Ok(())
+}
+
+/// AAC HLS SoundCloud (отчёт H) → файл кэша. Куски качаются ПОСЛЕДОВАТЕЛЬНО и
+/// дописываются в один `.part`: конкатенация init+сегменты и есть готовый
+/// фрагментированный mp4 (живая проверка 22.07: ftyp iso5 → moov в начале —
+/// Chromium такое играет, ремукс не нужен). Параллелить куски нельзя —
+/// порядок байт в файле обязан повторять порядок в плейлисте.
+///
+/// Размер здесь не сверяется с заявленным: у манифеста нет Content-Length
+/// всего трека, `entry.size` — оценка по битрейту. Границей служит тот же
+/// лимит содержимого, что и у прямой закачки, но по факту записанного.
+async fn fetch_hls_to_cache(
+    dir: &Path,
+    track_id: &str,
+    entry: &WarmEntry,
+    progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+    cancel: Option<&tokio::sync::Notify>,
+) -> Result<PathBuf, String> {
+    let part = dir.join(format!("{track_id}.{}.part", entry.ext));
+    let final_path = dir.join(format!("{track_id}.{}", entry.ext));
+    if let Err(e) = write_hls_to_part(&entry.hls_segments, &part, entry.size, progress, cancel).await
+    {
+        let _ = fs::remove_file(&part);
+        return Err(e);
+    }
+    // Тот же порядок финализации, что у прямой закачки: снести чужой
+    // одноимённый файл (yt-dlp мог оставить), затем rename.
+    let _ = fs::remove_file(&final_path);
+    if let Err(e) = fs::rename(&part, &final_path) {
+        let _ = fs::remove_file(&part);
+        return Err(format!("rename .part не прошёл: {e}"));
+    }
+    validate_ytdlp_output(dir, &final_path)
+}
+
+/// Склейка сегментов в `.part`. `estimate` — только для прогресса: пока
+/// записанное меньше оценки, total показываем оценкой, дальше — фактом
+/// (иначе полоса прогресса уезжала бы за 100%).
+async fn write_hls_to_part(
+    segments: &[String],
+    part: &Path,
+    estimate: u64,
+    progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
+    cancel: Option<&tokio::sync::Notify>,
+) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut file = fs::File::create(part).map_err(|e| format!("не создался .part: {e}"))?;
+    let mut written: u64 = 0;
+    for (index, segment) in segments.iter().enumerate() {
+        let send = warm_http_client()
+            .get(segment)
+            .header("User-Agent", SOUNDCLOUD_UA)
+            .timeout(SOUNDCLOUD_TIMEOUT)
+            .send();
+        let resp = match cancel {
+            Some(n) => tokio::select! {
+                _ = n.notified() => return Err("стрим отменён до ответа CDN".into()),
+                r = send => r,
+            },
+            None => send.await,
+        }
+        .map_err(|e| format!("сегмент {index} не ушёл: {e}"))?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Err(format!("сегмент {index}: статус {status}"));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("чтение сегмента {index}: {e}"))?;
+        written += bytes.len() as u64;
+        if !content_length_ok(written) {
+            return Err(format!("склейка HLS вне лимита: {written}"));
+        }
+        file.write_all(&bytes)
+            .map_err(|e| format!("запись .part: {e}"))?;
+        if let Some(tx) = progress {
+            tx.send_replace(StreamProgress {
+                written,
+                total: estimate.max(written),
+                finalized: false,
+                failed: false,
+            });
+        }
+    }
+    if written == 0 {
+        return Err("склейка HLS пуста".into());
     }
     file.flush().map_err(|e| format!("flush .part: {e}"))?;
     Ok(())
@@ -1897,6 +1997,7 @@ fn innertube_warm_entry_with_lookup(
         ext: fmt.ext.clone(),
         provider: "youtube".into(),
         expires_at,
+        hls_segments: Vec::new(),
     })
 }
 
@@ -2575,6 +2676,9 @@ struct SoundcloudFormat {
     url: String,
     size: u64,
     ext: String,
+    /// Непусто = AAC HLS: `url` — манифест, аудио лежит этими кусками
+    /// (init первым), а `size` — оценка (см. WarmEntry::hls_segments).
+    segments: Vec<String>,
 }
 
 /// SC-ступень — только когда ВЕДУЩИЙ источник Soundcloud с канонично валидным
@@ -2622,6 +2726,10 @@ struct ScTranscoding {
     url: String,
     ext: &'static str,
     protocol: ScProtocol,
+    /// Битрейт пресета, кбит/с. Нужен ТОЛЬКО для оценки размера HLS до
+    /// закачки (у манифеста нет Content-Length всего трека); у progressive
+    /// размер даёт честная Range-проба, и это поле не используется.
+    kbps: u32,
 }
 
 /// Порядок предпочтения среди AAC HLS: 160k лучше 96k, всё прочее AAC — в
@@ -2636,6 +2744,18 @@ fn sc_aac_rank(preset: &str) -> u8 {
         1
     } else {
         2
+    }
+}
+
+/// Битрейт пресета, кбит/с. Незнакомый пресет — 160 (верхняя из живых
+/// ступеней SC): оценка размера должна ошибаться В БОЛЬШУЮ сторону, иначе
+/// лимит содержимого срежет честный трек.
+fn sc_aac_kbps(preset: &str) -> u32 {
+    let p = preset.to_ascii_lowercase();
+    if p.contains("96") {
+        96
+    } else {
+        160
     }
 }
 
@@ -2665,12 +2785,14 @@ fn sc_pick_transcoding(track: &serde_json::Value) -> Result<ScTranscoding, Sound
                     url: url.to_string(),
                     ext,
                     protocol: ScProtocol::Progressive,
+                    kbps: 0,
                 })
             }
             // ext=="m4a" ⇔ mime audio/mp4|audio/aac — это и есть «AAC»;
             // HLS с audio/mpeg (mp3) сюда не попадает намеренно.
             Some("hls") if ext == "m4a" => {
-                let rank = sc_aac_rank(t["preset"].as_str().unwrap_or(""));
+                let preset = t["preset"].as_str().unwrap_or("");
+                let rank = sc_aac_rank(preset);
                 if best_hls.as_ref().is_none_or(|(best, _)| rank < *best) {
                     best_hls = Some((
                         rank,
@@ -2678,6 +2800,7 @@ fn sc_pick_transcoding(track: &serde_json::Value) -> Result<ScTranscoding, Sound
                             url: url.to_string(),
                             ext,
                             protocol: ScProtocol::HlsAac,
+                            kbps: sc_aac_kbps(preset),
                         },
                     ));
                 }
@@ -2997,18 +3120,9 @@ where
     let track: serde_json::Value = serde_json::from_str(&track_body)
         .map_err(|e| SoundcloudFail::Other(format!("ответ api-v2 не JSON: {e}")))?;
     let picked = sc_pick_transcoding(&track)?;
-    // Закачка сегментами ещё не подключена (часть B задачи И9): AAC HLS пока
-    // честно уступает лестнице тем же маркером журнала, что и до обобщения
-    // выбора — диагностика и её доля в отчётах не съезжают.
-    if picked.protocol == ScProtocol::HlsAac {
-        return Err(SoundcloudFail::Other(
-            "у трека остался только AAC HLS (SC удаляет прямой mp3) — качаем запасной дорогой"
-                .into(),
-        ));
-    }
-    let (transcoding_url, ext) = (picked.url, picked.ext);
+    let ext = picked.ext;
 
-    let with_id = sc_with_client_id(&transcoding_url, &client_id).map_err(SoundcloudFail::Other)?;
+    let with_id = sc_with_client_id(&picked.url, &client_id).map_err(SoundcloudFail::Other)?;
     let (status, body) = call(with_id).await.map_err(SoundcloudFail::Other)?;
     if status != 200 {
         return Err(SoundcloudFail::Other(format!("transcoding: статус {status}")));
@@ -3025,11 +3139,85 @@ where
     // проверит soundcloud_warm_entry в боевой обёртке, здесь она пропущена.
     validate_warm_url_with_lookup(&cdn_url, &mut |_, _| Ok(Vec::new()))
         .map_err(SoundcloudFail::Other)?;
+
+    // AAC HLS: по cdn_url лежит манифест, а не аудио — Range-проба размера
+    // здесь бессмысленна, состав и объём собираются из сегментов (отчёт H).
+    if picked.protocol == ScProtocol::HlsAac {
+        return sc_resolve_hls(&picked, &track, cdn_url, &mut call).await;
+    }
+
     let size = probe(cdn_url.clone()).await.map_err(SoundcloudFail::Other)?;
     Ok(SoundcloudFormat {
         url: cdn_url,
         size,
         ext: ext.to_string(),
+        segments: Vec::new(),
+    })
+}
+
+/// Оценка размера AAC HLS до закачки: длительность трека × битрейт пресета.
+/// Нужна только лимиту содержимого и прогрессу — настоящий размер известен
+/// после склейки. Нет duration в ответе api-v2 — считаем по числу сегментов
+/// (SC режет по ~10с, см. EXT-X-TARGETDURATION живого плейлиста).
+fn sc_hls_estimated_size(duration_ms: u64, kbps: u32, segments: usize) -> u64 {
+    let seconds = if duration_ms > 0 {
+        duration_ms / 1000
+    } else {
+        (segments as u64) * 10
+    };
+    seconds.saturating_mul(u64::from(kbps) * 1000 / 8)
+}
+
+/// Разбор AAC HLS в список кусков: GET манифеста → sc_parse_m3u8 → init
+/// первым, дальше сегменты по порядку. Каждый кусок проходит ту же
+/// синтаксическую границу, что и прямой CDN-URL: манифест приходит из сети и
+/// доверять его ссылкам нельзя (SSRF — подписанный URL не значит безопасный).
+async fn sc_resolve_hls<F, Fut>(
+    picked: &ScTranscoding,
+    track: &serde_json::Value,
+    playlist_url: String,
+    call: &mut F,
+) -> Result<SoundcloudFormat, SoundcloudFail>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<(u16, String), String>>,
+{
+    let (status, text) = call(playlist_url.clone())
+        .await
+        .map_err(SoundcloudFail::Other)?;
+    if status != 200 {
+        return Err(SoundcloudFail::Other(format!(
+            "медиаплейлист SC: статус {status}"
+        )));
+    }
+    let base = Url::parse(&playlist_url)
+        .map_err(|e| SoundcloudFail::Other(format!("url медиаплейлиста не разбирается: {e}")))?;
+    let playlist = sc_parse_m3u8(&text, &base)?;
+    // fMP4 без init не играет: в сегментах нет ни ftyp, ни moov. Живой SC
+    // init отдаёт всегда — его отсутствие означает другой формат, и лучше
+    // уступить лестнице, чем положить в кэш неиграбельный файл.
+    let init = playlist.init.ok_or_else(|| {
+        SoundcloudFail::Other("медиаплейлист SC без init-сегмента (#EXT-X-MAP)".into())
+    })?;
+
+    let mut segments = Vec::with_capacity(playlist.segments.len() + 1);
+    segments.push(init);
+    segments.extend(playlist.segments);
+    for segment in &segments {
+        validate_warm_url_with_lookup(segment, &mut |_, _| Ok(Vec::new()))
+            .map_err(SoundcloudFail::Other)?;
+    }
+
+    let size = sc_hls_estimated_size(
+        track["duration"].as_u64().unwrap_or(0),
+        picked.kbps,
+        segments.len().saturating_sub(1),
+    );
+    Ok(SoundcloudFormat {
+        url: playlist_url,
+        size,
+        ext: picked.ext.to_string(),
+        segments,
     })
 }
 
@@ -3086,12 +3274,30 @@ fn soundcloud_warm_entry_with_lookup(
         return Err(format!("подозрительное расширение: {:?}", fmt.ext));
     }
     let url = validate_warm_url_with_lookup(&fmt.url, lookup)?;
+    // Сегменты HLS проходят ту же границу доверия, что и прямой URL, но
+    // полный DNS-preflight делается на КАЖДЫЙ НОВЫЙ хост, а не на каждый
+    // кусок: у живого плейлиста все десятки сегментов лежат на одном CDN, и
+    // getaddrinfo per-segment встал бы прямо в путь «клик → звук».
+    let mut hls_segments = Vec::with_capacity(fmt.segments.len());
+    let mut checked_host: Option<String> = None;
+    for raw in &fmt.segments {
+        let host = Url::parse(raw)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .ok_or_else(|| format!("сегмент без разборчивого хоста: {raw}"))?;
+        if checked_host.as_deref() != Some(host.as_str()) {
+            validate_warm_url_with_lookup(raw, lookup)?;
+            checked_host = Some(host);
+        }
+        hls_segments.push(raw.clone());
+    }
     Ok(WarmEntry {
         url,
         size: fmt.size,
         ext: fmt.ext.clone(),
         provider: "soundcloud".into(),
         expires_at: now + SOUNDCLOUD_WARM_TTL,
+        hls_segments,
     })
 }
 
@@ -3114,6 +3320,18 @@ async fn resolve_via_soundcloud(
     canonical: &Url,
 ) -> Result<WarmEntry, SoundcloudFail> {
     let fmt = resolve_via_soundcloud_with(state, canonical, sc_http_get, sc_http_probe).await?;
+    // Видимость доли HLS в диагностике: раньше эта ветка была отказом ступени
+    // («только AAC HLS — качаем запасной дорогой»), теперь — рабочий путь.
+    if !fmt.segments.is_empty() {
+        stage0_log(
+            state,
+            SystemTime::now(),
+            format!(
+                "SoundCloud отдал только AAC HLS — скачиваем сегментами ({} шт.)",
+                fmt.segments.len()
+            ),
+        );
+    }
     // DNS-preflight validate_warm_url — блокирующий getaddrinfo: с async-
     // рантайма его уводит spawn_blocking (как и у InnerTube-ступени).
     tauri::async_runtime::spawn_blocking(move || soundcloud_warm_entry(&fmt, SystemTime::now()))
@@ -3343,6 +3561,7 @@ pub async fn engine_warm(
                     size: sim.size,
                     ext: sim.ext,
                     provider: attempt_provider,
+                    hls_segments: Vec::new(),
                 };
                 if entry.expires_at <= now {
                     last_error = "warm-URL уже протух".into();
@@ -5891,6 +6110,7 @@ mod warm_tests {
             ext: "opus".into(),
             provider: "youtube".into(),
             expires_at,
+            hls_segments: Vec::new(),
         }
     }
 
@@ -6127,6 +6347,7 @@ mod warm_tests {
                     size: sim.size,
                     ext: sim.ext,
                     provider: "youtube".into(),
+                    hls_segments: Vec::new(),
                 };
                 let t1 = Instant::now();
                 let path = tauri::async_runtime::block_on(fetch_to_cache(&dir, tag, &entry))
@@ -7480,20 +7701,56 @@ mod soundcloud_tests {
         assert_eq!(calls.len(), 3, "повтор тем же id не шлём: {calls:?}");
     }
 
-    /// Нет progressive — Err без похода за transcoding и без пробы.
+    /// Нет progressive — ступень больше НЕ уступает лестнице (часть B, отчёт
+    /// H): берёт AAC HLS, читает манифест и отдаёт куски для склейки.
     #[test]
-    fn sc_orchestration_no_progressive_falls_to_ladder() {
+    fn sc_orchestration_no_progressive_takes_aac_hls() {
         let state = EngineState::default();
         sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let playlist_url = sc_playlist_base().to_string();
         let (result, calls, probes) = run_sc(
             &state,
             "https://soundcloud.com/artist-a/track-b",
-            vec![Ok((200, sc_no_progressive_fixture()))],
+            vec![
+                Ok((200, sc_no_progressive_fixture())),
+                Ok((200, format!(r#"{{"url":"{playlist_url}"}}"#))),
+                Ok((200, sc_hls_playlist_fixture().to_string())),
+            ],
+            Ok(1),
+        );
+        let fmt = result.expect("AAC HLS обязан резолвиться");
+        assert_eq!(fmt.ext, "m4a");
+        assert_eq!(fmt.segments.len(), 4, "init + три сегмента: {:?}", fmt.segments);
+        assert!(fmt.segments[0].contains("init.mp4"), "init обязан идти первым");
+        // 213с × 160 кбит/с — оценка для лимита и прогресса, не факт
+        assert_eq!(fmt.size, 213 * 20_000);
+        assert_eq!(calls.len(), 3, "api-v2 → transcoding → манифест: {calls:?}");
+        assert!(
+            probes.is_empty(),
+            "у манифеста нет Content-Length — Range-проба бессмысленна"
+        );
+    }
+
+    /// Зашифрованный плейлист — честный отказ ступени, а не склейка мусора.
+    #[test]
+    fn sc_orchestration_encrypted_hls_yields_to_ladder() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let playlist_url = sc_playlist_base().to_string();
+        let (result, _calls, _probes) = run_sc(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, sc_no_progressive_fixture())),
+                Ok((200, format!(r#"{{"url":"{playlist_url}"}}"#))),
+                Ok((
+                    200,
+                    "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:10,\nd0.m4s".to_string(),
+                )),
+            ],
             Ok(1),
         );
         assert!(matches!(result, Err(SoundcloudFail::Other(_))), "{result:?}");
-        assert_eq!(calls.len(), 1);
-        assert!(probes.is_empty(), "до пробы не дошли");
     }
 
     /// Проба размера провалилась — провал ступени (без размера не построить
@@ -7550,6 +7807,7 @@ mod soundcloud_tests {
                 .into(),
             size: 4_567_890,
             ext: "mp3".into(),
+            segments: Vec::new(),
         };
         let entry = soundcloud_warm_entry_with_lookup(&fmt, now, &mut public_lookup).unwrap();
         assert_eq!(entry.provider, "soundcloud");
@@ -7574,6 +7832,7 @@ mod soundcloud_tests {
                 url: url.into(),
                 size,
                 ext: ext.into(),
+                segments: Vec::new(),
             };
             assert!(
                 soundcloud_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
