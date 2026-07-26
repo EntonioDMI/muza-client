@@ -3,6 +3,12 @@
    frosted panels use backdrop-filter + a --glass-* background. */
 
 :root {
+  /* Material scale. A bigger surface should read as a THICKER piece of
+     glass, and thickness is all we have: no bright top edge, no glare, no
+     shadow to fake depth. So the only thing that scales is the blur — and
+     it has to scale, because one radius across a 30px chip and a
+     full-height panel makes the chip look like a hole rather than a layer. */
+  --blur-chip: 12px;         /* small floating bits ON imagery (badges, pills) */
   --blur-glass: 28px;        /* frosted panels (player bar, now playing) */
   --blur-scenery: 64px;      /* blurred cover art used as a backdrop */
 
@@ -18,4 +24,27 @@
 
   /* Press feedback — scale, no color flash */
   --press-scale: 0.97; /* @kind other */
+}
+
+/* Reduced transparency: kill the blur outright. The --glass-* tokens go
+   opaque in colors.css under the same query, so a panel keeps separating
+   zones by density instead of by frost — leaving the blur on a now-opaque
+   background would only cost paint for an effect nobody can see. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --blur-chip: 0px;
+    --blur-scenery: 0px;
+    --blur-glass: 0px;
+  }
+}
+
+/* Reduced motion: drop the movement, KEEP the timing. The durations also
+   drive colour/opacity transitions, and those are what the setting asks us
+   to fall back to — zeroing them would strip the cross-fades too and leave
+   state changes snapping with no feedback at all. Only the scale step is
+   vestibular, so only it becomes a no-op. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --press-scale: 1;
+  }
 }

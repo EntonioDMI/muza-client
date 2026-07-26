@@ -20,10 +20,15 @@
   --glass-deep:  rgba(18, 17, 16, 0.78);    /* fullscreen listening-mode scrim */
   --glass-light: rgba(255, 255, 255, 0.08); /* frosted tile ON TOP of imagery */
 
-  /* Text — warm white ramp. Never pure #fff, never gray hex (use alpha). */
+  /* Text — warm white ramp. Never pure #fff, never gray hex (use alpha).
+     Alpha floors are contrast-driven, not taste-driven: --text-3 at 0.38
+     measured 3.33:1 over every backdrop we ship (bg-0, bg-1, glass-panel)
+     and failed AA for 13-15px labels, which is most of what it dresses.
+     0.48 is the lowest alpha that clears 4.5:1; the step down from
+     --text-2 still reads (4.5:1 vs 6.9:1), so the third tier survives. */
   --text-1: #f4f3f1;
   --text-2: rgba(244, 243, 241, 0.62);
-  --text-3: rgba(244, 243, 241, 0.38);
+  --text-3: rgba(244, 243, 241, 0.48);
   --text-on-accent: #ffffff;
 
   /* Accent — exactly one per theme. Default: sky-blue. */
@@ -37,6 +42,13 @@
   --brand-bolt:  #327ad9;
   --brand-flame: #f76967;
 
+  /* The logo's own gradient (glyph.svg, top-down). The system bans
+     gradients as a surface device; this one is exempt because it IS the
+     mark, not decoration — the Favourites tile wears it. Kept as a token
+     because it was hand-typed in two places and had already drifted from
+     the brand blue (#3b82f6 is the accent, --brand-bolt is #327ad9). */
+  --brand-gradient: linear-gradient(160deg, #f76967 0%, #3b82f6 100%);
+
   /* Functional (rare — errors in settings/forms only) */
   --danger: #f76967;
 
@@ -45,4 +57,39 @@
   --sb-thumb-hover: rgba(255, 255, 255, 0.42);
 
   color-scheme: dark;
+}
+
+/* ── Accessibility: the material has to survive the user's settings ──
+   Translucency is our ONLY device for separating zones (no borders, no
+   shadows), so when the OS says "less of that", the panels must not just
+   lose their blur — they'd become a flat wash over content with nothing
+   left to separate them. Density replaces blur: glass goes opaque, and
+   the surface ramp steps up so elevation is still readable. */
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-panel: #171614;
+    --glass-deep: #121110;
+    --glass-light: rgba(255, 255, 255, 0.16);
+
+    --surface-1: rgba(255, 255, 255, 0.07);
+    --surface-2: rgba(255, 255, 255, 0.11);
+    --surface-3: rgba(255, 255, 255, 0.16);
+    --surface-4: rgba(255, 255, 255, 0.22);
+  }
+}
+
+/* Higher contrast: lift the muted tiers rather than repaint the palette.
+   --text-3 goes to AAA-for-large and comfortably past AA for body; the
+   accent moves to its lighter text variant so it stays legible as ink. */
+@media (prefers-contrast: more) {
+  :root {
+    --text-2: rgba(244, 243, 241, 0.82);
+    --text-3: rgba(244, 243, 241, 0.66);
+    --accent-text: #a8c8fb;
+    --glass-panel: #171614;
+    --glass-deep: #121110;
+    --sb-thumb: rgba(255, 255, 255, 0.4);
+    --sb-thumb-hover: rgba(255, 255, 255, 0.6);
+  }
 }

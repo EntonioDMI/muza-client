@@ -372,7 +372,7 @@ function FavoritesRow({
           display: "grid",
           placeItems: "center",
           // тот же фирменный градиент, что у плитки библиотеки (glyph.svg)
-          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
+          background: "var(--brand-gradient)",
         }}
       >
         <Icon name="heart" size={22} color="#fff" filled />

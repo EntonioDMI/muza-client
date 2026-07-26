@@ -68,9 +68,10 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
           display: "grid",
           placeItems: "center",
           overflow: "hidden",
-          // Градиент логотипа Музы (glyph.svg: #F76967 → #3B82F6, сверху вниз) —
-          // «Любимое» носит фирменный цвет, а не общий акцент.
-          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
+          // Градиент логотипа Музы — «Любимое» носит фирменный цвет, а не
+          // общий акцент. Значение живёт в токене (--brand-gradient): тот же
+          // градиент рисует плитка в сайдбаре, и вручную они уже разъезжались.
+          background: "var(--brand-gradient)",
         }}
       >
         {/* Крупное сердце — почти во всю обложку (жалоба 2026-07-16: сделать
