@@ -90,7 +90,20 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
       >
         {t("views.favorites.title")}
       </div>
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>
+      {/* Усечение — как у подписи Tile (Tile.jsx): без него длинная подпись
+          («0 тр. · синхронизируется») в узкой колонке рвётся на две строки,
+          «Любимое» становится выше соседей по ряду и тянет за собой их
+          обёртки — ручка-⠿ уезжает вниз (баг владельца 2026-07-24). */}
+      <div
+        style={{
+          fontSize: "var(--fs-caption)",
+          color: "var(--text-2)",
+          marginTop: 2,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
         {t("views.library.playlistSubtitle", { count })}
       </div>
     </div>
@@ -389,6 +402,11 @@ export function LibraryView({
     // 19.07): в текучей сетке ручка задаёт нижнюю границу, тянуться дальше
     // колонкам никто не мешает.
     gridTemplateColumns: "repeat(auto-fill, minmax(var(--w-tile, 176px), 1fr))",
+    // Плитки живут своей высотой, а не высотой самой высокой в ряду: при
+    // stretch (умолчание grid) обёртка PlaylistDropTile растягивалась под
+    // соседа, Tile внутри оставался прежним — и абсолютная ручка-⠿
+    // (bottom: 8 от ОБЁРТКИ) висела ниже видимой карточки (баг 2026-07-24).
+    alignItems: "start",
     gap: "var(--sp-4)",
     paddingBottom: "var(--sp-6)",
   };
