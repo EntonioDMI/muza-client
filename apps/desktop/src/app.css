@@ -167,6 +167,7 @@ textarea,
   font-size: var(--fs-h1);
   font-weight: 700;
   line-height: 1.2;
+  letter-spacing: var(--ls-h1);
   color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;

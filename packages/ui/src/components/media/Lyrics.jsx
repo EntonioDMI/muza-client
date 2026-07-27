@@ -150,7 +150,10 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
               fontSize: karaoke ? "var(--fs-karaoke)" : "var(--fs-lyric)",
               fontWeight: "var(--fw-bold)",
               lineHeight: "var(--lh-lyrics)",
-              letterSpacing: "-0.01em",
+              // Karaoke runs 56px+ and the side panel 24px: the same tracking
+              // can't serve both — letters drift apart as they grow, so the
+              // big one tightens further. Both scale with the user's size.
+              letterSpacing: karaoke ? "var(--ls-karaoke)" : "var(--ls-title)",
               color: hasNote
                 ? "var(--accent-text)"
                 : isActive

@@ -25,6 +25,17 @@
   --fw-semibold: 600;  /* @kind font */
   --fw-bold: 700;      /* @kind font */
 
+  /* Tracking is size-specific: one value across the whole scale is wrong
+     somewhere. Letters read further apart as they grow, so large sizes
+     tighten; 13px labels open up slightly to stay legible. Values are in
+     `em` on purpose — headings are user-scalable (prefs.headingScale,
+     prefs.karaokeSize), and em keeps the tracking proportional to whatever
+     size the user lands on instead of freezing it at the default. */
+  --ls-caption: 0.005em;     /* 13px — opens up a hair */
+  --ls-title: -0.01em;       /* 22px section headers */
+  --ls-h1: -0.015em;         /* 28px page titles */
+  --ls-karaoke: -0.02em;     /* 56px+ — the only place we get truly large */
+
   --ls-display: -0.01em;     /* Unbounded is wide; never tighter than this */
   --ls-caps: 0.08em;         /* rare uppercase micro-labels */
 }

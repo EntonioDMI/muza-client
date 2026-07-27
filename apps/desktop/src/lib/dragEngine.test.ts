@@ -224,12 +224,42 @@ describe("reorderOffset: соседи съезжают на прямоуголь
   });
 });
 
-describe("clampShift/unionBox: плашка не выходит за габарит области", () => {
-  it("дельта внутри области проходит как есть, наружу — обрезается", () => {
+describe("clampShift/unionBox: край области упругий, а не глухой", () => {
+  /** Плитка 0 занимает 0..100, область — 0..210, значит вниз ей есть куда
+   *  ехать ровно 110px. Дальше начинается сопротивление. */
+  const LIMIT_Y = 110;
+  const BUDGET = 24;
+
+  it("дельта внутри области идёт один в один за курсором", () => {
     const bounds = unionBox(grid22);
     expect(bounds).toEqual({ top: 0, left: 0, right: 210, bottom: 210 });
-    // плитка 0 (0..100): вниз на 500 — упрётся в 110 (210-100); влево — в 0
-    expect(clampShift(grid22[0], bounds, 30, 500)).toEqual({ x: 30, y: 110 });
-    expect(clampShift(grid22[0], bounds, -50, -50)).toEqual({ x: 0, y: 0 });
+    expect(clampShift(grid22[0], bounds, 30, 50)).toEqual({ x: 30, y: 50 });
+  });
+
+  it("за краем плашка ещё идёт, но заметно отстаёт от курсора", () => {
+    const bounds = unionBox(grid22);
+    const near = clampShift(grid22[0], bounds, 30, 200).y;
+    const far = clampShift(grid22[0], bounds, 30, 500).y;
+
+    // жёсткого стопа нет — рука едет, плашка отвечает
+    expect(near).toBeGreaterThan(LIMIT_Y);
+    // дальше тянешь — дальше уходит, порядок сохраняется
+    expect(far).toBeGreaterThan(near);
+    // но отклик затухает: 390px курсора дают заметно меньше 390px плашки
+    expect(far - LIMIT_Y).toBeLessThan(500 - 200);
+  });
+
+  it("сколько ни тяни, за бюджет упругости не выходит", () => {
+    const bounds = unionBox(grid22);
+    const absurd = clampShift(grid22[0], bounds, 30, 100_000).y;
+    expect(absurd - LIMIT_Y).toBeLessThanOrEqual(BUDGET);
+  });
+
+  it("сопротивление одинаково по обеим осям и в обе стороны", () => {
+    const bounds = unionBox(grid22);
+    const { x, y } = clampShift(grid22[0], bounds, -50, -50);
+    expect(x).toBeLessThan(0); // ушла за верхний/левый край, но недалеко
+    expect(x).toBeGreaterThan(-BUDGET);
+    expect(y).toBeCloseTo(x, 5);
   });
 });

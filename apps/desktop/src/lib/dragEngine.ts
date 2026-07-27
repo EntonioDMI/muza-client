@@ -174,17 +174,45 @@ export function reorderOffset(rects: readonly Box[], from: number, to: number, i
   return { x: rects[j].left - rects[i].left, y: rects[j].top - rects[i].top };
 }
 
-/** Кламп сдвига (dx,dy) так, чтобы прямоугольник r не вышел за bounds —
- *  «следует за мышкой настолько, насколько может в рамках своей области». */
+/** Сопротивление за краем области (rubber-banding). Жёсткий стоп на границе
+ *  читается как «залипло»: рука ещё едет, плашка уже мертва. Реальные вещи
+ *  сопротивляются тем сильнее, чем дальше их тянут, и никогда не замирают
+ *  мгновенно — поэтому за границей плашка продолжает идти, но с затухающим
+ *  откликом, и сама говорит «дальше некуда» вместо того, чтобы притвориться
+ *  сломанной. Кривая — из сэмплов Apple (Designing Fluid Interfaces).
+ *
+ *  `dimension` здесь — БЮДЖЕТ выхода, а не габарит плашки: кривая асимптотически
+ *  упирается ровно в это значение, куда бы ни уехал курсор. Габарит плашки в
+ *  роли бюджета давал ~68px за краем на плитке 100px — это уже не «упругий
+ *  край», а «уехала из своей области», чего владелец просил не делать. */
+const RUBBER_BUDGET = 24;
+
+function rubberband(overshoot: number, dimension = RUBBER_BUDGET, constant = 0.55): number {
+  if (dimension <= 0) return 0;
+  return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
+}
+
+/** Значение с упругими границами: внутри [min,max] — один в один за курсором,
+ *  снаружи — затухающий хвост. */
+function resist(value: number, min: number, max: number): number {
+  if (value < min) return min + rubberband(value - min);
+  if (value > max) return max + rubberband(value - max);
+  return value;
+}
+
+/** Сдвиг (dx,dy) прямоугольника r в границах bounds: «следует за мышкой
+ *  настолько, насколько может в рамках своей области» — но край УПРУГИЙ,
+ *  а не глухой (см. rubberband выше). */
 export function clampShift(
   r: Box,
   bounds: Box,
   dx: number,
   dy: number,
 ): { x: number; y: number } {
-  const x = Math.max(bounds.left - r.left, Math.min(bounds.right - r.right, dx));
-  const y = Math.max(bounds.top - r.top, Math.min(bounds.bottom - r.bottom, dy));
-  return { x, y };
+  return {
+    x: resist(dx, bounds.left - r.left, bounds.right - r.right),
+    y: resist(dy, bounds.top - r.top, bounds.bottom - r.bottom),
+  };
 }
 
 /** Габарит области реордера: объединение прямоугольников всех элементов. */
