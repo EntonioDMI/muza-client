@@ -342,6 +342,61 @@ describe("Окно между кликом и ответом сервера", ()
   });
 });
 
+describe("Перевыдача истёкшего адреса", () => {
+  /** Элемент сообщает о неудаче загрузки (протухший стрим-токен). */
+  const failed = async (el: FakeAudio): Promise<void> => {
+    await act(async () => {
+      el.dispatchEvent(new Event("error"));
+    });
+    await settle();
+  };
+  /** Сколько раз за адрес этого трека ходили в сеть (первый заход + перевыдачи). */
+  const trips = (id: string): number => net.getStreamUrl.mock.calls.filter(([x]) => x === id).length;
+
+  it("адрес протух — одна перевыдача и возврат на ту же секунду", async () => {
+    await mount({ warmAhead: 0, preloadAheadSec: 0 });
+    await play([track("a")], 0);
+    await act(async () => {
+      slot(0).at(30);
+    });
+
+    await failed(slot(0));
+    expect(trips("a")).toBe(2); // первый заход + одна перевыдача
+    expect(slot(0).src).toBe(urlOf("a"));
+    expect(slot(0).currentTime).toBe(30); // продолжили, а не начали заново
+    expect(slot(0).paused).toBe(false);
+
+    await failed(slot(0)); // второй отказ подряд — честная жалоба, не круг
+    expect(trips("a")).toBe(2);
+    expect(ctl.player.playing).toBe(false);
+    expect(ctl.player.error).not.toBeNull();
+  });
+
+  it("ответ на старую перевыдачу не подменяет выбранную песню", async () => {
+    await mount({ warmAhead: 0, preloadAheadSec: 0 });
+    await play([track("a"), track("b")], 0);
+    await act(async () => {
+      slot(0).at(30);
+    });
+
+    hold("a"); // перевыдача застряла в сети
+    await failed(slot(0));
+    expect(trips("a")).toBe(2);
+
+    // человек не дождался и выбрал следующую песню
+    await act(async () => {
+      ctl.player.next();
+    });
+    await settle();
+    release("a");
+    await settle();
+
+    expect(ctl.player.current?.id).toBe("b");
+    expect(sounding().map((el) => el.src)).toEqual([urlOf("b")]);
+    expect(ctl.player.error).toBeNull();
+  });
+});
+
 describe("Два слота и эстафета", () => {
   it("следующий греется во втором слоте, пока первый звучит, и принимает эстафету", async () => {
     await mount({ crossfade: true, crossfadeSec: 4, preloadAheadSec: 20, warmAhead: 3 });

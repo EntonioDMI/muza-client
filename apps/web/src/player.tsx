@@ -777,14 +777,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     error: (slot) => {
       if (!isActive(slot)) return;
       const el = slot.el;
-      const track = currentRef.current;
-      if (!track) return;
+      // Чиним ТО, что в слоте, а не то, что в баре: пока летела ошибка, человек
+      // мог выбрать другую песню.
+      const trackId = slot.trackId;
+      if (trackId === null) return;
       // стрим-токен истёк (пауза дольше TTL) — одна перевыдача с возвратом позиции
       if (!slot.retried) {
         slot.retried = true;
         const pos = el.currentTime;
-        void streamUrl(track.id, true)
+        // ⚠️ Инвариант файла: путь асинхронный и в конце трогает src и play(),
+        // значит обязан сверить номер старта. Перевыдача идёт секунды; не
+        // дождавшись, человек кликает другую песню — и приехавший ответ
+        // возвращал СТАРУЮ: в баре одна, в наушниках другая.
+        const seq = loadSeqRef.current;
+        void streamUrl(trackId, true)
           .then(async (url) => {
+            if (loadSeqRef.current !== seq || slot.trackId !== trackId || !isActive(slot)) return;
             slot.url = url;
             el.src = url;
             el.load();
@@ -792,6 +800,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             await el.play();
           })
           .catch(() => {
+            if (loadSeqRef.current !== seq) return; // чужая беда, не наша
             setLoading(false);
             setPlaying(false);
             setError(t("media.player.errors.trackFetchFailed"));
