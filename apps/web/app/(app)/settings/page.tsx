@@ -678,7 +678,7 @@ export default function SettingsPage() {
           справа, а верх рельса не совпадал с верхом сайдбара (замечание
           владельца 02.08 со снимком). Экран настроек сам держит свои поля:
           контракт «раздел оборачивает себя сам». */}
-      <div className="shared-screen">
+      <div className="shared-screen" style={{ height: "100%", minHeight: 0 }}>
       <SettingsScreen
         caps={caps}
         rows={rows}
