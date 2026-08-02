@@ -80,6 +80,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const playedMsRef = useRef(0);
   const lastTimeRef = useRef(0);
   const retriedRef = useRef(false);
+  /** Номер последнего старта: растёт на каждую загрузку трека. Всё, что
+   *  вернулось из сети позже своего номера, считается чужим и отбрасывается —
+   *  иначе при быстром переборе песен старый ответ подменял источник уже
+   *  выбранной. Аналог playSeqRef приложения. */
+  const loadSeqRef = useRef(0);
   /** для какого трека уже прогрет серверный кэш следующего */
   const prefetchedRef = useRef<string | null>(null);
   const stateRef = useRef({ queue, index, repeat, shuffle });
@@ -129,6 +134,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const loadTrack = useCallback(
     async (track: Track, autoplay: boolean) => {
       const el = audio();
+      // Номер старта. Между строкой ниже и ответом сервера человек успевает
+      // нажать следующий трек — и не раз, если щёлкает подряд. Без сверки
+      // выходило две беды: ответ на СТАРЫЙ запрос приходил позже нового и
+      // подменял источник (играла не та песня, которую выбрали последней), а
+      // прерванный load'ом play() писал в консоль «The play() request was
+      // interrupted by a new load request» (жалоба владельца 02.08). Приём
+      // взят из приложения — там это playSeqRef в usePlayback.
+      const seq = ++loadSeqRef.current;
       setError(null);
       setLoading(true);
       setPosition(0);
@@ -137,10 +150,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       lastTimeRef.current = 0;
       retriedRef.current = false;
       try {
-        el.src = await streamUrl(track.id);
+        const url = await streamUrl(track.id);
+        if (loadSeqRef.current !== seq) return; // старт уже не наш — молча уходим
+        el.src = url;
         el.load();
-        if (autoplay) await el.play();
+        // play() ОБЯЗАН пережить обгон: следующий клик сменит src и отклонит это
+        // обещание с AbortError. Это не ошибка воспроизведения, а нормальный
+        // ход событий — гасим её, но только если старт действительно устарел.
+        if (autoplay) {
+          try {
+            await el.play();
+          } catch (e) {
+            if (loadSeqRef.current === seq) throw e;
+            return;
+          }
+        }
       } catch (e) {
+        if (loadSeqRef.current !== seq) return; // чужая беда, не наша
         // резолв первого запроса может идти десятки секунд — 503 честно скажет
         setError(e instanceof Error ? e.message : t("media.player.errors.playFailed"));
         setLoading(false);
@@ -300,17 +326,30 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       playable.findIndex((t) => t.id === tracks[startIndex]?.id),
       0,
     );
+    const el = audioRef.current;
+    // Повторный клик по тому, что уже играет, — это «поставь на паузу», а не
+    // «начни сначала». Правило приложения (usePlayback.playContext): совпали и
+    // очередь, и трек — зовём toggle и уходим. В вебе этого не было, и человек,
+    // нажав на ту же плитку в «В тренде», получал перезапуск с нуля вместо
+    // паузы (жалоба владельца 02.08). Очередь сверяем целиком: та же песня из
+    // ДРУГОЙ подборки — это новый контекст, её надо заводить заново.
+    const q = stateRef.current.queue;
+    const sameQueue = playable.length === q.length && playable.every((t, i) => t.id === q[i]?.id);
+    if (sameQueue && currentRef.current?.id === playable[start]?.id && el) {
+      if (el.paused) void el.play().catch(() => undefined);
+      else el.pause();
+      return;
+    }
     baseQueueRef.current = playable;
     setShuffle(false);
     setQueue(playable);
-    // повторный клик по игравшему треку — перезапуск через эффект не сработает
-    // (id не сменился), поэтому играем напрямую
-    const el = audioRef.current;
+    // Тот же трек, но очередь сменилась: эффект смены текущего не сработает
+    // (id не изменился) — заводим сами, с начала.
     const sameTrack = currentRef.current?.id === playable[start]?.id;
     setIndex(start);
     if (sameTrack && el) {
       el.currentTime = 0;
-      void el.play();
+      void el.play().catch(() => undefined);
     }
   }, []);
 
