@@ -1,12 +1,25 @@
-/** Эквалайзер веба: Web Audio-цепь поверх `<audio>` (лёгкая версия десктопного
- *  audioEngine — только 10-полосный EQ, без кроссфейда/нормализации).
+/** Звуковой тракт веба: уровни слотов плеера, 10-полосный эквалайзер и
+ *  выравнивание громкости.
  *
- *  Требования: элементу нужен crossOrigin="anonymous" ДО первой загрузки
- *  (иначе MediaElementSource молча даёт тишину — гоча из десктопа), а сервер
- *  должен отдавать CORS на /stream (muza-server отдаёт, CORS глобальный).
- *  Цепь создаётся ОДИН раз и только по явному включению EQ (жест пользователя
- *  → AudioContext разрешён); выключенный EQ = все полосы в 0 дБ (biquad с
- *  gain 0 прозрачен), цепь не разбирается — MediaElementSource необратим. */
+ *  Было (до 2026-08-02): один <audio> и цепь только под эквалайзер. Стало: у
+ *  плеера ДВА слота (player.tsx), и этот файл обслуживает оба — иначе нечем
+ *  сделать кроссфейд и переход без паузы: они по определению требуют, чтобы
+ *  два трека одновременно звучали с разными уровнями.
+ *
+ *  ДВА РЕЖИМА УРОВНЯ, и это не про красоту, а про риск. Web Audio-цепь
+ *  строится ТОЛЬКО когда включён эквалайзер: MediaElementSource без
+ *  CORS-чистого источника молча даёт тишину, и платить этим риском за фейды
+ *  нельзя. Пока цепи нет, уровень слота — обычный `el.volume` (кроссфейд и
+ *  выравнивание работают и так, только тише единицы: громкость элемента не
+ *  умеет усиливать). Есть цепь — уровень идёт через гейн слота, и тихий трек
+ *  можно ПОДНЯТЬ. Ровно так же устроен движок приложения: режимы webaudio и
+ *  plain в apps/desktop/src/player/audioEngine.ts.
+ *
+ *  Требования к элементу: crossOrigin="anonymous" ДО первой загрузки (иначе
+ *  MediaElementSource молча даёт тишину — гоча из десктопа), и сервер обязан
+ *  отдавать CORS на /stream (muza-server отдаёт, CORS глобальный). Цепь на
+ *  элемент создаётся ОДИН раз и не разбирается — MediaElementSource необратим;
+ *  выключенный эквалайзер = все полосы в 0 дБ (biquad с gain 0 прозрачен). */
 
 const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
@@ -24,52 +37,95 @@ export const EQ_PRESETS: Record<string, number[]> = {
   Вокал: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1],
 };
 
+/** Целевая громкость выравнивания (стриминговый стандарт, как в приложении). */
+const TARGET_LUFS = -14;
+
+const dbToLin = (db: number) => Math.pow(10, db / 20);
+
+/** Множитель выравнивания громкости трека: приводим измеренную сервером
+ *  громкость (EBU R128, LUFS) к общей цели. Не измерена или выключено — 1
+ *  (трек звучит как есть). Границы ±12 дБ — те же, что у приложения: без них
+ *  один битый замер сделал бы трек оглушительным. */
+export function normFactor(loudness: number | null, enabled: boolean): number {
+  if (!enabled || loudness === null) return 1;
+  return dbToLin(Math.max(-12, Math.min(12, TARGET_LUFS - loudness)));
+}
+
 let ctx: AudioContext | null = null;
 let filters: BiquadFilterNode[] = [];
-let attachedTo: HTMLAudioElement | null = null;
+/** Гейн на каждый подключённый к цепи элемент (слот плеера). */
+const gains = new Map<HTMLAudioElement, GainNode>();
 
-/** Построить цепь (однократно). false — не вышло (нет CORS/жеста), звук
- *  остаётся нетронутым, EQ честно недоступен. */
-export function ensureEq(el: HTMLAudioElement): boolean {
-  if (attachedTo === el && ctx) {
-    void ctx.resume().catch(() => undefined);
-    return true;
-  }
-  if (attachedTo) return false; // цепь уже на другом элементе — не бывает, но честно
+/** Построить общую часть цепи (полосы + лимитер + выход). Один раз на вкладку. */
+function buildShared(): boolean {
+  if (ctx) return true;
   try {
-    ctx = new AudioContext();
-    const source = ctx.createMediaElementSource(el);
+    const c = new AudioContext();
     filters = EQ_FREQS.map((freq, i) => {
-      const f = ctx!.createBiquadFilter();
+      const f = c.createBiquadFilter();
       f.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking";
       f.frequency.value = freq;
       f.Q.value = 1.0;
       f.gain.value = 0;
       return f;
     });
-    let node: AudioNode = source;
-    for (const f of filters) {
-      node.connect(f);
-      node = f;
-    }
+    for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
     // Лимитер в конце (паритет с десктопом, ресёрч отчёт #9): буст полос без него
     // клиппит на выходе. DynamicsCompressor как страховка (не true-peak).
-    const limiter = ctx.createDynamicsCompressor();
+    const limiter = c.createDynamicsCompressor();
     limiter.threshold.value = -2;
     limiter.knee.value = 0;
     limiter.ratio.value = 20;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.1;
-    node.connect(limiter);
-    limiter.connect(ctx.destination);
-    attachedTo = el;
-    void ctx.resume().catch(() => undefined);
+    filters[filters.length - 1].connect(limiter);
+    limiter.connect(c.destination);
+    ctx = c;
     return true;
   } catch {
     ctx = null;
     filters = [];
     return false;
   }
+}
+
+/** Подключить слот к цепи (однократно на элемент). false — не вышло (нет
+ *  CORS/жеста): звук остаётся нетронутым, уровень пойдёт через el.volume.
+ *
+ *  ⚠️ После успешного подключения el.volume больше не источник истины —
+ *  вызывающий обязан заново применить уровень через setSlotLevel. */
+export function ensureChain(el: HTMLAudioElement): boolean {
+  if (gains.has(el)) {
+    void ctx?.resume().catch(() => undefined);
+    return true;
+  }
+  if (!buildShared() || !ctx) return false;
+  try {
+    const source = ctx.createMediaElementSource(el);
+    const gain = ctx.createGain();
+    // Стартовый уровень — тот, что уже стоял на элементе: подключение цепи не
+    // должно менять громкость играющего трека.
+    gain.gain.value = el.volume;
+    source.connect(gain);
+    gain.connect(filters[0]);
+    gains.set(el, gain);
+    void ctx.resume().catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Уровень слота: цепь есть — гейн (умеет усиливать выше единицы), нет —
+ *  громкость элемента (клампим, усилить нечем).
+ *
+ *  Гейн ставится не присвоением, а короткой экспонентой: кроссфейд шагает
+ *  таймером каждые 20 мс, и мгновенные скачки параметра дают щелчки. */
+export function setSlotLevel(el: HTMLAudioElement, level: number): void {
+  const gain = gains.get(el);
+  const safe = Math.max(0, level);
+  if (gain && ctx) gain.gain.setTargetAtTime(safe, ctx.currentTime, 0.01);
+  else el.volume = Math.min(1, safe);
 }
 
 /** Применить полосы (дБ −12..+12); off = все нули (прозрачно). */
@@ -81,5 +137,5 @@ export function setEqBands(bands: number[], on: boolean): void {
 }
 
 export function eqAttached(): boolean {
-  return attachedTo !== null;
+  return gains.size > 0;
 }

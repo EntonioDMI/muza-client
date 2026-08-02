@@ -359,100 +359,17 @@ a {
 
 /* ── Настройки ── */
 
-/* Каркас «как приложение»: слева колонка категорий, справа панель активной
-   (десктопный SettingsView). Прокручивается весь .main, поэтому колонка
-   липнет sticky к верху его скролла. На <900px колонка превращается в
-   горизонтальные табы-чипы над панелью (медиа-ветка ниже). */
-.settings-layout {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-6);
-}
+/* Здесь лежал СВОЙ каркас настроек веба: .settings-layout, .settings-nav,
+   .settings-nav__item, .settings-pane и их адаптив на <900px. Он умер вместе с
+   переездом экрана на общий каркас (@muza/app/views/settings/SettingsScreen +
+   settingsShell.css, 2026-08-02): рельс, панель и схлопывание на узком экране
+   теперь рисуют классы .muza-settings*, а эти четыре класса не звал никто —
+   удалены 2026-08-02. Правишь вид рельса — правишь settingsShell.css, и правка
+   приезжает в обе программы.
 
-.settings-nav {
-  position: sticky;
-  top: 0;
-  flex: none;
-  width: 220px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-/* Пункт категории — язык пунктов сайдбара (NavLink в AppShell):
-   активный — surface-4 + жирная подпись, ховер — surface-2, рамок нет */
-.settings-nav__item {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  height: 44px;
-  padding: 0 var(--sp-4);
-  border: none;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
-  font-weight: 500;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out);
-}
-
-.settings-nav__item:hover {
-  background: var(--surface-2);
-  color: var(--text-1);
-}
-
-.settings-nav__item[aria-selected="true"] {
-  background: var(--surface-4);
-  color: var(--text-1);
-  font-weight: 600;
-}
-
-.settings-pane {
-  flex: 1;
-  min-width: 0;
-  max-width: 720px;
-}
-
-@media (max-width: 899px) {
-  .settings-layout {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--sp-4);
-  }
-
-  .settings-nav {
-    position: static;
-    width: auto;
-    flex-direction: row;
-    overflow-x: auto;
-    gap: var(--sp-2);
-    scrollbar-width: none;
-  }
-
-  .settings-nav::-webkit-scrollbar {
-    display: none;
-  }
-
-  .settings-nav__item {
-    flex: none;
-    height: 40px;
-    border-radius: var(--r-pill);
-    background: var(--surface-2);
-  }
-
-  .settings-nav__item[aria-selected="true"] {
-    background: var(--surface-4);
-  }
-
-  .settings-pane {
-    max-width: none;
-  }
-}
-
+   Из старой секции живо только то, что общий каркас не знает: полосы фейдеров
+   эквалайзера (у приложения эквалайзер — отдельный под-экран со своей
+   раскладкой, у веба он стоит прямо в разделе). */
 .eq-faders {
   display: flex;
   gap: var(--sp-3);

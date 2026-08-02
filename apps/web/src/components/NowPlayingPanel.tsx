@@ -14,40 +14,50 @@ import { useTrackLyrics } from "./LyricsPanel";
  *  под обложкой; шапка, обложка, название и сердце — пиксель в пиксель как в
  *  приложении.
  *
+ *  Настройки раздела «Тексты песен» панель ЧИТАЕТ (волна 2026-08-02): они
+ *  приезжают из useTrackLyrics — часть уже вшита в активную строку
+ *  («Синхронный текст», «Нотка в конце»), часть отдаётся пропами общего
+ *  экрана одним объектом panelPrefs. Спред, а не перечисление полей: новая
+ *  настройка панели не должна требовать правки этого файла.
+ *
  *  Чего у веба пока нет и почему пропы не передаются:
- *  - видео вместо обложки — видео-дорожку добывает движок приложения;
- *  - ПКМ по тексту и «Смысл строки» — контекстное меню веба ещё не сделано;
- *  - настройки текста (автопрокрутка, нотка, «строк в панели») — в веб-профиле
- *    таких полей нет, и общий экран берёт свои значения по умолчанию, равные
- *    заводским настройкам приложения. Появятся поля в prefs — сюда добавятся
- *    три пропа, и больше ничего.
+ *  - видео вместо обложки — видео-дорожку добывает движок приложения, у
+ *    страницы такого умения нет (и ряда настройки в браузере нет тоже);
+ *  - ПКМ по тексту — контекстное меню веба ещё не сделано.
  *
  *  ⚠️ className="zone np-panel" обязателен: панель — колонка CSS-сетки шелла,
  *  и брейкпоинты прячут её именно по этому классу. */
 export function NowPlayingPanel({ onClose }: { onClose: () => void }) {
   const { current } = usePlayer();
   const { likedIds, toggle } = useLikes();
-  const { lines, activeLine, loading, seekLine } = useTrackLyrics();
+  const { lines, activeLine, loading, seekLine, panelPrefs, explainLine, meaningDialog } = useTrackLyrics();
   if (!current) return null;
 
   return (
-    <SharedNowPlayingPanel
-      className="zone np-panel"
-      track={{
-        id: current.id,
-        title: current.title,
-        artist: current.artist,
-        album: current.album ?? "",
-        cover: current.coverUrl,
-        duration: current.durationSec,
-      }}
-      lyrics={lines}
-      lyricsLoading={loading}
-      activeLine={activeLine}
-      onSeekLine={seekLine}
-      liked={likedIds.has(current.id)}
-      onLike={() => toggle(current)}
-      onClose={onClose}
-    />
+    <>
+      <SharedNowPlayingPanel
+        {...panelPrefs}
+        onExplain={explainLine}
+        className="zone np-panel"
+        track={{
+          id: current.id,
+          title: current.title,
+          artist: current.artist,
+          album: current.album ?? "",
+          cover: current.coverUrl,
+          duration: current.durationSec,
+        }}
+        lyrics={lines}
+        lyricsLoading={loading}
+        activeLine={activeLine}
+        onSeekLine={seekLine}
+        liked={likedIds.has(current.id)}
+        onLike={() => toggle(current)}
+        onClose={onClose}
+      />
+      {/* Карточка смысла строки — соседом панели: сама панель её не держит
+          (у приложения диалог тоже живёт снаружи, на уровне окна). */}
+      {meaningDialog}
+    </>
   );
 }
