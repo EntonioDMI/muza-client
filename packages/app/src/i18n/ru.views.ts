@@ -82,8 +82,14 @@ export const viewsRu: typeof viewsEn = {
     chips: {
       playlists: "Плейлисты",
       local: "Локальные",
+      // Переехало из web.library.tabHistory (волна 8, 2026-08-02) — см. en.views.ts.
+      history: "История",
       albums: "Альбомы",
       artists: "Артисты",
+    },
+    historyEmpty: {
+      title: "История пуста",
+      hint: "Всё, что послушаешь, будет здесь — с любого устройства.",
     },
     title: "Твоя медиатека",
     addLink: "По ссылке",

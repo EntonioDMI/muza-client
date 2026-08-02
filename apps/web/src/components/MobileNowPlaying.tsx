@@ -22,7 +22,14 @@ import { LyricsBlock } from "./LyricsPanel";
  *
  *  Сам ListeningMode сюда НЕ ставится намеренно: его сцена — две колонки
  *  (обложка слева, текст справа) под ландшафтное окно, на 375px это чужая
- *  раскладка. Общее у экранов — полотно текста и его настройки, и оно общее. */
+ *  раскладка. Общее у экранов — полотно текста и его настройки, и оно общее.
+ *
+ *  ⚠️ Это правило — ПРО ТЕЛЕФОН, и только про него. На широком окне общий
+ *  ListeningMode с 2026-08-02 подключён (components/ListeningModeHost.tsx):
+ *  там две колонки как раз есть, и раньше клик по обложке в полосе плеера не
+ *  делал ничего, хотя в приложении открывал караоке. Два полноэкранных режима
+ *  не пересекаются: хост не монтируется на телефонной раскладке, этот экран
+ *  открывается только с мини-бара, которого на широком окне нет. */
 export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
   const p = usePlayer();
   const { position, duration } = usePosition();
@@ -51,7 +58,9 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
   return (
     <div className="np-overlay" role="dialog" aria-label={t("nowPlaying.heading")}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <IconButton icon="chevron-down" label={t("web.mobileNowPlaying.collapseAria")} onClick={onClose} />
+        {/* «Свернуть» — общая строка режима прослушивания: та же кнопка выхода
+            из полноэкранного «Сейчас играет», что в приложении. */}
+        <IconButton icon="chevron-down" label={t("listeningMode.minimize")} onClick={onClose} />
         <span
           style={{
             fontSize: "var(--fs-caption)",

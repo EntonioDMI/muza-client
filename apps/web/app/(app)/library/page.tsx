@@ -112,7 +112,8 @@ export default function LibraryPage() {
       }
       playContext(detail.tracks, 0);
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("web.playlist.notFound"), "x");
+      // общий текст неудачи (views.playlist.loadFailed) — тот же, что в приложении
+      notify(e instanceof Error ? e.message : t("views.playlist.loadFailed"), "x");
     }
   };
 

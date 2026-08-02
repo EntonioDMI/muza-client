@@ -92,8 +92,16 @@ export const viewsEn = {
     chips: {
       playlists: "Playlists",
       local: "Local",
+      // Вкладка «История» переехала сюда из web.* (волна 8, 2026-08-02): её
+      // рисует ОБЩИЙ LibraryView, и в приложении она такая же — раздел одной
+      // площадки для неё был неверным домом (приёмка волны 4).
+      history: "History",
       albums: "Albums",
       artists: "Artists",
+    },
+    historyEmpty: {
+      title: "History is empty",
+      hint: "Everything you listen to will show up here — from any device.",
     },
     title: "Your Library",
     addLink: "By link",

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ChipGroup, Fader, Switch, Tabs } from "@muza/ui";
-import { LANGS, useT, type Lang, type TranslationKey } from "@muza/app";
+import { ChipGroup, Switch, Tabs } from "@muza/ui";
+import { LANGS, useT, type Lang } from "@muza/app";
 import { usePlatform } from "@muza/app/platform";
 import { SettingsScreen } from "@muza/app/views/settings/SettingsScreen";
 import { AccountPane } from "@muza/app/views/settings/AccountPane";
@@ -14,6 +14,11 @@ import { DataSub } from "@muza/app/views/settings/DataSub";
 import { PrivacySub } from "@muza/app/views/settings/PrivacySub";
 import { StatsSub } from "@muza/app/views/settings/StatsSub";
 import { LicensesSub } from "@muza/app/views/settings/LicensesSub";
+/** Профили эквалайзера берутся ОТТУДА ЖЕ, откуда их рисуют чипы: копия в
+ *  apps/web/src/audioFx.ts совпадала цифра в цифру, но два списка в двух
+ *  файлах разъезжаются на первой же правке — а значение prefs.eqPreset
+ *  персистентно и общее с приложением. */
+import { EqualizerControls, EQ_PRESETS } from "@muza/app/views/settings/EqualizerSub";
 import { RecsTuning } from "@muza/app/views/settings/PlaybackPane";
 import { paneRows, SettingsProvider, settingsCaps, type SettingsSubKey } from "@muza/app/views/settings/settingsContext";
 import type { SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
@@ -27,12 +32,12 @@ import {
   PresetTile,
   RowValue,
   SettingRow,
+  SettingsPane,
   StepsEditor,
 } from "@muza/app/views/settings/primitives";
 import { matchPreset, PRESETS_WARM } from "@muza/app/prefs/presets";
 import { DEFAULT_PREFS } from "@muza/app/prefs/types";
 import { getApi } from "../../../src/api";
-import { EQ_PRESETS } from "../../../src/audioFx";
 import { usePlayer } from "../../../src/player";
 import { usePrefs, type WebPrefs } from "../../../src/prefs";
 import { useSession } from "../../../src/session";
@@ -155,7 +160,6 @@ const KARAOKE_SIZE_MAX = 72;
  *  «Системный» — единственная переводимая подпись этого выбора. */
 const FONT_KEYS = ["golos", "unbounded", "system"] as const;
 
-const EQ_LABELS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
 
 export default function SettingsPage() {
   const { prefs, set } = usePrefs();
@@ -208,21 +212,6 @@ export default function SettingsPage() {
     [caps],
   );
 
-  /** Строка, которой может ещё не быть в словарях (их правит отдельный ход
-   *  волны). Нет перевода — ряд остаётся без подсказки: пустая строка честнее,
-   *  чем `web.settings.speed.hint` буквами на экране.
-   *
-   *  ⚠️ Это ЗАГЛУШКА НА ВРЕМЯ, а не приём. Два ключа — `web.settings.speed.hint`
-   *  и `web.settings.speedSteps.hint` — заявлены в словари этой же волной;
-   *  как только они там появятся, подсказки встанут сами (`t` перестанет
-   *  возвращать ключ), а этот хелпер можно снимать вместе с двумя `tOpt` ниже.
-   *  Новые ряды через него заводить НЕ НАДО: строка добавляется вместе с
-   *  рядом, и ряд без подсказки — это недоделанный ряд. */
-  const tOpt = (key: string): string | undefined => {
-    const s = t(key as TranslationKey);
-    return s === key ? undefined : s;
-  };
-
   /** Открытый под-экран. Состояние держит страница (она же подменяет им
    *  содержимое раздела), но распоряжаются им ДВОЕ: сами ряды через контекст
    *  («Сессии и устройства →») и каркас — он закрывает под-экран при смене
@@ -247,7 +236,7 @@ export default function SettingsPage() {
   const setBand = (i: number, v: number) => {
     const bands = [...prefs.eqBands];
     bands[i] = Math.round(v);
-    // Значение — персистентный ключ prefs.eqPreset (см. EQ_PRESETS в audioFx.ts),
+    // Значение — персистентный ключ prefs.eqPreset (см. EQ_PRESETS в EqualizerSub),
     // сознательно не переведён, как и в приложении.
     set({ eqBands: bands, eqPreset: "Свой" });
   };
@@ -312,8 +301,13 @@ export default function SettingsPage() {
    *  это новая вкладка с noopener). */
   const systemPane = sub === "licenses" ? <LicensesSub /> : <SystemPane />;
 
+  /* Разделы, собранные прямо на странице, заворачиваются в <SettingsPane> —
+     контракт каркаса «раздел оборачивает себя сам» (шапка SettingsScreen.tsx).
+     Раньше поле вокруг них заводил каркас, и разделам, приехавшим готовым
+     компонентом (они заводят его у себя), оно доставалось дважды: 60px до
+     первого ряда против 36px здесь. */
   const appearancePane = (
-    <>
+    <SettingsPane>
       {/* Язык — первым, как в приложении: живой, без перезагрузки страницы. */}
       <SettingRow title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
         <Tabs
@@ -426,7 +420,7 @@ export default function SettingsPage() {
       <SettingRow title={t("web.settings.npPanelRow.title")} hint={t("web.settings.npPanelRow.hint")}>
         <Switch checked={prefs.npOpen} onChange={(npOpen: boolean) => set({ npOpen })} label={t("web.settings.npPanelRow.title")} />
       </SettingRow>
-    </>
+    </SettingsPane>
   );
 
   /** «Воспроизведение». До 2026-08-02 здесь был ОДИН ряд — эквалайзер, — хотя
@@ -445,7 +439,7 @@ export default function SettingsPage() {
    *     (src/providers.tsx), настройку он пока не спрашивает;
    *   - «Таймер сна» — кнопки-луны в полосе плеера веба не существует. */
   const playbackPane = (
-    <>
+    <SettingsPane>
       <GroupTitle>{t("settings.playback.transitionsGroup")}</GroupTitle>
       <SettingRow title={t("settings.playback.crossfade.title")} hint={t("settings.playback.crossfade.hint")}>
         <Switch checked={prefs.crossfade} onChange={(crossfade: boolean) => set({ crossfade })} label={t("settings.playback.crossfade.title")} />
@@ -475,29 +469,14 @@ export default function SettingsPage() {
       </SettingRow>
       {/* Эквалайзер в вебе — прямо в разделе, а не отдельным под-экраном:
           под-экранов у этого каркаса пока нет, а прятать десять фейдеров за
-          лишним переходом ради симметрии — хуже, чем показать их сразу. */}
-      <div style={prefs.eqOn ? undefined : { opacity: 0.4, pointerEvents: "none" }}>
-        <div className="eq-faders" style={{ margin: "var(--sp-2) 0 var(--sp-3)", padding: 0 }}>
-          {/* Ключи EQ_PRESETS (рус. слова) — персистентные значения prefs.eqPreset,
-              как и "Свой": сознательно не переведены, та же договорённость, что в
-              приложении (иначе сохранённая настройка разъедется между клиентами). */}
-          <ChipGroup items={[...Object.keys(EQ_PRESETS), "Свой"]} value={prefs.eqPreset} onChange={applyEqPreset} />
-        </div>
-        <div className="eq-faders">
-          {prefs.eqBands.map((v, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--sp-1)" }}>
-              <Fader
-                value={v}
-                min={-12}
-                max={12}
-                height={120}
-                onChange={(nv: number) => setBand(i, nv)}
-                ariaLabel={t("settings.equalizer.bandAria", { freq: EQ_LABELS[i] })}
-              />
-              <span style={{ fontFamily: "var(--font-ui)", fontSize: 11, color: "var(--text-3)" }}>{EQ_LABELS[i]}</span>
-            </div>
-          ))}
-        </div>
+          лишним переходом ради симметрии — хуже, чем показать их сразу.
+          РИСУЕТ ЕГО ОБЩИЙ КОД (@muza/app/views/settings/EqualizerSub) — чипы
+          профилей, панель полос со шкалой дБ и сброс те же, что в под-экране
+          приложения. Своя копия ряда фейдеров жила здесь до волны 8 и успела
+          разъехаться: полосы вдвое короче, без панели, без цифр дБ, без
+          сброса и с латинской «1k» вместо словарной «1к». */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+        <EqualizerControls bands={prefs.eqBands} preset={prefs.eqPreset} disabled={!prefs.eqOn} onPreset={applyEqPreset} onBand={setBand} />
       </div>
       {/* «Выравнивание громкости» ряда ЗДЕСЬ НЕТ, хотя плеер веба его уже умеет
           (apps/web/src/audioFx.ts: normFactor приводит трек к −14 LUFS). Не
@@ -510,14 +489,16 @@ export default function SettingsPage() {
           плеера веба нет, и без этого ряда переключать скорость было бы нечем
           (а «Шаги скорости» ниже настраивали бы пустоту). Значение живёт в
           плеере и не сохраняется между заходами — как кнопка в приложении. */}
-      <SettingRow title={t("player.speedTooltip")} hint={tOpt("web.settings.speed.hint")}>
+      <SettingRow title={t("player.speedTooltip")} hint={t("web.settings.speed.hint")}>
         <ChipGroup
           items={prefs.speedSteps.map((v) => ({ key: String(v), label: `${v}×` }))}
           value={String(player.speed)}
           onChange={(k: string) => player.setSpeed(Number(k))}
         />
       </SettingRow>
-      <SettingRow title={t("settings.playback.speedSteps.title")} hint={tOpt("web.settings.speedSteps.hint")}>
+      {/* Подсказка своя, а не общая settings.playback.speedSteps.hint: та
+          говорит про кнопку «1×» в плеере, которой у веба нет. */}
+      <SettingRow title={t("settings.playback.speedSteps.title")} hint={t("web.settings.speedSteps.hint")}>
         <StepsEditor
           values={prefs.speedSteps}
           onApply={(speedSteps) => set({ speedSteps })}
@@ -576,11 +557,11 @@ export default function SettingsPage() {
           />
         </SettingRow>
       </PresetRow>
-    </>
+    </SettingsPane>
   );
 
   const sourcesPane = (
-    <>
+    <SettingsPane>
       <GroupTitle>{t("settings.sources.searchGroup")}</GroupTitle>
       <SettingRow title={t("settings.sources.searchGrouping.title")} hint={t("settings.sources.searchGrouping.hint")}>
         <Switch
@@ -589,7 +570,7 @@ export default function SettingsPage() {
           label={t("settings.sources.searchGrouping.title")}
         />
       </SettingRow>
-    </>
+    </SettingsPane>
   );
 
   /** «Тексты песен». Ряды — те же, что в приложении (@muza/app/views/settings/
@@ -598,7 +579,7 @@ export default function SettingsPage() {
    *  разделов: LyricsPane читает контекст экрана настроек (SettingsProvider с
    *  портами площадки), а страница веба ведёт настройки своим usePrefs. */
   const lyricsPane = (
-    <>
+    <SettingsPane>
       <GroupTitle>{t("settings.lyrics.displayGroup")}</GroupTitle>
       <SettingRow title={t("settings.lyrics.synced.title")} hint={t("settings.lyrics.synced.hint")}>
         <Switch checked={prefs.syncedLyrics} onChange={(syncedLyrics: boolean) => set({ syncedLyrics })} label={t("settings.lyrics.synced.title")} />
@@ -656,7 +637,7 @@ export default function SettingsPage() {
       <SettingRow title={t("settings.lyrics.meaningMode.title")} hint={t("settings.lyrics.meaningMode.hint")}>
         <Switch checked={prefs.meaningMode} onChange={(meaningMode: boolean) => set({ meaningMode })} label={t("settings.lyrics.meaningMode.title")} />
       </SettingRow>
-    </>
+    </SettingsPane>
   );
 
   return (

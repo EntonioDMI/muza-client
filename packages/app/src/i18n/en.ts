@@ -1562,68 +1562,49 @@ export const en = {
     },
   },
 
-  // ── Веб-клиент (И5-веб, 2026-07-22): apps/web зона, строки без десктопного
-  //    аналога. Общие действия/тосты/пустые состояния переиспользуют settings.*/
-  //    menu.*/toast.*/views.*/dialogs.* выше — здесь только то, чему пары нет. ──
+  // ── Веб-клиент (И5-веб 2026-07-22; чистка и тон — волна 8, 2026-08-02).
+  //
+  //    ЧТО ЗДЕСЬ ЛЕЖИТ: только строки, которых у приложения нет и быть не
+  //    может — скачивание файлом браузером, нижняя навигация телефона,
+  //    витрина «это умеет приложение для Windows», настройки, которых у
+  //    десктопа нет. Всё остальное веб берёт из общих разделов выше:
+  //    одно понятие — ОДНА формулировка на два клиента.
+  //
+  //    ⚠️ Раздел ОДНОЙ площадки. Общий код (packages/app) сюда ходить НЕ
+  //    ДОЛЖЕН: приложение, рисуя тот же экран, показало бы «веб»-строки.
+  //    Нужна строка общему экрану — её дом views.*/settings.*/toast.*
+  //    (урок приёмки волны 4: LibraryView читал отсюда вкладку «История»,
+  //    строки переехали в views.library.*).
+  //
+  //    ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ (волна 8): лента, поиск, «Любимое», статистика,
+  //    медиатека и плейлист рисуются ОБЩИМИ вью — их веб-двойники стали
+  //    мёртвым грузом с разъехавшимися формулировками и удалены. «В плейлист»,
+  //    «Не удалось загрузить плейлист», «Ничего не играет», «Свернуть» и
+  //    «Сейчас играет» веб теперь берёт из общих разделов. ──
   web: {
     nav: {
-      playlistsEmptyHint: "Created in the app",
+      // Пустой список плейлистов в сайдбаре. Раньше здесь стояло «Created in
+      // the app» — неправда с тех пор, как у веба появилась кнопка «+».
+      playlistsEmptyHint: "Press + above — the first one shows up here",
       bottomNavAria: "Main navigation",
     },
-    favorites: {
-      emptyTitle: "Your favorites will show up here",
-      emptyHint: "Tap the heart on any track — in a list, the player or the Now Playing panel. Likes sync with the app.",
-    },
-    home: {
-      serverDown: "Server unavailable — refresh the page once it's back.",
-      emptyHint: "Listen to something — your feed will build from what you play.",
-    },
-    library: {
-      haveCode: "I have a code",
-      createPlaylist: "Create playlist",
-      tabHistory: "History",
-      historyEmptyTitle: "History is empty",
-      historyEmptyHint: "Everything you listen to will show up here — from any device.",
-      joinCodeHint: "A friend enters the code on their side: Library → \"I have a code\".",
-    },
     playlist: {
-      notFound: "Playlist not found.",
-      noId: "No playlist specified.",
-      empty: "This playlist is empty.",
-      actionsAria: "Playlist actions",
-      leaveDialogTitle: "Leave playlist?",
-      leaveDialogBody: "You'll stop seeing \"{name}\" and won't be able to add tracks — until the owner sends the code again.",
-      ownerSuffix: "(owner)",
-    },
-    search: {
-      catalogEmptyHint: 'The catalog is empty for now — try "Search in sources".',
-      nothingFound: "Nothing found.",
-      searchFailed: "Search failed",
-      searchingSources: "Searching in sources — up to half a minute…",
-      emptyTitle: "Find anything",
-      emptyHint: 'The catalog answers instantly as you type. Nothing found? "Search in sources" fetches the track from YouTube and SoundCloud.',
-    },
-    stats: {
-      serverDown: "Server unavailable — refresh the page once it's back.",
-      emptyTitle: "Nothing to show yet",
-      emptyHint: "Listen to something — minutes, tops and streaks will show up here after your first plays.",
-      topHour: "Favorite hour — {hour}:00",
-      noTopHour: "No favorite hour yet",
+      // Адрес страницы без id: у приложения такого состояния нет — там
+      // плейлист всегда открывают из списка.
+      noId: "It's not clear which playlist to open — pick one in your library.",
     },
     settings: {
-      tabs: { sound: "Sound", search: "Search", offline: "Offline", customizePlus: "Customize+" },
-      lightTheme: { title: "Light theme", hint: "Warm light interface instead of graphite" },
-      npPanelRow: { title: "\"Now Playing\" panel", hint: "Opens on its own when a track starts (on a wide screen)" },
-      backgroundHint: "Muza's signature look: a blurred track cover behind the interface",
-      fontHint: "Labels and text across the whole web player",
+      // Имена шрифтов не переводятся, «System» — единственное исключение.
       fontSystem: "System",
-      eqHint: "10 bands, like in the app. Works on the currently playing track.",
-      offlineSaveTitle: "Save tracks offline",
-      offlineSaveHint: "Listen without internet; old tracks are removed automatically once the limit is reached",
-      bgTitle: "Interface background",
-      marketplaceHint: "Ready-made themes from other users — in one click",
-      openMarketplace: "Open marketplace",
-      accountHint: "Full account settings and offline — in the Windows app",
+      npPanelRow: {
+        title: "\"Now Playing\" panel",
+        hint: "On a wide screen the panel with the cover and lyrics opens by itself when a track starts.",
+      },
+      // Своя подсказка, а не общая: кнопки «1×» в полосе плеера веба нет —
+      // скорость переключается прямо здесь, и после перезагрузки страницы
+      // возвращается к обычной.
+      speed: { hint: "The music plays faster or slower, and voices stay normal. Back to 1× when you open the site again." },
+      speedSteps: { hint: "These are the values shown next to \"Playback speed\" above. List your own steps comma-separated, from 0.25 to 4." },
     },
     desktopOnly: {
       defaultHint: "Works in the Windows app",
@@ -1633,26 +1614,21 @@ export const en = {
       inApp: "in the app",
     },
     trackList: {
-      fileOnOtherDevice: "{title} — file on another device",
-      downloadStarted: "Download started",
-      downloadFailed: "Couldn't download",
-      choosePlaylist: "Which playlist?",
-      noPlaylistsHint: "No playlists yet — create the first one in the Library.",
+      fileOnOtherDevice: "{title} — the file is on another device",
+      downloadStarted: "Downloading — look for the file in your browser's downloads",
+      downloadFailed: "Couldn't download the file",
     },
     player: {
-      queueHint: "Pick a track — the queue will appear on its own",
-      npPanelAria: "\"Now Playing\" panel",
       openNowPlayingAria: "Open \"Now Playing\"",
     },
     mobileNowPlaying: {
-      collapseAria: "Collapse",
       coverAria: "Cover",
     },
     lyrics: {
-      emptyNoTrack: "Play a track — lyrics will show up here.",
+      emptyNoTrack: "Play a track — the lyrics show up here.",
     },
     login: {
-      footerNote: "Email, password recovery and offline — in the Windows app.",
+      footerNote: "Email, password recovery and offline live in the Windows app.",
     },
   },
 

@@ -17,6 +17,7 @@ import { usePlaylists } from "../playlists";
 import { usePrefs } from "../prefs";
 import { useSession } from "../session";
 import { useToast } from "../toast";
+import { ListeningModeHost } from "./ListeningModeHost";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { NowPlayingPanel } from "./NowPlayingPanel";
 import { PlayerBar } from "./PlayerBar";
@@ -31,6 +32,9 @@ import { TRACK_DND_MIME } from "./TrackList";
  *  контент; телефон-портрет — нижняя навигация + мини-бар + полноэкранный
  *  now-playing; ландшафт высотой ≤480px — .bottomnav превращается в левый
  *  иконный рельс, мини-бар ужат.
+ *  Поверх любого широкого режима может подняться караоке во весь экран
+ *  (ListeningModeHost) — тот же общий оверлей, что в приложении; на телефоне
+ *  его роль играет MobileNowPlaying.
  *
  *  Э3 веб-паритета (2026-08-02): боковая панель больше НЕ своя — это общая
  *  @muza/app/shell/Sidebar, та же, что в приложении. Вместе с ней приехало то,
@@ -67,6 +71,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { t } = useT();
   const [mobileNp, setMobileNp] = useState(false);
+  /** Полноэкранный режим прослушивания (караоке) — как `expanded` в
+   *  приложении: состояние живёт в оболочке, потому что вход даёт полоса
+   *  плеера, а сцена накрывает всё окно целиком. На телефоне не включается —
+   *  там полный экран это MobileNowPlaying (см. ListeningModeHost.tsx). */
+  const [listening, setListening] = useState(false);
   /** Порядок плейлистов, применённый оптимистично (перетаскиванием), пока
    *  сервер не ответил. null — показываем то, что дал контекст. Провайдер
    *  плейлистов общий на весь веб и своего «переставить» не умеет; заводить
@@ -209,7 +218,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // наличию трека, — из-за чего у человека без музыки правая треть экрана
   // просто исчезала, а раскладка прыгала на первом же клике (замечание
   // владельца 02.08). Настройку оставляем: кто её выключил — тот выключил.
-  const npVisible = prefs.npOpen;
+  //
+  // …кроме экрана настроек. Он единственный сам по себе двухколоночный
+  // (рельс разделов + панель) и меряет себя container query по СВОЕЙ ширине —
+  // отобранные панелью 340px роняли его в узкий режим: рельс схлопывался в
+  // иконки, ряды настроек ломались в две строки. Замер 02.08: центральная зона
+  // на /settings — 864px в вебе против 1216px в приложении, и это была самая
+  // крупная оставшаяся разница между клиентами. В приложении ровно то же
+  // правило и по той же причине (App.tsx → showNowPlaying: `view !==
+  // "settings"`). Слушать музыку и крутить настройки одновременно не сценарий:
+  // что играет, видно в полосе плеера снизу, она никуда не делась.
+  const npVisible = prefs.npOpen && pathname !== "/settings";
 
   return (
     // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь.
@@ -336,6 +355,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         npOpen={prefs.npOpen}
         onToggleNp={() => set({ npOpen: !prefs.npOpen })}
         onOpenMobile={() => setMobileNp(true)}
+        onExpand={() => setListening(true)}
       />
 
       {/* Нижняя навигация (<900px): «Любимое» здесь остаётся пунктом —
@@ -382,6 +402,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </Dialog>
 
       {mobileNp ? <MobileNowPlaying onClose={() => setMobileNp(false)} /> : null}
+
+      {/* Караоке во весь экран — ПОСЛЕДНИМ ребёнком .shell и без обёрток:
+          общий оверлей позиционируется absolute inset:0 и рассчитывает, что
+          ближайший позиционированный предок — сам шелл (position: fixed).
+          z-index у него 100, то есть выше плеер-бара (--z-bar 40), нижней
+          навигации (30) и мобильного now-playing (--z-overlay 50) — и ниже
+          слоя переноса (300), как в приложении. */}
+      <ListeningModeHost open={listening} onClose={() => setListening(false)} />
     </div>
     </DragLayer>
   );

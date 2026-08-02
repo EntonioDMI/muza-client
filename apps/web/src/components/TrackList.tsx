@@ -237,13 +237,26 @@ export function useWebTrackMenu(
       ) : null}
 
       {/* Выбор плейлиста для «В плейлист…» */}
-      <Dialog open={plPick !== null} title={t("web.trackList.choosePlaylist")} onClose={() => setPlPick(null)}>
+      {/* Заголовок и пустой список — ОБЩИЕ строки диалога «В плейлист»
+          (app.addToPlaylistDialog.*): у веба был свой текст про то же самое
+          («В какой плейлист?»), и одно понятие звучало на двух клиентах
+          по-разному. Один трек — с названием, пачка — со счётчиком, как в
+          приложении (волна 8, 2026-08-02). */}
+      <Dialog
+        open={plPick !== null}
+        title={
+          plPick && plPick.length === 1
+            ? t("app.addToPlaylistDialog.titleWithTrack", { title: plPick[0].title })
+            : t("app.addToPlaylistDialog.titleWithCount", { count: plPick?.length ?? 0 })
+        }
+        onClose={() => setPlPick(null)}
+      >
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 300, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
           {!loaded ? (
             <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>{t("common.loading")}</span>
           ) : playlists.length === 0 ? (
             <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>
-              {t("web.trackList.noPlaylistsHint")}
+              {t("app.addToPlaylistDialog.empty")}
             </span>
           ) : (
             playlists.map((p) => (

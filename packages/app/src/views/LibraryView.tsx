@@ -12,23 +12,13 @@ import { SelectionBar } from "../shell/SelectionBar";
 import { useMultiSelect } from "../lib/useMultiSelect";
 import { useAltFileDrag, useLocalFiles, type LocalFileEntry } from "../platform";
 import { playlistIconSrc } from "@muza/core";
-import { useT, type TranslationKey } from "../i18n";
+import { useT } from "../i18n";
 
-/** Ключ вкладки «История» и её пустого состояния с мягким приземлением.
- *
- *  Дом этих строк — views.library.*, как у остальных подписей экрана: общий
- *  компонент не должен ходить в web.* — это раздел словаря ОДНОЙ площадки, и
- *  приложение, показывая ту же вкладку, читало бы «веб»-строки.
- *
- *  Почему пара ключей, а не один: строки под новыми именами заводятся
- *  отдельным ходом волны (словари — не эта зона), а translate на неизвестный
- *  ключ возвращает сам ключ — на вкладке стояло бы «views.library.chips.
- *  history». Поэтому: новый ключ, а пока его нет — прежний. Строки появились →
- *  вторая половина отмирает, и эту функцию можно снести вместе с парами. */
-function libraryText(t: (key: TranslationKey) => string, fresh: string, legacy: TranslationKey): string {
-  const value = t(fresh as TranslationKey);
-  return value === fresh ? t(legacy) : value;
-}
+/* Вкладка «История» и её пустое состояние берут строки из views.library.* —
+ * как остальные подписи экрана. Здесь была пара «новый ключ, а пока его нет —
+ * прежний web.library.*»: общий компонент не должен ходить в раздел словаря
+ * ОДНОЙ площадки (приложение показывало бы «веб»-строки). Волна 8 завела
+ * строки под правильными именами — временная пара снята. */
 
 /** «Любимое» — закреплённая ПЕРВАЯ плитка библиотеки (Spotify-паттерн, выбор
  *  владельца 2026-07-16): не пункт сайдбара, а особый плейлист. Вместо обложки
@@ -344,7 +334,7 @@ export function LibraryView({
   const chips = [
     { key: "playlists", label: t("views.library.chips.playlists") },
     ...(local ? [{ key: "local", label: t("views.library.chips.local") }] : []),
-    ...(historyTab ? [{ key: "history", label: libraryText(t, "views.library.chips.history", "web.library.tabHistory") }] : []),
+    ...(historyTab ? [{ key: "history", label: t("views.library.chips.history") }] : []),
     { key: "albums", label: t("views.library.chips.albums") },
     { key: "artists", label: t("views.library.chips.artists") },
   ];
@@ -555,8 +545,8 @@ export function LibraryView({
         ) : history.length === 0 ? (
           <EmptyState
             icon="history"
-            title={libraryText(t, "views.library.historyEmpty.title", "web.library.historyEmptyTitle")}
-            hint={libraryText(t, "views.library.historyEmpty.hint", "web.library.historyEmptyHint")}
+            title={t("views.library.historyEmpty.title")}
+            hint={t("views.library.historyEmpty.hint")}
           />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>

@@ -10,6 +10,31 @@
  *  «Системе» живут трей и обновления, у браузера этого раздела нет ВОВСЕ
  *  (нет ключа в `panes` — нет пункта в рельсе, нет ряда в поиске).
  *
+ *  ═══ КОНТРАКТ «РАЗДЕЛ ОБОРАЧИВАЕТ СЕБЯ САМ» (правка 2026-08-02) ═══
+ *
+ *  Поле вокруг рядов (вертикальный ритм + отступы сверху/снизу, paneStyle)
+ *  заводит САМ РАЗДЕЛ, ровно один раз. Каркас не добавляет вокруг `panes[tab]`
+ *  ничего: он вставляет узел как есть.
+ *
+ *  Почему так, а не наоборот («каркас даёт поле, раздел отдаёт голое
+ *  содержимое»): поле уже заводят у себя все девятнадцать разделов и
+ *  тринадцать под-экранов пакета (<div className={paneClass} style={paneStyle}>
+ *  — на этой же обёртке висит класс анимации смены панели), и приложение
+ *  вставляет их своим каркасом БЕЗ обёртки. То есть контракт де-факто
+ *  существовал, отступал от него ровно этот файл.
+ *
+ *  Чем это было: каркас заворачивал в поле ВСЁ, включая разделы, приехавшие
+ *  готовым компонентом, — и у них поле складывалось вдвое. Замер приёмки в
+ *  браузере: 60px от поиска до первого ряда в «Аккаунте», «Медиатеке»,
+ *  «Интеграциях» и «Системе» против 36px в разделах, собранных на странице
+ *  (лишние ровно --sp-6 = 24px). Числами по месту это не лечится: разъезжается
+ *  не число, а ответ на вопрос «чьё поле» — поэтому ответ ОДИН и записан здесь.
+ *
+ *  Что обязана делать площадка: раздел, собранный фрагментом (`<>…</>`),
+ *  завернуть в <SettingsPane> (primitives.tsx) — тогда он неотличим от
+ *  готового компонента, и каркасу не надо знать, чем раздел нарисован. Ровно
+ *  так поступают встроенный раздел клавиш ниже и список результатов поиска.
+ *
  *  Что умеет площадка — говорит `caps`: тот же список, что фильтрует индекс
  *  поиска (lib/settingsIndex.ts). Поиск, приводящий к несуществующему ряду,
  *  хуже ненайденного ряда — поэтому фильтр общий, а не по месту.
@@ -40,12 +65,12 @@
  *  (settingsContext.tsx) — список рядом с чужим компонентом разъехался бы с ним
  *  на первой же правке. */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Kbd, SearchInput } from "@muza/ui";
 import { useT, type TranslationKey } from "../../i18n";
 import { DEFAULT_HOTKEYS, formatCombo, hotkeyActionLabel, HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import { searchSettings, type SettingsCapability, type SettingsSearchHit } from "../../lib/settingsIndex";
-import { paneStyle, SettingRow } from "./primitives";
+import { SettingRow, SettingsPane } from "./primitives";
 import { navItemId, SETTINGS_PANE_ID, SETTINGS_TAB_KEYS, SettingsNav, type SettingsTabKey } from "./SettingsNav";
 import type { SettingsSubKey } from "./settingsContext";
 import "./settingsShell.css";
@@ -71,8 +96,10 @@ function HotkeysReferencePane() {
   // же смысла вместо «settings.hotkeys.fixedNote» на экране.
   const noteKey = "settings.hotkeys.fixedNote";
   const note = t(noteKey as TranslationKey);
+  // Собственное поле раздела — по контракту каркаса (см. шапку файла): каркас
+  // вокруг узла раздела не добавляет ничего, даже вокруг своего встроенного.
   return (
-    <>
+    <SettingsPane>
       {HOTKEY_ACTIONS.map((action) => (
         <SettingRow key={action.id} title={hotkeyActionLabel(action.id, lang)}>
           {/* Сочетание разбито на плашки-клавиши: «Ctrl + →» читается как две
@@ -89,7 +116,7 @@ function HotkeysReferencePane() {
       <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
         {note === noteKey ? t("settings.hotkeys.help.hint") : note}
       </div>
-    </>
+    </SettingsPane>
   );
 }
 
@@ -153,11 +180,28 @@ export function SettingsScreen({
   // прокрутки и пересоздания содержимого он такая же смена панели, как раздел.
   const paneKey = sub ?? tab;
 
-  // Прокрутка живёт в самой панели: при смене панели возвращаем её к началу,
-  // иначе скролл прошлого раздела протекает в следующий.
+  // Прокрутка при смене панели возвращается к началу, иначе скролл прошлого
+  // раздела протекает в следующий.
+  //
+  // ⚠️ Прокручивается НЕ ВСЕГДА сама панель. В окне приложения — да
+  // (.muza-settings__pane со своим overflow), а страницу браузера прокручивает
+  // зона вокруг неё (<main>), и панель там не скроллер вовсе: сброс её
+  // scrollTop был там пустой операцией — человек уходил в другой раздел,
+  // оставаясь на середине прошлого, и липкий рельс слева «прыгал» относительно
+  // содержимого. Поэтому ищем ближайшего предка, который реально прокручен.
   const paneScrollRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (paneScrollRef.current) paneScrollRef.current.scrollTop = 0;
+    const pane = paneScrollRef.current;
+    if (!pane) return;
+    pane.scrollTop = 0;
+    for (let el: HTMLElement | null = pane.parentElement; el; el = el.parentElement) {
+      // Ищем первого предка, который И скроллер, И реально прокручен: у не
+      // прокрученного scrollTop уже 0, трогать его незачем.
+      if (el.scrollTop !== 0 && /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY)) {
+        el.scrollTop = 0;
+        break;
+      }
+    }
   }, [paneKey]);
 
   // Смена раздела закрывает его под-экран: под-экран живёт ВНУТРИ раздела, и
@@ -247,7 +291,9 @@ export function SettingsScreen({
             style={{ marginTop: "var(--sp-6)" }}
           />
           {searchQ.trim() ? (
-            <div key="search-results" style={paneStyle}>
+            /* Результаты поиска — такой же «раздел», как остальные: своё поле,
+               заведённое той же обёрткой (контракт в шапке файла). */
+            <SettingsPane key="search-results">
               {searchHits.length === 0 ? (
                 <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.search.empty")}</div>
               ) : (
@@ -261,11 +307,13 @@ export function SettingsScreen({
                   ></SettingRow>
                 ))
               )}
-            </div>
+            </SettingsPane>
           ) : (
-            <div key={paneKey} style={paneStyle}>
-              {shownPanes[tab]}
-            </div>
+            /* Узел раздела вставляется КАК ЕСТЬ — поле у него своё (контракт в
+               шапке файла). Ключ несёт Fragment: в разметку он не добавляет
+               ничего, но смена раздела по-прежнему пересоздаёт поддерево —
+               внутреннее состояние прошлого раздела в следующий не протекает. */
+            <Fragment key={paneKey}>{shownPanes[tab]}</Fragment>
           )}
         </div>
       </div>

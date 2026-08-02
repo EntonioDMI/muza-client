@@ -22,7 +22,8 @@ import { usePlayer, usePosition } from "../player";
  *  полоса рисует кнопку, только если ей дали обработчик. Мы не даём таймер
  *  сна, скорость, эквалайзер, текст песни, совместное прослушивание и вынос
  *  файла на рабочий стол — их в вебе не существует. Остаются перемешивание,
- *  повтор, очередь и громкость.
+ *  повтор, очередь, громкость и — с подключением караоке — полноэкранный
+ *  режим прослушивания (onExpand, см. ListeningModeHost.tsx).
  *
  *  ⚠️ Мини-бар остался своим: у приложения телефона нет вовсе, и переносить
  *  в общий пакет пока нечего — он рисует ту же пару «обложка + название +
@@ -31,10 +32,17 @@ export function PlayerBar({
   npOpen,
   onToggleNp,
   onOpenMobile,
+  onExpand,
 }: {
   npOpen: boolean;
   onToggleNp: () => void;
   onOpenMobile: () => void;
+  /** Открыть полноэкранный режим прослушивания (караоке). Общая полоса даёт
+   *  ДВА входа сразу и оба — те же, что в приложении: клик по обложке трека
+   *  (кнопка с подсказкой «Слушать» — она была тут и раньше, но висела вхолостую)
+   *  и кнопка maximize-2 справа. Кнопки нет без обработчика: пока веб не умел
+   *  режим, полоса честно её не рисовала. */
+  onExpand?: () => void;
 }) {
   const p = usePlayer();
   const { position, duration } = usePosition();
@@ -66,7 +74,10 @@ export function PlayerBar({
     if (i >= 0) p.playContext(p.queue, i);
   };
 
-  const miniSubtitle = p.error ?? (p.loading ? t("common.loading") : (current?.artist ?? t("web.player.queueHint")));
+  // Пустой мини-бар говорит ТО ЖЕ, что полоса плеера приложения (player.empty.*):
+  // заголовок уже брался оттуда, а подсказка была своя — одно состояние
+  // объяснялось двумя разными фразами (волна 8, 2026-08-02).
+  const miniSubtitle = p.error ?? (p.loading ? t("common.loading") : (current?.artist ?? t("player.empty.hint")));
 
   return (
     <>
@@ -106,6 +117,7 @@ export function PlayerBar({
         onRepeat={p.cycleRepeat}
         queueOn={queueOpen}
         onQueue={() => setQueueOpen((v) => !v)}
+        onExpand={onExpand}
         // боковая панель «Сейчас играет» — веб-специфика: в приложении её
         // место занимает режим прослушивания, кнопки такой в компоновке нет
         extraButtons={
@@ -113,7 +125,9 @@ export function PlayerBar({
             <IconButton
               icon="panel-right"
               size="sm"
-              label={t("web.player.npPanelAria")}
+              // имя панели — общее (nowPlaying.heading), тем же ключом подписан
+              // тултип этой кнопки: два имени одной панели разъезжались
+              label={t("nowPlaying.heading")}
               active={npOpen}
               onClick={onToggleNp}
               disabled={!current}

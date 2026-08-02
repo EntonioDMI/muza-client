@@ -80,6 +80,41 @@ export interface TrackLyrics {
   meaningDialog: ReactNode;
 }
 
+/** ОБЩИЙ КЭШ ЗАПРОСОВ ТЕКСТА НА ВКЛАДКУ.
+ *
+ *  Экранов, показывающих текст, в вебе стало трое: панель «Сейчас играет»,
+ *  полноэкранное караоке (ListeningModeHost) и полный экран телефона. Каждый
+ *  зовёт useTrackLyrics СВОИМ экземпляром — иначе позиция плеера тикала бы
+ *  через общего родителя и перерисовывала бы весь шелл несколько раз в
+ *  секунду. Плата за это — одинаковые запросы: без кэша один и тот же трек
+ *  спрашивался бы у сервера столько раз, сколько таких экранов сейчас в DOM
+ *  (до подключения караоке их было двое, и вторая копия уже ездила зря).
+ *
+ *  Кэшируется ОБЕЩАНИЕ, а не ответ: экраны монтируются одновременно, и
+ *  склеивать надо в том числе запросы, которые ещё летят. Ключ — id трека:
+ *  текст песни в пределах сессии не меняется. Провал не запоминаем — следующий
+ *  экран вправе спросить снова. Это не хранилище, а склейка: держим последние
+ *  CACHE_MAX треков, чтобы переключение «вперёд-назад» не било по сети. */
+const CACHE_MAX = 8;
+type AnnotationsResult = Awaited<ReturnType<ReturnType<typeof getApi>["getAnnotations"]>>;
+const lyricsCache = new Map<string, Promise<LyricsData>>();
+const annotationsCache = new Map<string, Promise<AnnotationsResult>>();
+
+function cachedRequest<T>(store: Map<string, Promise<T>>, key: string, load: () => Promise<T>): Promise<T> {
+  const hit = store.get(key);
+  if (hit) return hit;
+  const started = load();
+  store.set(key, started);
+  void started.catch(() => store.delete(key));
+  // Map хранит ключи в порядке вставки — первый и есть самый старый.
+  while (store.size > CACHE_MAX) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+  return started;
+}
+
 /** Индекс synced-строки → аннотация. Сервер уже привязал фрагменты Genius к
  *  LRC-строкам (line_idxs), здесь только раскладка: у одной строки может быть
  *  несколько объяснений — берём первое, как в приложении. */
@@ -109,8 +144,7 @@ export function useTrackLyrics(): TrackLyrics {
     if (!current) return;
     let cancelled = false;
     setLoading(true);
-    getApi()
-      .getLyrics(current.id)
+    cachedRequest(lyricsCache, current.id, () => getApi().getLyrics(current.id))
       .then((l) => {
         if (!cancelled) setData(l);
       })
@@ -137,8 +171,7 @@ export function useTrackLyrics(): TrackLyrics {
     setGeniusUrl(null);
     if (!prefs.meaningMode || !hasSynced || !trackId) return;
     let cancelled = false;
-    getApi()
-      .getAnnotations(trackId)
+    cachedRequest(annotationsCache, trackId, () => getApi().getAnnotations(trackId))
       .then(({ annotations, geniusUrl: url }) => {
         if (cancelled) return;
         setNotes(buildNotes(annotations));

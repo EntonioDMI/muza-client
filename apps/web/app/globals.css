@@ -12,6 +12,22 @@
    ландшафт высотой ≤480px (телефон на боку) — левый иконный рельс вместо
    нижней навигации, тонкий мини-бар, контент во всю высоту. */
 
+/* ⚠️⚠️ НЕ ПИШИ `-webkit-backdrop-filter` РУКАМИ. ⚠️⚠️
+   Пиши только стандартный `backdrop-filter` — префикс расставит сборка.
+
+   Почему это важно (найдено замером 02.08). Next собирает этот файл Lightning
+   CSS, и тот сам добавляет вендорные префиксы по browserslist. Когда префикс
+   УЖЕ написан в исходнике следом за стандартным свойством, Lightning считает
+   пару дубликатом и оставляет в выдаче ОДИН — префиксный, выбрасывая
+   стандартный. А Chromium/Edge одинокий `-webkit-backdrop-filter` не применяют
+   (проверено пикселями: панель над полосатым фоном не размывается вовсе).
+   Итог: во всём вебе не работало НИ ОДНО матовое стекло — ни полоса плеера, ни
+   «Сейчас играет», ни мини-бар, ни нижняя навигация, ни полноэкранный
+   now-playing. В приложении те же панели красятся инлайн-стилями React, мимо
+   Lightning, и размытие там было — отсюда и «сильные отличия в мелочах»
+   при одинаковых на вид числах: геометрия совпадала, материал — нет.
+   Убрали ручные префиксы — Lightning выдал ОБА свойства, blur(28px) ожил. */
+
 html,
 body {
   height: 100%;
@@ -134,10 +150,33 @@ a {
   overflow: hidden;
 }
 
+/* Центральная зона — скролл-контейнер, зеркало <main> приложения
+   (App.tsx: overflowY:auto, scrollbarWidth:none, borderRadius:var(--r-lg)).
+   Оба свойства ниже приехали оттуда по замеру 02.08 — без них веб отличался:
+
+   • scrollbar-width: none. У приложения полосы прокрутки нет вообще, у веба
+     стояла системная. Это не только лишняя серая полоса: классический
+     скроллбар Chromium съедает ~15px ШИРИНЫ КОНТЕНТА, то есть правое поле
+     зоны на длинных экранах (лента, плейлист) не совпадало с левым — ровно те
+     «неровные спейсинги», на которые жаловался владелец. Прокрутка колесом,
+     клавишами и тачпадом не трогается — прячется только индикатор, как во всех
+     скролл-зонах Muza (та же строчка в общей Sidebar у списка плейлистов).
+   • border-radius: --r-lg. Зона скруглена так же, как соседние: уезжающий
+     под низ контент обрезался в приложении по дуге, а в вебе — по прямому
+     углу, и на светлой обложке это было видно у нижней кромки.
+   ⚠️ Фона у .main нет намеренно (подложку носят только сайдбар, «Сейчас
+   играет» и полоса плеера) — скругление здесь работает как обрезка, а не
+   как рамка. */
 .main {
   padding: var(--pad-zone);
   overflow-y: auto;
   overscroll-behavior: contain;
+  border-radius: var(--r-lg);
+  scrollbar-width: none;
+}
+
+.main::-webkit-scrollbar {
+  display: none;
 }
 
 /* ── ЕДИНСТВЕННЫЙ способ погасить поле зоны под общий экран ──────────────
@@ -180,7 +219,6 @@ a {
   overflow: hidden;
   background: var(--glass-nowplaying, var(--surface-1));
   backdrop-filter: var(--bf-zone, none);
-  -webkit-backdrop-filter: var(--bf-zone, none);
 }
 
 /* ── Плеер-бар (десктоп): плавающее стекло, как в приложении ── */
@@ -194,16 +232,39 @@ a {
   height: var(--h-playerbar);
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(300px, 2fr) minmax(200px, 1fr);
+  /* ⚠️ Эти три строки — ЗЕРКАЛО инлайн-стиля общей полосы (@muza/app/shell/
+     PlayerBar.tsx, ветка `className ? undefined : {...}`). Компонент один и тот
+     же, но когда ему передают className (а веб передаёт — «.playerbar»), он
+     СНИМАЕТ с себя всю инлайн-геометрию и целиком доверяет её этому классу.
+     Значит расхождение здесь ничем не ловится: типы совпадают, тесты зелёные,
+     а бар просто выглядит иначе. Замер 02.08 показал ровно это — колонки
+     359/718/359 против 434/480/514 у приложения, зазор 16 против 20, поле
+     сверху 12 против 0. Правишь геометрию бара — правь ОБА места.
+     Средняя колонка `auto`, а не доля: ширину задаёт сам блок прогресса
+     (progressStyle), и доля растянула бы его на всю освободившуюся середину. */
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: var(--sp-4);
-  padding: var(--sp-3) var(--sp-5);
+  gap: var(--sp-5);
+  padding: 0 var(--sp-5);
   border-radius: var(--r-lg);
   /* Плотность стекла плеера — та же цепочка, что у общей PlayerBar в
      приложении: своя переменная зоны, иначе общая --glass-panel. */
   background: var(--glass-player, var(--glass-panel));
   backdrop-filter: blur(var(--blur-glass));
-  -webkit-backdrop-filter: blur(var(--blur-glass));
+}
+
+/* Опора средней колонки. У приложения её ширину даёт инлайн-дефолт общей
+   полосы (PlayerBar.tsx: `progressStyle ?? { width: 480 }`) — колонка `auto`
+   меряется по нему и выходит ровно 480px. Веб передаёт СВОЙ progressStyle
+   (`width: "100%"`), а процент внутри `auto`-колонки неразрешим: браузер
+   считает вклад по содержимому, и середина схлопывалась до 236px — транспорт
+   с полосой прокрутки вдвое уже, чем в программе (замер 02.08).
+   Ширину возвращаем здесь, а не в PlayerBar.tsx: геометрия веб-бара по
+   уговору живёт в этом классе, компонент при наличии className её не ставит.
+   Колонка при этом остаётся сжимаемой — `auto` на узком окне ужимается до
+   min-content, поэтому фикс не ломает ветки 900–1199px. */
+.playerbar > :nth-child(2) {
+  width: 480px;
 }
 
 /* ── Мобильный мини-бар + нижняя навигация ── */
@@ -219,7 +280,6 @@ a {
   border-radius: var(--r-md);
   background: var(--glass-panel);
   backdrop-filter: blur(var(--blur-glass));
-  -webkit-backdrop-filter: blur(var(--blur-glass));
   overflow: hidden;
 }
 
@@ -261,7 +321,6 @@ a {
   padding-bottom: var(--safe-bottom);
   background: var(--glass-deep);
   backdrop-filter: blur(var(--blur-glass));
-  -webkit-backdrop-filter: blur(var(--blur-glass));
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
 }
@@ -296,7 +355,6 @@ a {
     calc(var(--safe-bottom) + var(--sp-5)) calc(var(--safe-left) + var(--sp-5));
   background: var(--glass-deep);
   backdrop-filter: blur(var(--blur-glass));
-  -webkit-backdrop-filter: blur(var(--blur-glass));
   animation: npIn var(--dur-slow) var(--ease-out);
   box-sizing: border-box;
 }
