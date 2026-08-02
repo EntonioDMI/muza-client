@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ChipGroup, Fader, Switch, Tabs } from "@muza/ui";
 import { LANGS, useT, type Lang, type TranslationKey } from "@muza/app";
 import { usePlatform } from "@muza/app/platform";
@@ -15,7 +15,7 @@ import { PrivacySub } from "@muza/app/views/settings/PrivacySub";
 import { StatsSub } from "@muza/app/views/settings/StatsSub";
 import { LicensesSub } from "@muza/app/views/settings/LicensesSub";
 import { RecsTuning } from "@muza/app/views/settings/PlaybackPane";
-import { SettingsProvider, type SettingsSubKey } from "@muza/app/views/settings/settingsContext";
+import { paneRows, SettingsProvider, settingsCaps, type SettingsSubKey } from "@muza/app/views/settings/settingsContext";
 import type { SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
 import {
   AccentSwatch,
@@ -29,7 +29,6 @@ import {
   SettingRow,
   StepsEditor,
 } from "@muza/app/views/settings/primitives";
-import type { SettingsCapability } from "@muza/app/lib/settingsIndex";
 import { matchPreset, PRESETS_WARM } from "@muza/app/prefs/presets";
 import { DEFAULT_PREFS } from "@muza/app/prefs/types";
 import { getApi } from "../../../src/api";
@@ -53,7 +52,9 @@ import { useRouter } from "next/navigation";
  *  бывает, ОТСУТСТВУЮТ — не серые, не «только в приложении»: значок у часов,
  *  запуск вместе с системой, обновление программы, журнал «почему включалось
  *  долго», расширения, музыка с диска. Их нет ни в рельсе, ни в результатах
- *  поиска (список умений `WEB_CAPS` ниже — им же фильтруется индекс поиска).
+ *  поиска: умения площадки страница НЕ пишет руками, а спрашивает у розетки
+ *  (settingsCaps(platform) в теле страницы) — того, чего браузер не умеет, в
+ *  розетке просто нет.
  *
  *  ⚠️ Ряд появляется здесь только тогда, когда он РАБОТАЕТ. Переключатель,
  *  который никуда не приезжает, хуже отсутствующего: человек считает, что
@@ -61,38 +62,76 @@ import { useRouter } from "next/navigation";
  *  что панель текста веба научилась читать настройки (src/components/
  *  LyricsPanel.tsx), и в них НЕТ ряда «Видео вместо обложки»: видео-дорожку
  *  добывает движок приложения, страница так не умеет. Поиск такого ряда тоже
- *  не найдёт — каркас настроек проверяет, нарисован ли ряд на самом деле
- *  (SettingsScreen.tsx, isReachable), а не только «есть ли раздел». */
+ *  не найдёт — каркас настроек показывает результат, только если ряд есть в
+ *  ОПИСИ страницы (`WEB_OWN_ROWS` ниже + `paneRows` в теле — они собираются в
+ *  проп `rows` каркаса). */
 
-/** Что умеет вкладка браузера. Пусто — значит НЕ умеет ничего из списка
- *  SettingsCapability: ни трея, ни автозапуска, ни обновлений, ни плагинов,
- *  ни файлов с диска. Появится умение — появится и ключ, и ряды с ним. */
-const WEB_CAPS: readonly SettingsCapability[] = [];
-
-/** Тот же список множеством — его спрашивают сами ряды через контекст экрана
- *  (`caps.has("discord")` в «Интеграциях»). Считается один раз на модуль, а не
- *  в теле страницы: новый Set на каждый рендер заставлял бы контекст настроек
- *  пересобираться впустую. Выведен из WEB_CAPS, чтобы умения ряда и умения
- *  поиска физически не могли разъехаться. */
-const WEB_CAPS_SET: ReadonlySet<SettingsCapability> = new Set(WEB_CAPS);
+/** ОПИСЬ РЯДОВ, КОТОРЫЕ СТРАНИЦА РИСУЕТ СВОЕЙ РАЗМЕТКОЙ: «ключ индекса → где
+ *  ряд нарисован». Значение везде null — под-экранов страница не рисует ни
+ *  одного, все эти ряды лежат прямо в разделе.
+ *
+ *  Зачем опись вообще. Каркас настроек не читает разметку (он не может: четыре
+ *  раздела приезжают сюда готовыми компонентами, их ряды лежат внутри) — он
+ *  верит этому списку. Ключа нет в списке → результата поиска нет, даже если
+ *  ряд на экране есть; поэтому список положительный, а не «чего у меня нет»:
+ *  забытый ключ прячет существующий ряд (человек найдёт его глазами), а
+ *  забытая строчка в списке отсутствующих привела бы в пустоту.
+ *
+ *  МЕСТО — часть описи, а не справка из индекса, потому что страница
+ *  раскладывает ряды ИНАЧЕ: «Шрифт текста», «Размытие панелей» и «Приглушение
+ *  текста» индекс числит в под-экране «Кастомизация», а страница рисует их
+ *  прямо во «Внешнем виде» — и переход из результата обязан вести туда, где ряд
+ *  на самом деле. То же с «Включить» эквалайзера.
+ *
+ *  ⚠️ Здесь перечислены ТОЛЬКО ряды собранных на странице разделов (оформление,
+ *  воспроизведение, источники, тексты). Разделы, приехавшие готовыми
+ *  компонентами, свою опись отдают сами — paneRows() в `rows` (тело страницы):
+ *  список рядом с чужим компонентом разъехался бы с ним на первой же правке.
+ *
+ *  Ряды без записи в индексе («Панель Сейчас играет», «Скорость», «Перевод»)
+ *  сюда не идут — поиск про них не знает вовсе. */
+const WEB_OWN_ROWS: Readonly<Record<string, SettingsSubKey | null>> = {
+  // Внешний вид
+  "settings.appearance.language.title": null,
+  "settings.appearance.theme.title": null,
+  "settings.appearance.accent.title": null,
+  "settings.appearance.radius.title": null,
+  "settings.customize.typography.fontUi.title": null,
+  "settings.appearance.glass.title": null,
+  "settings.customize.glass.panelBlur.title": null,
+  "settings.customize.colors.textDim.title": null,
+  "settings.appearance.background.title": null,
+  // Воспроизведение
+  "settings.playback.crossfade.title": null,
+  "settings.playback.crossfade.duration.title": null,
+  "settings.playback.gapless.title": null,
+  "settings.equalizer.enable.title": null,
+  "settings.playback.speedSteps.title": null,
+  "settings.playback.radioEndless.title": null,
+  "settings.playback.recs.title": null,
+  "settings.playback.recs.novelty.title": null,
+  "settings.playback.recs.repeats.title": null,
+  "settings.playback.resumePosition.title": null,
+  "settings.playback.queuePrep.title": null,
+  "settings.playback.queuePrep.warm.title": null,
+  "settings.playback.queuePrep.preload.title": null,
+  // Источники
+  "settings.sources.searchGrouping.title": null,
+  // Тексты песен
+  "settings.lyrics.synced.title": null,
+  "settings.lyrics.autoScroll.title": null,
+  "settings.lyrics.endNote.title": null,
+  "settings.lyrics.karaokeSize.title": null,
+  "settings.lyrics.karaokeLines.title": null,
+  "settings.lyrics.panelLines.title": null,
+  "settings.lyrics.meaningMode.title": null,
+};
 
 /** Под-экраны, которые вкладка браузера умеет открыть. Список нужен поиску:
  *  результат, ведущий в под-экран, показывается, только если открыть его есть
  *  чем. Discord сюда не входит — статус в нём умеет ставить только программа
  *  на устройстве (см. «Интеграции» ниже). */
 const WEB_SUBS = ["sessions", "data", "privacy", "stats", "licenses"] as const;
-
-/** Уход из раздела закрывает его под-экран.
- *
- *  Каркас настроек пересоздаёт содержимое раздела при смене раздела и при
- *  вводе в поиск (`<div key={tab}>`), поэтому уборка этого пустого соседа —
- *  честный сигнал «раздел покинут». Без него человек, заглянувший в «Сессии и
- *  устройства» и ушедший во «Внешний вид», вернулся бы в «Аккаунт» снова на
- *  «Сессиях» — вместо рядов раздела. */
-function SubLeaveGuard({ onLeave }: { onLeave: () => void }) {
-  useEffect(() => onLeave, [onLeave]);
-  return null;
-}
 
 /** Пресеты оформления — те же три, что на первом экране «Внешнего вида» в
  *  приложении (пара «акцент + углы» одним нажатием). */
@@ -129,17 +168,66 @@ export default function SettingsPage() {
    *  ряд «Скорость» ниже управляет тем, что звучит прямо сейчас. */
   const player = usePlayer();
 
-  /** Строка, которой может ещё не быть в словарях (новые ключи заводит
-   *  отдельный ход волны). Нет перевода — ряд остаётся без подсказки: пустая
-   *  строка честнее, чем ключ `web.settings.speed.hint` на экране. */
+  /** УМЕНИЯ ПЛОЩАДКИ — ВЫЧИСЛЯЮТСЯ ИЗ РОЗЕТКИ, а не пишутся здесь списком.
+   *
+   *  Раньше тут стоял ручной `WEB_CAPS = []`. Список из двух источников правды
+   *  расходится молча: появится у браузера порт (первым напрашивается
+   *  audioDevices — выбор вывода звука умеет и вкладка), розетка про него
+   *  узнает, а забытый список — нет, и ряд останется невидимым для поиска без
+   *  единого сообщения об ошибке. Теперь источник один: `settingsCaps` в
+   *  @muza/app/views/settings/settingsContext — та же функция, что зовёт
+   *  приложение.
+   *
+   *  Пересчёт по `platform`: вилка браузера — константа модуля
+   *  (src/platform/webAdapter.ts), так что на деле это разовый расчёт. */
+  const caps = useMemo(() => settingsCaps(platform), [platform]);
+  /** Тот же список множеством — его спрашивают сами ряды через контекст экрана
+   *  (`caps.has("discord")` в «Интеграциях»). Отдельный memo нужен, чтобы новый
+   *  Set на каждый рендер не пересобирал контекст настроек впустую. */
+  const capsSet = useMemo(() => new Set(caps), [caps]);
+
+  /** ПОЛНАЯ ОПИСЬ РЯДОВ СТРАНИЦЫ для поиска: что нарисовано и где.
+   *
+   *  Пять разделов приезжают сюда готовыми компонентами (@muza/app) и рисуют
+   *  ровно то, что знает индекс, — их опись берётся из того же индекса
+   *  функцией `paneRows`, иначе список рядом с чужим компонентом разъехался бы
+   *  с ним на первой же правке. Умения передаются той же переменной, что и
+   *  самим компонентам: раздел покажет ровно те ряды, которые попали в опись.
+   *
+   *  «Горячие клавиши» страница не рисует вовсе — раздел-справочник каркас
+   *  собирает сам, но ряд-указатель в индексе есть, и он достижим. */
+  const rows = useMemo(
+    () => ({
+      ...paneRows("account", caps),
+      ...paneRows("library", caps),
+      ...paneRows("integrations", caps),
+      ...paneRows("system", caps),
+      ...paneRows("hotkeys", caps),
+      ...WEB_OWN_ROWS,
+    }),
+    [caps],
+  );
+
+  /** Строка, которой может ещё не быть в словарях (их правит отдельный ход
+   *  волны). Нет перевода — ряд остаётся без подсказки: пустая строка честнее,
+   *  чем `web.settings.speed.hint` буквами на экране.
+   *
+   *  ⚠️ Это ЗАГЛУШКА НА ВРЕМЯ, а не приём. Два ключа — `web.settings.speed.hint`
+   *  и `web.settings.speedSteps.hint` — заявлены в словари этой же волной;
+   *  как только они там появятся, подсказки встанут сами (`t` перестанет
+   *  возвращать ключ), а этот хелпер можно снимать вместе с двумя `tOpt` ниже.
+   *  Новые ряды через него заводить НЕ НАДО: строка добавляется вместе с
+   *  рядом, и ряд без подсказки — это недоделанный ряд. */
   const tOpt = (key: string): string | undefined => {
     const s = t(key as TranslationKey);
     return s === key ? undefined : s;
   };
 
-  /** Открытый под-экран «Аккаунта». Держит его страница, а не каркас: общий
-   *  каркас под-экранов пока не рисует (SettingsScreen), поэтому раздел
-   *  подменяет своё содержимое сам — ровно как это делает приложение. */
+  /** Открытый под-экран. Состояние держит страница (она же подменяет им
+   *  содержимое раздела), но распоряжаются им ДВОЕ: сами ряды через контекст
+   *  («Сессии и устройства →») и каркас — он закрывает под-экран при смене
+   *  раздела и открывает нужный, когда туда ведёт результат поиска. Поэтому
+   *  `setSub` уезжает в каркас пропом `onSubChange`. */
   const [sub, setSub] = useState<SettingsSubKey | null>(null);
   const closeSub = useCallback(() => setSub(null), []);
   /** «Перейти в раздел, при желании сразу в под-экран». Разделом здесь
@@ -178,21 +266,11 @@ export default function SettingsPage() {
    *  уезжает обычной загрузкой файла — так эта кнопка и задумана.
    *
    *  Под-экран рисуется ВМЕСТО рядов раздела: рельс слева остаётся на месте с
-   *  подсвеченным «Аккаунтом», назад — стрелкой в шапке под-экрана. */
-  const accountPane = (
-    <>
-      <SubLeaveGuard onLeave={closeSub} />
-      {sub === "sessions" ? (
-        <SessionsSub />
-      ) : sub === "data" ? (
-        <DataSub />
-      ) : sub === "privacy" ? (
-        <PrivacySub />
-      ) : (
-        <AccountPane />
-      )}
-    </>
-  );
+   *  подсвеченным «Аккаунтом», назад — стрелкой в шапке под-экрана. Закрывать
+   *  под-экран при уходе в другой раздел странице не нужно — это делает сам
+   *  каркас (onSubChange(null) при смене раздела). */
+  const accountPane =
+    sub === "sessions" ? <SessionsSub /> : sub === "data" ? <DataSub /> : sub === "privacy" ? <PrivacySub /> : <AccountPane />;
 
   /** «Интеграции»: отметки прослушиваний (Last.fm, ListenBrainz) и медиа-
    *  клавиши. Ряд «Статус в Discord» держится на умении `discord`, которого у
@@ -219,12 +297,7 @@ export default function SettingsPage() {
    *  страница итогов веба реально читает (app/(app)/stats/page.tsx: состав —
    *  через enabledStatsBlocks, период — пропом initialPeriod), иначе рядам
    *  здесь было бы нечего менять и им было бы не место. */
-  const libraryPane = (
-    <>
-      <SubLeaveGuard onLeave={closeSub} />
-      {sub === "stats" ? <StatsSub /> : <LibraryPane />}
-    </>
-  );
+  const libraryPane = sub === "stats" ? <StatsSub /> : <LibraryPane />;
 
   /** «Система». Самый площадочный раздел: шесть его рядов из десяти — умения
    *  устройства (запуск вместе с системой, значок у часов, поведение при
@@ -237,12 +310,7 @@ export default function SettingsPage() {
    *  открытого кода под-экраном, сайт и исходники. Ссылки открывает розетка
    *  (`system.openExternal` — единственное, что умеют обе площадки; в браузере
    *  это новая вкладка с noopener). */
-  const systemPane = (
-    <>
-      <SubLeaveGuard onLeave={closeSub} />
-      {sub === "licenses" ? <LicensesSub /> : <SystemPane />}
-    </>
-  );
+  const systemPane = sub === "licenses" ? <LicensesSub /> : <SystemPane />;
 
   const appearancePane = (
     <>
@@ -617,15 +685,18 @@ export default function SettingsPage() {
       // Играющий трек нужен только предпросмотру статуса Discord, а его нет.
       nowPlaying={null}
       glyphSrc="/glyph.svg"
-      caps={WEB_CAPS_SET}
+      caps={capsSet}
       platform={platform}
       openSub={setSub}
       closeSub={closeSub}
       goTo={goTo}
     >
       <SettingsScreen
-        caps={WEB_CAPS}
+        caps={caps}
+        rows={rows}
         subs={WEB_SUBS}
+        sub={sub}
+        onSubChange={setSub}
         initialTab="appearance"
         panes={{
           account: accountPane,

@@ -39,7 +39,7 @@ import type {
   StagedPluginRef,
   UpdateFound,
 } from "../../platform";
-import type { SettingsCapability } from "../../lib/settingsIndex";
+import { SETTINGS_INDEX, type SettingsCapability } from "../../lib/settingsIndex";
 import type { SettingsTabKey } from "./SettingsNav";
 
 /** Под-экраны настроек: тяжёлый пункт — отдельный экран, а не строка.
@@ -199,6 +199,37 @@ export function settingsCaps(platform: PlatformAdapter): SettingsCapability[] {
   if (platform.audioDevices) caps.push("audioOutputs");
   if (platform.discordStatus) caps.push("discord");
   return caps;
+}
+
+/** ОПИСЬ РЯДОВ РАЗДЕЛА, ПРИЕХАВШЕГО ГОТОВЫМ.
+ *
+ *  Каркас настроек (SettingsScreen) спрашивает у площадки опись — «ключ индекса
+ *  → где этот ряд нарисован»; по ней решается, показывать ли результат поиска и
+ *  куда он ведёт. Раздел, который площадка взяла готовым компонентом отсюда
+ *  (`<AccountPane/>`, «Интеграции», «Медиатека», «Система»), рисует ровно то,
+ *  что знает индекс, и ровно там, где индекс написал, — минус ряды без умения.
+ *  Переписывать это руками на странице нельзя: список разъехался бы с
+ *  компонентом на первой же правке, поэтому опись берётся ЗДЕСЬ, из того же
+ *  индекса, что и сам поиск.
+ *
+ *  Ряды под-экранов раздела сюда входят: «а можно ли туда попасть» каркас
+ *  выясняет отдельно, по списку под-экранов площадки.
+ *
+ *  Раздел, который площадка собрала своей разметкой (у веба это оформление,
+ *  звук, тексты, источники), перечисляет ключи руками рядом с этой разметкой —
+ *  там и только там видно, какие ряды написаны на самом деле и в каком месте. */
+export function paneRows(
+  tab: SettingsTabKey,
+  caps?: Iterable<SettingsCapability>,
+): Record<string, SettingsSubKey | null> {
+  const has = caps ? new Set(caps) : null;
+  const out: Record<string, SettingsSubKey | null> = {};
+  for (const entry of SETTINGS_INDEX) {
+    if (entry.tab !== tab) continue;
+    if (entry.needs && has && !has.has(entry.needs)) continue;
+    out[entry.titleKey] = (entry.sub as SettingsSubKey | null) ?? null;
+  }
+  return out;
 }
 
 /** Валидные ключи плагинных кнопок бара — только у включённых расширений

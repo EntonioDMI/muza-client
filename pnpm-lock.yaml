@@ -112,6 +112,9 @@ importers:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
     devDependencies:
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.3
@@ -124,9 +127,15 @@ importers:
       '@typescript/native':
         specifier: npm:typescript@^7.0.2
         version: typescript@7.0.2
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
       typescript:
         specifier: npm:@typescript/typescript6@^6.0.2
         version: '@typescript/typescript6@6.0.2'
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(jsdom@29.1.1)(vite@8.1.3(@types/node@24.13.3))
 
   packages/api-client:
     dependencies:
