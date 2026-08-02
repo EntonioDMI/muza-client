@@ -292,6 +292,56 @@ describe("Сверка номера старта", () => {
   });
 });
 
+describe("Окно между кликом и ответом сервера", () => {
+  // Пока адрес новой песни едет, СТАРАЯ ещё звучит: loadTrack до первого await
+  // не трогает ни src, ни play(). Наблюдатель конца трека всё это время тикает
+  // — и обязан понимать, что элемент и «текущий трек» разошлись.
+
+  it("позиция звучащей песни не приписывается только что выбранной", async () => {
+    await mount({ resumePosition: true, warmAhead: 0, preloadAheadSec: 0, crossfade: false, gapless: false });
+    await play([track("a"), track("b")], 0);
+    await tickTo(slot(0), 150); // первую слушали 2:30
+
+    hold("b"); // адрес второй едет медленно — первая всё это время играет
+    await act(async () => {
+      ctl.player.next();
+    });
+    await wait(400); // десяток тиков наблюдателя, пока адрес в пути
+
+    release("b");
+    await settle();
+    await act(async () => {
+      slot(0).meta(200);
+    });
+
+    expect(slot(0).currentTime).toBe(0); // вторая песня — с начала, а не с 2:30
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide")); // дописать хранилище
+    });
+    const stored = JSON.parse(localStorage.getItem(RESUME_KEY) ?? "{}") as Record<string, number>;
+    expect(stored.b).toBeUndefined(); // и в хранилище чужой позиции нет
+    expect(stored.a).toBe(150); // своя — на месте
+  });
+
+  it("клик в последние секунды играет выбранное, а не следующее за ним", async () => {
+    await mount({ crossfade: true, crossfadeSec: 4, warmAhead: 0, preloadAheadSec: 0 });
+    const list = [track("a"), track("b"), track("c")];
+    await play(list, 0);
+    await tickTo(slot(0), 195); // остаток 5 с — до окна кроссфейда ещё далеко
+
+    hold("b"); // выбрали вторую песню, её адрес в пути
+    await play(list, 1);
+    await tickTo(slot(0), 197); // первая тем временем дошла до окна кроссфейда
+
+    release("b");
+    await settle();
+
+    expect(ctl.player.current?.id).toBe("b");
+    expect(sounding().map((el) => el.src)).toEqual([urlOf("b")]);
+    expect(asked(["a", "b"])).toEqual([]); // за третьей песней никто не ходил
+  });
+});
+
 describe("Два слота и эстафета", () => {
   it("следующий греется во втором слоте, пока первый звучит, и принимает эстафету", async () => {
     await mount({ crossfade: true, crossfadeSec: 4, preloadAheadSec: 20, warmAhead: 3 });

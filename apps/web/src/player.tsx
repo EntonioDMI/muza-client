@@ -39,7 +39,14 @@ import { usePrefs } from "./prefs";
  *  правку: любой асинхронный путь, который в итоге трогает src или play(),
  *  обязан сначала убедиться, что его номер ещё актуален. Иначе ответ на старый
  *  запрос подменяет уже выбранную песню (жалоба владельца 02.08). Путей теперь
- *  два — loadTrack (клик) и advanceWithFade (авто-переход), сверка есть в обоих.
+ *  два — loadTrack (клик) и advanceWithFade (авто-переход), сверка есть в обоих,
+ *  плюс перевыдача истёкшего адреса в обработчике error.
+ *
+ *  ⚠️ СЛОТ И «ТЕКУЩИЙ ТРЕК» — РАЗНЫЕ ВЕЩИ (аудит 03.08). Клик меняет current
+ *  сразу, а слот получает новую песню только после ответа сервера — секунды
+ *  спустя, и всё это время в нём играет ПРЕДЫДУЩАЯ. Поэтому у слота есть
+ *  собственный trackId, и всякий, кто читает элемент (наблюдатель конца трека,
+ *  повторный клик по плитке), сверяется с ним, а не с currentRef.
  *
  *  Контекст разрезан надвое: позиция тикает ~4 раза в секунду, и от неё должны
  *  перерисовываться только плеер-бар и тексты — не все списки страницы. */
@@ -118,12 +125,20 @@ type ResumeMap = Record<string, number>;
 interface Slot {
   el: HTMLAudioElement;
   url: string | null;
+  /** ЧЕЙ трек сейчас в элементе. Выводить это из currentRef нельзя: между
+   *  кликом и ответом сервера «текущий» уже новый, а звучит ещё старый —
+   *  loadTrack до первого await не трогает ни src, ни play(). Вся разница между
+   *  «запомнить позицию песни» и «приписать её чужой» — в этом поле. */
+  trackId: string | null;
   /** Множитель выравнивания громкости трека, который сейчас в слоте. */
   norm: number;
   /** Доля кроссфейда 0..1 — ею множится уровень слота. */
   fade: number;
   /** Куда досикнуть, когда приедут метаданные («продолжить с места»). */
   seekTo: number | null;
+  /** Перевыдачу истёкшего адреса делаем один раз — и НА СЛОТ, а не на плеер:
+   *  общий флаг гасил вторую попытку для следующей песни. */
+  retried: boolean;
 }
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
@@ -151,7 +166,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   /** наиграно текущего трека (для честного скроббла) */
   const playedMsRef = useRef(0);
   const lastTimeRef = useRef(0);
-  const retriedRef = useRef(false);
   /** Номер последнего старта: растёт на каждую загрузку трека. Всё, что
    *  вернулось из сети позже своего номера, считается чужим и отбрасывается —
    *  иначе при быстром переборе песен старый ответ подменял источник уже
@@ -288,7 +302,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       el.crossOrigin = "anonymous";
       // Скорость с сохранением тона — «без бурундука» независимо от браузера
       el.preservesPitch = true;
-      const slot: Slot = { el, url: null, norm: 1, fade: 1, seekTo: null };
+      const slot: Slot = { el, url: null, trackId: null, norm: 1, fade: 1, seekTo: null, retried: false };
       const on = (name: string, pick: (h: NonNullable<typeof handlersRef.current>) => (s: Slot) => void) =>
         el.addEventListener(name, () => {
           const h = handlersRef.current;
@@ -318,7 +332,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     slot.el.removeAttribute("src");
     slot.el.load();
     slot.url = null;
+    slot.trackId = null;
     slot.seekTo = null;
+    slot.retried = false;
     slot.fade = 0;
   }, []);
 
@@ -402,7 +418,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setDuration(track.durationSec);
       playedMsRef.current = 0;
       lastTimeRef.current = 0;
-      retriedRef.current = false;
       advanceFromRef.current = null;
       preparedIdRef.current = null;
       try {
@@ -424,6 +439,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           slot.el.load();
         }
         const el = slot.el;
+        // С этой секунды слот отвечает за НОВУЮ песню: наблюдатель конца трека
+        // сверяется именно с этим полем.
+        slot.trackId = track.id;
+        slot.retried = false;
         el.playbackRate = speedRef.current;
         slot.norm = normFactor(track.loudness, prefsRef.current.normalize);
         slot.fade = 1;
@@ -495,6 +514,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         inSlot.el.src = url;
         inSlot.el.load();
       }
+      inSlot.trackId = track.id;
+      inSlot.retried = false;
       inSlot.el.playbackRate = speedRef.current;
       inSlot.norm = normFactor(track.loudness, prefsRef.current.normalize);
       inSlot.fade = 0;
@@ -523,7 +544,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       playedMsRef.current = 0;
       lastTimeRef.current = from;
-      retriedRef.current = false;
       activeRef.current = 1 - activeRef.current;
       // Эффект смены текущего увидит эти два указателя и НЕ станет заводить
       // трек заново — он уже звучит во втором слоте.
@@ -575,6 +595,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (el.paused || !el.src) return;
     const track = currentRef.current;
     if (!track) return;
+    // ⚠️ Элемент и «текущий трек» разъезжаются на всё время резолва следующей
+    // песни: клик уже сменил current, а звучит ещё предыдущая. Наблюдателю в
+    // этом окне делать нечего — он бы приписал позицию звучащего трека новому
+    // («продолжить с места» заводило бы выбранную песню с чужой секунды) и
+    // завёл бы авто-переход на трек ПОСЛЕ выбранного, отбросив клик.
+    if (slot.trackId !== track.id) return;
     const p = prefsRef.current;
     const dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : track.durationSec;
     if (dur <= 0) return;
@@ -754,8 +780,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const track = currentRef.current;
       if (!track) return;
       // стрим-токен истёк (пауза дольше TTL) — одна перевыдача с возвратом позиции
-      if (!retriedRef.current) {
-        retriedRef.current = true;
+      if (!slot.retried) {
+        slot.retried = true;
         const pos = el.currentTime;
         void streamUrl(track.id, true)
           .then(async (url) => {
