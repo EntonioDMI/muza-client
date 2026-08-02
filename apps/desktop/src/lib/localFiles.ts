@@ -29,7 +29,11 @@ export function loadServerIds(): Record<string, string> {
   }
 }
 
-function saveServerId(hash: string, trackId: string) {
+/** Запомнить серверный id файла. Экспортирован ради вилки площадки
+ *  (src/platform/desktopAdapter.ts → порт localFiles): общий экран медиатеки
+ *  регистрирует выбранные файлы сам, а КЛЮЧ хранилища обязан остаться в одном
+ *  месте — иначе карта разъедется с loadServerIds. */
+export function saveServerId(hash: string, trackId: string) {
   const map = loadServerIds();
   map[hash] = trackId;
   localStorage.setItem(SERVER_IDS_KEY, JSON.stringify(map));

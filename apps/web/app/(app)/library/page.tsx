@@ -1,137 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Dialog, EmptyState, Icon, SearchInput, Tabs } from "@muza/ui";
+import { Button, Dialog, SearchInput } from "@muza/ui";
 import { pickRandomPlaylistIcon } from "@muza/core";
-import { ApiError, type HistoryItem, type PlaylistMeta } from "@muza/api-client";
+import { ApiError, type PlaylistMeta } from "@muza/api-client";
 import { useT } from "@muza/app";
+import { moveItem } from "@muza/app/lib/dragEngine";
+import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
+import { LibraryView } from "@muza/app/views/LibraryView";
 import { getApi } from "../../../src/api";
-import { tracksLabel } from "../../../src/format";
 import { useLikes } from "../../../src/likes";
+import { usePlayer } from "../../../src/player";
 import { usePlaylists } from "../../../src/playlists";
-import { PlaylistCover } from "../../../src/components/PlaylistCover";
-import { TrackList } from "../../../src/components/TrackList";
 import { useToast } from "../../../src/toast";
 
-/** Библиотека веба: плейлисты (создание/переименование/удаление — на
- *  странице плейлиста, здесь создание + вход по инвайт-коду) + история.
- *  Импорт по ссылке и локальные файлы — в десктопе, веб лёгкий. */
-/** Плитка «Любимое» — всегда первая в сетке, фирменный градиент глифа
- *  (зеркало FavoritesTile десктопа, LibraryView.tsx:31). */
-function FavoritesTile({ count }: { count: number }) {
-  const { t, lang } = useT();
-  const [lit, setLit] = useState(false);
-  return (
-    <Link
-      href="/favorites"
-      aria-label={t("media.nav.favorites")}
-      onMouseEnter={() => setLit(true)}
-      onMouseLeave={() => setLit(false)}
-      style={{
-        display: "block",
-        padding: "var(--sp-3)",
-        borderRadius: "var(--r-md)",
-        background: lit ? "var(--surface-3)" : "var(--surface-2)",
-        textDecoration: "none",
-        transition: "background var(--dur-base) var(--ease-out)",
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          display: "grid",
-          placeItems: "center",
-          aspectRatio: "1",
-          marginBottom: "var(--sp-3)",
-          borderRadius: "var(--r-sm)",
-          overflow: "hidden",
-          // градиент логотипа (glyph.svg: #F76967 → #3B82F6) — как в приложении
-          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
-        }}
-      >
-        <Icon name="heart" size={96} color="#fff" filled style={{ width: "58%", height: "58%" }} />
-      </span>
-      <span
-        style={{
-          display: "block",
-          fontFamily: "var(--font-ui)",
-          fontWeight: 600,
-          fontSize: "var(--fs-body)",
-          color: "var(--text-1)",
-        }}
-      >
-        {t("media.nav.favorites")}
-      </span>
-      <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>
-        {tracksLabel(count, lang)}
-      </span>
-    </Link>
-  );
-}
-
-/** Квадратная плитка плейлиста (было — строка): иконка на всю ширину
- *  колонки, имя и счётчик под ней — раскладка плитки десктопа. */
-function PlaylistTile({ p }: { p: PlaylistMeta }) {
-  const { t, lang } = useT();
-  const [lit, setLit] = useState(false);
-  return (
-    <Link
-      href={`/playlist?id=${p.id}`}
-      onMouseEnter={() => setLit(true)}
-      onMouseLeave={() => setLit(false)}
-      style={{
-        display: "block",
-        padding: "var(--sp-3)",
-        borderRadius: "var(--r-md)",
-        background: lit ? "var(--surface-3)" : "var(--surface-2)",
-        textDecoration: "none",
-        transition: "background var(--dur-base) var(--ease-out)",
-      }}
-    >
-      <span style={{ display: "block", marginBottom: "var(--sp-3)" }}>
-        <PlaylistCover
-          icon={p.icon}
-          coverUrl={p.iconCoverUrl}
-          shared={p.collaboratorsCount > 0 || p.role === "collaborator"}
-          size={0}
-          iconSize={48}
-          fluid
-          radius="var(--r-sm)"
-        />
-      </span>
-      <span
-        style={{
-          display: "block",
-          fontFamily: "var(--font-ui)",
-          fontWeight: 600,
-          fontSize: "var(--fs-body)",
-          color: "var(--text-1)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {p.name}
-      </span>
-      <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>
-        {p.role === "collaborator"
-          ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername ?? "" })
-          : tracksLabel(p.trackCount, lang)}
-      </span>
-    </Link>
-  );
-}
-
+/** «Твоя медиатека» — тот же экран, что в приложении
+ *  (@muza/app/views/LibraryView, волна экранов веб-паритета 2026-08-02).
+ *  Своей вёрстки у страницы больше нет: раньше здесь была вторая реализация
+ *  сетки плиток и своя плитка «Любимое», которые уже разъезжались с
+ *  приложением по подписям, отступам и поведению.
+ *
+ *  ЧТО ПРИШЛО ВМЕСТЕ С ОБЩИМ ЭКРАНОМ: приём трека на плитку перетаскиванием,
+ *  порядок плиток за ручку-⠿, выделение нескольких плейлистов с массовым
+ *  удалением, контекстные меню плитки и пустого места, закреплённые и
+ *  подписки — всего этого в вебе не было вовсе.
+ *
+ *  ЧЕГО НЕТ И БЫТЬ НЕ МОЖЕТ: вкладки «Локальные» — браузер не знает путей к
+ *  файлам на диске (порт localFiles ему не выдан), поэтому вкладка не серая,
+ *  а отсутствует; «Добавить по ссылке» и «Импорт плейлиста» — обработчиков
+ *  страница не передаёт, и кнопок нет.
+ *
+ *  ⚠️ Вкладка «История» отсюда УШЛА вместе со своей реализацией: в приложении
+ *  такой вкладки нет, а волна ведёт веб к виду «один в один». Понадобится —
+ *  заводить надо в ОБЩЕМ экране, сразу для обеих программ. */
 export default function LibraryPage() {
   const router = useRouter();
   const notify = useToast();
   const { t } = useT();
   const { favorites } = useLikes();
-  const { playlists, loaded, refresh } = usePlaylists();
-  const [tab, setTab] = useState("playlists");
-  const [history, setHistory] = useState<HistoryItem[] | null>(null);
+  const { playlists, refresh } = usePlaylists();
+  const { current, playing, playContext } = usePlayer();
+  const menuApiRef = useRef<ContextMenuApi<MenuAbilities> | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -142,13 +52,65 @@ export default function LibraryPage() {
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (tab !== "history" || history !== null) return;
-    getApi()
-      .getHistory(50)
-      .then(setHistory)
-      .catch(() => setHistory([]));
-  }, [tab, history]);
+  /** Порядок, применённый оптимистично (перетаскиванием), пока сервер не
+   *  ответил. Тот же приём и тот же расчёт, что у боковой панели
+   *  (src/components/AppShell.tsx → reorderPlaylists): общий провайдер
+   *  плейлистов своего «переставить» не умеет, а копия живёт ровно здесь и
+   *  умирает, как только список перечитан с сервера. */
+  const [optimistic, setOptimistic] = useState<PlaylistMeta[] | null>(null);
+  useEffect(() => setOptimistic(null), [playlists]);
+  const list = optimistic ?? playlists;
+
+  /** Трек уронили на плитку плейлиста. */
+  const dropOnPlaylist = async (playlistId: string, trackId: string) => {
+    const pl = list.find((p) => p.id === playlistId);
+    if (!pl) return;
+    try {
+      await getApi().addPlaylistTrack(playlistId, trackId);
+      notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
+      void refresh();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : t("toast.playlist.addFailed"), "x");
+    }
+  };
+
+  /** Новый порядок после перетаскивания плитки за ручку-⠿.
+   *
+   *  ⚠️ toIndex приходит в координатах УРЕЗАННОГО списка: экран отдаёт в
+   *  перетаскивание только подвижные плитки (подписки и закреплённые
+   *  исключены). Складывать его с позицией из ПОЛНОГО списка нельзя — промах
+   *  равен числу исключённых (ровно эту ошибку чинили в приложении
+   *  2026-08-02). */
+  const reorderPlaylists = async (draggedId: string, toIndex: number) => {
+    const movable = list.filter((p) => p.role !== "follower" && !p.pinned);
+    const from = movable.findIndex((p) => p.id === draggedId);
+    if (from < 0 || from === toIndex || toIndex < 0 || toIndex >= movable.length) return;
+    const moved = moveItem(movable, from, toIndex);
+    let k = 0;
+    const next = list.map((p) => (p.role !== "follower" && !p.pinned ? moved[k++] : p));
+    setOptimistic(next);
+    try {
+      await getApi().reorderPlaylists(next.map((p) => p.id));
+    } catch {
+      void refresh(); // не сохранилось — вернём серверный порядок
+    }
+  };
+
+  /** «Слушать» из меню плитки: состав плейлиста страница не держит — берём
+   *  его на месте и отдаём общему плееру веба. Пустой плейлист играть нечем —
+   *  говорим об этом, а не молчим. */
+  const playPlaylist = async (id: string) => {
+    try {
+      const detail = await getApi().getPlaylist(id);
+      if (detail.tracks.length === 0) {
+        notify(t("views.playlist.empty"), "x");
+        return;
+      }
+      playContext(detail.tracks, 0);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t("web.playlist.notFound"), "x");
+    }
+  };
 
   const closeCreate = () => {
     setCreateOpen(false);
@@ -160,9 +122,8 @@ export default function LibraryPage() {
     if (!name) return;
     setCreateBusy(true);
     try {
-      const usedIcons = playlists.map((p) => p.icon).filter((v): v is string => Boolean(v));
-      const icon = pickRandomPlaylistIcon(usedIcons);
-      const playlist = await getApi().createPlaylist(name, icon);
+      const usedIcons = list.map((p) => p.icon).filter((v): v is string => Boolean(v));
+      const playlist = await getApi().createPlaylist(name, pickRandomPlaylistIcon(usedIcons));
       await refresh();
       closeCreate();
       router.push(`/playlist?id=${playlist.id}`);
@@ -199,49 +160,42 @@ export default function LibraryPage() {
     }
   };
 
+  /** Умения браузера для меню плитки и пустого места. Чего тут нет (радио,
+   *  офлайн, переименование, иконка плейлиста) — того и в меню нет: пункт
+   *  появится сам, как только умение появится у веба. */
+  const abilities: MenuAbilities = {
+    openPlaylist: (id) => router.push(`/playlist?id=${id}`),
+    playlistRole: (id) => list.find((p) => p.id === id)?.role ?? "owner",
+    playPlaylist: (id) => void playPlaylist(id),
+    openCreatePlaylist: () => setCreateOpen(true),
+    openJoinCode: () => setJoinOpen(true),
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-        <h1 className="page-title" style={{ margin: 0 }}>
-          {t("media.nav.library")}
-        </h1>
-        <div style={{ display: "flex", gap: "var(--sp-2)" }}>
-          <Button variant="ghost" size="lg" icon="users" onClick={() => setJoinOpen(true)}>
-            {t("web.library.haveCode")}
-          </Button>
-          <Button variant="primary" size="lg" icon="plus" onClick={() => setCreateOpen(true)}>
-            {t("web.library.createPlaylist")}
-          </Button>
-        </div>
+    // suppressNativeMenu={false}: у браузера своё меню — на сайте отбирать его
+    // нельзя (плиткам это не мешает, их openMenu гасит нативное сам)
+    <ContextMenuProvider ctx={abilities} apiRef={menuApiRef} suppressNativeMenu={false}>
+      {/* .shared-screen гасит отступ зоны: общий экран приносит свои поля,
+          как в приложении, где <main> голый (globals.css) */}
+      <div className="shared-screen">
+        <LibraryView
+          api={getApi()}
+          canSearch
+          srvPlaylists={list}
+          currentId={current?.id ?? null}
+          playing={playing}
+          favoritesCount={favorites.length}
+          onOpenFavorites={() => router.push("/favorites")}
+          onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
+          onPlaylistMenu={(p, e) => menuApiRef.current?.openMenu(e, { kind: "playlist", id: p.id, name: p.name })}
+          onJoinCode={() => setJoinOpen(true)}
+          onCreatePlaylist={() => setCreateOpen(true)}
+          onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
+          onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
+          onPlaylistsChanged={() => void refresh()}
+          onNotify={(text, icon) => notify(text, icon)}
+        />
       </div>
-      <Tabs
-        items={[
-          { key: "playlists", label: t("views.library.chips.playlists") },
-          { key: "history", label: t("web.library.tabHistory") },
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
-      {tab === "playlists" ? (
-        !loaded ? (
-          <p style={noteStyle}>{t("common.loading")}</p>
-        ) : (
-          /* Сетка КВАДРАТНЫХ плиток, как в приложении (было — строки);
-             «Любимое» всегда первой, даже без единого плейлиста */
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "var(--sp-3)" }}>
-            <FavoritesTile count={favorites.length} />
-            {playlists.map((p) => (
-              <PlaylistTile key={p.id} p={p} />
-            ))}
-          </div>
-        )
-      ) : history === null ? (
-        <p style={noteStyle}>{t("common.loading")}</p>
-      ) : history.length === 0 ? (
-        <EmptyState icon="history" title={t("web.library.historyEmptyTitle")} hint={t("web.library.historyEmptyHint")} />
-      ) : (
-        <TrackList tracks={history.map((h) => h.track)} />
-      )}
 
       <Dialog
         open={createOpen}
@@ -305,8 +259,6 @@ export default function LibraryPage() {
           {joinError ? <p style={{ margin: 0, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "#e5484d" }}>{joinError}</p> : null}
         </div>
       </Dialog>
-    </div>
+    </ContextMenuProvider>
   );
 }
-
-const noteStyle: React.CSSProperties = { margin: 0, fontFamily: "var(--font-ui)", color: "var(--text-3)" };

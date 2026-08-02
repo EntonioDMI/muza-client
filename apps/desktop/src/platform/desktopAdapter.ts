@@ -12,9 +12,23 @@
  *  (без Tauri): там выноса файла нет — и порта тоже нет, общий код увидит
  *  ровно то же, что увидит веб, а не падение при первом же перетаскивании. */
 
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { PlatformAdapter } from "@muza/app/platform";
 import { dragOutAvailable, exportCachedTrack, startTrackFileDrag } from "../lib/dragOut";
+import {
+  loadServerIds,
+  localAvailable,
+  localForget,
+  localList,
+  localPickAndScan,
+  localResolve,
+  localScanPaths,
+  saveServerId,
+} from "../lib/localFiles";
+import { cacheRemove } from "../lib/engine";
+import { savePngFile } from "../lib/saveImage";
 import { autostartEnabled, openExternal, syncAutostart, trayConfigure } from "../lib/system";
+import { invalidateCachedSources } from "../player/sourcesCache";
 
 export function createDesktopPlatform(): PlatformAdapter {
   return {
@@ -28,14 +42,52 @@ export function createDesktopPlatform(): PlatformAdapter {
           },
         }
       : {}),
+    // Файлы с диска (вкладка «Локальные» медиатеки). Того же условия, что у
+    // выноса файла: в обычном браузере Tauri-команд нет — порта нет, и вкладка
+    // не появляется вовсе (localAvailable() = isTauri(), ровно та проверка,
+    // которой экран пользовался до переезда в @muza/app).
+    ...(localAvailable()
+      ? {
+          localFiles: {
+            list: localList,
+            // без языка — как звал экран до переезда: подписи системного
+            // окна выбора файлов остаются английскими (менять здесь = менять
+            // поведение приложения, это отдельная правка)
+            pickAndScan: (kind: "files" | "folder") => localPickAndScan(kind),
+            scanPaths: localScanPaths,
+            resolvePath: localResolve,
+            forget: localForget,
+            serverIds: loadServerIds,
+            rememberServerId: saveServerId,
+            reveal: (path: string) => revealItemInDir(path),
+          },
+        }
+      : {}),
     system: {
       openExternal,
       setAutostart: syncAutostart,
       autostartEnabled,
       configureTray: trayConfigure,
     },
-    // localFiles / offline / window появятся здесь, когда соответствующие
-    // экраны поедут в @muza/app: порт заводится ВМЕСТЕ с первым потребителем,
-    // иначе это мёртвый код, который никто не проверял.
+    // Сохранить картинку файлом («Поделиться» → «Сохранить PNG»). Условие то
+    // же, что у выноса файла: без Tauri системного окна «куда сохранить» нет,
+    // и кнопки в диалоге не появляется (раньше на её месте был тост «только в
+    // приложении» — теперь объяснять нечего, кнопки просто нет).
+    ...(dragOutAvailable() ? { saveImage: { savePng: savePngFile } } : {}),
+    // Забыть подготовленное для трека — ОДИН порт на две прежние строки
+    // диалога «Версии и источники»: файл трека на устройстве и разобранные
+    // источники в памяти плеера протухают по одной причине (сменилась
+    // версия) и всегда вместе. cacheRemove сам молчит вне Tauri, поэтому
+    // условия здесь нет: в браузерном dev-окне вызов ничего не делает —
+    // ровно как делал до переезда диалога.
+    preparedTracks: {
+      forget: async (trackId: string) => {
+        await cacheRemove(trackId);
+        invalidateCachedSources(trackId);
+      },
+    },
+    // offline / window появятся здесь, когда соответствующие экраны поедут в
+    // @muza/app: порт заводится ВМЕСТЕ с первым потребителем, иначе это
+    // мёртвый код, который никто не проверял.
   };
 }

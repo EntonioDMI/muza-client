@@ -5,6 +5,15 @@ import { DragLayer } from "../shell/DragLayer";
 import { TestMenuProvider } from "../shell/menuTestUtils";
 import { PlaylistView } from "./PlaylistView";
 
+// ⚠️ ТЕСТ ОСТАЛСЯ В ПРИЛОЖЕНИИ, хотя сам экран уехал в @muza/app (волна
+// экранов веб-паритета, 2026-08-02). Он проверяет ИМЕННО приложенческую
+// сборку: `./PlaylistView` — тонкая обёртка, которая подставляет общему
+// экрану чтение через оффлайн-копию устройства (withSnapshot), прогрев строк
+// и файлы с диска. Первый же случай ниже — «оффлайн-копия удалённого
+// плейлиста» — без этой обёртки не воспроизводится вовсе. Общий экран в
+// «браузерной» сборке (без этих пропов) проверяется отдельно:
+// packages/app/src/views/PlaylistView.web.test.tsx.
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

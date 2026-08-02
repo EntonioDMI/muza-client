@@ -13,7 +13,7 @@
 
 import { createContext, useCallback, useContext, useMemo, type DragEvent, type ReactNode } from "react";
 import { useT } from "../i18n";
-import type { DragOutPort, PlatformAdapter, TrackFileRef } from "./types";
+import type { DragOutPort, LocalFilesPort, PlatformAdapter, TrackFileRef } from "./types";
 
 /** Вилка не вставлена — площадка не умеет НИЧЕГО из портов. Это честное
  *  значение по умолчанию (юнит-тест общего компонента, площадка, где
@@ -40,6 +40,12 @@ export function usePlatform(): PlatformAdapter {
  *  (браузер), и пункт/жест не показываем вовсе. */
 export function useDragOut(): DragOutPort | undefined {
   return useContext(PlatformContext).dragOut;
+}
+
+/** Порт музыки с диска устройства; undefined — площадка так не умеет
+ *  (браузер), и вкладки «Локальные» в медиатеке нет вовсе — не серой. */
+export function useLocalFiles(): LocalFilesPort | undefined {
+  return useContext(PlatformContext).localFiles;
 }
 
 /** Обычное перетаскивание строки = в плейлист (перенос на pointer-событиях,

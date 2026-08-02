@@ -18,8 +18,9 @@ import { useToast } from "../toast";
 export const TRACK_DND_MIME = "application/x-muza-track";
 
 /** Кастомный ghost для драга: мини-пилюля с названием вместо полупрозрачного
- *  скриншота строки. Убирается сам после старта драга. Экспортирован —
- *  переиспользуется GroupedTrackList.tsx (T41), чтобы не дублировать. */
+ *  скриншота строки. Убирается сам после старта драга. Экспортирован для
+ *  других веб-списков (единственный потребитель, выдача поиска, переехал на
+ *  общий экран @muza/app 2026-08-02 и таскает строки уже общим слоем). */
 export function setTrackDragImage(e: React.DragEvent, track: Track) {
   const ghost = document.createElement("div");
   ghost.textContent = `${track.artist} — ${track.title}`;

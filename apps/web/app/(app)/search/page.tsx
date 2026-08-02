@@ -1,116 +1,103 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Button, EmptyState, SearchInput } from "@muza/ui";
-import type { GroupedSearchResult, Track } from "@muza/api-client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import type { PublicPlaylist, Track } from "@muza/api-client";
 import { useT } from "@muza/app";
+import { usePlatform } from "@muza/app/platform";
+import { ContextMenuProvider } from "@muza/app/shell/ContextMenu";
+import { SearchView } from "@muza/app/views/SearchView";
 import { getApi } from "../../../src/api";
-import { GroupedTrackList } from "../../../src/components/GroupedTrackList";
-import { TrackList } from "../../../src/components/TrackList";
+import { useLikes } from "../../../src/likes";
+import { usePlayer } from "../../../src/player";
+import { usePlaylists } from "../../../src/playlists";
 import { usePrefs } from "../../../src/prefs";
+import { useSession } from "../../../src/session";
+import { useToast } from "../../../src/toast";
+import { useWebTrackMenu } from "../../../src/components/TrackList";
 
-/** Поиск веба: живой каталожный (на каждый ввод, мгновенный) + «Искать в
- *  источниках» (full — сервер дёргает yt-dlp, rate-limit). Модель десктопа.
- *  T41: preference searchGrouping (Настройки → Поиск, дефолт true) решает,
- *  бьёт ли сервер ?group=1 (карточки-группы ремиксов) или старый плоский
- *  контракт — оба режима держим отдельными списками результатов, чтобы
- *  выключенная группировка гарантированно оставалась старым плоским видом. */
+/** Поиск веба — ТОТ ЖЕ экран, что в приложении (@muza/app/views/SearchView,
+ *  волна «экраны» веб-паритета, 2026-08-02). Своей реализации здесь больше
+ *  нет: страница только подаёт экрану данные площадки (сессия, плеер, лайки,
+ *  плейлисты, тосты) и умения меню.
+ *
+ *  Что веб получил вместе с переездом и чего у него не было вовсе:
+ *  - карточку найденного плейлиста с превью состава, «Слушать» и подпиской;
+ *  - режим кода PL_… и @адреса (весь запрос целиком — прямой поиск плейлиста);
+ *  - витрину «плейлисты от слушателей» под выдачей;
+ *  - «Загрузить ещё» (лестница пула в источниках);
+ *  - множественный выбор с панелью массовых действий и правой кнопкой.
+ *  Своя урезанная выдача (GroupedTrackList + variantLabels) удалена — двум
+ *  реализациям одного экрана больше негде разъехаться.
+ *
+ *  Панель массовых действий собирается ПО УМЕНИЯМ площадки: очереди и
+ *  хранения на устройстве у браузера нет, поэтому там остаются «В плейлист» и
+ *  «В любимое» — не серые кнопки, а просто отсутствующие. */
 export default function SearchPage() {
   const { prefs } = usePrefs();
   const { t } = useT();
-  const grouping = prefs.searchGrouping;
+  const router = useRouter();
+  const notify = useToast();
+  const { session } = useSession();
+  const { current, playing, playContext } = usePlayer();
+  const { likedIds, toggle } = useLikes();
+  const { refresh: refreshPlaylists } = usePlaylists();
+  const platform = usePlatform();
   const [query, setQuery] = useState("");
-  const [flatResults, setFlatResults] = useState<Track[]>([]);
-  const [groupedResults, setGroupedResults] = useState<GroupedSearchResult[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const seq = useRef(0);
+  /** Показанные экраном треки: меню веба принимает Track целиком (лайк
+   *  оптимистично правит список «Любимого»), а экран отдаёт наружу только
+   *  плоский список строк — по нему и собирается меню. */
+  const [rows, setRows] = useState<Track[]>([]);
+  const menu = useWebTrackMenu(rows);
 
-  // живой каталожный поиск с дебаунсом
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      setFlatResults([]);
-      setGroupedResults([]);
-      setNote(null);
-      return;
-    }
-    const my = ++seq.current;
-    const timer = setTimeout(() => {
-      const api = getApi();
-      if (grouping) {
-        api
-          .searchGrouped(q, { scope: "catalog" })
-          .then((items) => {
-            if (seq.current !== my) return;
-            setGroupedResults(items);
-            setFlatResults([]);
-            setNote(items.length === 0 ? t("web.search.catalogEmptyHint") : null);
-          })
-          .catch(() => undefined);
-      } else {
-        api
-          .search(q, { scope: "catalog" })
-          .then((tracks) => {
-            if (seq.current !== my) return;
-            setFlatResults(tracks);
-            setGroupedResults([]);
-            setNote(tracks.length === 0 ? t("web.search.catalogEmptyHint") : null);
-          })
-          .catch(() => undefined);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query, grouping, t]);
-
-  const fullSearch = async () => {
-    const q = query.trim();
-    if (q.length < 2 || busy) return;
-    setBusy(true);
-    setNote(t("web.search.searchingSources"));
-    const my = ++seq.current;
-    try {
-      const api = getApi();
-      if (grouping) {
-        const items = await api.searchGrouped(q, { scope: "full" });
-        if (seq.current === my) {
-          setGroupedResults(items);
-          setFlatResults([]);
-          setNote(items.length === 0 ? t("web.search.nothingFound") : null);
-        }
-      } else {
-        const tracks = await api.search(q, { scope: "full" });
-        if (seq.current === my) {
-          setFlatResults(tracks);
-          setGroupedResults([]);
-          setNote(tracks.length === 0 ? t("web.search.nothingFound") : null);
-        }
-      }
-    } catch (e) {
-      if (seq.current === my) setNote(e instanceof Error ? e.message : t("web.search.searchFailed"));
-    } finally {
-      setBusy(false);
-    }
+  /** Плейлист SoundCloud из выдачи. Своей read-only страницы у веба нет (она
+   *  есть в приложении) — честно уводим к первоисточнику новой вкладкой через
+   *  розетку площадки, а не рисуем кнопку, которая никуда не ведёт. */
+  const openScPlaylist = (p: PublicPlaylist) => {
+    if (p.permalinkUrl && platform.system) void platform.system.openExternal(p.permalinkUrl);
+    else notify(t("views.search.somethingWrong"), "x");
   };
 
-  const hasResults = grouping ? groupedResults.length > 0 : flatResults.length > 0;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", maxWidth: 900 }}>
-      {/* flexWrap — иначе SearchInput+Button не влезают рядом на 375px (ни один
-          не может сжаться ниже своего min-content): найдено живой проверкой
-          T41 на мобильном, было так и до группировки — попутный фикс. */}
-      <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center", flexWrap: "wrap" }}>
-        <SearchInput value={query} onChange={setQuery} placeholder={t("views.search.placeholder")} autoFocus style={{ flex: 1, minWidth: 200 }} />
-        <Button variant="primary" icon="radar" disabled={busy || query.trim().length < 2} onClick={() => void fullSearch()}>
-          {busy ? t("views.search.searching") : t("views.search.searchSources")}
-        </Button>
-      </div>
-      {note ? <p style={{ margin: 0, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{note}</p> : null}
-      {query.trim().length < 2 && !hasResults ? (
-        <EmptyState icon="search" title={t("web.search.emptyTitle")} hint={t("web.search.emptyHint")} />
-      ) : null}
-      {grouping ? <GroupedTrackList results={groupedResults} /> : <TrackList tracks={flatResults} />}
-    </div>
+    // suppressNativeMenu={false}: у браузера своё меню («Открыть в новой
+    // вкладке», «Назад») — на сайте отбирать его нельзя. Строкам это не
+    // мешает: их openMenu гасит нативное меню сам.
+    <ContextMenuProvider ctx={menu.abilities} apiRef={menu.apiRef} suppressNativeMenu={false}>
+      <SearchView
+        api={getApi()}
+        // аноним сюда не попадает (шелл уводит на /login), но экран honest:
+        // без сессии сервер каталога не знает
+        canSearch={Boolean(session)}
+        query={query}
+        onQueryChange={setQuery}
+        currentId={current?.id ?? null}
+        playing={playing}
+        likes={[...likedIds]}
+        searchGrouping={prefs.searchGrouping}
+        onPlayCatalog={(tracks, id) =>
+          playContext(
+            tracks,
+            Math.max(
+              tracks.findIndex((tr) => tr.id === id),
+              0,
+            ),
+          )
+        }
+        onLike={(id) => {
+          const tr = rows.find((r) => r.id === id);
+          if (tr) toggle(tr);
+        }}
+        onNotify={notify}
+        onCatalogMenu={(tr, e) => menu.openRowMenu(tr, e)}
+        onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
+        onOpenScPlaylist={openScPlaylist}
+        onPlaylistsChanged={() => void refreshPlaylists()}
+        onResultsChange={setRows}
+        // Свои поля экрана гасим: зона контента веба (.main) уже с полями —
+        // иначе они удвоились бы и страница поехала бы вправо-вниз.
+        style={{ padding: 0 }}
+      />
+      {menu.overlay}
+    </ContextMenuProvider>
   );
 }

@@ -15,8 +15,10 @@ export type {
   LocalFilesPort,
   OfflinePort,
   PlatformAdapter,
+  PreparedTracksPort,
+  SaveImagePort,
   SystemPort,
   TrackFileRef,
   WindowPort,
 } from "./types";
-export { PlatformProvider, useAltFileDrag, useDragOut, usePlatform, useTrackDragOut } from "./PlatformContext";
+export { PlatformProvider, useAltFileDrag, useDragOut, useLocalFiles, usePlatform, useTrackDragOut } from "./PlatformContext";

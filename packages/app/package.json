@@ -11,6 +11,7 @@
     "./platform": "./src/platform/index.ts",
     "./auth/*": "./src/auth/*.tsx",
     "./shell/*": "./src/shell/*.tsx",
+    "./views/*": "./src/views/*.tsx",
     "./lib/*": "./src/lib/*.ts",
     "./theme/accent": "./src/theme/accent.ts",
     "./theme/themeVars": "./src/theme/themeVars.ts",

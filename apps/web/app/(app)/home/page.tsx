@@ -1,94 +1,85 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Tile } from "@muza/ui";
+import { useMemo, useState } from "react";
 import type { HomeSection, Track } from "@muza/api-client";
-import { useT } from "@muza/app";
+import { HomeFeed } from "@muza/app/views/HomeFeed";
+import { ContextMenuProvider } from "@muza/app/shell/ContextMenu";
+import { useRouter } from "next/navigation";
 import { getApi } from "../../../src/api";
+import { useLikes } from "../../../src/likes";
 import { usePlayer } from "../../../src/player";
 import { useSession } from "../../../src/session";
-import { TrackList } from "../../../src/components/TrackList";
+import { useToast } from "../../../src/toast";
+import { useWebTrackMenu } from "../../../src/components/TrackList";
 
-/** Главная веба: живые секции `/home` (рекомендации Stage 5). Первая секция —
- *  список (быстрый play), остальные — карусели обложек, как полки десктопа. */
-
-function Shelf({ section }: { section: HomeSection }) {
-  const { current, playing, playContext } = usePlayer();
-  const withCovers = section.tracks.filter((t) => t.coverUrl && !t.localHash);
-  if (withCovers.length < 3) return <TrackList tracks={section.tracks.slice(0, 8)} />;
-  return (
-    <div className="shelf">
-      {withCovers.slice(0, 16).map((t: Track, i: number) => (
-        <Tile
-          key={t.id}
-          cover={t.coverUrl!}
-          title={t.title}
-          subtitle={t.artist}
-          width="auto"
-          playing={current?.id === t.id && playing}
-          onPlay={() => playContext(withCovers, i)}
-          onClick={() => playContext(withCovers, i)}
-        />
-      ))}
-    </div>
-  );
-}
-
+/** Главная веба = ОБЩИЙ экран @muza/app/views/HomeFeed, тот же самый, что
+ *  рисует приложение (волна экранов веб-паритета, 2026-08-02).
+ *
+ *  Что здесь было раньше: своя вёрстка ленты — секции в порядке сервера,
+ *  первая всегда списком, остальные плитками без подписей. Человек видел
+ *  «Для тебя» сразу, а витрин «В тренде» и «Новое в каталоге» не видел вовсе;
+ *  заголовки были на 10 и 5 пикселей мельче приложения, у полок не было
+ *  стрелок-листалок, у плиток — правой кнопки. Теперь порядок секций,
+ *  типографика, полки и меню приезжают из одного файла на два клиента.
+ *
+ *  Страница осталась ВИЛКОЙ: отдаёт общему экрану то, чем веб умеет
+ *  распоряжаться (плеер, лайки, тосты, переходы, меню по правой кнопке).
+ *  Оффлайн-копии ленты, прогрева добычи и выноса файла на рабочий стол у
+ *  браузера нет — соответствующие пропсы не передаются, и экран ведёт себя
+ *  так, будто этих возможностей в продукте нет. */
 export default function HomePage() {
   const { session } = useSession();
-  const { t } = useT();
-  const [sections, setSections] = useState<HomeSection[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { current, playing, playContext } = usePlayer();
+  const { likedIds, toggle } = useLikes();
+  const notify = useToast();
+  const router = useRouter();
 
-  useEffect(() => {
-    if (!session) return;
-    getApi()
-      .getHome()
-      .then(setSections)
-      .catch(() => setFailed(true));
-  }, [session]);
-
-  const greeting = (() => {
-    const h = new Date().getHours();
-    const word =
-      h < 5
-        ? t("views.home.greeting.night")
-        : h < 12
-          ? t("views.home.greeting.morning")
-          : h < 18
-            ? t("views.home.greeting.day")
-            : t("views.home.greeting.evening");
-    const name = session?.user.username;
-    return name ? `${word}, ${name}!` : `${word}!`;
-  })();
+  /** Треки ленты нужны меню по правой кнопке: оно живёт снаружи экрана
+   *  (это веб-умение — «Скачать», диалог «В плейлист»), а треки знает только
+   *  сам экран. Отдаёт он их коллбэком onSections. */
+  const [sections, setSections] = useState<HomeSection[]>([]);
+  const tracks = useMemo(() => {
+    const seen = new Set<string>();
+    const flat: Track[] = [];
+    for (const s of sections) {
+      for (const tr of s.tracks) {
+        if (seen.has(tr.id)) continue;
+        seen.add(tr.id);
+        flat.push(tr);
+      }
+    }
+    return flat;
+  }, [sections]);
+  const menu = useWebTrackMenu(tracks);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
-      <h1 className="page-title">{greeting}</h1>
-      {failed ? (
-        <p style={noteStyle}>{t("web.home.serverDown")}</p>
-      ) : sections === null ? (
-        // спокойные плейсхолдеры (ДС запрещает мерцание)
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }} aria-hidden="true">
-          <div className="ph" style={{ height: 20, width: 140 }} />
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="ph" style={{ height: 56 }} />
-          ))}
-          <div className="ph" style={{ height: 20, width: 180, marginTop: "var(--sp-3)" }} />
-          <div className="ph" style={{ height: 180 }} />
-        </div>
-      ) : sections.length === 0 ? (
-        <p style={noteStyle}>{t("web.home.emptyHint")}</p>
-      ) : (
-        sections.map((s, idx) => (
-          <section key={s.key}>
-            <h2 className="section-title">{s.title}</h2>
-            {idx === 0 ? <TrackList tracks={s.tracks.slice(0, 8)} /> : <Shelf section={s} />}
-          </section>
-        ))
-      )}
-    </div>
+    // suppressNativeMenu={false}: у браузера своё меню — на сайте отбирать его
+    // целиком нельзя, строки и плитки гасят нативное меню сами.
+    <ContextMenuProvider ctx={menu.abilities} apiRef={menu.apiRef} suppressNativeMenu={false}>
+      <HomeFeed
+        api={getApi()}
+        canSearch={Boolean(session)}
+        greetName={session?.user.username ?? null}
+        currentId={current?.id ?? null}
+        playing={playing}
+        likes={[...likedIds]}
+        onPlayCatalog={(list, id) => {
+          const i = list.findIndex((tr) => tr.id === id);
+          if (i >= 0) playContext(list, i);
+        }}
+        onLike={(id) => {
+          const tr = tracks.find((x) => x.id === id);
+          if (tr) toggle(tr);
+        }}
+        onCatalogMenu={(tr, e) => menu.openRowMenu(tr, e)}
+        onNotify={(text, icon) => notify(text, icon)}
+        onOpen={(v) => router.push(`/${v}`)}
+        onSections={setSections}
+        // Поля несёт панель-зона `.main` (globals.css) — экран свои гасит,
+        // иначе отступ сложился бы вдвое.
+        padding="0"
+      />
+      {menu.overlay}
+    </ContextMenuProvider>
   );
 }
-
-const noteStyle: React.CSSProperties = { margin: 0, fontFamily: "var(--font-ui)", color: "var(--text-2)" };

@@ -215,9 +215,11 @@ function playlistSelectionItems(
   t: T,
 ): MenuItem[] {
   const { playlists, ctl } = target;
+  const saveOffline = ctl.saveOffline;
   return [
     { header: t("menu.selection.count", { count: playlists.length }) },
-    { icon: "download", label: t("menu.catalog.saveOffline"), onClick: ctl.saveOffline },
+    // умения нет (браузер) — пункта нет вовсе, а не серым
+    ...(saveOffline ? [{ icon: "download", label: t("menu.catalog.saveOffline"), onClick: saveOffline }] : []),
     "-",
     {
       icon: "trash-2",
