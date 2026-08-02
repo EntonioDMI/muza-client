@@ -19,7 +19,7 @@ import { Icon } from "../core/Icon.jsx";
  *    строки) и давало ровно тот эффект, на который пожаловался владелец:
  *    скрытая строка получает opacity:0, но ОСТАЁТСЯ В ПОТОКЕ и держит своё
  *    место пустым — панель читалась как три строки посреди пустоты. */
-export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, onLineContextMenu, autoScroll = true, endNote = false, style }) {
+export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExplain, onLineContextMenu, autoScroll = true, endNote = false, windowLines = 5, panelLines = 0, style }) {
   const wrapRef = useRef(null);
   const activeRef = useRef(null);
   // Пользователь листает сам: показываем весь текст и не дёргаем автоскролл
@@ -28,7 +28,10 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
 
   const karaoke = mode === "karaoke";
   const synced = activeIndex >= 0; // plain-текст без таймкодов — обычный список
-  const radius = 2; // караоке-окно: активная ±2 (5 строк). В панели окна нет
+  // Караоке-окно: активная ±radius. Окно всегда симметрично, поэтому число
+  // видимых строк нечётное: 3, 5, 7… Настройка «Строк текста в караоке» даёт
+  // именно это число, заводское 5 = прежний radius 2. В панели окна нет.
+  const radius = Math.max(1, Math.floor((windowLines - 1) / 2));
   // autoScroll=false — постоянный «ручной» режим: свободный скролл, активная
   // строка подсвечивается, но окно за ней не едет
   const freeScroll = manual || !autoScroll;
@@ -43,6 +46,35 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
   // centerActive (scrollTo клампится у краёв сам). Караоке — процент: полный
   // экран, активная всплывает в верхнюю треть, а не жмётся к самому краю.
   const edgePad = karaoke ? "22%" : "var(--sp-8)";
+
+  // «Строк текста в панели»: 0 — «Авто» (размер строки диктует общий «Размер
+  // текста», как было всегда), N — подобрать размер так, чтобы в видимую
+  // высоту влезло ровно N строк. Наблюдаем ПРОКРУЧИВАЕМУЮ ОБЁРТКУ, а не список
+  // строк: её высоту задаёт flex-родитель, поэтому обратной связи «шрифт вырос
+  // → контейнер вырос → шрифт вырос» не возникает. В караоке не применяется —
+  // там число строк задаётся окном, а не размером.
+  const [fittedFs, setFittedFs] = useState(null);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (karaoke || !panelLines || panelLines < 2 || !wrap || typeof ResizeObserver === "undefined") {
+      setFittedFs(null);
+      return;
+    }
+    const recompute = () => {
+      const cs = getComputedStyle(wrap);
+      const lh = parseFloat(cs.getPropertyValue("--lh-lyrics")) || 1.3;
+      const gap = parseFloat(cs.rowGap) || 0;
+      const h = wrap.clientHeight;
+      if (!h) return;
+      const raw = (h - (panelLines - 1) * gap) / (panelLines * lh);
+      // кламп: ниже 12px текст нечитаем, выше 34px панель превращается в караоке
+      setFittedFs(Math.max(12, Math.min(34, raw)));
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [karaoke, panelLines]);
 
   const centerActive = (behavior) => {
     const wrap = wrapRef.current;
@@ -147,7 +179,7 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
             }}
             style={{
               fontFamily: "var(--font-ui)",
-              fontSize: karaoke ? "var(--fs-karaoke)" : "var(--fs-lyric)",
+              fontSize: karaoke ? "var(--fs-karaoke)" : fittedFs ? `${fittedFs}px` : "var(--fs-lyric)",
               fontWeight: "var(--fw-bold)",
               lineHeight: "var(--lh-lyrics)",
               // Karaoke runs 56px+ and the side panel 24px: the same tracking

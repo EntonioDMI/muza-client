@@ -57,7 +57,7 @@ export const mediaRu: typeof mediaEn = {
     equalizer: { label: "Эквалайзер", hint: "Открывает под-экран EQ" },
     lyrics: { label: "Текст", hint: "Панель «Сейчас играет»" },
     jam: { label: "Jam", hint: "Слушать вместе" },
-    volume: { label: "Громкость", hint: "Кнопка-mute и слайдер" },
+    volume: { label: "Громкость", hint: "Кнопка тишины, ползунок и выбор устройства вывода — уберёте отсюда, останутся только в настройках" },
     queue: { label: "Очередь", hint: "Панель очереди" },
     fullscreen: { label: "Во весь экран", hint: "Режим прослушивания" },
   },

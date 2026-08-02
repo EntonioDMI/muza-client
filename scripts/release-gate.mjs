@@ -42,6 +42,11 @@ const EXPECTED_MAIN_PERMISSIONS = [
   "process:allow-restart",
   "drag:default",
   { identifier: "opener:allow-open-url", allow: [{ url: "https://**" }] },
+  // «Показать в папке» у локального трека: путь произвольный, потому что импортированные
+  // файлы лежат где угодно на диске пользователя — сузить до кэша нельзя, фича сломается.
+  // Добавлено в main.json 2026-07-20 (35f7e03), в эталон доехало только 2026-08-01: до этого
+  // гейт падал, но шаг CI оставался зелёным (см. правку ErrorActionPreference в workflows).
+  { identifier: "opener:allow-reveal-item-in-dir", allow: [{ path: "**" }] },
 ];
 const EXPECTED_MINI_PERMISSIONS = ["core:default", "core:window:allow-start-dragging"];
 const EXPECTED_CAPABILITY_KEYS = ["$schema", "identifier", "description", "windows", "permissions"];

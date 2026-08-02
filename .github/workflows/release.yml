@@ -56,9 +56,19 @@ jobs:
           Move-Item -LiteralPath (Join-Path $denoExtract 'deno.exe') -Destination $denoPath -Force
           if (-not (Test-Path -LiteralPath $denoPath -PathType Leaf)) { throw 'Deno sidecar missing after extraction' }
 
+      # Две строки преамбулы в КАЖДОМ многокомандном pwsh-блоке ниже — не украшение.
+      # GitHub проверяет только код возврата ПОСЛЕДНЕЙ команды блока, поэтому падение
+      # любой команды кроме последней исчезало бесследно. Так v0.1.4 и v0.1.5 уехали с
+      # молча провалившимся гейтом наименьших привилегий: в логе прогона v0.1.5 стоит
+      # "main capability permission set mismatch", а джоба зелёная (проверено 2026-08-01).
+      # $PSNativeCommandUseErrorActionPreference превращает ненулевой код нативной
+      # команды в терминирующую ошибку; на pwsh старше 7.3 переменная просто
+      # проигнорируется, поэтому строка безопасна и на других раннерах.
       - name: Node trust tests и API env
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node --test scripts/release-gate.test.mjs
           node scripts/release-gate.mjs env VITE_API_URL
           node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL
@@ -66,18 +76,24 @@ jobs:
       - name: Rust tests и schema check
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
           cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 
       - name: Production frontend builds
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm --filter muza-desktop build
           pnpm --filter muza-web build
 
       - name: Exact config, capability, workflow и artifact gates
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node scripts/release-gate.mjs tauri apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/tauri.dev.conf.json
           node scripts/release-gate.mjs capabilities apps/desktop/src-tauri/capabilities/main.json apps/desktop/src-tauri/capabilities/mini.json
           node scripts/release-gate.mjs workflows .github/workflows/release.yml .github/workflows/trust-gate.yml

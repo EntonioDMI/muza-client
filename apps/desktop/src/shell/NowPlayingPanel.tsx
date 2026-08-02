@@ -15,6 +15,7 @@ export function NowPlayingPanel({
   activeLine,
   lyricsAutoScroll = true,
   lyricsEndNote = true,
+  lyricsPanelLines = 0,
   onSeekLine,
   onExplain,
   videoUrl = null,
@@ -37,6 +38,8 @@ export function NowPlayingPanel({
   lyricsAutoScroll?: boolean;
   /** Настройка «Нотка в конце» (Тексты): декоративный знак под текстом. */
   lyricsEndNote?: boolean;
+  /** 0 — «Авто», N — подогнать размер строки под N строк (prefs.lyricsPanelLines). */
+  lyricsPanelLines?: number;
   onSeekLine: (i: number) => void;
   /** Открыть общую модалку смысла для выделенной строки. */
   onExplain: (index: number) => void;
@@ -216,6 +219,7 @@ export function NowPlayingPanel({
             activeIndex={activeLine}
             autoScroll={lyricsAutoScroll}
             endNote={lyricsEndNote}
+            panelLines={lyricsPanelLines}
             onSeek={onSeekLine}
             onExplain={onExplain}
             onLineContextMenu={openLyricsMenu}

@@ -44,6 +44,25 @@ describe("PRESETS_WARM", () => {
   });
 });
 
+describe("PRESETS_WARM", () => {
+  /** Сторож против расхождения пары чисел с подписью чипа. До 2026-08-02
+   *  preloadAheadSec стоял ровно наоборот: «Экономно» начинало качать
+   *  следующий трек за 30 с до конца (раньше всех), «Максимум» — за 10 с
+   *  (позже всех). Оба числа обязаны расти в одну сторону: чем «мгновеннее»
+   *  режим, тем шире окно прогрева и тем раньше начинается преднагрузка. */
+  it("оба числа растут от «экономно» к «максимуму»", () => {
+    const { eco, normal, max } = PRESETS_WARM;
+    for (const key of ["warmAhead", "preloadAheadSec"] as const) {
+      expect(eco[key], `${key}: экономно должно быть не больше обычного`).toBeLessThanOrEqual(normal[key]!);
+      expect(max[key], `${key}: максимум должен быть не меньше обычного`).toBeGreaterThanOrEqual(normal[key]!);
+    }
+  });
+
+  it("«Обычно» равен дефолтам: после обновления человек видит прежнее поведение", () => {
+    expect(matchPreset(PRESETS_WARM, DEFAULT_PREFS)).toBe("normal");
+  });
+});
+
 describe("PRESETS_BG", () => {
   it("«Живо» равен дефолтам: после обновления пользователь видит прежний фон", () => {
     expect(matchPreset(PRESETS_BG, DEFAULT_PREFS)).toBe("lively");

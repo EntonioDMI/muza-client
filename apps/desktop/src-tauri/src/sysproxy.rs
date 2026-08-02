@@ -425,8 +425,44 @@ mod win {
     }
 }
 
+/// Разбор значения аварийного выключателя. Вынесен отдельной чистой функцией
+/// нарочно: само значение кэшируется на весь запуск, поэтому тест, дёргающий
+/// переменную окружения, был бы зависим от порядка тестов.
+#[cfg(target_os = "windows")]
+fn disabled_by_value(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
+}
+
+/// Аварийный выход: `MUZA_NO_SYSTEM_PROXY=1` полностью выключает системный
+/// прокси — добыча ходит напрямую, ровно как в v0.1.5.
+///
+/// Зачем: прокси берётся всегда, когда он настроен в Windows, и это правильно
+/// для тех, кто его ставил ради обхода. Но есть узкая группа, которой стало
+/// хуже: прокси есть, браузер через него ходит, а музыкальные площадки он не
+/// тянет — трек просто не заводится, и связать это с настройками сети человек
+/// сам не может. Список исключений Windows приложение соблюдает, но требовать
+/// от пользователя редактировать его — не выход на время до появления тумблера
+/// в интерфейсе (запланирован, см. docs/subsystems/добыча.md).
+///
+/// Читается ОДИН раз за запуск: менять на лету незачем, а чтение ДО любого
+/// обращения к WinHTTP заодно снимает синхронный запрос к системе на старте —
+/// на машине с залипшим PAC-адресом именно он подвешивал окно.
+#[cfg(target_os = "windows")]
+fn system_proxy_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        disabled_by_value(std::env::var("MUZA_NO_SYSTEM_PROXY").ok().as_deref())
+    })
+}
+
 #[cfg(target_os = "windows")]
 pub fn proxy_for(url: &str) -> Option<String> {
+    if system_proxy_disabled() {
+        return None;
+    }
     win::proxy_for(url)
 }
 
@@ -666,5 +702,23 @@ mod tests {
             resolve_proxy("not a url", &IeProxyConfig::default(), |_, _, _| None),
             None
         );
+    }
+
+    /// Аварийный выключатель: включается только явным значением. Пустая строка
+    /// и «0» — это НЕ «выключить прокси»: переменная, случайно объявленная
+    /// пустой в чужом окружении, не должна молча возвращать поведение 0.1.5.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn no_system_proxy_switch_reads_only_explicit_values() {
+        for on in ["1", "true", "yes", "TRUE", " 1 "] {
+            assert!(disabled_by_value(Some(on)), "{on:?} обязан выключать прокси");
+        }
+        for off in ["", "0", "false", "no", "off", "да"] {
+            assert!(
+                !disabled_by_value(Some(off)),
+                "{off:?} НЕ должен выключать прокси"
+            );
+        }
+        assert!(!disabled_by_value(None));
     }
 }

@@ -43,7 +43,13 @@ export const PRESETS_BG: Record<string, Partial<Prefs>> = {
  *  который пользователь мог не дослушать, и поднимало velocity-сигнатуру
  *  для бот-детекта YouTube. */
 export const PRESETS_WARM: Record<string, Partial<Prefs>> = {
-  eco: { warmAhead: 1, preloadAheadSec: 30 },
+  //
+  // 2026-08-02: preloadAheadSec стоял ровно наоборот и противоречил подписи
+  // чипа — «Экономно» начинало качать следующий трек за 30 с до конца, то есть
+  // РАНЬШЕ всех, а «Максимум» за 10 с, позже всех. Числа поменяны местами;
+  // «Обычно» равно дефолту поля и потому не трогается. Сторож монотонности —
+  // в presets.test.ts, чтобы пара чисел больше не разъезжалась.
+  eco: { warmAhead: 1, preloadAheadSec: 10 },
   normal: { warmAhead: 3, preloadAheadSec: 20 },
-  max: { warmAhead: 10, preloadAheadSec: 10 },
+  max: { warmAhead: 10, preloadAheadSec: 30 },
 };

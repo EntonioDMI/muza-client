@@ -137,6 +137,10 @@ export function usePlayback({
   stateRef.current = { queue, index, playing, repeat, shuffle, speed, track, pos };
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+  // Громкость держим и ref'ом: движок создаётся лениво, первым же треком, и в
+  // этот момент читать её надо синхронно — см. догон настроек в фабрике engine().
+  const volRef = useRef(vol);
+  volRef.current = vol;
   // i18n (T-media): usePlayback не рендерится внутри своего LanguageProvider
   // (тот выше, в Player/App) — как T31 в App.tsx, зовём чистую translate()
   // напрямую с prefs.language вместо хука useT(). prefsRef уже существует
@@ -264,6 +268,17 @@ export function usePlayback({
       // подхватит их в ensureGraph). Конфиг голоса — тем же приёмом.
       engineRef.current.setMicConfig({ deviceId: prefsRef.current.micDeviceId || null, gain: prefsRef.current.micGain });
       if (resolvedRoutesRef.current.length > 0) engineRef.current.setOutputs(resolvedRoutesRef.current);
+      // По той же причине догоняем ВСЁ, что человек мог задать до первого трека.
+      // Эквалайзер: его эффект висит на [eqOn, eqBands], а ссылка на массив
+      // полос при обычных правках настроек не меняется — после монтирования с
+      // пустым движком эффект больше не срабатывал, и включённый в прошлой
+      // сессии эквалайзер молчал до первого касания полосы.
+      // Громкость и скорость: выставленные до первого трека (клавиша M, ползунок,
+      // переключатель скорости) уходили в никуда — движка ещё не было, а он
+      // рождается со своими заводскими 64 и 1x.
+      engineRef.current.setEq(prefsRef.current.eqOn, prefsRef.current.eqBands);
+      engineRef.current.setVolume(volRef.current);
+      if (stateRef.current.speed !== 1) engineRef.current.setSpeed(stateRef.current.speed);
     }
     return engineRef.current;
   };
@@ -550,12 +565,21 @@ export function usePlayback({
     if (ni === null) {
       // конец очереди без повтора: сперва даём шанс бесконечному радио
       if (auto && onQueueEndRef.current) {
+        // Тот же приём сверки, что и у повтора выше, и он здесь обязателен:
+        // запрос радио на медленной сети летит 2-5 секунд, и за это время
+        // человек успевает кликнуть песню руками. Без сверки радио-трек
+        // заводился ПОВЕРХ выбранного, а склейка от снимка `s.queue` затирала
+        // всё, что человек за эти секунды сделал с очередью.
+        const seqBefore = playSeqRef.current;
         const more = await onQueueEndRef.current(s.track).catch(() => null);
+        if (playSeqRef.current !== seqBefore) return; // старт уже не наш
         if (more && more.length > 0) {
-          const nextQueue = [...s.queue, ...more];
+          // очередь склеиваем от СВЕЖЕГО состояния, а не от снимка до ожидания
+          const live = stateRef.current;
+          const nextQueue = [...live.queue, ...more];
           setQueue(nextQueue);
           stateRef.current = { ...stateRef.current, queue: nextQueue };
-          await startAt(s.queue.length, { fadeSec: 0, auto: true });
+          await startAt(live.queue.length, { fadeSec: 0, auto: true });
           return;
         }
       }

@@ -11,7 +11,7 @@ import {
   type Prefs,
   type StatsBlockKey,
 } from "../types";
-import { listInputDevices, listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
+import { deviceAccessDenied, listInputDevices, listOutputDevices, type OutputDeviceInfo } from "../player/outputDevices";
 import { getStartLog, subscribeStartLog, type StartRecord } from "../player/startTelemetry";
 import { useT, type TParams, type TranslationKey } from "../i18n";
 import { normalizeStatsBlocks, statsBlockLabel } from "../lib/statsBlocks";
@@ -1100,6 +1100,7 @@ export function SettingsView({
   onOpenHotkeys,
   onPluginsChanged,
   intent,
+  onIntentUsed,
   nowPlaying,
 }: {
   api: MuzaApi;
@@ -1119,6 +1120,9 @@ export function SettingsView({
    *  (слоты/iframe) БЕЗ перезагрузки приложения. См. docs/notes про gap T45b. */
   onPluginsChanged?: () => void;
   intent?: SettingsIntent | null;
+  /** Заявка исполнена — гасить её в App, иначе она сработает на следующем
+   *  входе в настройки (поддерево пересоздаётся при смене экрана). */
+  onIntentUsed?: () => void;
   /** Играющий трек — честный предпросмотр Discord RPC (обложка — сырая,
    *  как в реальной активности); null — демо-значения. */
   nowPlaying?: { title: string; artist: string; album: string; cover: string | null; duration: number } | null;
@@ -1730,12 +1734,18 @@ export function SettingsView({
     });
   };
 
-  // Открытие под-экрана извне (кнопка EQ в плеер-баре)
+  // Открытие под-экрана извне (кнопка EQ в плеер-баре).
+  // Заявку ОБЯЗАТЕЛЬНО гасим сразу после исполнения: <main key={view}> в App
+  // пересоздаёт поддерево при каждой смене экрана, поэтому этот эффект
+  // отрабатывает заново на КАЖДОМ входе в настройки. Пока заявка висела, войти
+  // в корень настроек из сайдбара было нельзя — до перезапуска приложения
+  // каждый вход проваливал в тот самый под-экран (жалоба-разбор 2026-08-02).
   useEffect(() => {
     if (!intent) return;
     setTab(SUB_HOME_TAB[intent.sub]);
     setSub(intent.sub);
-  }, [intent]);
+    onIntentUsed?.();
+  }, [intent, onIntentUsed]);
 
   // Внешний скробблинг (Интеграции): статус с сервера + флоу подключения
   const [scrob, setScrob] = useState<ScrobblingStatus | null>(null);
@@ -3016,7 +3026,11 @@ export function SettingsView({
       {outDevices === null ? (
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.outputs.loading")}</div>
       ) : outDevices.length === 0 ? (
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("settings.outputs.empty")}</div>
+        // Пустой список — две разные беды с одинаковым видом. Пока не различали,
+        // человека с запретом микрофона в Windows отправляли проверять провода.
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+          {t(deviceAccessDenied() ? "settings.outputs.blocked" : "settings.outputs.empty")}
+        </div>
       ) : (
         outDevices.map(outDeviceRow)
       )}
@@ -4182,6 +4196,35 @@ export function SettingsView({
             label={t("settings.lyrics.karaokeSize.title")}
             suffix={`${prefs.karaokeSize} px`}
             onChange={(v) => set({ karaokeSize: 36 + Math.round(v) })}
+          />
+        </SettingRow>
+        {/* Окно караоке симметрично (активная ±N), поэтому число строк всегда
+            нечётное: ползунок ходит по 3,5,7,9,11 — шаг 2 от тройки. */}
+        <SettingRow title={t("settings.lyrics.karaokeLines.title")} hint={t("settings.lyrics.karaokeLines.hint")}>
+          <LiveSlider
+            value={(prefs.karaokeLines - 3) / 2}
+            max={4}
+            label={t("settings.lyrics.karaokeLines.title")}
+            suffix={t("settings.lyrics.linesSuffix", { count: prefs.karaokeLines })}
+            onChange={(v) => set({ karaokeLines: 3 + Math.round(v) * 2 })}
+          />
+        </SettingRow>
+        {/* 0 — «Авто»: размер строки диктует общий «Размер текста», как было
+            всегда. Дальше 4..14 — размер подбирается под число строк. */}
+        <SettingRow title={t("settings.lyrics.panelLines.title")} hint={t("settings.lyrics.panelLines.hint")}>
+          <LiveSlider
+            value={prefs.lyricsPanelLines === 0 ? 0 : prefs.lyricsPanelLines - 3}
+            max={11}
+            label={t("settings.lyrics.panelLines.title")}
+            suffix={
+              prefs.lyricsPanelLines === 0
+                ? t("settings.lyrics.panelLines.auto")
+                : t("settings.lyrics.linesSuffix", { count: prefs.lyricsPanelLines })
+            }
+            onChange={(v) => {
+              const n = Math.round(v);
+              set({ lyricsPanelLines: n === 0 ? 0 : n + 3 });
+            }}
           />
         </SettingRow>
         <GroupTitle>{t("settings.lyrics.understandingGroup")}</GroupTitle>

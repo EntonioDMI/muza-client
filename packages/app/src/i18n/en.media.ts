@@ -89,7 +89,7 @@ export const mediaEn = {
     equalizer: { label: "Equalizer", hint: "Opens the EQ sub-screen" },
     lyrics: { label: "Lyrics", hint: '"Now Playing" panel' },
     jam: { label: "Jam", hint: "Listen together" },
-    volume: { label: "Volume", hint: "Mute button and slider" },
+    volume: { label: "Volume", hint: "Mute button, slider and the output device picker — hide it here and they stay only in settings" },
     queue: { label: "Queue", hint: "Queue panel" },
     fullscreen: { label: "Fullscreen", hint: "Listening mode" },
   },

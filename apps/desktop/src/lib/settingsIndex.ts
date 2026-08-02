@@ -172,6 +172,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("lyrics", null, "settings.lyrics.endNote", ["нотка", "конец текста"]),
   e("lyrics", null, "settings.lyrics.videoNowPlaying", ["видео", "клип", "обложка", "video"]),
   e("lyrics", null, "settings.lyrics.karaokeSize", ["караоке", "размер строки"]),
+  e("lyrics", null, "settings.lyrics.karaokeLines", ["строки", "сколько строк", "караоке", "lines"]),
+  e("lyrics", null, "settings.lyrics.panelLines", ["строки", "сколько строк", "панель", "сейчас играет", "lines"]),
   // «Перевод» из индекса убран (аудит 22.07): фича ещё не существует —
   // поиск не должен приводить к ряду-заглушке. Вернуть вместе с фичей.
   e("lyrics", null, "settings.lyrics.meaningMode", ["смысл", "значение", "meaning"]),

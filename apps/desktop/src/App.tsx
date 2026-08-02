@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, SearchInput, Toast } from "@muza/ui";
 import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
 import {
@@ -289,6 +289,10 @@ function Player({
   const [likes, setLikes] = useState<string[]>([]);
   // Запрос открыть конкретный под-экран настроек (кнопка эквалайзера в баре)
   const [settingsIntent, setSettingsIntent] = useState<SettingsIntent | null>(null);
+  // Заявка одноразовая: SettingsView гасит её сразу после того, как открыл
+  // нужный под-экран. Стабильная ссылка — иначе эффект-исполнитель в
+  // SettingsView перезапускался бы каждым рендером App.
+  const clearSettingsIntent = useCallback(() => setSettingsIntent(null), []);
   const [lyricsOn, setLyricsOn] = useState(true);
   const [queueOn, setQueueOn] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -572,9 +576,24 @@ function Player({
   const reorderPlaylists = async (draggedId: string, toIndex: number) => {
     let nextIds: string[] = [];
     setSrvPlaylists((ps) => {
-      const from = ps.findIndex((p) => p.id === draggedId);
-      if (from < 0 || from === toIndex) return ps;
-      const next = moveItem(ps, from, toIndex);
+      // toIndex приходит в координатах УРЕЗАННОГО списка: и сайдбар, и сетка
+      // медиатеки отдают в перетаскивание только подвижные плейлисты (подписки
+      // и закреплённые исключены — их позиций сервер не хранит, а смысл
+      // закрепа в том, чтобы случайно не сдвинуть). Раньше здесь `from`
+      // брался из ПОЛНОГО списка и складывался с чужим `toIndex`: промах был
+      // равен числу исключённых, а сравнение «откуда == куда» сравнивало
+      // несравнимое — поэтому сдвиг на одну позицию вниз молча не давал
+      // ничего. Закреплённые всегда сверху, так что с появлением закрепа
+      // (0.1.6) промах стал бы гарантированным, а испорченный порядок уходит
+      // на сервер и переживает перезапуск.
+      const movable = ps.filter((p) => p.role !== "follower" && !p.pinned);
+      const from = movable.findIndex((p) => p.id === draggedId);
+      if (from < 0 || from === toIndex || toIndex < 0 || toIndex >= movable.length) return ps;
+      const moved = moveItem(movable, from, toIndex);
+      // Неподвижные остаются на СВОИХ местах в общем списке, подвижные
+      // перетасовываются только между своими слотами.
+      let k = 0;
+      const next = ps.map((p) => (p.role !== "follower" && !p.pinned ? moved[k++] : p));
       nextIds = next.map((p) => p.id);
       return next;
     });
@@ -723,6 +742,7 @@ function Player({
       pause: pb.pause,
     },
     prefs.mediaKeys,
+    pb.speed,
   );
 
   // Мини-плеер: окно "mini" живёт/умирает по prefs; состояние уходит событиями
@@ -1635,7 +1655,14 @@ function Player({
         ? { "--bg-0": baseBg.bg0, "--bg-1": baseBg.bg1 }
         : {}),
     "--text-2": `rgba(${textBase}, ${(prefs.textDim / 100).toFixed(2)})`,
-    "--text-3": `rgba(${textBase}, ${Math.max(0.2, prefs.textDim / 100 - 0.24).toFixed(2)})`,
+    // Шаг между вторым и третьим тоном = 0.14, и это НЕ вкусовое число: в токенах ДС
+    // (packages/ui/src/tokens/colors.css) --text-2 0.62 и --text-3 0.48 — ровно 0.14.
+    // Держать их в синхроне обязательно: этот инлайн-стиль сильнее любого правила
+    // таблицы стилей, поэтому именно он, а не токен, решает, что увидит пользователь.
+    // Было 0.24 (шаг старого токена 0.38) — из-за этого правка контраста от 27.07
+    // до людей не доезжала вовсе. Та же формула продублирована для веба в
+    // packages/app/src/theme/themeVars.ts — менять обе разом.
+    "--text-3": `rgba(${textBase}, ${Math.max(0.2, prefs.textDim / 100 - 0.14).toFixed(2)})`,
     "--blur-scenery": `${prefs.blurScenery}px`,
     // Скорость орбит анимированного фона (зона 1 спеки 19.07): app.css читает
     // var(--orb-dur, 64s) — дефолт токена = прежней зашитой скорости.
@@ -2197,6 +2224,7 @@ function Player({
                 onOpenHotkeys={openHotkeys}
                 onPluginsChanged={plugins.refresh}
                 intent={settingsIntent}
+                onIntentUsed={clearSettingsIntent}
                 // Живой трек для честного предпросмотра Discord RPC: обложка —
                 // СЫРАЯ (rawCover, как в реальной активности), не кроп useCoverArt
                 nowPlaying={
@@ -2218,6 +2246,7 @@ function Player({
             activeLine={activeLine}
             lyricsAutoScroll={prefs.lyricsAutoScroll}
             lyricsEndNote={prefs.lyricsEndNote}
+            lyricsPanelLines={prefs.lyricsPanelLines}
             onSeekLine={seekLine}
             onExplain={setMeaningLine}
             videoUrl={trackVideoUrl}
@@ -2664,6 +2693,7 @@ function Player({
         activeLine={activeLine}
         lyricsAutoScroll={prefs.lyricsAutoScroll}
         lyricsEndNote={prefs.lyricsEndNote}
+        karaokeLines={prefs.karaokeLines}
         onTogglePlay={pb.toggle}
         onPrev={pb.prev}
         onNext={pb.next}

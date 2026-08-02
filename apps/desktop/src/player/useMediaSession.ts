@@ -19,6 +19,11 @@ export function useMediaSession(
   pos: number,
   controls: MediaSessionControls,
   enabled = true,
+  /** Скорость воспроизведения. Оверлей Windows сам двигает полоску между
+   *  нашими обновлениями позиции и считает её по этому числу: с зашитой
+   *  единицей на 1.5x и 2x полоска отставала и дёргалась рывками назад при
+   *  каждом нашем тике. */
+  speed = 1,
 ) {
   // Метаданные трека (название/артист/обложка в оверлее)
   useEffect(() => {
@@ -51,13 +56,13 @@ export function useMediaSession(
       navigator.mediaSession.setPositionState({
         duration: track.duration,
         position: Math.min(wholePos, track.duration),
-        playbackRate: 1,
+        playbackRate: speed,
       });
     } catch {
       /* некорректные значения на границах треков — не критично */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wholePos, track?.duration, enabled]);
+  }, [wholePos, track?.duration, enabled, speed]);
 
   // Обработчики: медиаклавиши и кнопки оверлея (выключено — сняты)
   useEffect(() => {

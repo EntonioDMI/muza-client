@@ -312,6 +312,7 @@ describe("buildMenuItems: выделение", () => {
       {
         kind: "selection",
         tracks,
+        count: tracks.length,
         place: "list",
         ctl: { remove: { scope: "playlist", run: vi.fn() }, clear: vi.fn() },
       },
@@ -321,11 +322,11 @@ describe("buildMenuItems: выделение", () => {
     expect(labels(withRemove)[0]).toBe("#menu.selection.count");
     expect(item(withRemove, "views.playlist.removeFromPlaylist").danger).toBe(true);
 
-    const noRemove = buildMenuItems({ kind: "selection", tracks, place: "list", ctl: { clear: vi.fn() } }, makeCtx(), t);
+    const noRemove = buildMenuItems({ kind: "selection", tracks, count: tracks.length, place: "list", ctl: { clear: vi.fn() } }, makeCtx(), t);
     expect(labels(noRemove)).not.toContain("views.playlist.removeFromPlaylist");
 
     const queueRemove = buildMenuItems(
-      { kind: "selection", tracks, place: "queue", ctl: { remove: { scope: "queue", run: vi.fn() }, clear: vi.fn() } },
+      { kind: "selection", tracks, count: tracks.length, place: "queue", ctl: { remove: { scope: "queue", run: vi.fn() }, clear: vi.fn() } },
       makeCtx(),
       t,
     );
@@ -333,14 +334,32 @@ describe("buildMenuItems: выделение", () => {
   });
 
   it("в очереди нет playNext/queue — они добавляли бы копии уже стоящих треков", () => {
-    const items = buildMenuItems({ kind: "selection", tracks, place: "queue", ctl: { clear: vi.fn() } }, makeCtx(), t);
+    const items = buildMenuItems({ kind: "selection", tracks, count: tracks.length, place: "queue", ctl: { clear: vi.fn() } }, makeCtx(), t);
     expect(labels(items)).not.toContain("menu.catalog.playNext");
     expect(labels(items)).not.toContain("menu.catalog.queue");
   });
 
+  it("счётчик показывает реальное выделение, а не длину каталожного списка", () => {
+    // Локальные файлы в каталожную форму не превращаются и в tracks не попадают,
+    // но «Убрать из очереди» работает по полному набору id. Пока счётчик брался
+    // из tracks.length, в меню стояло «Выбрано: 2», а убиралось 3.
+    // локальный переводчик, который проговаривает подставленные значения
+    const spyT = ((key: string, params?: Record<string, unknown>) =>
+      params ? `${key}:${JSON.stringify(params)}` : key) as unknown as Parameters<typeof buildMenuItems>[2];
+    const items = buildMenuItems(
+      { kind: "selection", tracks, count: 3, place: "queue", ctl: { remove: { scope: "queue", run: vi.fn() }, clear: vi.fn() } },
+      makeCtx(),
+      spyT,
+    );
+    const first = items[0];
+    expect(typeof first === "object" && "header" in first ? first.header : null).toBe(
+      'menu.selection.count:{"count":3}',
+    );
+  });
+
   it("массовые действия получают ВСЕ выделенные треки", () => {
     const ctx = makeCtx();
-    const items = buildMenuItems({ kind: "selection", tracks, place: "list", ctl: { clear: vi.fn() } }, ctx, t);
+    const items = buildMenuItems({ kind: "selection", tracks, count: tracks.length, place: "list", ctl: { clear: vi.fn() } }, ctx, t);
     item(items, "menu.catalog.queue").onClick?.();
     expect(ctx.queueMany).toHaveBeenCalledWith(tracks);
     item(items, "menu.catalog.like").onClick?.();

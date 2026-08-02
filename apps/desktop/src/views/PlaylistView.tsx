@@ -117,24 +117,46 @@ export function PlaylistView({
     void load();
   }, [load]);
 
+  // Правило для всех трёх обработчиков ниже (правка 2026-08-02): после
+  // проглоченной ошибки НЕЛЬЗЯ делать шаги успешной ветки. Раньше `.catch()`
+  // показывал тост об ошибке, а следом безусловно выполнялась успешная часть:
+  // тост «Убрано из плейлиста» затирал сообщение об ошибке в том же кадре
+  // (тост в приложении один, showToast перезаписывает его), трек оставался на
+  // месте, а при удалении плейлиста нас ещё и уводило на Главную — как будто
+  // всё получилось. Образец правильного поведения был рядом, в toggleFollow.
   const rename = async () => {
     const name = renameValue.trim();
     if (!name || !detail) return;
-    await api.renamePlaylist(playlistId, name).catch(() => onNotify(t("views.playlist.renameFailed"), "x"));
+    try {
+      await api.renamePlaylist(playlistId, name);
+    } catch {
+      onNotify(t("views.playlist.renameFailed"), "x");
+      return;
+    }
     setRenameOpen(false);
     await load();
     onChanged();
   };
 
   const remove = async () => {
-    await api.deletePlaylist(playlistId).catch(() => onNotify(t("views.playlist.deleteFailed"), "x"));
+    try {
+      await api.deletePlaylist(playlistId);
+    } catch {
+      onNotify(t("views.playlist.deleteFailed"), "x");
+      return;
+    }
     setDeleteOpen(false);
     onChanged();
     onDeleted();
   };
 
   const removeTrack = async (trackId: string) => {
-    await api.removePlaylistTrack(playlistId, trackId).catch(() => onNotify(t("views.playlist.removeTrackFailed"), "x"));
+    try {
+      await api.removePlaylistTrack(playlistId, trackId);
+    } catch {
+      onNotify(t("views.playlist.removeTrackFailed"), "x");
+      return;
+    }
     onNotify(t("views.playlist.removedFromPlaylist"), "list-x");
     await load();
     onChanged();
@@ -572,6 +594,7 @@ export function PlaylistView({
                     openMenu(e, {
                       kind: "selection",
                       tracks: selectedTracks(),
+                      count: multi.count,
                       place: "list",
                       ctl: {
                         remove: canEditRows

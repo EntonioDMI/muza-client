@@ -358,7 +358,7 @@ export function SearchView({
         onMore={(e: React.MouseEvent) => {
           // ПКМ по выделенному — меню выделения; по невыделенному — сброс
           if (multi.count > 0 && multi.has(tr.id)) {
-            openMenu(e, { kind: "selection", tracks: selectedTracks(), place: "list", ctl: { clear: multi.clear } });
+            openMenu(e, { kind: "selection", tracks: selectedTracks(), count: multi.count, place: "list", ctl: { clear: multi.clear } });
             return;
           }
           if (multi.count > 0) multi.clear();

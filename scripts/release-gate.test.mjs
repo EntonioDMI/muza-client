@@ -60,6 +60,7 @@ const EXPECTED_MAIN_PERMISSIONS = [
   "process:allow-restart",
   "drag:default",
   { identifier: "opener:allow-open-url", allow: [{ url: "https://**" }] },
+  { identifier: "opener:allow-reveal-item-in-dir", allow: [{ path: "**" }] },
 ];
 
 const EXPECTED_ACTIONS = {

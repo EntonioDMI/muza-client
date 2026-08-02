@@ -214,6 +214,7 @@ export function QueuePanel({
       openMenu(e, {
         kind: "selection",
         tracks: selectedCatalog(),
+        count: multi.count,
         place: "queue",
         ctl: {
           remove: onRemoveMany ? { scope: "queue", run: () => onRemoveMany(multi.ids) } : undefined,

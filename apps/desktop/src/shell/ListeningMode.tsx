@@ -48,6 +48,7 @@ export function ListeningMode({
   activeLine,
   lyricsAutoScroll = true,
   lyricsEndNote = true,
+  karaokeLines = 5,
   onTogglePlay,
   onPrev,
   onNext,
@@ -81,6 +82,8 @@ export function ListeningMode({
   lyricsAutoScroll?: boolean;
   /** Настройка «Нотка в конце» (Тексты): декоративный знак под текстом. */
   lyricsEndNote?: boolean;
+  /** Сколько строк видно в окне вокруг активной (prefs.karaokeLines). */
+  karaokeLines?: number;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -379,7 +382,7 @@ export function ListeningMode({
           }}
         >
           {lyrics.length > 0 ? (
-            <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" autoScroll={lyricsAutoScroll} endNote={lyricsEndNote} onSeek={onSeekLine} onExplain={onExplain} onLineContextMenu={openLyricsMenu} style={{ height: "100%" }} />
+            <Lyrics lines={lyrics} activeIndex={activeLine} mode="karaoke" autoScroll={lyricsAutoScroll} endNote={lyricsEndNote} windowLines={karaokeLines} onSeek={onSeekLine} onExplain={onExplain} onLineContextMenu={openLyricsMenu} style={{ height: "100%" }} />
           ) : (
             <div
               style={{

@@ -406,10 +406,11 @@ export const en = {
     // ── Устройства вывода (под-экран, 2026-07-22) ─────────────────────
     outputs: {
       title: "Output devices",
-      intro: "Where the music plays. Nothing picked — it follows the system output, as usual. Pick devices and the music plays to all of them at once, each with its own volume, separate from the app volume slider. A virtual cable (like VB-Cable) shows up here too: route music into it and pick it as the microphone in a game or Discord.",
+      intro: "Where the music plays. Nothing picked — it follows the system output, as usual. Pick devices and the music plays to all of them at once, each with its own volume, separate from the app volume slider. A virtual cable (like VB-Cable) shows up here too: route music into it and pick it as the microphone in a game or Discord. Windows only shows device names after the app switches the microphone on for a second — that's why its tray icon blinks the first time you open this screen. Nothing is recorded: the capture stops the same moment.",
       devicesGroup: "Devices",
       loading: "Looking for devices…",
       empty: "No devices found. Check they're connected and refresh the list.",
+      blocked: "Device names are hidden: Windows won't let the app reach the microphone, and without that the list stays empty. Allow access in Windows Settings — Privacy & security → Microphone — then refresh the list.",
       refresh: "Refresh",
       device: {
         linkedHint: "Follows the app volume slider.",
@@ -463,7 +464,7 @@ export const en = {
         cover: { title: "Track cover", hint: "The playing track's cover shows next to the status.", ariaLabel: "Cover" },
         progress: {
           title: "Track progress line",
-          hint: "A bar from track start to end in the status — shows how far along you are.",
+          hint: "A bar from track start to end in the status — shows how far along you are. It doesn't show together with the button: pick one.",
           ariaLabel: "Track progress line",
         },
         line1: { title: "First line", hint: "Template for the first status line. Placeholders: {track}, {artist}, {album}." },
@@ -746,6 +747,16 @@ export const en = {
         hint: "When a track has a video (usually YouTube tracks), Now Playing shows it instead of the cover. The sound stays the same.",
       },
       karaokeSize: { title: "Karaoke text size", hint: "Size of the lyrics line in listening mode." },
+      linesSuffix: "{count} lines",
+      karaokeLines: {
+        title: "Karaoke lines on screen",
+        hint: "How many lines show around the one being sung. Works while the text scrolls itself — scroll it by hand and you see all of it. With large lines the edges may not fit the window.",
+      },
+      panelLines: {
+        title: "Lyrics lines in the panel",
+        hint: "How many lines fit in Now playing. On Auto the line size follows the general Text size. Pick a number and the size is chosen for you — Text size stops affecting the lyrics.",
+        auto: "Auto",
+      },
       understandingGroup: "Understanding",
       translation: { title: "Translation", hint: "Translates lines into a chosen language. Coming later.", soon: "Coming soon" },
       meaningMode: { title: "Meaning mode", hint: "Lines with explanations get a dotted underline — a click opens the meaning card." },

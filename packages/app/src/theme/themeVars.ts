@@ -77,7 +77,10 @@ export function buildThemeVars(t: WebTheme): CSSProperties {
     "--glass-panel": `rgba(${glassBase}, ${t.glassOpacity / 100})`,
     ...(t.accent === "custom" ? customAccentVars(t.customAccent, isLight) : {}),
     "--text-2": `rgba(${textBase}, ${(t.textDim / 100).toFixed(2)})`,
-    "--text-3": `rgba(${textBase}, ${Math.max(0.2, t.textDim / 100 - 0.24).toFixed(2)})`,
+    // Шаг 0.14 = разница токенов ДС --text-2 (0.62) и --text-3 (0.48). Инлайн-стиль
+    // перебивает токен, поэтому расхождение здесь означает, что правка токена до
+    // пользователя не доедет. Вторая копия формулы — apps/desktop/src/App.tsx.
+    "--text-3": `rgba(${textBase}, ${Math.max(0.2, t.textDim / 100 - 0.14).toFixed(2)})`,
     ...(t.fontUi !== "golos" ? { "--font-ui": fontFamily(t.fontUi) } : {}),
   } as CSSProperties;
 }

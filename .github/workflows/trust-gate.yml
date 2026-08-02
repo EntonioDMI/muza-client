@@ -57,9 +57,14 @@ jobs:
           Move-Item -LiteralPath (Join-Path $denoExtract 'deno.exe') -Destination $denoPath -Force
           if (-not (Test-Path -LiteralPath $denoPath -PathType Leaf)) { throw 'Deno sidecar missing after extraction' }
 
+      # Преамбула из двух строк — см. подробное объяснение в release.yml: без неё
+      # GitHub учитывает только код возврата последней команды блока, и падение
+      # любой предыдущей теряется (так два релиза уехали с красным гейтом привилегий).
       - name: Node trust tests и API env
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node --test scripts/release-gate.test.mjs
           node scripts/release-gate.mjs env VITE_API_URL
           node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL
@@ -88,18 +93,24 @@ jobs:
       - name: Rust tests и schema check
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
           cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 
       - name: Production frontend builds
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm --filter muza-desktop build
           pnpm --filter muza-web build
 
       - name: Exact config, capability, workflow и artifact gates
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node scripts/release-gate.mjs tauri apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/tauri.dev.conf.json
           node scripts/release-gate.mjs capabilities apps/desktop/src-tauri/capabilities/main.json apps/desktop/src-tauri/capabilities/mini.json
           node scripts/release-gate.mjs workflows .github/workflows/release.yml .github/workflows/trust-gate.yml

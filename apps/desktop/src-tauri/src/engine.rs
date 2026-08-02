@@ -1158,7 +1158,11 @@ fn evict_lru(dir: &Path, limit_bytes: u64, keep: &Path, pins: &HashSet<String>) 
         }
         // Свежий .part — возможно, живой стрим Фазы 2: не сносим на ходу
         // (старый .part — мусор, идёт под общую уборку)
-        if path == keep || is_pinned(&path, pins) || is_live_stream_part(&path) {
+        if same_cache_file(&path, keep)
+            || is_cache_bookkeeping(&path)
+            || is_pinned(&path, pins)
+            || is_live_stream_part(&path)
+        {
             continue;
         }
         // Файл может быть занят плеером — просто пропускаем, удалим в другой раз
@@ -1171,6 +1175,39 @@ fn evict_lru(dir: &Path, limit_bytes: u64, keep: &Path, pins: &HashSet<String>) 
 fn is_pinned(path: &Path, pins: &HashSet<String>) -> bool {
     path.file_stem()
         .map(|s| pins.contains(s.to_string_lossy().as_ref()))
+        .unwrap_or(false)
+}
+
+/// Тот же файл внутри каталога кэша — сверяем по ИМЕНИ, а не по строке пути.
+///
+/// Гоча Windows (поймана разбором 2026-08-02): `keep` приходит канонизированным
+/// (`validate_ytdlp_output` → `fs::canonicalize`, то есть с префиксом `\\?\`), а
+/// пути обхода каталога такого префикса не имеют — строковое сравнение
+/// `path == keep` не совпадало НИКОГДА. Пока в кэше есть что удалять, это
+/// незаметно; когда почти всё закреплено оффлайн или занято плеером, уборка
+/// сносила только что скачанный файл ДО того, как его отдадут плееру: трек
+/// «скачался», но не играл, и повтор клика давал ровно то же самое.
+/// Имя файла внутри одной папки кэша уникально (это `<track_id>.<ext>`),
+/// поэтому его достаточно и оно не зависит от формы пути.
+fn same_cache_file(path: &Path, keep: &Path) -> bool {
+    match (path.file_name(), keep.file_name()) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Служебные файлы каталога кэша: не музыка, уборке не подлежат.
+///
+/// `offline-pins.json` лежит в одной папке с треками, и обе уборки — и LRU по
+/// лимиту, и «Очистить кэш» — сносили его наравне с музыкой. Сами закреплённые
+/// файлы они щадят, а СПИСОК закреплённых — нет; после перезапуска список пуст,
+/// значки «сохранено оффлайн» пропадают, файлы теряют защиту и уходят при
+/// первой же уборке. То есть человек терял ровно то, что специально просил
+/// сохранить. Переносить файл наружу не стали: это потребовало бы переезда
+/// данных у существующих пользователей ради того же результата.
+fn is_cache_bookkeeping(path: &Path) -> bool {
+    path.file_name()
+        .map(|n| n == "offline-pins.json")
         .unwrap_or(false)
 }
 
@@ -1742,6 +1779,23 @@ async fn fetch_hls_to_cache(
         let _ = fs::remove_file(&part);
         return Err(e);
     }
+    // Предохранитель склейки: смотрим начало .part ДО того, как файл станет
+    // кэшем. Без этой проверки испорченная склейка ложилась в кэш КАК УСПЕХ, а
+    // это худший исход из возможных: кэш-хит считается готовым файлом, лестница
+    // yt-dlp больше не включается, и трек молчит до ручной очистки кэша — о
+    // которой пользователь догадаться не может. Провал здесь, наоборот, ведёт
+    // себя как любой другой сбой закачки: classify_failure и уход на лестницу.
+    match hls_part_head(&part) {
+        Ok(head) if hls_head_looks_playable(&head) => {}
+        Ok(_) => {
+            let _ = fs::remove_file(&part);
+            return Err("склейка HLS не похожа на mp4: нет ftyp/moov в начале".into());
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            return Err(format!("чтение начала склейки HLS: {e}"));
+        }
+    }
     // Тот же порядок финализации, что у прямой закачки: снести чужой
     // одноимённый файл (yt-dlp мог оставить), затем rename.
     let _ = fs::remove_file(&final_path);
@@ -1750,6 +1804,40 @@ async fn fetch_hls_to_cache(
         return Err(format!("rename .part не прошёл: {e}"));
     }
     validate_ytdlp_output(dir, &final_path)
+}
+
+/// Сколько байт начала склейки читаем на проверку. `ftyp` стоит в первых
+/// восьми, `moov` приходит в init-сегменте (у SoundCloud это единицы КБ);
+/// 64 КБ — с большим запасом и всё ещё одно чтение с диска.
+const HLS_HEAD_PROBE: usize = 64 * 1024;
+
+/// Начало только что склеенного `.part`, не более `HLS_HEAD_PROBE` байт.
+/// Отдельно от `read_slice` нарочно: тот требует точный диапазон и падает на
+/// коротком файле, а короткий файл здесь — как раз один из ожидаемых исходов.
+fn hls_part_head(part: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut file = fs::File::open(part)?;
+    let mut buf = vec![0u8; HLS_HEAD_PROBE];
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    buf.truncate(filled);
+    Ok(buf)
+}
+
+/// Признаки играбельной склейки fMP4: файл начинается боксом `ftyp` (сигнатура
+/// стоит со смещения 4, первые четыре байта — размер бокса) и несёт `moov` в
+/// начале. Именно потому, что у SoundCloud `moov` лежит в init-сегменте, а не в
+/// хвосте, Chromium играет склейку без ремукса — развилка отчёта H, 27.07.
+/// Тот же критерий проверяет живой smoke `sc_hls_first_segments_are_fmp4`.
+fn hls_head_looks_playable(head: &[u8]) -> bool {
+    head.len() >= 8 && &head[4..8] == b"ftyp" && head.windows(4).any(|w| w == b"moov")
 }
 
 /// Склейка сегментов в `.part`. `estimate` — только для прогресса: пока
@@ -4462,8 +4550,14 @@ pub fn engine_cache_clear(
         for entry in entries.flatten() {
             let path = entry.path();
             // Оффлайн-пины переживают чистку; занятые плеером файлы пропускаем;
-            // свежий .part — возможно, живой стрим Фазы 2 (не рвать на ходу)
-            if path.is_file() && !is_pinned(&path, &pins) && !is_live_stream_part(&path) {
+            // свежий .part — возможно, живой стрим Фазы 2 (не рвать на ходу).
+            // Список закреплённых обязан пережить чистку вместе с самими
+            // файлами — иначе они останутся на диске без защиты.
+            if path.is_file()
+                && !is_cache_bookkeeping(&path)
+                && !is_pinned(&path, &pins)
+                && !is_live_stream_part(&path)
+            {
                 let _ = fs::remove_file(path);
             }
         }
@@ -6423,6 +6517,55 @@ mod warm_tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Защита «только что скачанный файл не удалять» обязана работать на
+    /// РЕАЛЬНОМ пути, а не только на выдуманном. `keep` приходит с
+    /// канонизацией (на Windows это префикс `\\?\`), пути обхода каталога — без
+    /// неё; пока сравнивали строки, защита не срабатывала никогда, и уборка
+    /// сносила свежий файл до того, как его отдадут плееру.
+    #[test]
+    fn evict_keeps_just_downloaded_file_even_in_canonical_form() {
+        let dir = std::env::temp_dir().join(format!("muza-warm-keep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let just_downloaded = dir.join("777.opus");
+        let other = dir.join("888.opus");
+        fs::write(&just_downloaded, vec![0u8; 1000]).unwrap();
+        fs::write(&other, vec![0u8; 1000]).unwrap();
+        // ровно то, что отдаёт validate_ytdlp_output
+        let keep = fs::canonicalize(&just_downloaded).unwrap();
+        evict_lru(&dir, 0, &keep, &HashSet::new());
+        assert!(
+            just_downloaded.exists(),
+            "только что скачанный файл обязан пережить уборку"
+        );
+        assert!(!other.exists(), "остальное при нулевом лимите уходит");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Список закреплённых оффлайн лежит в одной папке с музыкой. Обе уборки
+    /// щадят сами закреплённые файлы — но снеся список, они оставляли их без
+    /// защиты, и при следующей уборке оффлайн-музыка исчезала.
+    #[test]
+    fn cleanups_never_delete_the_offline_pins_list() {
+        let dir = std::env::temp_dir().join(format!("muza-warm-pins-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let pins_list = dir.join("offline-pins.json");
+        fs::write(&pins_list, br#"["42"]"#).unwrap();
+        fs::write(dir.join("42.opus"), vec![0u8; 1000]).unwrap();
+        fs::write(dir.join("43.opus"), vec![0u8; 1000]).unwrap();
+        let pins: HashSet<String> = ["42".to_string()].into_iter().collect();
+        evict_lru(&dir, 0, &dir.join("нет-такого"), &pins);
+        assert!(pins_list.exists(), "список закреплённых пережил уборку по лимиту");
+        assert!(dir.join("42.opus").exists(), "закреплённый трек на месте");
+        assert!(!dir.join("43.opus").exists(), "незакреплённый ушёл");
+        assert!(
+            is_cache_bookkeeping(&pins_list) && !is_cache_bookkeeping(&dir.join("42.opus")),
+            "служебным считается только сам список"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// Регресс-защита от огрызков: `.part` недокачки не имеет права стать
     /// кэш-хитом (двойная защита: find_cached пропускает .part явно, плюс
     /// file_stem у `<id>.<ext>.part` — это `<id>.<ext>`, не `<id>`).
@@ -7802,6 +7945,29 @@ mod soundcloud_tests {
             head.windows(4).any(|w| w == b"moov"),
             "init-сегмент обязан нести moov"
         );
+    }
+
+    /// Предохранитель склейки: в кэш попадает только то, что похоже на mp4.
+    /// Дефект, который это ловит, самый неприятный из возможных — испорченный
+    /// файл в кэше считается готовым, лестница не включается, трек молчит.
+    #[test]
+    fn hls_head_check_accepts_only_fmp4() {
+        let mut good = vec![0u8, 0, 0, 0x18];
+        good.extend_from_slice(b"ftypiso5");
+        good.extend_from_slice(&[0u8; 8]);
+        good.extend_from_slice(b"\0\0\0\x08moov");
+        assert!(hls_head_looks_playable(&good), "нормальный init отвергнут");
+
+        // HTML-страница ошибки CDN вместо сегмента — самый вероятный мусор.
+        assert!(!hls_head_looks_playable(b"<!DOCTYPE html><html><body>403"));
+        // ftyp есть, moov нет: хвостовой moov Chromium не сыграет потоком.
+        let mut no_moov = vec![0u8, 0, 0, 0x18];
+        no_moov.extend_from_slice(b"ftypiso5");
+        no_moov.extend_from_slice(&[0u8; 64]);
+        assert!(!hls_head_looks_playable(&no_moov));
+        // Обрезанный ответ короче сигнатуры не должен паниковать на срезе.
+        assert!(!hls_head_looks_playable(b"\0\0\0"));
+        assert!(!hls_head_looks_playable(b""));
     }
 
     /// Длинный микс (живой прогон 27.07 поймал 733 сегмента) уступает

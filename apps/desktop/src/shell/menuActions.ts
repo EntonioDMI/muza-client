@@ -127,7 +127,9 @@ function lyricsItems(target: Extract<ContextTarget, { kind: "lyrics" }>, ctx: Me
  *  действия. «Убрать…» — только где есть что убирать (ctl.remove). */
 function selectionItems(target: Extract<ContextTarget, { kind: "selection" }>, ctx: MenuContext, t: T): MenuItem[] {
   const { tracks, place, ctl } = target;
-  const n = tracks.length;
+  // Считаем по count, а не по длине каталожного списка: локальные файлы в
+  // tracks не попадают, но убираются наравне со всеми.
+  const n = target.count;
   return [
     { header: t("menu.selection.count", { count: n }) },
     // очередь: playNext/queue добавляли бы КОПИИ уже стоящих в очереди треков

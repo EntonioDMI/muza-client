@@ -40,6 +40,8 @@ export const THEME_KEYS = [
   "uiScale",
   "animSpeed",
   "karaokeSize",
+  "karaokeLines",
+  "lyricsPanelLines",
   "wSidebar",
   "wNowPlaying",
   "blur",
