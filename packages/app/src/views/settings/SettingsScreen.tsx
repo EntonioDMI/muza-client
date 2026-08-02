@@ -12,20 +12,94 @@
  *
  *  Что умеет площадка — говорит `caps`: тот же список, что фильтрует индекс
  *  поиска (lib/settingsIndex.ts). Поиск, приводящий к несуществующему ряду,
- *  хуже ненайденного ряда — поэтому фильтр общий, а не по месту.
+ *  хуже ненайденного ряда — поэтому фильтр общий, а не по месту. Умений мало
+ *  (они про «чего не бывает во вкладке браузера»), поэтому последнее слово за
+ *  РЯДОМ, а не за разделом: результат остаётся в выдаче, только если ряд
+ *  реально нарисован — см. collectRowTitles и isReachable ниже.
  *
  *  ⚠️ Приложение пока рисует свой каркас внутри apps/desktop/.../SettingsView.tsx
  *  (там он сплетён с десятком под-экранов) — этот файл собран из его же кода и
  *  ждёт, когда под-экраны переедут следом. Расхождению поведения тут взяться
  *  неоткуда: рельс, поиск и подсветка — одни и те же модули. */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { SearchInput } from "@muza/ui";
+import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Kbd, SearchInput } from "@muza/ui";
 import { useT, type TranslationKey } from "../../i18n";
+import { DEFAULT_HOTKEYS, formatCombo, hotkeyActionLabel, HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import { searchSettings, type SettingsCapability, type SettingsSearchHit } from "../../lib/settingsIndex";
 import { paneStyle, SettingRow } from "./primitives";
 import { navItemId, SETTINGS_PANE_ID, SETTINGS_TAB_KEYS, SettingsNav, type SettingsTabKey } from "./SettingsNav";
 import "./settingsShell.css";
+
+/** Названия рядов, которые площадка РЕАЛЬНО нарисовала в узлах разделов.
+ *
+ *  Зачем обход дерева, а не список от площадки: единственный, кто знает точно,
+ *  какие ряды есть на экране, — сами узлы разделов. Список рядом с ними
+ *  разъехался бы с ними же через неделю (ровно так поиск и начал водить в
+ *  никуда: он спрашивал «есть ли РАЗДЕЛ», а у браузера раздел был, а девяти из
+ *  десяти его рядов — нет).
+ *
+ *  Ищем проп `title`: его несёт SettingRow, и он же становится якорем
+ *  data-rowtitle, к которому потом прокручивает переход из результатов —
+ *  то есть сравниваем ровно то, по чему потом будем искать ряд в DOM.
+ *
+ *  Обход статический: элементы уже созданы (JSX площадки), рендерить ничего не
+ *  надо. Ряд, спрятанный площадкой ВНУТРЬ своего компонента, обходу не виден —
+ *  он просто не найдётся поиском. Это осознанный перекос в безопасную сторону:
+ *  ненайденный ряд человек ищет глазами, а результат, ведущий в пустоту, врёт. */
+function collectRowTitles(node: ReactNode, out: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const child of node) collectRowTitles(child as ReactNode, out);
+    return;
+  }
+  if (!isValidElement(node)) return;
+  const props = node.props as { title?: unknown; children?: ReactNode } | undefined;
+  if (typeof props?.title === "string") out.add(props.title);
+  if (props?.children !== undefined) collectRowTitles(props.children, out);
+}
+
+/** Раздел «Горячие клавиши» без переназначения — справочник «что какой
+ *  клавишей».
+ *
+ *  Каркас рисует его САМ, когда площадка не передала свой: клавиши слышат обе
+ *  площадки (слушатель — один общий модуль lib/hotkeys, в браузере он работает
+ *  без единой правки), а список действий и сочетаний от площадки не зависит
+ *  вообще. До этой правки раздел просто исчезал у веба молча — человек не мог
+ *  узнать, что пробел ставит паузу, хотя пробел работал.
+ *
+ *  Чего здесь нет: переназначения. Оно требует места, где сочетания хранятся
+ *  (у приложения это Prefs.hotkeys); у площадки без такого хранилища клавиши
+ *  закреплены — об этом и говорит подпись под списком. Площадка с хранилищем
+ *  передаёт СВОЙ узел раздела (приложение так и делает) — тогда этот не
+ *  используется вовсе. */
+function HotkeysReferencePane() {
+  const { t, lang } = useT();
+  // Новая строка заводится отдельным ходом волны (словари — не эта зона).
+  // Пока её нет, translate вернул бы сам ключ — показываем старую строку того
+  // же смысла вместо «settings.hotkeys.fixedNote» на экране.
+  const noteKey = "settings.hotkeys.fixedNote";
+  const note = t(noteKey as TranslationKey);
+  return (
+    <>
+      {HOTKEY_ACTIONS.map((action) => (
+        <SettingRow key={action.id} title={hotkeyActionLabel(action.id, lang)}>
+          {/* Сочетание разбито на плашки-клавиши: «Ctrl + →» читается как две
+              клавиши, а не как строка текста (тот же приём, что в справке «?»). */}
+          <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+            {formatCombo(DEFAULT_HOTKEYS[action.id])
+              .split(" + ")
+              .map((key) => (
+                <Kbd key={key}>{key}</Kbd>
+              ))}
+          </div>
+        </SettingRow>
+      ))}
+      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
+        {note === noteKey ? t("settings.hotkeys.help.hint") : note}
+      </div>
+    </>
+  );
+}
 
 export function SettingsScreen({
   panes,
@@ -43,10 +117,18 @@ export function SettingsScreen({
   initialTab?: SettingsTabKey;
 }) {
   const { t } = useT();
+  // Разделы, которые каркас умеет нарисовать сам, если площадка не передала
+  // свой (сейчас такой один — «Горячие клавиши», см. HotkeysReferencePane).
+  // Дальше по файлу площадочные и встроенные узлы неразличимы: и рельс, и
+  // поиск смотрят в один объект.
+  const shownPanes = useMemo(
+    () => (panes.hotkeys === undefined ? { ...panes, hotkeys: <HotkeysReferencePane /> } : panes),
+    [panes],
+  );
   // Канонический порядок разделов держит SETTINGS_TAB_KEYS: площадка решает
   // только «есть/нет», а не «где» — иначе один и тот же «Внешний вид» стоял бы
   // в приложении пятым, а в браузере первым (так и было до этой волны).
-  const tabs = useMemo(() => SETTINGS_TAB_KEYS.filter((key) => panes[key] !== undefined), [panes]);
+  const tabs = useMemo(() => SETTINGS_TAB_KEYS.filter((key) => shownPanes[key] !== undefined), [shownPanes]);
   const [tab, setTab] = useState<SettingsTabKey>(() => initialTab ?? tabs[0] ?? "appearance");
 
   // Прокрутка живёт в самой панели: при смене раздела возвращаем её к началу,
@@ -81,13 +163,28 @@ export function SettingsScreen({
     setFlashTitle(hit.title);
   };
 
-  const searchHits = searchQ.trim()
-    ? searchSettings(searchQ, (key) => t(key as TranslationKey), caps).filter((hit) =>
-        // Ряд из раздела, которого на площадке нет, в выдачу не попадает —
-        // даже если умение для него не заведено (страховка «одно из двух»).
-        hit.sub === null ? panes[hit.tab as SettingsTabKey] !== undefined : (subs ?? []).includes(hit.sub),
-      )
-    : [];
+  // Правило выдачи одно: результат показывается, только если из него ЕСТЬ КУДА
+  // ВЕСТИ — раздел на площадке есть И сам ряд на экране существует. Ряд
+  // существует двумя способами: он нарисован прямо в узле раздела (нашли по
+  // названию) либо живёт в под-экране, который площадка умеет открыть.
+  //
+  // Раньше здесь стояло только «есть раздел» — и в браузере поиск выдавал
+  // около 26 рядов, которых на экране нет: раздел «Внешний вид» у веба есть, а
+  // девяти десятых его рядов — нет. Проверять раздел вместо ряда — это как
+  // отвечать «дом такой есть» на вопрос о квартире.
+  const isReachable = (hit: SettingsSearchHit, rowTitles: Set<string>) =>
+    shownPanes[hit.tab as SettingsTabKey] !== undefined &&
+    (rowTitles.has(hit.title) || (hit.sub !== null && (subs ?? []).includes(hit.sub)));
+
+  const searchHits = useMemo(() => {
+    if (!searchQ.trim()) return [];
+    const rowTitles = new Set<string>();
+    // Обходим узлы ВСЕХ разделов, а не только открытого: человек ищет по всем
+    // настройкам, а не по тем, что сейчас перед глазами.
+    for (const pane of Object.values(shownPanes)) collectRowTitles(pane, rowTitles);
+    return searchSettings(searchQ, (key) => t(key as TranslationKey), caps).filter((hit) => isReachable(hit, rowTitles));
+    // isReachable в зависимостях не нужен: он читает те же shownPanes и subs.
+  }, [searchQ, shownPanes, subs, caps, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="muza-settings">
@@ -121,7 +218,7 @@ export function SettingsScreen({
             </div>
           ) : (
             <div key={tab} style={paneStyle}>
-              {panes[tab]}
+              {shownPanes[tab]}
             </div>
           )}
         </div>

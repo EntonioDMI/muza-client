@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PREFS } from "./types";
-import { THEME_KEYS } from "./lib/themes";
+import { THEME_KEYS } from "./themes";
 
 describe("bassShake pref (T14)", () => {
   it("выключен по умолчанию", () => {

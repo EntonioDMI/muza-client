@@ -25,10 +25,31 @@ import {
   localScanPaths,
   saveServerId,
 } from "../lib/localFiles";
-import { cacheRemove } from "../lib/engine";
+import { cacheClear, cacheRemove, cacheStats, engineAvailable, engineStage0Status } from "../lib/engine";
 import { savePngFile } from "../lib/saveImage";
 import { autostartEnabled, openExternal, syncAutostart, trayConfigure } from "../lib/system";
 import { invalidateCachedSources } from "../player/sourcesCache";
+// ── умения экрана настроек ──
+import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { save } from "@tauri-apps/plugin-dialog";
+import { checkForUpdate, updaterAvailable } from "../lib/updater";
+import { rpcAvailable } from "../lib/discord";
+import { miniHide, miniShow } from "../lib/miniBridge";
+import { deviceAccessDenied, listInputDevices, listOutputDevices } from "../player/outputDevices";
+import { getStartLog, subscribeStartLog } from "../player/startTelemetry";
+import {
+  cancelInstall,
+  finalizeInstall,
+  listInstalled,
+  pickAndStagePlugin,
+  setPluginEnabled,
+  stagePluginFromMarket,
+  uninstallPlugin,
+  type StagedPlugin,
+} from "../plugins/install";
+import { fullAccessHost } from "../plugins/fullAccessHost";
 
 export function createDesktopPlatform(): PlatformAdapter {
   return {
@@ -65,9 +86,10 @@ export function createDesktopPlatform(): PlatformAdapter {
       : {}),
     system: {
       openExternal,
-      setAutostart: syncAutostart,
-      autostartEnabled,
-      configureTray: trayConfigure,
+      // Запуск вместе с системой и значок у часов — только у настоящего окна
+      // программы: в обычном браузере (pnpm dev без Tauri) этих умений нет, и
+      // соответствующих рядов настроек там не должно появляться вовсе.
+      ...(dragOutAvailable() ? { setAutostart: syncAutostart, autostartEnabled, configureTray: trayConfigure } : {}),
     },
     // Сохранить картинку файлом («Поделиться» → «Сохранить PNG»). Условие то
     // же, что у выноса файла: без Tauri системного окна «куда сохранить» нет,
@@ -85,6 +107,83 @@ export function createDesktopPlatform(): PlatformAdapter {
         await cacheRemove(trackId);
         invalidateCachedSources(trackId);
       },
+    },
+    // ── Умения экрана настроек (волна «настройки», 2026-08-02) ───────
+    // Все девять портов ниже условны по одной причине: без Tauri их команд не
+    // существует. Общий экран настроек спрашивает наличие поля и просто НЕ
+    // рисует соответствующие ряды — ни серых, ни с подписью «только в
+    // приложении»: их там нет, как нет и в поиске по настройкам.
+    ...(engineAvailable()
+      ? {
+          // Место под подготовленные файлы: цифры + очистка (закреплённое
+          // переживает очистку — это забота движка, не экрана).
+          storedMedia: {
+            stats: async () => {
+              const s = await cacheStats();
+              return { bytes: s.bytes, files: s.files, pinnedBytes: s.pinnedBytes, pinnedFiles: s.pinnedFiles };
+            },
+            clear: cacheClear,
+          },
+          // Журнал «почему включалось долго»: предохранители движка + кольцо
+          // последних включений из плеера.
+          diagnostics: {
+            health: engineStage0Status,
+            startLog: getStartLog,
+            subscribeStartLog,
+          },
+          // Готова ли связка с Discord (идентификатор зашит в сборку моста).
+          discordStatus: { configured: rpcAvailable },
+          // Расширения. Экран согласия, права и стейджинг — уже существующий
+          // рантайм; здесь только сопоставление «порт → готовая функция».
+          plugins: {
+            list: listInstalled,
+            pickFile: () => pickAndStagePlugin(),
+            stageFromMarket: (payload) => stagePluginFromMarket(payload),
+            // Приведение: общий код держит подготовленное расширение
+            // НЕПРОЗРАЧНОЙ ручкой (ему видно только manifest) и возвращает её
+            // сюда как есть — это та же самая ручка, что выдал стейджинг.
+            finalize: (staged, granted) => finalizeInstall(staged as StagedPlugin, granted as string[]),
+            cancel: (staged) => cancelInstall(staged as StagedPlugin),
+            setEnabled: setPluginEnabled,
+            remove: uninstallPlugin,
+            errors: () => fullAccessHost.getErrors(),
+            clearErrors: () => fullAccessHost.clearErrors(),
+            subscribeErrors: (cb: () => void) => fullAccessHost.subscribe(cb),
+            errorsVersion: () => fullAccessHost.runtimeVersion(),
+            restart: relaunch,
+          },
+          // Маленькое окно плеера поверх других окон.
+          miniPlayer: { show: miniShow, hide: miniHide },
+          // Сведения о самой программе: единственный источник правды по
+          // версии — сборка, а не число в коде экрана (оно однажды протухло).
+          appInfo: { version: getVersion },
+          // «Куда сохранить» для выгрузки данных. Содержимое юникодное,
+          // поэтому в base64 переводим через TextEncoder: голый btoa падает на
+          // кириллице.
+          saveDataFile: {
+            saveJson: async (suggestedName: string, json: string) => {
+              const path = await save({ defaultPath: suggestedName, filters: [{ name: "JSON", extensions: ["json"] }] });
+              if (!path) return false;
+              const bytes = new TextEncoder().encode(json);
+              let binary = "";
+              for (let i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+              }
+              await invoke("share_save_file", { path, dataBase64: btoa(binary) });
+              return true;
+            },
+          },
+        }
+      : {}),
+    // Обновление программы изнутри неё самой — своё условие: обновляется
+    // установленная сборка, а не окно разработки.
+    ...(updaterAvailable() ? { updates: { check: checkForUpdate } } : {}),
+    // Выбор устройств вывода — тоже своё: перечисление идёт через сам
+    // браузерный движок и в окне разработки работает так же честно.
+    audioDevices: {
+      listOutputs: listOutputDevices,
+      listInputs: listInputDevices,
+      accessDenied: deviceAccessDenied,
     },
     // offline / window появятся здесь, когда соответствующие экраны поедут в
     // @muza/app: порт заводится ВМЕСТЕ с первым потребителем, иначе это

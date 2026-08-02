@@ -15,26 +15,18 @@ import { SessionProvider } from "./session";
 import { ToastProvider } from "./toast";
 
 /** Э1 веб-паритета: тема из prefs применяется общим ThemeRoot (@muza/app) —
- *  та же механика data-атрибутов + CSS-переменных, что на десктопе. Внутри
- *  PrefsProvider, поверх всего видимого дерева (включая /login). */
+ *  та же механика data-атрибутов + CSS-переменных, что на десктопе.  Внутри
+ *  PrefsProvider, поверх всего видимого дерева (включая /login).
+ *
+ *  Профиль уезжает в движок ЦЕЛИКОМ (до 2026-08-02 здесь перечислялись восемь
+ *  полей): ровно из-за того среза ряды настроек вроде «Масштаб интерфейса»,
+ *  «Простор» или «Плотность стекла» в браузере ничего не делали — движок про
+ *  них не знал. Лишние ключи профиля он игнорирует, брать подмножество руками
+ *  не нужно и вредно: новое поле оформления снова пришлось бы дописывать сюда
+ *  и никто бы не заметил, что забыли. */
 function ThemedTree({ children }: { children: React.ReactNode }) {
   const { prefs } = usePrefs();
-  return (
-    <ThemeRoot
-      theme={{
-        theme: prefs.theme,
-        accent: prefs.accent,
-        customAccent: prefs.customAccent,
-        radius: prefs.radius,
-        blur: prefs.blur,
-        glassOpacity: prefs.glassOpacity,
-        textDim: prefs.textDim,
-        fontUi: prefs.fontUi,
-      }}
-    >
-      {children}
-    </ThemeRoot>
-  );
+  return <ThemeRoot theme={prefs}>{children}</ThemeRoot>;
 }
 
 /** Клиентские провайдеры поверх всего дерева (в т.ч. /login — сессия нужна

@@ -199,10 +199,14 @@ export default function SettingsPage() {
       </SettingRow>
       <SettingRow title={t("settings.appearance.background.title")} hint={t("settings.appearance.background.hint")}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-          <RowValue>{prefs.bgCover ? t("settings.appearance.background.fromCover") : t("common.off")}</RowValue>
+          {/* Общая модель хранит вид фона перечислением (bgType), а вкладка
+              умеет ровно один — «из обложки». Тумблер переключает между ним
+              и «выкл»; выбранный в программе цвет/градиент/картинку веб
+              бережёт в профиле, но не рисует (слияние моделей 2026-08-02). */}
+          <RowValue>{prefs.bgType === "cover" ? t("settings.appearance.background.fromCover") : t("common.off")}</RowValue>
           <Switch
-            checked={prefs.bgCover}
-            onChange={(bgCover: boolean) => set({ bgCover })}
+            checked={prefs.bgType === "cover"}
+            onChange={(on: boolean) => set({ bgType: on ? "cover" : "none" })}
             label={t("settings.appearance.background.ariaLabel")}
           />
         </div>

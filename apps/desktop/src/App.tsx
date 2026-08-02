@@ -9,12 +9,14 @@ import {
   type Session,
   type Track as CatalogTrack,
 } from "@muza/api-client";
-import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs, type View } from "./types";
-import { LanguageProvider, resolveMigratedLanguage, translate, type TParams, type TranslationKey } from "./i18n";
-import { accentRoleVars, customAccentVars } from "./lib/accent";
+import { type Prefs, type View } from "./types";
+import { loadPrefs, PREFS_KEY } from "@muza/app/prefs/load";
+// Общий движок темы: профиль настроек → CSS-переменные корня, одни и те же
+// формулы у приложения и у веба (см. шапку themeVars.ts).
+import { buildThemeVars } from "@muza/app/theme/themeVars";
+import { LanguageProvider, translate, type TParams, type TranslationKey } from "./i18n";
 import { devApiHost } from "./lib/devApiHost";
-import { dominantColor, mixHex } from "./lib/coverTint";
-import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./lib/legacyPrefs";
+import { dominantColor } from "./lib/coverTint";
 import { applySourcePolicy } from "./lib/sources";
 import { resumeStore } from "./lib/resumeStore";
 import { miniHide, miniListen, miniSendState, miniShow, type MiniCommand, type MiniState } from "./lib/miniBridge";
@@ -30,7 +32,7 @@ import { useErrorTelemetry } from "./lib/useErrorTelemetry";
 import { useVisitPing } from "./lib/useVisitPing";
 import { useCoverArt } from "./lib/coverArt";
 import { moveItem } from "./lib/dragEngine";
-import { comboFromEvent, matchAction, formatCombo, withDefaults, HOTKEY_ACTIONS, hotkeyActionLabel } from "./lib/hotkeys";
+import { comboFromEvent, matchAction, formatCombo, HOTKEY_ACTIONS, hotkeyActionLabel } from "./lib/hotkeys";
 import {
   canGoBack,
   canGoForward,
@@ -47,7 +49,6 @@ import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } f
 import { usePlayback } from "./player/usePlayback";
 import { useWarmer, WarmerProvider } from "./player/useWarmer";
 import { useWheelScroll } from "./lib/useWheelScroll";
-import { fontFamily } from "./lib/fonts";
 import { applyCustomFont } from "./lib/customFont";
 import { useLyrics } from "./player/useLyrics";
 import { useTrackVideo } from "./player/useTrackVideo";
@@ -174,80 +175,17 @@ function AppRoot() {
   );
 }
 
-const PREFS_KEY = "muza.prefs.v1";
+/* PREFS_KEY и loadPrefs переехали в @muza/app (`@muza/app/prefs/load`, импорт
+ * наверху файла): тем же ключом `muza.prefs.v1` и с теми же миграциями теперь
+ * читает профиль веб-клиент. Вторая реализация слияния означала бы, что часть
+ * миграций в браузере не отрабатывает и человек теряет оформление. Поведение
+ * здесь не изменилось ни на шаг — имена оставлены прежними намеренно, чтобы у
+ * пяти мест вызова не было диффа. */
 
-function loadPrefs(): Prefs {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return DEFAULT_PREFS;
-    // merge с дефолтами: новые поля Prefs не ломают старые сохранения
-    const stored = JSON.parse(raw) as Partial<Prefs> & { bgCover?: boolean };
-    const prefs = { ...DEFAULT_PREFS, ...stored };
-    // миграция Stage 6: старый bgCover=true → bgType="cover"
-    if (stored.bgCover && stored.bgType === undefined) prefs.bgType = "cover";
-    // вложенные объекты мерджатся глубже: новое под-поле не теряет соседей
-    prefs.sourcesEnabled = { ...DEFAULT_PREFS.sourcesEnabled, ...stored.sourcesEnabled };
-    prefs.rowShow = { ...DEFAULT_PREFS.rowShow, ...stored.rowShow };
-    // хоткеи — так же: новое действие (напр. T16 navBack/navForward) не теряется
-    // в старых сохранениях, где его ещё не было (иначе бинд молча пуст, "—" в хелпе)
-    prefs.hotkeys = withDefaults(stored.hotkeys);
-    // T28 (i18n): raw уже существовал (не первый запуск, ветка "raw пуст"
-    // выше вернула бы DEFAULT_PREFS.language="en" раньше) — см.
-    // i18n/index.tsx::resolveMigratedLanguage для полного обоснования.
-    prefs.language = resolveMigratedLanguage(stored.language);
-    // миграция «пресеты → ползунки»: строковые значения старых сохранений
-    // («sharper», «compact»…) конвертируются в числа, мусор — к дефолту
-    for (const key of MIGRATED_PREF_KEYS) {
-      const v = (stored as Record<string, unknown>)[key];
-      if (v === undefined) continue;
-      (prefs as Record<string, unknown>)[key] =
-        migrateLegacyValue(key, v) ?? DEFAULT_PREFS[key as keyof Prefs];
-    }
-    return prefs;
-  } catch {
-    return DEFAULT_PREFS;
-  }
-}
-
-/** Пресеты базовых bg-слоёв (Stage 6, «Базовый фон»); graphite = дефолт ДС. */
-const BASE_BG: Record<Prefs["baseBg"], { bg0: string; bg1: string } | null> = {
-  graphite: null,
-  warm: { bg0: "#151110", bg1: "#1b1512" },
-  cold: { bg0: "#0f1114", bg1: "#13171c" },
-  amoled: { bg0: "#000000", bg1: "#0b0b0b" },
-};
-
-/** Базовые значения шкалы радиусов по пресету [data-radius] (radius.css ДС) —
- *  «скругление по типам» (ползунки-проценты) умножает их и переопределяет
- *  токены inline. */
-const RADIUS_BASE: Record<Prefs["radius"], { xs: number; sm: number; md: number; lg: number; xl: number }> = {
-  mild: { xs: 6, sm: 8, md: 12, lg: 16, xl: 20 },
-  soft: { xs: 10, sm: 14, md: 20, lg: 28, xl: 36 },
-  round: { xs: 14, sm: 18, md: 26, lg: 36, xl: 48 },
-};
-
-/** Дефолтные --bg-0/1 тем (colors.css / themes.css ДС) — база для тонировки
- *  обложкой, когда baseBg-пресет не активен. */
-const BG_DEFAULTS = {
-  dark: { bg0: "#121110", bg1: "#171614" },
-  light: { bg0: "#f3f1ed", bg1: "#faf9f6" },
-};
-
-/** Плотность (ползунок 0–100) → отступ зоны 14–26px (--pad-zone, дефолт 20
- *  при 50) + высота строки трека 52–68px (--h-trackrow, TrackRow читает с
- *  фолбэком 60). Межстрочный: prefs.lineSpacing 125–160 → --lh-ui 1.25–1.60. */
-const densityPad = (d: number) => 14 + Math.round((12 * d) / 100);
-const densityRow = (d: number) => 52 + Math.round((16 * d) / 100);
-
-/** Характер движения (зона 2 спеки 19.07): пресеты кривой --ease-out.
- *  soft — родная кривая ДС (tokens/effects.css), crisp — быстрее выходит на
- *  цель, linear — ровный ход. Произвольного ввода кривой нет намеренно:
- *  это язык разработчика (спека §7). */
-const EASE_CURVES: Record<Prefs["easeStyle"], string> = {
-  soft: "cubic-bezier(0.22, 1, 0.36, 1)",
-  crisp: "cubic-bezier(0.33, 1, 0.68, 1)",
-  linear: "linear",
-};
+/* Таблицы оформления (пресеты базового фона, шкала радиусов, дефолтные
+   --bg-0/1, формулы плотности и кривые движения) жили здесь до 2026-08-02 и
+   уехали В ОДНОМ ЭКЗЕМПЛЯРЕ в общий движок темы — packages/app/src/theme/
+   themeVars.ts. Здесь они больше не нужны: rootStyle собирает buildThemeVars. */
 
 /** Восстановление плеера при старте (T2: защита от «песни сами играют»).
  *  Плеер НИКОГДА не стартует играющим сам (usePlayback.playing начинается с
@@ -1591,151 +1529,25 @@ function Player({
 
   const accentAttr = prefs.accent === "blue" || prefs.accent === "custom" ? undefined : prefs.accent;
   const isLight = prefs.theme === "light";
-  // baseBg-пресеты (тёплый/холодный/AMOLED) заточены под тёмную — в светлой не применяем
-  const baseBg = isLight ? null : BASE_BG[prefs.baseBg];
-  const animMult = prefs.animSpeed / 100;
-  // База текста/стекла зависит от темы: тёмная = белый текст на тёмном стекле,
-  // светлая = тёмный текст на светлом стекле (иначе инлайн перебил бы [data-theme])
-  const textBase = isLight ? "28, 26, 23" : "244, 243, 241";
-  const glassBase = isLight ? "250, 249, 246" : "23, 22, 20";
-  // Поверхности зон (сайдбар/«сейчас играет»): тёмная тема — translucent-white,
-  // светлая — translucent-black (логика слоёв themes.css)
-  const surfaceBase = isLight ? "20, 18, 15" : "255, 255, 255";
-  // Скругление по типам: плитки/панели — процент от пресета, кнопки/поля — px
-  // (RADIUS_OVERRIDE_OFF = токен не ставим, форма как в ДС)
-  const rBase = RADIUS_BASE[prefs.radius];
-  const rTilesMult = prefs.radiusTiles / 100;
-  const rPanelsMult = prefs.radiusPanels / 100;
-  const rControl = prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusControls}px`;
-  const rField = prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusFields}px`;
-  const rTabs = prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? null : `${prefs.radiusTabs}px`;
   // Скрим (T5): затемняющий слой поверх фоновой обложки (bgDim). На тёмной
-  // теме — чёрный, как раньше; на светлой — тон BG_DEFAULTS.light.bg0
+  // теме — чёрный, как раньше; на светлой — тон дефолтного --bg-0 светлой темы
   // (#f3f1ed → 243,241,237), иначе сквозь полупрозрачные светлые панели
   // (--glass-panel) просвечивает серо-чёрная муть — тот самый «баг белой темы».
   const scrimRgb = isLight ? "243, 241, 237" : "0, 0, 0";
-  // Тонировка фона обложкой поверх действующей пары bg-слоёв
-  const bgPair = baseBg ?? BG_DEFAULTS[isLight ? "light" : "dark"];
-  const tintStrength = isLight ? 0.12 : 0.22;
-  const tintedBg =
-    prefs.bgTint && coverTint
-      ? { bg0: mixHex(bgPair.bg0, coverTint, tintStrength), bg1: mixHex(bgPair.bg1, coverTint, tintStrength) }
-      : null;
+  // ПЕРЕЕЗД 2026-08-02 (фаза 2 веб-паритета): все формулы CSS-переменных корня
+  // (акцент, стекло по зонам, скругления по типам, размеры зон, типографика,
+  // плотность, длительности, zoom) уехали в ОБЩИЙ движок темы —
+  // packages/app/src/theme/themeVars.ts. Раньше они жили прямо здесь, а веб
+  // знал лишь восемь ключей из сорока: ряд настройки в браузере было нечем
+  // применить. Объект тот же до символа, изменилось только место сборки; сюда
+  // движку передаётся то, чего он знать не может, — состояние окна и трека.
   const rootStyle = {
     position: "absolute",
     inset: 0,
     background: "var(--bg-0)",
     overflow: "hidden",
     fontFamily: "var(--font-ui)",
-    "--blur-glass": `${prefs.blur}px`,
-    "--glass-panel": `rgba(${glassBase}, ${prefs.glassOpacity / 100})`,
-    // свой акцент: все четыре акцент-токена выводятся из выбранного hex (theme-aware)
-    ...(prefs.accent === "custom" ? customAccentVars(prefs.customAccent, isLight) : {}),
-    // роли акцента: play/слайдеры/активный трек отдельно (фолбэк — --accent)
-    ...(prefs.accentRolesOn
-      ? accentRoleVars({ play: prefs.accentPlay, slider: prefs.accentSlider, active: prefs.accentActive }, isLight)
-      : {}),
-    // скругление по типам поверх пресета [data-radius]
-    ...(prefs.radiusTiles !== 100
-      ? {
-          "--r-xs": `${Math.round(rBase.xs * rTilesMult)}px`,
-          "--r-sm": `${Math.round(rBase.sm * rTilesMult)}px`,
-          "--r-md": `${Math.round(rBase.md * rTilesMult)}px`,
-        }
-      : {}),
-    ...(prefs.radiusPanels !== 100
-      ? {
-          "--r-lg": `${Math.round(rBase.lg * rPanelsMult)}px`,
-          "--r-xl": `${Math.round(rBase.xl * rPanelsMult)}px`,
-        }
-      : {}),
-    ...(rControl ? { "--r-control": rControl } : {}),
-    ...(rField ? { "--r-field": rField } : {}),
-    ...(rTabs ? { "--r-tabs": rTabs } : {}),
-    // прозрачность по зонам: своя плотность стекла у каждой зоны + backdrop-blur
-    // для зон, которые без этого — плоские surface (сайдбар, «сейчас играет»)
-    ...(prefs.glassZonesOn
-      ? {
-          "--glass-player": `rgba(${glassBase}, ${prefs.glassPlayer / 100})`,
-          "--glass-menu": `rgba(${glassBase}, ${prefs.glassMenu / 100})`,
-          "--glass-dialog": `rgba(${glassBase}, ${prefs.glassDialog / 100})`,
-          "--glass-sidebar": `rgba(${surfaceBase}, ${prefs.glassSidebar / 100})`,
-          "--glass-nowplaying": `rgba(${surfaceBase}, ${prefs.glassNowPlaying / 100})`,
-          "--bf-zone": "blur(var(--blur-glass))",
-        }
-      : {}),
-    // Stage 6 (продвинутая кастомизация): токен-уровневые переопределения
-    ...(tintedBg
-      ? { "--bg-0": tintedBg.bg0, "--bg-1": tintedBg.bg1 }
-      : baseBg
-        ? { "--bg-0": baseBg.bg0, "--bg-1": baseBg.bg1 }
-        : {}),
-    "--text-2": `rgba(${textBase}, ${(prefs.textDim / 100).toFixed(2)})`,
-    // Шаг между вторым и третьим тоном = 0.14, и это НЕ вкусовое число: в токенах ДС
-    // (packages/ui/src/tokens/colors.css) --text-2 0.62 и --text-3 0.48 — ровно 0.14.
-    // Держать их в синхроне обязательно: этот инлайн-стиль сильнее любого правила
-    // таблицы стилей, поэтому именно он, а не токен, решает, что увидит пользователь.
-    // Было 0.24 (шаг старого токена 0.38) — из-за этого правка контраста от 27.07
-    // до людей не доезжала вовсе. Та же формула продублирована для веба в
-    // packages/app/src/theme/themeVars.ts — менять обе разом.
-    "--text-3": `rgba(${textBase}, ${Math.max(0.2, prefs.textDim / 100 - 0.14).toFixed(2)})`,
-    "--blur-scenery": `${prefs.blurScenery}px`,
-    // Скорость орбит анимированного фона (зона 1 спеки 19.07): app.css читает
-    // var(--orb-dur, 64s) — дефолт токена = прежней зашитой скорости.
-    "--orb-dur": `${prefs.bgAnimSpeedSec}s`,
-    // Размеры плеера (зона 3): все потребители уже читают эти переменные
-    // (PlayerBar height/Cover size, отступы зон в App и PluginFrames).
-    "--h-playerbar": `${prefs.hPlayerBar}px`,
-    "--size-cover-bar": `${prefs.coverBarSize}px`,
-    // Списки (зона 4): --w-tile читают и дефолт Tile, и minmax сеток —
-    // фиксированные ленты и текучие сетки крутятся одной ручкой.
-    "--w-tile": `${prefs.tileSize}px`,
-    "--pad-tile": `${prefs.padTile}px`,
-    "--gap-zone": `${prefs.gapZone}px`,
-    // Шрифт и текст (зона 5): family из реестра lib/fonts.ts; заголовки и
-    // шкала отступов — множителями. При дефолтах переменные не ставятся —
-    // работают родные токены ДС.
-    ...(prefs.fontUi !== "golos" ? { "--font-ui": fontFamily(prefs.fontUi) } : {}),
-    ...(prefs.fontDisplay !== "unbounded" ? { "--font-display": fontFamily(prefs.fontDisplay) } : {}),
-    ...(prefs.headingScale !== 100
-      ? {
-          "--fs-title": `${((1.375 * prefs.headingScale) / 100).toFixed(4)}rem`,
-          "--fs-h1": `${((1.75 * prefs.headingScale) / 100).toFixed(4)}rem`,
-          "--fs-greet": `${((2.25 * prefs.headingScale) / 100).toFixed(4)}rem`,
-        }
-      : {}),
-    ...(prefs.spaceScale !== 100
-      ? Object.fromEntries(
-          [4, 8, 12, 16, 20, 24, 32, 40, 56, 80].map((base, i) => [
-            `--sp-${i + 1}`,
-            `${Math.round((base * prefs.spaceScale) / 100)}px`,
-          ]),
-        )
-      : {}),
-    "--fs-karaoke": `${prefs.karaokeSize}px`,
-    "--w-nowplaying": `${prefs.wNowPlaying}px`,
-    // Типографика и плотность (продвинутая кастомизация): межстрочный + отступ
-    // зоны + высота строки трека; размер шрифта — через root font-size (эффект ниже)
-    "--lh-ui": (prefs.lineSpacing / 100).toFixed(2),
-    "--pad-zone": `${densityPad(prefs.density)}px`,
-    "--h-trackrow": `${densityRow(prefs.density)}px`,
-    // zoom масштабирует весь UI (WebView2/Chromium); 100% — без свойства
-    ...(prefs.uiScale !== 100 ? { zoom: prefs.uiScale / 100 } : {}),
-    ...(wideEnoughForSidebar ? { "--w-sidebar": `${prefs.wSidebar}px` } : { "--w-sidebar": "220px" }),
-    ...(prefs.anims
-      ? animMult !== 1 || prefs.durMenuMult !== 100 || prefs.durDialogMult !== 100 || prefs.durPageMult !== 100
-        ? {
-            // Зона 2 спеки 19.07: групповые множители ПОВЕРХ общего animSpeed —
-            // быстрые отклики / диалоги / переходы крутятся поотдельности.
-            "--dur-fast": `${Math.round((150 * animMult * prefs.durMenuMult) / 100)}ms`,
-            "--dur-base": `${Math.round((220 * animMult * prefs.durDialogMult) / 100)}ms`,
-            "--dur-slow": `${Math.round((400 * animMult * prefs.durPageMult) / 100)}ms`,
-          }
-        : {}
-      : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
-    // Характер движения (зона 2): --ease-out из пресета; soft = прежняя кривая
-    // ДС (0.22,1,0.36,1) — переменную в этом случае не трогаем вовсе.
-    ...(prefs.easeStyle !== "soft" ? { "--ease-out": EASE_CURVES[prefs.easeStyle] } : {}),
+    ...buildThemeVars(prefs, { coverTint, wideSidebar: wideEnoughForSidebar }),
   } as React.CSSProperties;
 
   // T15: вращение диска включено только когда общий anims включён и OS не

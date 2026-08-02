@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { migrateLegacyValue } from "./legacyPrefs";
 import { sanitizeTokens } from "./themes";
-import { RADIUS_OVERRIDE_OFF } from "../types";
+import { RADIUS_OVERRIDE_OFF } from "./types";
 
 describe("migrateLegacyValue", () => {
   it("мигрирует строковые пресеты в прежние числа", () => {

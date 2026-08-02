@@ -28,6 +28,10 @@
  *  `next/*` или `import.meta.env` — он живёт в ОБЩЕМ пакете и попадает в оба
  *  бандла. Здесь только типы. */
 
+/** Единственный импорт файла — и он типовой: манифест расширения разбирает
+ *  @muza/core, розетка его только переносит от площадки к экрану согласия. */
+import type { PluginManifest } from "@muza/core";
+
 /** Трек в терминах выноса файла — ровно то, из чего собирается человеческое
  *  имя файла «Артист - Название.ext». */
 export interface TrackFileRef {
@@ -156,6 +160,195 @@ export interface SystemPort {
   configureTray?(visible: boolean, closeToTray: boolean): Promise<void>;
 }
 
+/* ══ Порты экрана настроек (волна «настройки», 2026-08-02) ═══════════════
+ *
+ *  Экран настроек — самый «системный» экран продукта: он трогал Tauri в
+ *  двенадцати местах (обновление, расширения, место на диске, диагностика,
+ *  Discord, устройства вывода, версия, сохранение файла…). Из-за этого он
+ *  единственный не мог переехать в общий пакет вместе с остальными экранами.
+ *
+ *  Порты ниже — ровно те двенадцать мест, ничего сверх. Правило прежнее и
+ *  здесь особенно жёсткое: НЕТ ПОРТА — НЕТ РЯДА. Не серого, не «доступно
+ *  только в приложении» — ряда нет вовсе, и поиск по настройкам его тоже не
+ *  находит (индекс фильтруется тем же списком умений, lib/settingsIndex.ts).
+ *  Причина: строка настройки, которая ничего не настраивает, — это обещание,
+ *  которое интерфейс не выполнит. */
+
+/** Найденное обновление программы. */
+export interface UpdateFound {
+  version: string;
+  /** Что изменилось; null — сервер списка не прислал. */
+  notes: string | null;
+  /** Скачать, установить и перезапуститься. onProgress: 0..100 либо −1,
+   *  когда размер заранее неизвестен. Дальше программа завершается сама —
+   *  код после этого вызова не выполняется. */
+  install(onProgress: (pct: number) => void): Promise<void>;
+}
+
+/** ОБНОВЛЕНИЕ ПРОГРАММЫ ИЗНУТРИ НЕЁ САМОЙ. У вкладки браузера порта нет и не
+ *  будет: страница обновляется перезагрузкой, ряда «Обновление» там нет. */
+export interface UpdatesPort {
+  /** null — обновлений нет. Бросает, когда проверить не удалось (нет сети). */
+  check(): Promise<UpdateFound | null>;
+}
+
+/** СВЕДЕНИЯ О САМОЙ ПРОГРАММЕ (ряд «Версия»). У страницы версии сборки нет —
+ *  ряда тоже. */
+export interface AppInfoPort {
+  version(): Promise<string>;
+}
+
+/** Сколько места занято подготовленными файлами. */
+export interface StoredMediaStats {
+  bytes: number;
+  files: number;
+  /** Из них оставлено «слушать без сети». */
+  pinnedBytes: number;
+  pinnedFiles: number;
+}
+
+/** ФАЙЛЫ, ПОДГОТОВЛЕННЫЕ ЗАРАНЕЕ (ряды «Скачанное» и «Слушать без сети»).
+ *  Отдельно от OfflinePort: тот про «закрепить трек», этот — про место на
+ *  диске и кнопку «очистить». */
+export interface StoredMediaPort {
+  stats(): Promise<StoredMediaStats>;
+  clear(): Promise<void>;
+}
+
+/** Событие журнала подготовки — текст УЖЕ человеческий, показывается как есть. */
+export interface EngineHealthEvent {
+  at_ms: number;
+  text: string;
+}
+
+/** Снимок предохранителей подготовки: они срабатывают молча, и без этого
+ *  снимка жалоба «стало медленно» неразбираема. Имена полей в змеином
+ *  регистре — это payload с Rust-стороны, переименование чинилось бы в двух
+ *  местах (тот же довод, что у LocalFileEntry.duration_sec выше). */
+export interface EngineHealth {
+  cooldown_until_ms: number | null;
+  consecutive_fails: number;
+  sc_key_ready: boolean;
+  events: EngineHealthEvent[];
+}
+
+/** Как быстро прошёл путь «клик → звук». null у фазы = её не было. */
+export interface TrackStartRecord {
+  trackId: string;
+  title: string;
+  reason: string;
+  at: number;
+  sourcesMs: number | null;
+  urlMs: number | null;
+  path: "stream" | "resolve" | "preloaded" | null;
+  playCallMs: number | null;
+  soundMs: number | null;
+  error: string | null;
+}
+
+/** ЖУРНАЛ «ПОЧЕМУ ВКЛЮЧАЛОСЬ ДОЛГО». */
+export interface DiagnosticsPort {
+  health(): Promise<EngineHealth>;
+  /** Последние старты (кольцо в памяти площадки). */
+  startLog(): TrackStartRecord[];
+  /** Подписка на пополнение журнала; возвращает отписку. */
+  subscribeStartLog(cb: () => void): () => void;
+}
+
+/** СТАТУС «СЛУШАЕТ MUZA» В DISCORD. */
+export interface DiscordStatusPort {
+  /** Готова ли связка с Discord (площадка знает свой идентификатор). */
+  configured(): Promise<boolean>;
+}
+
+/** Устройство звука в терминах экрана вывода. */
+export interface AudioDeviceInfo {
+  deviceId: string;
+  label: string;
+}
+
+/** ВЫВОД ЗВУКА НА НЕСКОЛЬКО УСТРОЙСТВ + ПОДМЕШИВАНИЕ ГОЛОСА. */
+export interface AudioDevicesPort {
+  listOutputs(): Promise<AudioDeviceInfo[]>;
+  listInputs(): Promise<AudioDeviceInfo[]>;
+  /** Разрешение спрашивали и не дали. Пустой список бывает по двум причинам,
+   *  и человеку с запретом микрофона незачем идти проверять провода. */
+  accessDenied(): boolean;
+}
+
+/** МАЛЕНЬКОЕ ОКНО ПЛЕЕРА ПОВЕРХ ДРУГИХ ОКОН. Отдельный порт, а не метод
+ *  WindowPort: WindowPort — черновик без единой реализации, а это умение
+ *  живое и нужно ряду настроек уже сейчас. */
+export interface MiniPlayerPort {
+  show(): Promise<void>;
+  hide(): Promise<void>;
+}
+
+/** Расширение, установленное на этом устройстве. `manifest` намеренно не
+ *  типизирован жёстко: его разбирает @muza/core (isFullAccessManifest,
+ *  PERMISSION_INFO), а розетка только переносит. */
+export interface InstalledPluginRef {
+  id: string;
+  version: string;
+  enabled: boolean;
+  manifest: PluginManifest;
+  granted: readonly string[];
+}
+
+/** Подготовленное к установке расширение. Для общего кода это НЕПРОЗРАЧНАЯ
+ *  ручка: он показывает `manifest` на экране согласия и возвращает ту же
+ *  ручку обратно в finalize/cancel, не заглядывая внутрь. */
+export interface StagedPluginRef {
+  manifest: PluginManifest;
+}
+
+/** Ошибка расширения с полным доступом. */
+export interface PluginErrorRecord {
+  pluginId: string;
+  message: string;
+  at: number;
+}
+
+/** РАСШИРЕНИЯ, УСТАНАВЛИВАЕМЫЕ ФАЙЛОМ. Целиком отсутствует у браузера:
+ *  страница не берёт файл с диска в свою песочницу и не переживает
+ *  перезапуск — раздел «Расширения» там не появляется вовсе. */
+export interface PluginsPort {
+  list(): Promise<InstalledPluginRef[]>;
+  /** Системный выбор файла + проверка; null — человек передумал. */
+  pickFile(): Promise<StagedPluginRef | null>;
+  /** Подготовить из данных витрины — дальше ТОТ ЖЕ экран согласия. */
+  stageFromMarket(payload: {
+    manifest: Record<string, unknown>;
+    code: string;
+    css?: string;
+    strings?: Record<string, string>;
+  }): Promise<StagedPluginRef>;
+  /** Согласие получено — установить с этими правами. */
+  finalize(staged: StagedPluginRef, granted: readonly string[]): Promise<void>;
+  /** Отказ — убрать подготовленное. */
+  cancel(staged: StagedPluginRef): Promise<void>;
+  setEnabled(id: string, on: boolean): Promise<void>;
+  remove(id: string): Promise<void>;
+  errors(): PluginErrorRecord[];
+  clearErrors(): void;
+  /** Подписка на реестр ошибок; возвращает отписку. */
+  subscribeErrors(cb: () => void): () => void;
+  /** Версия реестра ошибок — для useSyncExternalStore. */
+  errorsVersion(): number;
+  /** Перезапустить программу: выключенное расширение с полным доступом
+   *  живёт в памяти до перезапуска, и честнее предложить его сразу. */
+  restart(): Promise<void>;
+}
+
+/** СОХРАНИТЬ ФАЙЛ ДАННЫХ («Выгрузить мои данные»). Порт НЕобязателен, и это
+ *  единственное место, где его отсутствие не убирает ряд: без порта общий код
+ *  отдаёт файл обычной загрузкой браузера — так эта кнопка и работала в
+ *  окне без Tauri. Порт нужен там, где человек выбирает МЕСТО на диске. */
+export interface SaveDataFilePort {
+  /** Спросить место и сохранить. false — человек закрыл выбор места. */
+  saveJson(suggestedName: string, json: string): Promise<boolean>;
+}
+
 /** Вилка площадки. Каждое поле — отдельное умение; НЕТ поля = площадка так
  *  не умеет, и общий код обязан вести себя так, будто такой возможности в
  *  продукте нет (не серая заглушка — отсутствие пункта). */
@@ -167,4 +360,14 @@ export interface PlatformAdapter {
   system?: SystemPort;
   saveImage?: SaveImagePort;
   preparedTracks?: PreparedTracksPort;
+  // ── экран настроек ──
+  updates?: UpdatesPort;
+  appInfo?: AppInfoPort;
+  storedMedia?: StoredMediaPort;
+  diagnostics?: DiagnosticsPort;
+  discordStatus?: DiscordStatusPort;
+  audioDevices?: AudioDevicesPort;
+  miniPlayer?: MiniPlayerPort;
+  plugins?: PluginsPort;
+  saveDataFile?: SaveDataFilePort;
 }

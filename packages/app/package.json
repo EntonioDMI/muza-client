@@ -14,6 +14,7 @@
     "./views/*": "./src/views/*.tsx",
     "./views/settings/*.css": "./src/views/settings/*.css",
     "./lib/*": "./src/lib/*.ts",
+    "./prefs/*": "./src/prefs/*.ts",
     "./theme/accent": "./src/theme/accent.ts",
     "./theme/themeVars": "./src/theme/themeVars.ts",
     "./theme/ThemeRoot": "./src/theme/ThemeRoot.tsx",

@@ -1,108 +1,108 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { DEFAULT_LANG, resolveMigratedLanguage, type Lang } from "@muza/app";
+import { DEFAULT_LANG, type Lang } from "@muza/app";
+import { DEFAULT_PREFS, type Prefs } from "@muza/app/prefs/types";
+import { loadPrefs, mergePrefs, parseStoredPrefs, PREFS_KEY, savePrefs } from "@muza/app/prefs/load";
 
-/** Настройки веба (мини-версия десктопных Prefs): живут в localStorage,
- *  применяются мгновенно. Скоуп сознательно узкий — «минимальные настройки»,
- *  остальная кастомизация — фишка десктопа. */
+/** Настройки веба — ТОТ ЖЕ профиль, что у приложения (волна веб-паритета,
+ *  фаза 2, 2026-08-02).
+ *
+ *  Было: свой узкий тип WebPrefs на 14 полей и свой ключ хранения. Стало:
+ *  общая модель @muza/app/prefs. Причина — не красота, а поведение: пока
+ *  профили разные, настройка, сделанная в приложении, в браузере просто не
+ *  существует, и наоборот.
+ *
+ *  Два правила, из которых всё следует:
+ *  1. ХРАНИМ ЦЕЛИКОМ. В браузере лежат и те поля, которые вкладка применить
+ *     не может (окно поверх других, значок у часов, вывод на устройства).
+ *     Иначе заход на сайт стирал бы половину профиля, собранного в программе.
+ *  2. ПРИМЕНЯЕМ ТОЛЬКО ЧТО УМЕЕМ. Список применяемого — ниже по файлу и в
+ *     потребителях (providers.tsx → ThemeRoot, AppShell, player.tsx). Чего
+ *     площадка не умеет, у неё и не спрашивают (розетка @muza/app/platform). */
 
-/** Язык интерфейса по умолчанию для СОВСЕМ нового посетителя (localStorage
- *  пуст): смотрим `navigator.language`, ru* → ru, иначе EN (И5-веб, 22.07).
- *  Для профилей, сохранённых ДО этой правки (language нет, но prefs уже
- *  есть), сохраняем привычный русский — см. `resolveMigratedLanguage` ниже,
- *  та же логика, что у десктопа (i18n/index.tsx), веб был русским хардкодом. */
+/** Язык интерфейса по умолчанию для СОВСЕМ нового посетителя (хранилище
+ *  пусто): смотрим `navigator.language`, ru* → ru, иначе EN (И5-веб, 22.07).
+ *  Профили, сохранённые ДО языковой настройки, мигрирует mergePrefs
+ *  (resolveMigratedLanguage — им остаётся привычный русский). */
 function detectBrowserLanguage(): Lang {
   if (typeof navigator === "undefined") return DEFAULT_LANG;
   return navigator.language.toLowerCase().startsWith("ru") ? "ru" : DEFAULT_LANG;
 }
 
-export interface WebPrefs {
-  /** Э1 веб-паритета (2026-07-21): тема — общее подмножество Prefs десктопа
-   *  (имена/типы 1-в-1, см. @muza/app theme/themeVars.ts). Применяет ThemeRoot
-   *  в providers.tsx. Акцент расширен значением "custom" (+customAccent). */
-  theme: "dark" | "light";
-  accent: "blue" | "red" | "bolt" | "custom";
-  customAccent: string;
-  radius: "mild" | "soft" | "round";
-  blur: number;
-  glassOpacity: number;
-  textDim: number;
-  fontUi: "golos" | "unbounded" | "system";
-  /** Сценография: размытая обложка текущего трека фоном (фирменный вид Muza). */
-  bgCover: boolean;
-  /** Правая панель «Сейчас играет» открывается сама при старте трека (≥1200px). */
-  npOpen: boolean;
-  eqOn: boolean;
-  eqPreset: string;
-  eqBands: number[];
-  /** T41: группировка ремиксов/версий в поиске — оригинал + версии одной
-   *  карточкой (?group=1 сервера, T36). Default true (дизайн-док). */
-  searchGrouping: boolean;
-  /** И5-веб (2026-07-22): язык интерфейса, общий i18n-модуль @muza/app —
-   *  см. providers.tsx (LanguageProvider) и detectBrowserLanguage выше. */
-  language: Lang;
+/** Дефолты ПЕРВОГО ЗАПУСКА в браузере. Отличие от DEFAULT_PREFS ровно одно и
+ *  оно намеренное: размытая обложка фоном — фирменный вид сайта, и раньше
+ *  веб-дефолт `bgCover: true` его включал. В приложении фон по умолчанию
+ *  выключен (bgType "none"), там за вид отвечает целый раздел настроек.
+ *  Сохранённый профиль всегда главнее этих значений — приехавший из программы
+ *  bgType не перезаписывается. */
+export const DEFAULT_WEB_PREFS: Prefs = { ...DEFAULT_PREFS, bgType: "cover" };
+
+/** Старый ключ веба. Читается ОДИН раз — при первом запуске на общей модели,
+ *  и НЕ УДАЛЯЕТСЯ: если релиз придётся откатить, человек вернётся на прежнюю
+ *  версию сайта и найдёт свои настройки на месте. Лишние ~300 байт в
+ *  localStorage — честная цена за это. */
+const LEGACY_WEB_KEY = "muza.web.prefs.v1";
+
+/** Форма старого веб-профиля: имена полей совпадали с Prefs, кроме `bgCover`
+ *  (предок `bgType`, тот же переход приложение прошло в Stage 6). */
+type LegacyWebPrefs = Partial<Prefs> & { bgCover?: boolean };
+
+/** Профиль старого ключа → общая модель. `bgCover` разбирается здесь, а не
+ *  в общем mergePrefs: тот умеет только `true → "cover"` (в сохранениях
+ *  приложения поля просто не было, когда фон не просили), а веб писал и
+ *  явное `false` — «человек ВЫКЛЮЧИЛ сценографию», и включать её обратно
+ *  веб-дефолтом нельзя. */
+function fromLegacyWeb(legacy: LegacyWebPrefs): Prefs {
+  const { bgCover, ...rest } = legacy;
+  // bgCover выбрасывается, а не переносится: в общем профиле поля больше нет,
+  // и таскать его дальше значило бы возить между клиентами ключ-призрак.
+  // Сам старый ключ хранилища при этом остаётся нетронутым (LEGACY_WEB_KEY).
+  return mergePrefs({ ...rest, bgType: bgCover === false ? "none" : "cover" }, DEFAULT_WEB_PREFS);
 }
 
-export const DEFAULT_WEB_PREFS: WebPrefs = {
-  theme: "dark",
-  accent: "blue",
-  customAccent: "#22c55e",
-  radius: "soft",
-  blur: 28,
-  glassOpacity: 62,
-  textDim: 62,
-  fontUi: "golos",
-  bgCover: true,
-  npOpen: true,
-  eqOn: false,
-  eqPreset: "Ровный",
-  eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  searchGrouping: true,
-  // Модульный дефолт — безопасен на сервере (SSR-пререндер статического
-  // экспорта); реальный язык посетителя подставляется в эффекте ниже.
-  language: DEFAULT_LANG,
-};
-
-const KEY = "muza.web.prefs.v1";
+/** Совместимость имени: старые потребители писали `WebPrefs["theme"]` и т.п.
+ *  Отдельного веб-типа больше нет — это общая модель. */
+export type WebPrefs = Prefs;
 
 interface PrefsCtx {
-  prefs: WebPrefs;
-  set: (patch: Partial<WebPrefs>) => void;
+  prefs: Prefs;
+  set: (patch: Partial<Prefs>) => void;
 }
 
 const Ctx = createContext<PrefsCtx | null>(null);
 
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
-  const [prefs, setPrefs] = useState<WebPrefs>(DEFAULT_WEB_PREFS);
+  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_WEB_PREFS);
 
   // localStorage читается после маунта (SSR-пререндер его не видит)
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const stored = JSON.parse(raw) as Partial<WebPrefs>;
-        setPrefs({
-          ...DEFAULT_WEB_PREFS,
-          ...stored,
-          // Профиль СУЩЕСТВОВАЛ до языковой настройки (raw уже был) — сохраняем
-          // привычный русский, а не подсовываем detectBrowserLanguage: это тот
-          // же манёвр, что resolveMigratedLanguage у десктопа (i18n/index.tsx).
-          language: resolveMigratedLanguage(stored.language),
-        });
-      } else {
-        // Совсем новый посетитель — язык браузера решает дефолт вкладки.
-        setPrefs({ ...DEFAULT_WEB_PREFS, language: detectBrowserLanguage() });
+      // 1. Общий профиль — если он есть, старый ключ больше не смотрим.
+      if (localStorage.getItem(PREFS_KEY)) {
+        setPrefs(loadPrefs(DEFAULT_WEB_PREFS));
+        return;
       }
+      // 2. Первый запуск после переезда: поднимаем профиль со старого ключа
+      //    и пишем его в общий. Старый остаётся лежать (см. LEGACY_WEB_KEY).
+      const legacy = parseStoredPrefs(localStorage.getItem(LEGACY_WEB_KEY)) as LegacyWebPrefs | null;
+      if (legacy) {
+        const migrated = fromLegacyWeb(legacy);
+        savePrefs(migrated);
+        setPrefs(migrated);
+        return;
+      }
+      // 3. Совсем новый посетитель — язык браузера решает дефолт вкладки.
+      setPrefs({ ...DEFAULT_WEB_PREFS, language: detectBrowserLanguage() });
     } catch {
       /* битые сохранения — дефолты */
     }
   }, []);
 
-  const set = useCallback((patch: Partial<WebPrefs>) => {
+  const set = useCallback((patch: Partial<Prefs>) => {
     setPrefs((prev) => {
       const next = { ...prev, ...patch };
-      localStorage.setItem(KEY, JSON.stringify(next));
+      savePrefs(next); // профиль пишется ЦЕЛИКОМ, включая неприменимые поля
       return next;
     });
   }, []);

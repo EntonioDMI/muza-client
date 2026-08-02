@@ -12,7 +12,23 @@ import { SelectionBar } from "../shell/SelectionBar";
 import { useMultiSelect } from "../lib/useMultiSelect";
 import { useAltFileDrag, useLocalFiles, type LocalFileEntry } from "../platform";
 import { playlistIconSrc } from "@muza/core";
-import { useT } from "../i18n";
+import { useT, type TranslationKey } from "../i18n";
+
+/** Ключ вкладки «История» и её пустого состояния с мягким приземлением.
+ *
+ *  Дом этих строк — views.library.*, как у остальных подписей экрана: общий
+ *  компонент не должен ходить в web.* — это раздел словаря ОДНОЙ площадки, и
+ *  приложение, показывая ту же вкладку, читало бы «веб»-строки.
+ *
+ *  Почему пара ключей, а не один: строки под новыми именами заводятся
+ *  отдельным ходом волны (словари — не эта зона), а translate на неизвестный
+ *  ключ возвращает сам ключ — на вкладке стояло бы «views.library.chips.
+ *  history». Поэтому: новый ключ, а пока его нет — прежний. Строки появились →
+ *  вторая половина отмирает, и эту функцию можно снести вместе с парами. */
+function libraryText(t: (key: TranslationKey) => string, fresh: string, legacy: TranslationKey): string {
+  const value = t(fresh as TranslationKey);
+  return value === fresh ? t(legacy) : value;
+}
 
 /** «Любимое» — закреплённая ПЕРВАЯ плитка библиотеки (Spotify-паттерн, выбор
  *  владельца 2026-07-16): не пункт сайдбара, а особый плейлист. Вместо обложки
@@ -328,10 +344,7 @@ export function LibraryView({
   const chips = [
     { key: "playlists", label: t("views.library.chips.playlists") },
     ...(local ? [{ key: "local", label: t("views.library.chips.local") }] : []),
-    // ⚠️ ключ временно из веб-раздела словаря: вкладка была веб-страницей и
-    // потеряна при переезде экрана в общий пакет (2026-08-02), а словари в эту
-    // волну править нельзя. Правильный дом — views.library.chips.history.
-    ...(historyTab ? [{ key: "history", label: t("web.library.tabHistory") }] : []),
+    ...(historyTab ? [{ key: "history", label: libraryText(t, "views.library.chips.history", "web.library.tabHistory") }] : []),
     { key: "albums", label: t("views.library.chips.albums") },
     { key: "artists", label: t("views.library.chips.artists") },
   ];
@@ -540,7 +553,11 @@ export function LibraryView({
         history === null ? (
           <div style={{ padding: "var(--sp-6) 0", color: "var(--text-3)" }}>{t("common.loading")}</div>
         ) : history.length === 0 ? (
-          <EmptyState icon="history" title={t("web.library.historyEmptyTitle")} hint={t("web.library.historyEmptyHint")} />
+          <EmptyState
+            icon="history"
+            title={libraryText(t, "views.library.historyEmpty.title", "web.library.historyEmptyTitle")}
+            hint={libraryText(t, "views.library.historyEmpty.hint", "web.library.historyEmptyHint")}
+          />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
             {history.map((h, i) => (

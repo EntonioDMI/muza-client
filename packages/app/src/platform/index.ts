@@ -10,15 +10,33 @@
  *  apps/desktop/src/platform/desktopAdapter.ts, apps/web/src/platform/webAdapter.ts. */
 
 export type {
+  AppInfoPort,
+  AudioDeviceInfo,
+  AudioDevicesPort,
+  DiagnosticsPort,
+  DiscordStatusPort,
   DragOutPort,
+  EngineHealth,
+  EngineHealthEvent,
+  InstalledPluginRef,
   LocalFileEntry,
   LocalFilesPort,
+  MiniPlayerPort,
   OfflinePort,
   PlatformAdapter,
+  PluginErrorRecord,
+  PluginsPort,
   PreparedTracksPort,
+  SaveDataFilePort,
   SaveImagePort,
+  StagedPluginRef,
+  StoredMediaPort,
+  StoredMediaStats,
   SystemPort,
   TrackFileRef,
+  TrackStartRecord,
+  UpdateFound,
+  UpdatesPort,
   WindowPort,
 } from "./types";
 export { PlatformProvider, useAltFileDrag, useDragOut, useLocalFiles, usePlatform, useTrackDragOut } from "./PlatformContext";

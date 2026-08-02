@@ -62,16 +62,8 @@ export function dominantColor(src: string): Promise<string | null> {
   });
 }
 
-/** Смешение двух hex-цветов: a + (b − a) × t. */
-export function mixHex(a: string, b: string, t: number): string {
-  const pa = parseInt(a.slice(1), 16);
-  const pb = parseInt(b.slice(1), 16);
-  const ch = (sh: number) => {
-    const ca = (pa >> sh) & 255;
-    const cb = (pb >> sh) & 255;
-    return Math.round(ca + (cb - ca) * t);
-  };
-  return (
-    "#" + [16, 8, 0].map((sh) => ch(sh).toString(16).padStart(2, "0")).join("")
-  );
-}
+/** Смешение двух hex-цветов жило здесь, а с 2026-08-02 живёт в общем движке
+ *  темы (@muza/app/theme/themeVars): смешивает он — тонировка --bg-0/1
+ *  обложкой теперь считается одним кодом для приложения и веба. Здесь остался
+ *  реэкспорт, чтобы у прежних потребителей не было диффа. */
+export { mixHex } from "@muza/app/theme/themeVars";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { matchPreset, PRESETS_BG, PRESETS_WARM } from "./presets";
-import { DEFAULT_PREFS } from "../types";
+import { DEFAULT_PREFS } from "./types";
 
 /** Тестируем на СУЩЕСТВУЮЩИХ ключах Prefs — matchPreset универсален,
  *  конкретные наборы пресетов добавляют волны 3а-3д рядом со своей зоной. */

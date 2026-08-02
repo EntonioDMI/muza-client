@@ -93,11 +93,17 @@ a {
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* Ширины колонок — из настроек, а не из числа в этом файле (2026-08-02, общий
+   движок темы). --w-sidebar и --w-nowplaying теперь приезжают с профилем, как
+   в приложении: ползунки «Ширина боковой панели» и «Ширина панели Сейчас
+   играет» двигают и браузер тоже. Токены ДС дают 280/340, если профиль пуст.
+   Узкие ветки ниже прибивают сайдбар к своему числу намеренно — там места
+   меньше, чем человек мог попросить. */
 .shell-grid {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--w-sidebar) 1fr;
   gap: var(--gap-zone);
   /* Безопасные зоны нужны и десктопной раскладке: iPad-PWA (standalone,
      viewport-fit=cover) кладёт статус-бар и home-indicator ПОВЕРХ вебвью,
@@ -110,7 +116,7 @@ a {
 }
 
 .shell-grid.with-np {
-  grid-template-columns: 260px 1fr 340px;
+  grid-template-columns: var(--w-sidebar) 1fr var(--w-nowplaying);
 }
 
 .zone {
@@ -161,12 +167,20 @@ a {
   padding: 0;
 }
 
+/* Зона «Сейчас играет» — своя плотность стекла, как в приложении: общая
+   NowPlayingPanel из @muza/app красится var(--glass-nowplaying, var(--surface-1)),
+   и веб-копия панели обязана вести себя так же, иначе ряд «Плотность стекла →
+   Сейчас играет» двигает ползунок вхолостую. Без включённого «Стекла по зонам»
+   переменной нет — работает фолбэк, вид прежний. */
 .np-panel {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
   padding: var(--pad-zone);
   overflow: hidden;
+  background: var(--glass-nowplaying, var(--surface-1));
+  backdrop-filter: var(--bf-zone, none);
+  -webkit-backdrop-filter: var(--bf-zone, none);
 }
 
 /* ── Плеер-бар (десктоп): плавающее стекло, как в приложении ── */
@@ -185,7 +199,9 @@ a {
   gap: var(--sp-4);
   padding: var(--sp-3) var(--sp-5);
   border-radius: var(--r-lg);
-  background: var(--glass-panel);
+  /* Плотность стекла плеера — та же цепочка, что у общей PlayerBar в
+     приложении: своя переменная зоны, иначе общая --glass-panel. */
+  background: var(--glass-player, var(--glass-panel));
   backdrop-filter: blur(var(--blur-glass));
   -webkit-backdrop-filter: blur(var(--blur-glass));
 }

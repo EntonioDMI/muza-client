@@ -17,53 +17,11 @@ export interface DiscordActivity {
   buttonUrl: string | null;
 }
 
-/** Кнопку реально шлём только с валидным http(s)-URL — Rust (rpc.rs) молча
- *  отбрасывает прочее, и предпросмотр обязан показывать ту же правду. */
-export function isValidButtonUrl(url: string): boolean {
-  return /^https?:\/\/\S+$/.test(url.trim());
-}
-
-/** Шаблон строки активности: подстановки {track}/{artist}/{album}. Пустые
- *  значения подчищаются вместе с висячими разделителями (« — », «·»…):
- *  "{artist} — {album}" без альбома отдаёт просто артиста. Лимит Discord —
- *  128 символов. */
-export function formatTemplate(
-  tpl: string,
-  vars: { track: string; artist: string; album?: string },
-): string {
-  const out = tpl
-    .replaceAll("{track}", vars.track)
-    .replaceAll("{artist}", vars.artist)
-    .replaceAll("{album}", vars.album ?? "")
-    // разделители, повисшие на месте пустой подстановки
-    .replace(/^[\s\-—–·|:]+/, "")
-    .replace(/[\s\-—–·|:]+$/, "")
-    .replace(/\s{2,}/g, " ");
-  return out.slice(0, 128);
-}
-
-/** Обложка для Discord-активности. Discord тянет внешний https-URL как есть и
- *  НЕ кропает его (в статусе — letterbox-кадр с полями, жалоба 2026-07-16), а
- *  локальные байты (кроп useCoverArt — data-URL канвы) ему не отдать. Для
- *  ytimg-тумб — центральный квадрат через публичный резайз-прокси weserv
- *  (стандартный трюк RPC-интеграций): у музыкальных тумб YouTube арт всегда
- *  ровно по центру кадра (hqdefault 480×360 → арт 360×360, maxres 1280×720 →
- *  720×720), так что слепой center-crop без канвы режет точно по арту. Прокси
- *  упал — Discord просто покажет активность без картинки, не ошибка.
- *  Остальные источники (iTunes и т.п.) и так квадратные — как есть. */
-export function discordCoverUrl(raw: string | null): string | null {
-  if (!raw || !raw.startsWith("https")) return null;
-  try {
-    if (!/(^|\.)ytimg\.com$/.test(new URL(raw).hostname)) return raw;
-  } catch {
-    return null; // кривой URL из каталога — лучше без картинки, чем падение эффекта
-  }
-  // trim=30 — автообрезка однотонных полей ДО квадратного кропа: у hqdefault
-  // рамки ДВОЙНЫЕ (16:9-кадр в 4:3-холсте + поля вокруг самого арта), и слепой
-  // центральный квадрат оставлял боковые полосы внутри (жалоба 2026-07-16).
-  // Проверено на тёмных и светлых артах: поля уходят, арт не отъедается.
-  return `https://images.weserv.nl/?url=${encodeURIComponent(raw)}&trim=30&w=600&h=600&fit=cover`;
-}
+/** ЧИСТЫЕ ПРАВИЛА (годность ссылки кнопки, сборка строки активности, адрес
+ *  обложки) переехали в @muza/app/lib/discord — по ним же рисует предпросмотр
+ *  под-экрана настроек, а он стал общим (волна «настройки», 2026-08-02).
+ *  Ре-экспорт: потребители (App.tsx, discord.test.ts) импортов не меняли. */
+export { discordCoverUrl, formatTemplate, isValidButtonUrl } from "@muza/app/lib/discord";
 
 export async function updateDiscordActivity(a: DiscordActivity): Promise<boolean> {
   if (!isTauri()) return false;
