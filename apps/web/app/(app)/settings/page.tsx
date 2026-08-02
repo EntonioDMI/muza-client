@@ -672,6 +672,13 @@ export default function SettingsPage() {
       closeSub={closeSub}
       goTo={goTo}
     >
+      {/* shared-screen гасит поле зоны .main (globals.css): без него зона
+          добавляла свои 20px, и рельс настроек уезжал на 20 вправо и вниз
+          относительно главного сайдбара — зазор слева становился 32 против 12
+          справа, а верх рельса не совпадал с верхом сайдбара (замечание
+          владельца 02.08 со снимком). Экран настроек сам держит свои поля:
+          контракт «раздел оборачивает себя сам». */}
+      <div className="shared-screen">
       <SettingsScreen
         caps={caps}
         rows={rows}
@@ -690,6 +697,7 @@ export default function SettingsPage() {
           system: systemPane,
         }}
       />
+      </div>
     </SettingsProvider>
   );
 }
