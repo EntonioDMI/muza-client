@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { IconButton, Slider } from "@muza/ui";
+import { Cover, IconButton, Slider } from "@muza/ui";
 import { useT } from "@muza/app";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer, usePosition } from "../player";
-import { Cover } from "./Cover";
 import { LyricsBlock } from "./LyricsPanel";
 
 /** Полноэкранный now-playing телефона: открывается тапом по мини-бару.
@@ -64,7 +63,15 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "center", padding: "var(--sp-4) 0" }}>
         {view === "cover" ? (
           <div style={{ display: "flex", justifyContent: "center" }}>
-            <Cover url={current.coverUrl} style={{ width: "min(78vw, 46vh)" }} />
+            {/* Обложка — только через Cover ДС: он один знает про вшитые поля
+                тумбов источника и про то, какие варианты трогать нельзя. */}
+            <Cover
+              key={current.coverUrl ?? "none"}
+              src={current.coverUrl}
+              radius="var(--r-md)"
+              className="muza-fade"
+              style={{ width: "min(78vw, 46vh)" }}
+            />
           </div>
         ) : (
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>

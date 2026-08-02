@@ -1,6 +1,6 @@
 "use client";
 
-import { Icon, IconButton, Slider, Spinner, Tooltip } from "@muza/ui";
+import { Cover, Icon, IconButton, Slider, Spinner, Tooltip } from "@muza/ui";
 import { useT } from "@muza/app";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
@@ -23,27 +23,14 @@ function LikeButton({ liked, onToggle, size = "sm" as const }: { liked: boolean;
   );
 }
 
-function CoverThumb({ url, size }: { url: string | null; size: number }) {
-  return url ? (
-    <img src={url} alt="" style={{ width: size, height: size, borderRadius: "var(--r-xs)", objectFit: "cover", flex: "none" }} />
-  ) : (
-    <span
-      aria-hidden="true"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "var(--r-xs)",
-        background: "var(--accent-soft)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flex: "none",
-      }}
-    >
-      <Icon name="music-2" size={Math.round(size * 0.45)} color="var(--accent-text)" />
-    </span>
-  );
-}
+// Своей обложки здесь больше нет — рисуем через <Cover> дизайн-системы, как
+// это делает приложение (apps/desktop/src/shell/PlayerBar.tsx). Прежняя
+// самоделка ставила сырой <img> с object-fit:cover, а сервер отдаёт тумб
+// YouTube hqdefault 480×360: это кадр 16:9 с чёрными полями по 45px сверху и
+// снизу. Центральный квадрат такой картинки — 360×360 — забирает обе полосы
+// целиком, отсюда и жалоба владельца на «серые и чёрные грани». Cover знает
+// про этот квирк ytimg и доворачивает геометрию (см. его шапку), а заодно даёт
+// тот же плейсхолдер, что в приложении.
 
 /** Плеер веба: на десктопе — плавающий стеклянный бар (как в приложении),
  *  на телефоне — мини-бар над нижней навигацией (тап открывает полноэкранный
@@ -71,7 +58,7 @@ export function PlayerBar({
       {/* ── Десктоп ── */}
       <footer className="playerbar">
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
-          <CoverThumb url={current?.coverUrl ?? null} size={52} />
+          <Cover src={current?.coverUrl ?? null} size={52} />
           <span style={{ minWidth: 0 }}>
             <span
               style={{
@@ -188,7 +175,7 @@ export function PlayerBar({
             boxSizing: "border-box",
           }}
         >
-          <CoverThumb url={current?.coverUrl ?? null} size={44} />
+          <Cover src={current?.coverUrl ?? null} size={44} />
           <span style={{ flex: 1, minWidth: 0 }}>
             <span
               style={{

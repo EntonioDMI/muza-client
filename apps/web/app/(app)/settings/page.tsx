@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, ChipGroup, Fader, Icon, Switch } from "@muza/ui";
+import { Button, ChipGroup, Fader, Icon, Slider, Switch } from "@muza/ui";
 import { DesktopOnlyOverlay } from "@muza/app/components/DesktopOnly";
 import { LANGS, useT, type Lang } from "@muza/app";
 import { EQ_PRESETS } from "../../../src/audioFx";
@@ -100,6 +100,43 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
   );
 }
 
+/** Живой слайдер со значением справа — копия LiveSlider десктопа
+ *  (SettingsView.tsx, «Живой слайдер со значением справа»): та же вёрстка
+ *  (240px, Slider из ДС + число шириной 48px), чтобы ряды стекла, размытия и
+ *  приглушения текста выглядели в вебе ровно как в приложении. Родной
+ *  <input type=range> тут не годился: у него другой вид и другая высота
+ *  трека — рядом с одинаковыми рядами приложения разъезжается. */
+function LiveSlider({
+  value,
+  max,
+  label,
+  suffix,
+  onChange,
+}: {
+  value: number;
+  max: number;
+  label: string;
+  suffix: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", width: 240 }}>
+      <Slider value={value} max={max} onChange={onChange} ariaLabel={label} valueText={suffix} style={{ flex: 1 }} />
+      <span
+        style={{
+          fontSize: "var(--fs-caption)",
+          color: "var(--text-3)",
+          width: 48,
+          textAlign: "right",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {suffix}
+      </span>
+    </div>
+  );
+}
+
 /** Заголовок группы внутри панели (для панелей с несколькими темами). */
 function GroupTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -144,6 +181,15 @@ function radiusLabel(key: (typeof RADIUS_KEYS)[number], t: TFn): string {
   if (key === "round") return t("settings.appearance.radius.round");
   return t("settings.appearance.radius.soft");
 }
+
+/** Границы ползунков оформления — те же числа, что в SettingsView десктопа
+ *  (одна тема должна настраиваться одинаково на обеих платформах):
+ *  плотность стекла 30–100 % (ниже 30 интерфейс нечитаем), размытие панелей
+ *  0–64 px, приглушение текста 40–80 %. */
+const GLASS_MIN = 30;
+const BLUR_MAX = 64;
+const TEXT_DIM_MIN = 40;
+const TEXT_DIM_MAX = 80;
 
 /** Golos/Unbounded — имена шрифтов, не переводятся ни в одном языке (как в
  *  десктопе); «Системный» — единственная переводимая подпись этого чипа. */
@@ -247,15 +293,34 @@ export default function SettingsPage() {
         />
       </Row>
       <Row title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
-        <input
-          type="range"
-          min={30}
-          max={90}
-          value={prefs.glassOpacity}
-          aria-label={t("settings.appearance.glass.title")}
-          aria-valuetext={`${prefs.glassOpacity}%`}
-          style={{ width: 200, accentColor: "var(--accent)" }}
-          onChange={(e) => set({ glassOpacity: Number(e.target.value) })}
+        <LiveSlider
+          value={prefs.glassOpacity - GLASS_MIN}
+          max={100 - GLASS_MIN}
+          label={t("settings.appearance.glass.title")}
+          suffix={`${prefs.glassOpacity} %`}
+          onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
+        />
+      </Row>
+      {/* Размытие и приглушение текста веб УЖЕ применял (themeVars.ts пишет
+          --blur-glass и --text-2/--text-3), но на экране их не было — человек
+          не видел настройки, которая у него работает. Ряды и подписи — те же
+          ключи, что у одноимённых рядов «Кастомизации» приложения. */}
+      <Row title={t("settings.customize.glass.panelBlur.title")} hint={t("settings.customize.glass.panelBlur.hint")}>
+        <LiveSlider
+          value={prefs.blur}
+          max={BLUR_MAX}
+          label={t("settings.customize.glass.panelBlur.title")}
+          suffix={`${prefs.blur} px`}
+          onChange={(v) => set({ blur: Math.round(v) })}
+        />
+      </Row>
+      <Row title={t("settings.customize.colors.textDim.title")} hint={t("settings.customize.colors.textDim.hint")}>
+        <LiveSlider
+          value={prefs.textDim - TEXT_DIM_MIN}
+          max={TEXT_DIM_MAX - TEXT_DIM_MIN}
+          label={t("settings.customize.colors.textDim.title")}
+          suffix={`${prefs.textDim} %`}
+          onChange={(v) => set({ textDim: TEXT_DIM_MIN + Math.round(v) })}
         />
       </Row>
       <Row title={t("settings.appearance.background.ariaLabel")} hint={t("web.settings.backgroundHint")}>

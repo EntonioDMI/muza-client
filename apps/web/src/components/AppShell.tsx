@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Badge, Icon } from "@muza/ui";
+import { Badge, Cover, Icon } from "@muza/ui";
 import type { PlaylistMeta } from "@muza/api-client";
 import { useT } from "@muza/app";
 import { getApi } from "../api";
@@ -180,10 +180,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь
     <div className="shell">
-      {/* Сценография: фирменный вид Muza — размытая обложка за интерфейсом */}
+      {/* Сценография: фирменный вид Muza — размытая обложка за интерфейсом.
+          Картинку рисует Cover ДС, а не голый <img>, и это принципиально.
+          Приложение кладёт в фон обложку, УЖЕ прошедшую очистку (canvas-кроп
+          в useCoverArt) — то есть квадрат самого арта. Веб очистку не тянет,
+          и сырой тумб источника — это кадр 4:3 с полями сверху и снизу: на
+          узком окне object-fit их не срезает, и по краям экрана проступала
+          тёмная кайма, которой в приложении нет. Cover доворачивает геометрию
+          сам и знает, какие варианты ссылок трогать нельзя, — знание остаётся
+          в одном месте, копии регулярки в вебе не заводим.
+          Квадрат max(120vw,120vh) центрирован в .scenery: он заведомо
+          перекрывает окно с тем же запасом ±10%, что был у прежнего <img>,
+          и виден ровно центральный кроп арта — как в приложении. */}
       {prefs.bgCover && current?.coverUrl ? (
         <>
-          <img key={current.coverUrl} src={current.coverUrl} alt="" aria-hidden="true" className="scenery muza-fade" />
+          {/* overflow скрыт не для вида, а ради размытия: без него браузер
+              растрирует и размывает весь квадрат целиком (на широком окне это
+              заметно больше пикселей, чем видно). Обрезка идёт по рамке
+              .scenery — она на 10% больше окна с каждой стороны, так что край
+              размытия остаётся за экраном, как и раньше. */}
+          <div className="scenery" aria-hidden="true" style={{ overflow: "hidden" }}>
+            <Cover
+              key={current.coverUrl}
+              src={current.coverUrl}
+              size="max(120vw, 120vh)"
+              radius="0"
+              className="muza-fade"
+              style={{
+                position: "absolute",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%)",
+                // без заливки: пока картинка грузится, фон окна остаётся своим,
+                // а не мигает на весь экран подложкой обложки
+                background: "transparent",
+              }}
+            />
+          </div>
           <div className="scenery-dim" aria-hidden="true" />
         </>
       ) : null}
@@ -256,7 +289,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     transition: "background var(--dur-fast) var(--ease-out)",
                   }}
                 >
-                  <PlaylistCover icon={p.icon} shared={p.role === "collaborator" || p.collaboratorsCount > 0} size={40} iconSize={18} />
+                  <PlaylistCover
+                    icon={p.icon}
+                    coverUrl={p.iconCoverUrl}
+                    shared={p.role === "collaborator" || p.collaboratorsCount > 0}
+                    size={40}
+                    iconSize={18}
+                  />
                   <span style={{ minWidth: 0 }}>
                     <span
                       style={{

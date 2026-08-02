@@ -1,10 +1,9 @@
 "use client";
 
-import { IconButton } from "@muza/ui";
+import { Cover, IconButton } from "@muza/ui";
 import { useT } from "@muza/app";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
-import { Cover } from "./Cover";
 import { LyricsBlock } from "./LyricsPanel";
 
 /** Правая панель «Сейчас играет» (≥1200px): крупная обложка, трек, лайк и
@@ -32,7 +31,9 @@ export function NowPlayingPanel({ onClose }: { onClose: () => void }) {
         </span>
         <IconButton icon="x" size="sm" label={t("plugins.closePanel")} iconSize={16} style={{ width: 30, height: 30 }} onClick={onClose} />
       </div>
-      <Cover url={current.coverUrl} style={{ width: "100%", flex: "none" }} />
+      {/* Обложка — только через Cover ДС (зеркало десктопной NowPlayingPanel):
+          тумб источника несёт вшитые поля, и лечит их ДС, а не панель. */}
+      <Cover key={current.coverUrl ?? "none"} src={current.coverUrl} radius="var(--r-md)" className="muza-fade" />
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div

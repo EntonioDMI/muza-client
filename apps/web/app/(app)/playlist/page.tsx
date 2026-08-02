@@ -182,7 +182,14 @@ function PlaylistBody() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-        <PlaylistCover icon={detail.icon} shared={detail.collaborators.length > 0} size={72} radius="var(--r-md)" iconSize={30} />
+        <PlaylistCover
+          icon={detail.icon}
+          coverUrl={detail.iconCoverUrl}
+          shared={detail.collaborators.length > 0}
+          size={72}
+          radius="var(--r-md)"
+          iconSize={30}
+        />
         <div style={{ minWidth: 0, flex: 1 }}>
           <h1 className="page-title" style={{ fontSize: 24 }}>
             {detail.name}

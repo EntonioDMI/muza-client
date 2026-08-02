@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { LanguageProvider } from "@muza/app";
+import { comboFromEvent, isTypingTarget, matchAction, withDefaults } from "@muza/app/lib/hotkeys";
 import { ThemeRoot } from "@muza/app/theme/ThemeRoot";
-import { LikesProvider } from "./likes";
-import { PlayerProvider } from "./player";
+import { LikesProvider, useLikes } from "./likes";
+import { PlayerProvider, usePlayer, usePosition } from "./player";
 import { PlaylistsProvider } from "./playlists";
 import { PrefsProvider, usePrefs } from "./prefs";
 import { SessionProvider } from "./session";
@@ -56,6 +58,90 @@ function LocalizedTree({ children }: { children: React.ReactNode }) {
     document.documentElement.lang = prefs.language;
   }, [prefs.language]);
   return <LanguageProvider lang={prefs.language}>{children}</LanguageProvider>;
+}
+
+/** Шаг перемотки стрелками — тот же, что у приложения по умолчанию
+ *  (apps/desktop DEFAULT_PREFS.seekStepSec). В вебе настройки клавиш пока нет,
+ *  поэтому и биндинги берутся дефолтные: withDefaults() без сохранённых. */
+const SEEK_STEP_SEC = 5;
+const WEB_HOTKEYS = withDefaults();
+
+/** Горячие клавиши веба: тот же модуль, что у приложения (@muza/app), тот же
+ *  один слушатель на окно, те же дефолтные сочетания. Монтируется в layout
+ *  залогиненной части — на /login клавиши плеера не нужны.
+ *
+ *  Чего в вебе нет и быть не может:
+ *  - клавиш при неактивном окне (у приложения это тоже не сделано, но там
+ *    такое хотя бы возможно) — браузер отдаёт keydown только активной вкладке;
+ *    роль «клавиш при свёрнутом окне» в вебе играет Media Session (см.
+ *    player.tsx: play/pause/next/prev с медиа-кнопок клавиатуры);
+ *  - «?» (справка по клавишам) и Esc (закрыть очередь) — это части оболочки
+ *    приложения, в вебе таких панелей нет.
+ *
+ *  Ctrl+K и Alt+←/→ перехватываются намеренно: у первого в браузере своего
+ *  смысла нет (адресная строка вне страницы), второе — та же навигация назад/
+ *  вперёд, только через роутер, без перезагрузки. */
+export function AppHotkeys() {
+  const player = usePlayer();
+  const { position, duration } = usePosition();
+  const likes = useLikes();
+  const router = useRouter();
+
+  // Слушатель ставится один раз на маунт, актуальные значения — через ref
+  // (иначе замыкание держало бы позицию и очередь на момент подписки).
+  const handlerRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  handlerRef.current = (e: KeyboardEvent) => {
+    // Человек печатает — музыка не реагирует (правило общее с приложением)
+    if (isTypingTarget(e.target)) return;
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    const action = matchAction(combo, WEB_HOTKEYS);
+    if (!action) return;
+    switch (action) {
+      case "playPause":
+        e.preventDefault(); // иначе страница проскроллится / нажмётся кнопка в фокусе
+        player.toggle();
+        break;
+      case "next":
+        player.next();
+        break;
+      case "prev":
+        player.prev();
+        break;
+      case "seekFwd":
+        if (player.current) player.seek(Math.min(position + SEEK_STEP_SEC, duration || player.current.durationSec));
+        break;
+      case "seekBack":
+        if (player.current) player.seek(Math.max(position - SEEK_STEP_SEC, 0));
+        break;
+      case "mute":
+        player.toggleMute();
+        break;
+      case "like":
+        if (player.current) likes.toggle(player.current);
+        break;
+      case "search":
+        e.preventDefault();
+        router.push("/search");
+        break;
+      case "navBack":
+        e.preventDefault();
+        router.back();
+        break;
+      case "navForward":
+        e.preventDefault();
+        router.forward();
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => handlerRef.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return null;
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {

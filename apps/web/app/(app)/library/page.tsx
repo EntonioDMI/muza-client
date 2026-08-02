@@ -93,6 +93,7 @@ function PlaylistTile({ p }: { p: PlaylistMeta }) {
       <span style={{ display: "block", marginBottom: "var(--sp-3)" }}>
         <PlaylistCover
           icon={p.icon}
+          coverUrl={p.iconCoverUrl}
           shared={p.collaboratorsCount > 0 || p.role === "collaborator"}
           size={0}
           iconSize={48}

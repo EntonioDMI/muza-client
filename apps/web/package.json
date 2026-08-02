@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "next dev --webpack -p 3000",
+    "dev": "next dev -p 3000",
     "build": "node ../../scripts/release-gate.mjs env NEXT_PUBLIC_API_URL && next build --webpack",
     "typecheck": "tsc --noEmit"
   },
