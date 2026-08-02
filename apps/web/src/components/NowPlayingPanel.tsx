@@ -31,7 +31,26 @@ export function NowPlayingPanel({ onClose }: { onClose: () => void }) {
   const { current } = usePlayer();
   const { likedIds, toggle } = useLikes();
   const { lines, activeLine, loading, seekLine, panelPrefs, explainLine, meaningDialog } = useTrackLyrics();
-  if (!current) return null;
+  // Без трека панель НЕ исчезает: в приложении это зона раскладки, и пустой она
+  // показывает «Ничего не играет». Возврат null оставлял в сетке шелла пустую
+  // колонку в 340px — правая треть экрана выглядела дырой, а раскладка прыгала
+  // на первом же клике по песне (замечание владельца 02.08). Общая панель
+  // пустое состояние умеет сама — ей нужен только track: null.
+  if (!current) {
+    return (
+      <SharedNowPlayingPanel
+        {...panelPrefs}
+        className="zone np-panel"
+        track={null}
+        lyrics={[]}
+        lyricsLoading={false}
+        liked={false}
+        onLike={() => undefined}
+        activeLine={-1}
+        onSeekLine={() => undefined}
+      />
+    );
+  }
 
   return (
     <>

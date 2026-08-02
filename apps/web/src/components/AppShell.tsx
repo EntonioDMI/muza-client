@@ -203,7 +203,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return <div style={{ position: "fixed", inset: 0, background: "var(--bg-0)" }} />;
   }
 
-  const npVisible = prefs.npOpen && Boolean(current);
+  // Панель «Сейчас играет» стоит ВСЕГДА, как в приложении: там это зона
+  // раскладки, а не всплывающее окно, и пустой она показывает «Ничего не
+  // играет». Пряталась она здесь по двум условиям сразу — и по настройке, и по
+  // наличию трека, — из-за чего у человека без музыки правая треть экрана
+  // просто исчезала, а раскладка прыгала на первом же клике (замечание
+  // владельца 02.08). Настройку оставляем: кто её выключил — тот выключил.
+  const npVisible = prefs.npOpen;
 
   return (
     // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь.
@@ -313,7 +319,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Контент */}
-        <main key={pathname} className="zone main muza-view">
+        {/* Класса zone тут НЕТ намеренно: в приложении фон-подложку носят только
+            сайдбар, «Сейчас играет» и полоса плеера, а центральный экран лежит
+            прямо на фоне страницы. Веб добавлял ему четвёртую подложку, и от
+            этого экран читался как «страница внутри страницы» (замечание
+            владельца 02.08). */}
+        <main key={pathname} className="main muza-view">
           {children}
         </main>
 
