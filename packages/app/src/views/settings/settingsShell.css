@@ -1,0 +1,220 @@
+/* ══ Каркас экрана настроек — общий вид рельса и панели ═════════════════════
+   Волна веб-паритета «настройки» (2026-08-02). До неё вид рельса настроек
+   существовал ТОЛЬКО в apps/desktop/src/app.css, и браузер рисовал свой
+   (.settings-nav в globals.css) — с другим размером пункта, другим стеклом и
+   без скользящей пилюли. Этот файл — тот же рельс для любой площадки.
+
+   ⚠️ ЗЕРКАЛО. Пока приложение продолжает брать эти же правила из своего
+   app.css (правка app.css — чужая зона этой волны, там параллельно работают
+   другие). Значения ниже скопированы оттуда 1-в-1; расходиться им нельзя.
+   Свести в одно место (десктоп тоже импортирует этот файл, из app.css секция
+   .muza-settings* удаляется) — отдельной правкой, когда app.css свободен.
+   Файл импортируют только те, у кого своих правил нет, — иначе одинаковые
+   объявления сложатся дважды.
+
+   Что здесь НЕ повторяется: геометрия «во всю высоту зоны» из
+   apps/desktop/src/views/SettingsView.layout.css. Она про окно приложения
+   (сайдбар + полоса плеера, скролл внутри панели); страница браузера
+   прокручивается целиком, и высота 100% ей только мешает. */
+
+/* Схлопывание рельса меряется CONTAINER QUERY по ширине САМОЙ панели, не
+   @media по окну: у приложения боковые зоны пользователь тянет руками, у
+   браузера рядом стоит сайдбар — window.innerWidth врёт обоим.
+   container-type: inline-size безопасен для position:fixed потомков (диалоги,
+   выпадашки Select) — в отличие от contain/transform. */
+.muza-settings {
+  container-type: inline-size;
+  container-name: settings;
+}
+
+.muza-settings__cols {
+  display: grid;
+  /* Рельс 220px минимум (подписи читаемы) → 280px (= --w-sidebar: рельс не
+     должен выглядеть солиднее главного рельса приложения). */
+  grid-template-columns: clamp(220px, 24cqw, 280px) minmax(0, 1fr);
+  /* Отступ рельс↔контент = отступу зон окна. */
+  gap: var(--gap-zone, 12px);
+  align-items: start;
+}
+
+/* Потолок читабельности строк: ряды-плашки шире ~880 растягивают подсказки в
+   полотно, а контролы уезжают далеко от своих заголовков. */
+.muza-settings__pane {
+  min-width: 0;
+  max-width: 880px;
+  width: 100%;
+}
+
+/* Та же зона-поверхность, что у сайдбара: рельс лежит на --bg-0 и обязан
+   слушаться того же ползунка «прозрачность сайдбара». */
+.muza-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-lg);
+  background: var(--glass-sidebar, var(--surface-1));
+  backdrop-filter: var(--bf-zone, none);
+  -webkit-backdrop-filter: var(--bf-zone, none);
+  box-sizing: border-box;
+  position: sticky;
+  /* Страницу браузера прокручивают целиком — рельс не должен уезжать вверх.
+     У приложения тот же рельс стоит и так (колонка во всю высоту зоны). */
+  top: var(--sp-4);
+}
+
+/* Заголовок экрана живёт ВНУТРИ плашки, шапкой над пунктами: снаружи он не
+   совпадал по левому краю ни с чем. Тот же горизонтальный паддинг, что у
+   пункта → один левый край с подписями. */
+.muza-settings-nav__title {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: var(--ls-h1);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Обёртка пунктов: держит скользящую пилюлю (position: relative — её якорь).
+   Заголовок ВНЕ обёртки, поэтому пилюля считается от индекса пункта без учёта
+   его высоты (translateY в SettingsNav.tsx). */
+.muza-settings-nav__items {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* Скользящий фон активного раздела — тот же приём, что у главного сайдбара:
+   переключение едет, а не мигает fade'ом. Позиция считается арифметикой по
+   индексу (пункты фиксированной высоты 48 с фиксированным gap sp-2). */
+.muza-settings-nav__pill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 48px;
+  border-radius: var(--r-sm);
+  background: var(--surface-4);
+  pointer-events: none;
+  transition:
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+
+.muza-settings-nav__item {
+  position: relative;
+  z-index: 1; /* поверх пилюли */
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  /* Метрики — как у пункта главного сайдбара (48px, var(--sp-4)). */
+  height: 48px;
+  padding: 0 var(--sp-4);
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  transition: color var(--dur-base) var(--ease-out);
+}
+
+/* Ховер — только у НЕактивного: под активным едет пилюля, свой фон затёр бы её. */
+.muza-settings-nav__item:not([aria-selected="true"]):hover {
+  background: var(--surface-2);
+}
+
+.muza-settings-nav__item[aria-selected="true"] {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+
+.muza-settings-nav__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Подсказка пункта рельса — живёт ТОЛЬКО в узком режиме (см. @container ниже):
+   когда подпись видна, подсказка не нужна. CSS, а не <Tooltip>: обёртка
+   сломала бы селекторы прямых потомков рельса. */
+.muza-settings-nav__tip {
+  display: none;
+}
+
+/* Узкая панель → рельс из одних иконок (подпись прячется СТИЛЕМ, не условным
+   рендером: @container из JS не виден, поэтому у кнопки всегда есть
+   aria-label). Порог 600px = 220 (навигация) + 20 (гаттер) + 360 (пол
+   панели): ниже него ряду «заголовок + контрол шириной 160px» не остаётся
+   места на текст. */
+@container settings (max-width: 600px) {
+  .muza-settings__cols {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: var(--sp-3);
+  }
+
+  .muza-settings-nav__item {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .muza-settings-nav__label {
+    display: none;
+  }
+
+  /* Подпись спрятана → подсказку несёт тултип справа от иконки (язык ДС). */
+  .muza-settings-nav__tip {
+    display: block;
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 7px 12px;
+    border-radius: var(--r-xs);
+    background: var(--glass-panel);
+    backdrop-filter: blur(var(--blur-glass));
+    -webkit-backdrop-filter: blur(var(--blur-glass));
+    color: var(--text-1);
+    font-size: var(--fs-caption);
+    font-weight: var(--fw-medium);
+    line-height: 1;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 60;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .muza-settings-nav__item:hover .muza-settings-nav__tip {
+    opacity: 1;
+    transition-delay: 450ms; /* задержка появления как у Tooltip ДС; уход — сразу */
+  }
+
+  /* Заголовок в рельс не влезает (48px против ~140px текста) и распёр бы
+     колонку. Скринридер его не теряет — role="tablist" держит aria-label. */
+  .muza-settings-nav__title {
+    display: none;
+  }
+}
+
+/* Подсветка ряда, к которому привёл поиск по настройкам (экран вешает класс
+   на 2 с после прокрутки к ряду). !important — фон ряда задан inline-стилем
+   SettingRow. Появление НАРОЧНО мгновенное (transition: none): подсветка —
+   суть фичи и обязана быть видимой даже там, где переходы заморожены.
+   Плавное затухание даёт собственный inline-transition ряда ПОСЛЕ снятия. */
+.muza-settings-row--flash {
+  background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
+  transition: none !important;
+}

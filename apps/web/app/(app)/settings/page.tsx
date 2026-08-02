@@ -1,215 +1,77 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button, ChipGroup, Fader, Icon, Slider, Switch } from "@muza/ui";
-import { DesktopOnlyOverlay } from "@muza/app/components/DesktopOnly";
+import { Button, ChipGroup, Fader, Switch, Tabs } from "@muza/ui";
 import { LANGS, useT, type Lang } from "@muza/app";
+import { SettingsScreen } from "@muza/app/views/settings/SettingsScreen";
+import {
+  AccentSwatch,
+  CustomAccentSwatch,
+  GLASS_MIN,
+  GroupTitle,
+  LiveSlider,
+  PresetTile,
+  RowValue,
+  SettingRow,
+} from "@muza/app/views/settings/primitives";
+import type { SettingsCapability } from "@muza/app/lib/settingsIndex";
 import { EQ_PRESETS } from "../../../src/audioFx";
-import { usePrefs } from "../../../src/prefs";
+import { usePrefs, type WebPrefs } from "../../../src/prefs";
 import { useSession } from "../../../src/session";
+import { useRouter } from "next/navigation";
 
-/** Настройки веба — структура десктопного SettingsView (сайдбар категорий +
- *  панель справа), состав минимальный (полная кастомизация — фишка десктопа):
- *  эквалайзер (та же 10-полосная модель, что в приложении), акцент ДС,
- *  сценография, панель «Сейчас играет», витрины десктопных функций, аккаунт.
- *  Навигация — role=tablist/tab/tabpanel, как в десктопе (SettingsView.tsx):
- *  выбор категории мгновенно меняет соседнюю панель, ни маршрута, ни истории.
- *  Раскладка и адаптив (<900px — горизонтальные табы-чипы) — globals.css,
- *  секция «Настройки». */
+/** Настройки веба (волна веб-паритета «настройки», 2026-08-02).
+ *
+ *  Каркас, рельс разделов, ряды-плашки и поиск по настройкам — ОБЩИЕ с
+ *  приложением (@muza/app/views/settings): до этой волны у веба был свой
+ *  экран со своим Row, своим списком категорий и без поиска — он уже
+ *  разъехался с приложением (другие отступы, другой порядок разделов, свои
+ *  ползунки). Теперь одна и та же настройка выглядит одинаково в обеих
+ *  программах, потому что рисует её один и тот же код.
+ *
+ *  ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Разделы и ряды, которых во вкладке браузера не
+ *  бывает, ОТСУТСТВУЮТ — не серые, не «только в приложении»: значок у часов,
+ *  запуск вместе с системой, обновление программы, журнал «почему включалось
+ *  долго», расширения, музыка с диска. Их нет ни в рельсе, ни в результатах
+ *  поиска (список умений `WEB_CAPS` ниже — им же фильтруется индекс поиска).
+ *
+ *  ⚠️ Ряд появляется здесь только тогда, когда он РАБОТАЕТ. Переключатель,
+ *  который никуда не приезжает, хуже отсутствующего: человек считает, что
+ *  настроил. Поэтому «Тексты песен» ждут, пока панель текста в вебе научится
+ *  слушать настройки, а масштаб и простор — пока их научится применять общий
+ *  движок темы (@muza/app theme/themeVars.ts, сейчас в нём 8 ключей). */
 
-const EQ_LABELS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+/** Что умеет вкладка браузера. Пусто — значит НЕ умеет ничего из списка
+ *  SettingsCapability: ни трея, ни автозапуска, ни обновлений, ни плагинов,
+ *  ни файлов с диска. Появится умение — появится и ключ, и ряды с ним. */
+const WEB_CAPS: readonly SettingsCapability[] = [];
 
-/** Ключи, цвета и иконки переиспользуют desktop-словарь (settings.appearance.accent.*
- *  — тот же набор blue/red/bolt) — подписи собираются в рендере через t(). */
-const ACCENTS: { key: "blue" | "red" | "bolt"; color: string }[] = [
-  { key: "blue", color: "#3b82f6" },
-  { key: "bolt", color: "#327ad9" },
-  { key: "red", color: "#f76967" },
-];
-
-type TFn = ReturnType<typeof useT>["t"];
-
-/** Подпись акцента — реюз desktop-ключей settings.appearance.accent.*. */
-function accentLabel(key: "blue" | "red" | "bolt", t: TFn): string {
-  if (key === "blue") return t("settings.appearance.accent.blue");
-  if (key === "red") return t("settings.appearance.accent.red");
-  return t("settings.appearance.accent.bolt");
-}
-
-/** Категории настроек — зеркало десктопной модели (SETTINGS_TAB_KEYS +
- *  SETTINGS_TAB_ICONS в SettingsView.tsx), состав веба: порядок массива =
- *  порядок пунктов навигации. Подписи — в sectionLabel() ниже (часть реюзает
- *  settings.tabs.* десктопа, часть — свои web.settings.tabs.* без аналога). */
-const SECTIONS = [
-  { key: "appearance", icon: "paintbrush" },
-  { key: "sound", icon: "audio-lines" },
-  { key: "search", icon: "search" },
-  { key: "integrations", icon: "plug" },
-  { key: "offline", icon: "hard-drive" },
-  { key: "customize", icon: "sparkles" },
-  { key: "account", icon: "user" },
+/** Пресеты оформления — те же три, что на первом экране «Внешнего вида» в
+ *  приложении (пара «акцент + углы» одним нажатием). */
+const APPEARANCE_PRESETS = [
+  { key: "muza", accent: "blue", accentColor: "#3b82f6", radius: "soft" },
+  { key: "flame", accent: "red", accentColor: "#f76967", radius: "round" },
+  { key: "graphite", accent: "bolt", accentColor: "#327ad9", radius: "mild" },
 ] as const;
 
-type SectionKey = (typeof SECTIONS)[number]["key"];
-
-function sectionLabel(key: SectionKey, t: TFn): string {
-  switch (key) {
-    case "appearance":
-      return t("settings.tabs.appearance");
-    case "integrations":
-      return t("settings.tabs.integrations");
-    case "account":
-      return t("settings.tabs.account");
-    case "sound":
-      return t("web.settings.tabs.sound");
-    case "search":
-      return t("web.settings.tabs.search");
-    case "offline":
-      return t("web.settings.tabs.offline");
-    case "customize":
-      return t("web.settings.tabs.customizePlus");
-  }
-}
-
-/** id пункта навигации — на него ссылается aria-labelledby панели. */
-const sectionTabId = (key: string) => `settings-tab-${key}`;
-/** id панели — на него ссылается aria-controls пунктов навигации. */
-const SETTINGS_PANE_ID = "settings-pane";
-
-function Row({ title, hint, children }: { title: string; hint?: string; children?: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "var(--sp-4)",
-        padding: "var(--sp-3) 0",
-        flexWrap: "wrap",
-      }}
-    >
-      <div style={{ minWidth: 200, flex: 1 }}>
-        <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{title}</div>
-        {hint ? (
-          <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>{hint}</div>
-        ) : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-/** Живой слайдер со значением справа — копия LiveSlider десктопа
- *  (SettingsView.tsx, «Живой слайдер со значением справа»): та же вёрстка
- *  (240px, Slider из ДС + число шириной 48px), чтобы ряды стекла, размытия и
- *  приглушения текста выглядели в вебе ровно как в приложении. Родной
- *  <input type=range> тут не годился: у него другой вид и другая высота
- *  трека — рядом с одинаковыми рядами приложения разъезжается. */
-function LiveSlider({
-  value,
-  max,
-  label,
-  suffix,
-  onChange,
-}: {
-  value: number;
-  max: number;
-  label: string;
-  suffix: string;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", width: 240 }}>
-      <Slider value={value} max={max} onChange={onChange} ariaLabel={label} valueText={suffix} style={{ flex: 1 }} />
-      <span
-        style={{
-          fontSize: "var(--fs-caption)",
-          color: "var(--text-3)",
-          width: 48,
-          textAlign: "right",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {suffix}
-      </span>
-    </div>
-  );
-}
-
-/** Заголовок группы внутри панели (для панелей с несколькими темами). */
-function GroupTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h3
-      style={{
-        margin: "var(--sp-5) 0 var(--sp-2)",
-        fontSize: "var(--fs-caption)",
-        fontWeight: 600,
-        letterSpacing: "var(--ls-caps)",
-        textTransform: "uppercase",
-        color: "var(--text-3)",
-      }}
-    >
-      {children}
-    </h3>
-  );
-}
-
-/** Шапка активной панели — название категории (как заголовок раздела десктопа). */
-function PaneTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h2
-      style={{
-        margin: "0 0 var(--sp-2)",
-        fontFamily: "var(--font-ui)",
-        fontWeight: 700,
-        fontSize: 17,
-        color: "var(--text-1)",
-      }}
-    >
-      {children}
-    </h2>
-  );
-}
-
-/** Те же ключи mild/soft/round, что prefs.radius десктопа — подписи реюзают
- *  settings.appearance.radius.* (десктопный ChipGroup того же значения). */
-const RADIUS_KEYS = ["mild", "soft", "round"] as const;
-
-function radiusLabel(key: (typeof RADIUS_KEYS)[number], t: TFn): string {
-  if (key === "mild") return t("settings.appearance.radius.mild");
-  if (key === "round") return t("settings.appearance.radius.round");
-  return t("settings.appearance.radius.soft");
-}
-
-/** Границы ползунков оформления — те же числа, что в SettingsView десктопа
- *  (одна тема должна настраиваться одинаково на обеих платформах):
- *  плотность стекла 30–100 % (ниже 30 интерфейс нечитаем), размытие панелей
- *  0–64 px, приглушение текста 40–80 %. */
-const GLASS_MIN = 30;
+/** Границы ползунков оформления — те же числа, что в приложении: одна тема
+ *  обязана настраиваться одинаково на обеих площадках. */
 const BLUR_MAX = 64;
 const TEXT_DIM_MIN = 40;
 const TEXT_DIM_MAX = 80;
 
-/** Golos/Unbounded — имена шрифтов, не переводятся ни в одном языке (как в
- *  десктопе); «Системный» — единственная переводимая подпись этого чипа. */
+/** Golos/Unbounded — имена шрифтов, не переводятся ни в одном языке;
+ *  «Системный» — единственная переводимая подпись этого выбора. */
 const FONT_KEYS = ["golos", "unbounded", "system"] as const;
 
-function fontLabel(key: (typeof FONT_KEYS)[number], t: TFn): string {
-  if (key === "golos") return "Golos";
-  if (key === "unbounded") return "Unbounded";
-  return t("web.settings.fontSystem");
-}
+const EQ_LABELS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
 
 export default function SettingsPage() {
   const { prefs, set } = usePrefs();
   const { session, logout } = useSession();
   const router = useRouter();
   const { t, lang } = useT();
-  const colorRef = useRef<HTMLInputElement>(null);
-  const [section, setSection] = useState<SectionKey>("appearance");
 
-  const applyPreset = (name: string) => {
+  const applyEqPreset = (name: string) => {
     const bands = EQ_PRESETS[name];
     set(bands ? { eqPreset: name, eqBands: bands } : { eqPreset: name });
   };
@@ -218,81 +80,97 @@ export default function SettingsPage() {
     const bands = [...prefs.eqBands];
     bands[i] = Math.round(v);
     // Значение — персистентный ключ prefs.eqPreset (см. EQ_PRESETS в audioFx.ts),
-    // сознательно не переведён, как и на десктопе (SettingsView.tsx:1070).
+    // сознательно не переведён, как и в приложении.
     set({ eqBands: bands, eqPreset: "Свой" });
   };
 
+  const accountPane = (
+    <>
+      <SettingRow title={t("settings.account.profile.title")} hint={session?.user.username ?? ""}>
+        <Button
+          variant="ghost"
+          icon="log-out"
+          onClick={() => {
+            void logout().then(() => router.replace("/login"));
+          }}
+        >
+          {t("settings.account.profile.signOut")}
+        </Button>
+      </SettingRow>
+    </>
+  );
+
   const appearancePane = (
     <>
-      <PaneTitle>{t("settings.tabs.appearance")}</PaneTitle>
-      <Row title={t("web.settings.lightTheme.title")} hint={t("web.settings.lightTheme.hint")}>
-        <Switch
-          checked={prefs.theme === "light"}
-          onChange={(on: boolean) => set({ theme: on ? "light" : "dark" })}
-          label={t("web.settings.lightTheme.title")}
-        />
-      </Row>
-      <Row title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
-        <ChipGroup
+      {/* Язык — первым, как в приложении: живой, без перезагрузки страницы. */}
+      <SettingRow title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
+        <Tabs
           items={LANGS.map((l) => ({
             key: l,
             label: l === "ru" ? t("settings.appearance.language.optionRu") : t("settings.appearance.language.optionEn"),
           }))}
           value={lang}
-          onChange={(key: string) => set({ language: key as Lang })}
+          onChange={(k: string) => set({ language: k as Lang })}
         />
-      </Row>
-      <Row title={t("settings.appearance.accent.title")} hint={t("settings.appearance.accent.hint")}>
-        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-          {ACCENTS.map((a) => (
-            <button
-              key={a.key}
-              type="button"
-              className={prefs.accent === a.key ? "swatch active" : "swatch"}
-              style={{ background: a.color }}
-              aria-label={accentLabel(a.key, t)}
-              aria-pressed={prefs.accent === a.key}
-              onClick={() => set({ accent: a.key })}
-            />
-          ))}
-          <button
-            type="button"
-            className={prefs.accent === "custom" ? "swatch active" : "swatch"}
-            style={{ background: prefs.accent === "custom" ? prefs.customAccent : "var(--surface-3)" }}
-            aria-label={t("settings.appearance.accent.customLabel")}
-            aria-pressed={prefs.accent === "custom"}
-            onClick={() => colorRef.current?.click()}
+      </SettingRow>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--sp-3)" }}>
+        {APPEARANCE_PRESETS.map((p) => (
+          <PresetTile
+            key={p.key}
+            name={t(`settings.appearance.presets.${p.key}.name`)}
+            hint={t(`settings.appearance.presets.${p.key}.hint`)}
+            accentColor={p.accentColor}
+            radius={p.radius}
+            selected={prefs.accent === p.accent && prefs.radius === p.radius}
+            onClick={() => set({ accent: p.accent, radius: p.radius })}
           />
-          <input
-            ref={colorRef}
-            type="color"
-            value={prefs.customAccent}
-            aria-hidden="true"
-            tabIndex={-1}
-            style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }}
-            onInput={(e) => set({ accent: "custom", customAccent: (e.target as HTMLInputElement).value })}
+        ))}
+      </div>
+      <SettingRow title={t("settings.appearance.theme.title")} hint={t("settings.appearance.theme.hint")}>
+        <Tabs
+          items={[
+            { key: "dark", label: t("settings.appearance.theme.dark") },
+            { key: "light", label: t("settings.appearance.theme.light") },
+          ]}
+          value={prefs.theme}
+          onChange={(k: string) => set({ theme: k as WebPrefs["theme"] })}
+        />
+      </SettingRow>
+      <SettingRow title={t("settings.appearance.accent.title")} hint={t("settings.appearance.accent.hint")}>
+        <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+          <AccentSwatch color="#3b82f6" label={t("settings.appearance.accent.blue")} selected={prefs.accent === "blue"} onClick={() => set({ accent: "blue" })} />
+          <AccentSwatch color="#f76967" label={t("settings.appearance.accent.red")} selected={prefs.accent === "red"} onClick={() => set({ accent: "red" })} />
+          <AccentSwatch color="#327ad9" label={t("settings.appearance.accent.bolt")} selected={prefs.accent === "bolt"} onClick={() => set({ accent: "bolt" })} />
+          <CustomAccentSwatch
+            color={prefs.customAccent}
+            selected={prefs.accent === "custom"}
+            onPick={(customAccent) => set({ accent: "custom", customAccent })}
           />
         </div>
-      </Row>
-      <Row title={t("settings.appearance.radius.title")} hint={t("settings.appearance.radius.hint")}>
-        <ChipGroup
-          items={RADIUS_KEYS.map((k) => ({ key: k, label: radiusLabel(k, t) }))}
+      </SettingRow>
+      <SettingRow title={t("settings.appearance.radius.title")} hint={t("settings.appearance.radius.hint")}>
+        <Tabs
+          items={[
+            { key: "mild", label: t("settings.appearance.radius.mild") },
+            { key: "soft", label: t("settings.appearance.radius.soft") },
+            { key: "round", label: t("settings.appearance.radius.round") },
+          ]}
           value={prefs.radius}
-          onChange={(key: string) =>
-            set({ radius: (RADIUS_KEYS as readonly string[]).includes(key) ? (key as (typeof RADIUS_KEYS)[number]) : "soft" })
-          }
+          onChange={(radius: string) => set({ radius: radius as WebPrefs["radius"] })}
         />
-      </Row>
-      <Row title={t("settings.customize.typography.fontUi.title")} hint={t("web.settings.fontHint")}>
-        <ChipGroup
-          items={FONT_KEYS.map((k) => ({ key: k, label: fontLabel(k, t) }))}
+      </SettingRow>
+      <SettingRow title={t("settings.customize.typography.fontUi.title")} hint={t("settings.customize.typography.fontUi.hint")}>
+        <Tabs
+          items={FONT_KEYS.map((k) => ({
+            key: k,
+            // Имена шрифтов не переводятся; переводится только «Системный».
+            label: k === "system" ? t("web.settings.fontSystem") : k === "golos" ? "Golos" : "Unbounded",
+          }))}
           value={prefs.fontUi}
-          onChange={(key: string) =>
-            set({ fontUi: (FONT_KEYS as readonly string[]).includes(key) ? (key as (typeof FONT_KEYS)[number]) : "golos" })
-          }
+          onChange={(k: string) => set({ fontUi: k as WebPrefs["fontUi"] })}
         />
-      </Row>
-      <Row title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
+      </SettingRow>
+      <SettingRow title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
         <LiveSlider
           value={prefs.glassOpacity - GLASS_MIN}
           max={100 - GLASS_MIN}
@@ -300,12 +178,8 @@ export default function SettingsPage() {
           suffix={`${prefs.glassOpacity} %`}
           onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
         />
-      </Row>
-      {/* Размытие и приглушение текста веб УЖЕ применял (themeVars.ts пишет
-          --blur-glass и --text-2/--text-3), но на экране их не было — человек
-          не видел настройки, которая у него работает. Ряды и подписи — те же
-          ключи, что у одноимённых рядов «Кастомизации» приложения. */}
-      <Row title={t("settings.customize.glass.panelBlur.title")} hint={t("settings.customize.glass.panelBlur.hint")}>
+      </SettingRow>
+      <SettingRow title={t("settings.customize.glass.panelBlur.title")} hint={t("settings.customize.glass.panelBlur.hint")}>
         <LiveSlider
           value={prefs.blur}
           max={BLUR_MAX}
@@ -313,8 +187,8 @@ export default function SettingsPage() {
           suffix={`${prefs.blur} px`}
           onChange={(v) => set({ blur: Math.round(v) })}
         />
-      </Row>
-      <Row title={t("settings.customize.colors.textDim.title")} hint={t("settings.customize.colors.textDim.hint")}>
+      </SettingRow>
+      <SettingRow title={t("settings.customize.colors.textDim.title")} hint={t("settings.customize.colors.textDim.hint")}>
         <LiveSlider
           value={prefs.textDim - TEXT_DIM_MIN}
           max={TEXT_DIM_MAX - TEXT_DIM_MIN}
@@ -322,28 +196,38 @@ export default function SettingsPage() {
           suffix={`${prefs.textDim} %`}
           onChange={(v) => set({ textDim: TEXT_DIM_MIN + Math.round(v) })}
         />
-      </Row>
-      <Row title={t("settings.appearance.background.ariaLabel")} hint={t("web.settings.backgroundHint")}>
-        <Switch checked={prefs.bgCover} onChange={(bgCover: boolean) => set({ bgCover })} label={t("settings.appearance.background.ariaLabel")} />
-      </Row>
-      <Row title={t("web.settings.npPanelRow.title")} hint={t("web.settings.npPanelRow.hint")}>
+      </SettingRow>
+      <SettingRow title={t("settings.appearance.background.title")} hint={t("settings.appearance.background.hint")}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+          <RowValue>{prefs.bgCover ? t("settings.appearance.background.fromCover") : t("common.off")}</RowValue>
+          <Switch
+            checked={prefs.bgCover}
+            onChange={(bgCover: boolean) => set({ bgCover })}
+            label={t("settings.appearance.background.ariaLabel")}
+          />
+        </div>
+      </SettingRow>
+      <SettingRow title={t("web.settings.npPanelRow.title")} hint={t("web.settings.npPanelRow.hint")}>
         <Switch checked={prefs.npOpen} onChange={(npOpen: boolean) => set({ npOpen })} label={t("web.settings.npPanelRow.title")} />
-      </Row>
+      </SettingRow>
     </>
   );
 
-  const soundPane = (
+  const playbackPane = (
     <>
-      <PaneTitle>{t("web.settings.tabs.sound")}</PaneTitle>
-      <Row title={t("settings.equalizer.title")} hint={t("web.settings.eqHint")}>
-        <Switch checked={prefs.eqOn} onChange={(eqOn: boolean) => set({ eqOn })} label={t("settings.equalizer.title")} />
-      </Row>
+      <GroupTitle>{t("settings.playback.soundGroup")}</GroupTitle>
+      <SettingRow title={t("settings.equalizer.enable.title")} hint={t("settings.equalizer.enable.hint")}>
+        <Switch checked={prefs.eqOn} onChange={(eqOn: boolean) => set({ eqOn })} label={t("settings.equalizer.enable.title")} />
+      </SettingRow>
+      {/* Эквалайзер в вебе — прямо в разделе, а не отдельным под-экраном:
+          под-экранов у этого каркаса пока нет, а прятать десять фейдеров за
+          лишним переходом ради симметрии — хуже, чем показать их сразу. */}
       <div style={prefs.eqOn ? undefined : { opacity: 0.4, pointerEvents: "none" }}>
         <div className="eq-faders" style={{ margin: "var(--sp-2) 0 var(--sp-3)", padding: 0 }}>
           {/* Ключи EQ_PRESETS (рус. слова) — персистентные значения prefs.eqPreset,
-              как и "Свой": сознательно не переведены, см. audioFx.ts и SettingsView.tsx
-              десктопа (та же договорённость, чтобы не разъехаться по клиентам). */}
-          <ChipGroup items={[...Object.keys(EQ_PRESETS), "Свой"]} value={prefs.eqPreset} onChange={applyPreset} />
+              как и "Свой": сознательно не переведены, та же договорённость, что в
+              приложении (иначе сохранённая настройка разъедется между клиентами). */}
+          <ChipGroup items={[...Object.keys(EQ_PRESETS), "Свой"]} value={prefs.eqPreset} onChange={applyEqPreset} />
         </div>
         <div className="eq-faders">
           {prefs.eqBands.map((v, i) => (
@@ -364,142 +248,29 @@ export default function SettingsPage() {
     </>
   );
 
-  const searchPane = (
+  const sourcesPane = (
     <>
-      <PaneTitle>{t("web.settings.tabs.search")}</PaneTitle>
-      <Row title={t("settings.sources.searchGrouping.title")} hint={t("settings.sources.searchGrouping.hint")}>
+      <GroupTitle>{t("settings.sources.searchGroup")}</GroupTitle>
+      <SettingRow title={t("settings.sources.searchGrouping.title")} hint={t("settings.sources.searchGrouping.hint")}>
         <Switch
           checked={prefs.searchGrouping}
           onChange={(searchGrouping: boolean) => set({ searchGrouping })}
           label={t("settings.sources.searchGrouping.title")}
         />
-      </Row>
+      </SettingRow>
     </>
   );
-
-  /* Витрины десктопных функций под оверлеями (по слову владельца 21.07):
-     функция отрисована и понятна, но менять — в приложении */
-  const integrationsPane = (
-    <>
-      <PaneTitle>{t("settings.tabs.integrations")}</PaneTitle>
-      <GroupTitle>Discord</GroupTitle>
-      <DesktopOnlyOverlay hint={t("settings.integrations.discord.rowHint")}>
-        <Row title={t("settings.integrations.discord.title")} hint={t("settings.integrations.discord.rowHint")}>
-          <Switch checked onChange={() => {}} label={t("settings.integrations.discord.title")} />
-        </Row>
-        <Row title={t("settings.integrations.discord.buttonGroup")} hint={t("settings.integrations.discord.btnOn.hint")}>
-          <Switch checked onChange={() => {}} label={t("settings.integrations.discord.buttonGroup")} />
-        </Row>
-      </DesktopOnlyOverlay>
-    </>
-  );
-
-  const offlinePane = (
-    <>
-      <PaneTitle>{t("web.settings.tabs.offline")}</PaneTitle>
-      <DesktopOnlyOverlay hint={t("web.settings.offlineSaveHint")}>
-        <Row title={t("web.settings.offlineSaveTitle")} hint={t("web.settings.offlineSaveHint")}>
-          <Switch checked onChange={() => {}} label={t("web.settings.offlineSaveTitle")} />
-        </Row>
-        <Row title={t("settings.library.cache.limitLabel")}>
-          <ChipGroup
-            items={[2, 5, 10].map((n) => t("settings.library.units.gb", { n }))}
-            value={t("settings.library.units.gb", { n: 5 })}
-            onChange={() => {}}
-          />
-        </Row>
-      </DesktopOnlyOverlay>
-    </>
-  );
-
-  const customizePane = (
-    <>
-      <PaneTitle>{t("web.settings.tabs.customizePlus")}</PaneTitle>
-      <DesktopOnlyOverlay hint={t("web.settings.bgTitle")}>
-        <Row title={t("web.settings.bgTitle")} hint={t("settings.customize.background.type.hint")}>
-          <ChipGroup
-            items={[
-              t("settings.customize.background.type.cover"),
-              t("settings.customize.background.type.gradient"),
-              t("settings.customize.background.type.animated"),
-            ]}
-            value={t("settings.customize.background.type.cover")}
-            onChange={() => {}}
-          />
-        </Row>
-        <Row title={t("settings.customize.css.toggle.title")} hint={t("settings.customize.css.toggle.hint")}>
-          <Switch checked={false} onChange={() => {}} label={t("settings.customize.css.toggle.title")} />
-        </Row>
-        <Row title={t("settings.customize.themes.marketRow.title")} hint={t("web.settings.marketplaceHint")}>
-          <Button variant="secondary">{t("web.settings.openMarketplace")}</Button>
-        </Row>
-      </DesktopOnlyOverlay>
-    </>
-  );
-
-  const accountPane = (
-    <>
-      <PaneTitle>{t("settings.tabs.account")}</PaneTitle>
-      <Row title={session?.user.username ?? ""} hint={t("web.settings.accountHint")}>
-        <Button
-          variant="ghost"
-          icon="log-out"
-          onClick={() => {
-            void logout().then(() => router.replace("/login"));
-          }}
-        >
-          {t("settings.account.profile.signOut")}
-        </Button>
-      </Row>
-    </>
-  );
-
-  const panes: Record<SectionKey, React.ReactNode> = {
-    appearance: appearancePane,
-    sound: soundPane,
-    search: searchPane,
-    integrations: integrationsPane,
-    offline: offlinePane,
-    customize: customizePane,
-    account: accountPane,
-  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <h1 className="page-title" style={{ marginBottom: "var(--sp-5)" }}>
-        {t("settings.title")}
-      </h1>
-      <div className="settings-layout">
-        <nav className="settings-nav" role="tablist" aria-orientation="vertical" aria-label={t("settings.title")}>
-          {SECTIONS.map((s) => {
-            const active = s.key === section;
-            return (
-              <button
-                key={s.key}
-                id={sectionTabId(s.key)}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                aria-controls={SETTINGS_PANE_ID}
-                className="settings-nav__item"
-                onClick={() => setSection(s.key)}
-              >
-                {/* активная категория — акцентная иконка, как пункты сайдбара */}
-                <Icon name={s.icon} size={20} color={active ? "var(--accent-text)" : "currentColor"} />
-                {sectionLabel(s.key, t)}
-              </button>
-            );
-          })}
-        </nav>
-        <div
-          className="settings-pane"
-          id={SETTINGS_PANE_ID}
-          role="tabpanel"
-          aria-labelledby={sectionTabId(section)}
-        >
-          {panes[section]}
-        </div>
-      </div>
-    </div>
+    <SettingsScreen
+      caps={WEB_CAPS}
+      initialTab="appearance"
+      panes={{
+        account: accountPane,
+        appearance: appearancePane,
+        playback: playbackPane,
+        sources: sourcesPane,
+      }}
+    />
   );
 }

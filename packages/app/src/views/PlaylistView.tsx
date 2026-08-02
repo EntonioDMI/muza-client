@@ -9,6 +9,7 @@ import { useContextMenu } from "../shell/ContextMenu";
 import type { MenuAbilities } from "../shell/menuActions";
 import { SelectionBar } from "../shell/SelectionBar";
 import { useMultiSelect } from "../lib/useMultiSelect";
+import type { WarmRow } from "../lib/rowWarm";
 import { useAltFileDrag, useLocalFiles, type LocalFileEntry } from "../platform";
 import { playlistIconSrc } from "@muza/core";
 import { trackRowL10n } from "../lib/dsLabels";
@@ -112,17 +113,11 @@ export function PlaylistView({
     key: string,
     fetch: () => Promise<PlaylistDetail>,
   ) => Promise<{ data: PlaylistDetail; offline: boolean }>;
-  /** Прогрев строк — умение приложения: пока курсор над строкой, оно уже
-   *  разбирает, откуда возьмётся звук. Пропа нет (браузер) — на обёртку
-   *  строки просто ничего не вешается. Форма повторяет WarmRowProps
-   *  приложения (apps/desktop/src/player/useWarmer.ts): импортировать её
-   *  оттуда нельзя — тот модуль тянет движок и в общий пакет не поедет.
-   *  Та же форма у общего экрана поиска — оба питаются одним useWarmRow(). */
-  warmRow?: (id: string) => {
-    ref?: (el: HTMLDivElement | null) => (() => void) | undefined;
-    onMouseEnter?: () => void;
-    onPointerDown?: () => void;
-  };
+  /** Готовит трек заранее — умение приложения: пока курсор над строкой, оно уже
+   *  разбирает, откуда возьмётся звук. Пропа нет (браузер) — на обёртку строки
+   *  просто ничего не вешается. Форма общая для всех экранов (lib/rowWarm.ts):
+   *  раньше она была тут расписана инлайном — одной из пяти копий. */
+  warmRow?: WarmRow;
   /** Музыка с диска устройства: что здесь есть и где лежит. Подмножество
    *  порта localFiles розетки — как только вилка приложения начнёт отдавать
    *  порт, проп можно снять (он перекрывает порт, значения одинаковые). */

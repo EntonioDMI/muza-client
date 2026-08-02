@@ -83,6 +83,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (ready && !session) router.replace("/login");
   }, [ready, session, router]);
 
+  /** Пункт «Админка» в панели — только если сервер подтвердил права. Спросить
+   *  СЕРВЕР, а не смотреть на поле сессии: страница /admin и каждый её запрос
+   *  всё равно охраняются сервером, и второй источник правды тут только мешал
+   *  бы разъезжаться. Ровно так же это устроено в приложении (App.tsx →
+   *  isAdmin). Отказ = «не админ»: показать пункт, ведущий на редирект, хуже,
+   *  чем не показать вовсе (правило умений площадки — нет умения, нет пункта,
+   *  а не серый). */
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!session) {
+      setIsAdmin(false);
+      return;
+    }
+    let alive = true;
+    getApi()
+      .adminPing()
+      .then((ok) => {
+        if (alive) setIsAdmin(ok);
+      })
+      .catch(() => {
+        if (alive) setIsAdmin(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session]);
+
   /** Строки панели: ровно та же раскладка признаков, что в приложении
    *  (App.tsx → sidebarPlaylists). fixed = «в перетаскивание не входит»:
    *  у подписок сервер не хранит позиций, а смысл закрепа — «случайно не
@@ -272,6 +299,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {t("web.nav.playlistsEmptyHint")}
               </span>
             }
+            // Нет прав — пункта нет вовсе (не серого): панель рисует его
+            // ровно по наличию колбэка, как и в приложении.
+            onOpenAdmin={isAdmin ? () => router.push("/admin") : undefined}
+            adminActive={pathname === "/admin"}
             onOpenSettings={() => router.push("/settings")}
             settingsActive={pathname === "/settings"}
           />

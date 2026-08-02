@@ -23,13 +23,16 @@
  *  - `rowProps` — пропсы на обёртку строки трека (у приложения это подготовка
  *    трека к мгновенному старту, у веба такого умения нет — и пропсов нет);
  *  - `onCustomize` — есть обработчик, есть кнопка «Настроить»; нет — нет
- *    кнопки вовсе (не серая), как и с остальными умениями площадки. */
+ *    кнопки вовсе (не серая), как и с остальными умениями площадки. Чем она
+ *    открывается, решает площадка: приложение уходит в свой под-экран
+ *    настроек, веб — в диалог shell/StatsBlocksDialog.tsx. */
 
 import { useEffect, useRef, useState } from "react";
 import { Button, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muza/ui";
 import type { MuzaApi, StatsOverview, StatsPeriod, Track } from "@muza/api-client";
 import { BAR_MAX_WIDTH, barSpecs } from "../lib/statsBars";
 import { hourLabel } from "../lib/hourLabel";
+import type { WarmRow } from "../lib/rowWarm";
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
 
@@ -45,8 +48,10 @@ export type StatsBlockKey =
   | "streaks"
   | "likes";
 
-/** Порядок блоков по умолчанию — канонический. Площадка без своих настроек
- *  статистики (веб) показывает всё и в этом порядке. */
+/** Порядок блоков по умолчанию — канонический: так страница выглядит, пока
+ *  состав ни разу не меняли (и так же её видит площадка, которая настройку
+ *  блоков не подаёт вовсе). Нормализация сохранённого списка обоих клиентов
+ *  опирается на этот же порядок — см. shell/StatsBlocksDialog.tsx. */
 export const DEFAULT_STATS_BLOCKS: readonly StatsBlockKey[] = [
   "summary",
   "activity",
@@ -317,8 +322,11 @@ export function StatsView({
   /** Чем тянуть агрегаты. По умолчанию — прямой запрос к серверу; приложение
    *  подставляет сюда чтение через свой запас последних удачных ответов. */
   loadOverview?: (period: StatsPeriod) => Promise<{ data: StatsOverview; offline: boolean }>;
-  /** Пропсы на обёртку строки трека (подготовка к мгновенному старту). */
-  rowProps?: (id: string) => React.ComponentProps<"div">;
+  /** Пропсы на обёртку строки трека (подготовка к мгновенному старту). Форма
+   *  общая для всех экранов (lib/rowWarm.ts): здесь стояло «любые пропсы div»,
+   *  и опечатка в имени поля прошла бы молча — пятая копия одной и той же
+   *  формы, чистка дублей волны 3. */
+  rowProps?: WarmRow;
 }) {
   const { t, lang } = useT();
   const [period, setPeriod] = useState<StatsPeriod>(initialPeriod);

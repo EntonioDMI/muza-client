@@ -44,5 +44,13 @@ export default function AdminPage() {
   }, [ready, session, router]);
 
   if (allowed !== true) return null;
-  return <AdminView api={getApi()} />;
+  // .shared-screen гасит отступ зоны: поле (24px) приносит сам экран, как в
+  // приложении, где <main> голый. Без обёртки поля складывались и содержимое
+  // стояло на 78px от края зоны вместо 58px (globals.css → «ЕДИНСТВЕННЫЙ
+  // способ погасить поле зоны»).
+  return (
+    <div className="shared-screen">
+      <AdminView api={getApi()} />
+    </div>
+  );
 }

@@ -6,18 +6,9 @@ import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
 import { useAltFileDrag } from "../platform";
 import { useT } from "../i18n";
-
-/** Пропсы прогрева на обёртку строки: приложение заранее готовит трек, на
- *  который человек навёл курсор. Форма — apps/desktop/src/player/useWarmer.ts
- *  (WarmRowProps); поля необязательны, потому что у площадки такого умения
- *  может не быть вовсе (браузер греет только тем, что качает сам).
- *  Умение приезжает ПРОПОМ, а не хуком: подсистема прогрева — приложенческая
- *  (Rust-движок), в общий пакет она не едет. */
-export interface RowWarmProps {
-  ref?: (el: HTMLElement | null) => (() => void) | undefined;
-  onMouseEnter?: () => void;
-  onPointerDown?: () => void;
-}
+// Форма пропсов подготовки строки — общая (lib/rowWarm.ts): здесь она была
+// объявлена своим RowWarmProps, ещё в четырёх экранах — своими копиями.
+import type { WarmRow } from "../lib/rowWarm";
 
 /** «Любимое» — настоящее избранное с сервера (слайс 4, переживает
  *  переустановку). Лайки живут в аккаунте, поэтому у анонима их нет.
@@ -67,7 +58,7 @@ export function FavoritesView({
    *  снимок (сервер лёг — список всё равно виден); нет пропа — прямой запрос. */
   loadFavorites?: () => Promise<Track[]>;
   /** Готовит трек заранее по наведению; нет умения — строки просто без него. */
-  warmRow?: (id: string) => RowWarmProps;
+  warmRow?: WarmRow;
 }) {
   const { t, lang } = useT();
   const { dragSource } = useDrag();

@@ -1,0 +1,302 @@
+/** Индекс поиска по настройкам (спека 19.07 §4.2): при ~130 рядах и росте к
+ *  200 ни одна структура не живёт без поиска — это ответ на «где искать».
+ *
+ *  Каждая запись — один ряд экрана настроек: в каком табе и суб-панели живёт,
+ *  i18n-ключи названия/подсказки и синонимы (оба языка — человек пишет
+ *  «фон», «background» или «обои», не зная наших названий).
+ *
+ *  Дисциплина: НОВЫЙ SettingRow в настройках = НОВАЯ запись здесь. Поиск ищет
+ *  по переведённым названию + подсказке + синонимам, так что запись без syn —
+ *  уже находимая.
+ *
+ *  Прокрутка к ряду — по data-rowtitle, который SettingRow вешает сам из
+ *  пропа title: ручной разметки 130 рядов нет и не нужно.
+ *
+ *  ⚠️ ПЕРЕЕЗД (волна веб-паритета, 2026-08-02): индекс переехал сюда из
+ *  apps/desktop/src/lib/settingsIndex.ts — экран настроек теперь общий, и
+ *  ВТОРАЯ копия индекса означала бы, что в браузере поиск приводит к рядам,
+ *  которых там нет. Отсюда же поле `needs` ниже. */
+
+/** Умение площадки, без которого ряда НЕТ ВОВСЕ (не серого — отсутствующего).
+ *  Имена намеренно не совпадают один-в-один с портами розетки: один ряд может
+ *  требовать умения, которое розетка ещё не описала (обновления, плагины), а
+ *  список «чего не бывает во вкладке браузера» нужен поиску уже сейчас. */
+export type SettingsCapability =
+  /** Музыка с диска устройства (порт localFiles). */
+  | "localFiles"
+  /** Файлы, подготовленные заранее, и их место на диске. */
+  | "offlineCache"
+  /** Запуск вместе с системой (порт system.setAutostart). */
+  | "autostart"
+  /** Значок у часов и «закрыть = свернуть» (порт system.configureTray). */
+  | "tray"
+  /** Обновление программы изнутри неё самой. */
+  | "updates"
+  /** Маленькое окно плеера поверх других окон. */
+  | "miniPlayer"
+  /** Журнал «почему включалось долго». */
+  | "diagnostics"
+  /** Расширения, устанавливаемые файлом. */
+  | "plugins"
+  /** Витрина чужих оформлений (ставит тему в это устройство). */
+  | "themeMarket"
+  /** Свой файл шрифта. */
+  | "customFont"
+  /** Выбор, откуда брать звук. */
+  | "sourcePicker"
+  /** Вывод звука на несколько устройств и подмешивание голоса. */
+  | "audioOutputs"
+  /** Статус «слушает Muza» в Discord. */
+  | "discord";
+
+export interface SettingsIndexEntry {
+  /** Ключ таба из SETTINGS_TAB_KEYS (экран настроек). */
+  tab: string;
+  /** Суб-панель внутри таба (setSub) либо null — ряд лежит прямо в табе. */
+  sub: string | null;
+  /** i18n-ключ названия ряда. */
+  titleKey: string;
+  /** i18n-ключ подсказки; отсутствующий в словаре ключ просто не ищется. */
+  hintKey: string;
+  /** Синонимы на обоих языках, нижний регистр. */
+  syn?: string[];
+  /** Умение, без которого ряда на площадке нет. Пусто — ряд есть везде. */
+  needs?: SettingsCapability;
+}
+
+const e = (
+  tab: string,
+  sub: string | null,
+  base: string,
+  syn?: string[],
+  keys: { title?: string; hint?: string; needs?: SettingsCapability } = {},
+): SettingsIndexEntry => ({
+  tab,
+  sub,
+  titleKey: keys.title ?? `${base}.title`,
+  hintKey: keys.hint ?? `${base}.hint`,
+  ...(syn ? { syn } : {}),
+  ...(keys.needs ? { needs: keys.needs } : {}),
+});
+
+export const SETTINGS_INDEX: SettingsIndexEntry[] = [
+  // ── Аккаунт ────────────────────────────────────────────────────────────
+  e("account", null, "settings.account.profile", ["ник", "имя", "аватар", "профиль", "nickname", "avatar"]),
+  e("account", null, "settings.account.email", ["почта", "email", "мыло"]),
+  e("account", null, "settings.account.password", ["пароль", "password"]),
+  e("account", null, "settings.account.sessions", ["сессии", "устройства", "devices"], { title: "settings.account.sessions.rowTitle", hint: "settings.account.sessions.rowHint" }),
+  e("account", null, "settings.account.telemetry", ["статистика", "телеметрия", "анонимно", "privacy"]),
+  e("account", null, "settings.account.dataDoc", ["данные", "хранение"]),
+  e("account", null, "settings.account.exportOrDelete", ["экспорт", "удалить аккаунт", "delete account"]),
+  e("account", "privacy", "settings.privacy.export", ["экспорт", "выгрузка", "export"]),
+  e("account", "privacy", "settings.privacy.deleteAccount", ["удалить аккаунт", "delete account"]),
+  e("account", "privacy", "settings.privacy.privacyDoc", ["приватность", "privacy"]),
+  // ── Внешний вид ───────────────────────────────────────────────────────
+  e("appearance", null, "settings.appearance.language", ["язык", "language", "русский", "english"]),
+  e("appearance", null, "settings.appearance.theme", ["тема", "светлая", "тёмная", "dark", "light"]),
+  e("appearance", null, "settings.appearance.accent", ["акцент", "цвет", "color", "accent"]),
+  e("appearance", null, "settings.appearance.radius", ["углы", "скругление", "радиус", "corners"]),
+  e("appearance", null, "settings.appearance.glass", ["стекло", "прозрачность", "блюр", "glass", "blur"]),
+  e("appearance", null, "settings.appearance.background", ["фон", "обои", "background", "wallpaper"]),
+  e("appearance", null, "settings.appearance.scale", ["масштаб", "зум", "scale", "zoom"]),
+  e("appearance", null, "settings.appearance.customize", ["кастомизация", "тонкая настройка", "customize"]),
+  e("appearance", "customize", "settings.customize.glass.panelBlur", ["блюр", "размытие", "blur"]),
+  e("appearance", "customize", "settings.customize.glass.bgBlur", ["размытие фона", "blur"]),
+  e("appearance", "customize", "settings.customize.glass.zones", ["зоны", "стекло"]),
+  e("appearance", "customize", "settings.customize.glass.zonePlayer"),
+  e("appearance", "customize", "settings.customize.glass.zoneMenu"),
+  e("appearance", "customize", "settings.customize.glass.zoneDialog"),
+  e("appearance", "customize", "settings.customize.glass.zoneSidebar"),
+  e("appearance", "customize", "settings.customize.glass.zoneNowPlaying"),
+  e("appearance", "customize", "settings.customize.colors.baseBg", ["фон", "подложка", "amoled"]),
+  e("appearance", "customize", "settings.customize.colors.accentRoles", ["акцент", "роли"]),
+  e("appearance", "customize", "settings.customize.colors.accentPlay"),
+  e("appearance", "customize", "settings.customize.colors.accentSlider"),
+  e("appearance", "customize", "settings.customize.colors.accentActive"),
+  e("appearance", "customize", "settings.customize.colors.textDim", ["тусклость", "яркость текста", "контраст"]),
+  e("appearance", "customize", "settings.customize.shape.tiles", ["плитки", "углы", "tiles"]),
+  e("appearance", "customize", "settings.customize.shape.buttons", ["кнопки", "углы"]),
+  e("appearance", "customize", "settings.customize.shape.tabs", ["переключатели", "углы"]),
+  e("appearance", "customize", "settings.customize.shape.fields", ["поля", "углы"]),
+  e("appearance", "customize", "settings.customize.shape.panels", ["панели", "углы"]),
+  e("appearance", "customize", "settings.customize.shape.density", ["плотность", "density", "компактно"]),
+  e("appearance", "customize", "settings.customize.shape.tileSize", ["размер плитки", "плитки", "сетка", "tile size", "grid"]),
+  e("appearance", "customize", "settings.customize.shape.padTile", ["отступ плитки", "внутри плитки", "padding"]),
+  e("appearance", "customize", "settings.customize.shape.gapZone", ["зазор", "зоны", "расстояние", "gap"]),
+  e("appearance", "customize", "settings.customize.shape.sidebarWidth", ["сайдбар", "ширина", "sidebar"]),
+  e("appearance", "customize", "settings.customize.shape.nowPlayingWidth", ["сейчас играет", "ширина"]),
+  e("appearance", "customize", "settings.customize.typography.fontUi", ["шрифт", "шрифт текста", "font", "typeface"]),
+  e("appearance", "customize", "settings.customize.typography.fontDisplay", ["шрифт заголовков", "заголовки", "font", "headings"]),
+  e("appearance", "customize", "settings.customize.typography.customFont", ["свой шрифт", "загрузить шрифт", "файл шрифта", "ttf", "woff", "custom font", "upload font"], { needs: "customFont" }),
+  e("appearance", "customize", "settings.customize.typography.fontScale", ["шрифт", "размер текста", "font"]),
+  e("appearance", "customize", "settings.customize.typography.headingScale", ["размер заголовков", "заголовки", "headings"]),
+  e("appearance", "customize", "settings.customize.typography.lineSpacing", ["межстрочный", "интервал"]),
+  e("appearance", "customize", "settings.customize.typography.spaceScale", ["простор", "отступы", "воздух", "плотность", "spacing"]),
+  // Дубль karaokeSize из Типографики удалён 19.07 (спека §7) — единственный
+  // ряд остался в «Текстах песен» (запись settings.lyrics.karaokeSize ниже).
+  e("appearance", "customize", "settings.customize.motion.anims", ["анимации", "движение", "animations"]),
+  e("appearance", "customize", "settings.customize.motion.animSpeed", ["скорость анимаций", "speed"]),
+  e("appearance", "customize", "settings.customize.motion.durMenu", ["отклики", "меню", "подсказки", "скорость", "responses"]),
+  e("appearance", "customize", "settings.customize.motion.durDialog", ["окна", "диалоги", "панели", "скорость", "dialogs"]),
+  e("appearance", "customize", "settings.customize.motion.durPage", ["переходы", "экраны", "страницы", "transitions"]),
+  e("appearance", "customize", "settings.customize.motion.ease", ["характер движения", "мягко", "чётко", "ровно", "easing"]),
+  e("appearance", "customize", "settings.customize.motion.scrollSpeed", ["скорость прокрутки", "колесо", "scroll"]),
+  e("appearance", "customize", "settings.customize.motion.scrollSmooth", ["плавная прокрутка", "инерция", "smooth scroll"]),
+  e("appearance", "customize", "settings.customize.layout.barButtons", ["кнопки плеера", "бар"]),
+  e("appearance", "customize", "settings.customize.layout.navTabs", ["навигация", "меню", "разделы"]),
+  e("appearance", "customize", "settings.customize.layout.rowCover", ["обложка", "строка трека"]),
+  e("appearance", "customize", "settings.customize.layout.rowDuration", ["длительность", "строка трека"]),
+  // «Альбом» скрыт вместе с рядом (аудит 22.07) — вернуть с серверными данными.
+  e("appearance", "customize", "settings.customize.layout.rowSource", ["источник", "строка трека", "source", "soundcloud", "youtube"]),
+  e("appearance", "customize", "settings.customize.layout.playerHeight", ["высота плеера", "полоса плеера", "player height"]),
+  e("appearance", "customize", "settings.customize.layout.playerCover", ["обложка в плеере", "размер обложки", "cover"]),
+  e("appearance", "customize", "settings.customize.background.type", ["фон", "обои", "анимированный", "background", "градиент"]),
+  e("appearance", "customize", "settings.customize.background.invert", ["направление", "вращение"]),
+  e("appearance", "customize", "settings.customize.background.anim", ["анимированный фон", "круги", "пресеты фона", "animated background"]),
+  e("appearance", "customize", "settings.customize.background.animSpeed", ["скорость фона", "оборот", "вращение", "spin"]),
+  e("appearance", "customize", "settings.customize.background.animOpacity", ["заметность", "прозрачность фона", "visibility"]),
+  e("appearance", "customize", "settings.customize.background.animScale", ["размер кругов", "circle size"]),
+  e("appearance", "customize", "settings.customize.background.animEdge", ["за край", "заход", "edge"]),
+  e("appearance", "customize", "settings.customize.background.imageUrl", ["картинка", "изображение", "ссылка"]),
+  e("appearance", "customize", "settings.customize.background.dim", ["затемнение", "dim"]),
+  e("appearance", "customize", "settings.customize.background.tint", ["оттенок", "tint"]),
+  // Визуализатор и отклик на бас переехали из «Расширений» 19.07 (спека §7):
+  // ключи остались settings.extensions.*, место рендера — Кастомизация.
+  e("appearance", "customize", "settings.extensions.visualizer", ["визуализатор", "волна", "бары", "visualizer"]),
+  e("appearance", "customize", "settings.extensions.visualizerKind", ["визуализатор", "вид"]),
+  e("appearance", "customize", "settings.extensions.visualizerMirror", ["зеркало", "визуализатор"]),
+  e("appearance", "customize", "settings.extensions.bassShake", ["бас", "тряска", "пульсация", "bass"]),
+  e("appearance", "customize", "settings.extensions.bassShakeStrength", ["бас", "сила"]),
+  e("appearance", "customize", "settings.extensions.bassSharp", ["бас", "резкость", "атака", "bass"]),
+  e("appearance", "customize", "settings.extensions.bassReach", ["бас", "размах", "качание", "bass"]),
+  e("appearance", "customize", "settings.customize.behavior.doubleClick", ["двойной клик", "дабл-клик"]),
+  e("appearance", "customize", "settings.customize.behavior.startView", ["стартовый экран", "запуск"]),
+  e("appearance", "customize", "settings.customize.themes.saveAs", ["тема", "сохранить тему", "theme"]),
+  e("appearance", "customize", "settings.customize.themes.importRow", ["вставить тему", "импорт темы"]),
+  e("appearance", "customize", "settings.customize.themes.marketRow", ["маркетплейс", "темы", "market"], { needs: "themeMarket" }),
+  e("appearance", "customize", "settings.customize.css.toggle", ["css", "свои стили", "custom css"]),
+  // ── Воспроизведение ───────────────────────────────────────────────────
+  e("playback", null, "settings.playback.crossfade", ["кроссфейд", "плавный переход", "crossfade"]),
+  e("playback", null, "settings.playback.crossfade.duration", ["кроссфейд", "секунды"]),
+  e("playback", null, "settings.playback.gapless", ["без пауз", "gapless", "стык"]),
+  e("playback", null, "settings.playback.equalizer", ["эквалайзер", "eq", "частоты", "басы"], { title: "settings.playback.equalizer.rowTitle", hint: "settings.playback.equalizer.rowHint" }),
+  e("playback", "equalizer", "settings.equalizer.enable", ["эквалайзер", "eq"]),
+  e("playback", null, "settings.playback.outputs", ["вывод", "устройства", "наушники", "колонки", "микрофон", "кабель", "динамики", "output", "devices", "headphones", "speakers", "microphone", "cable"], {
+    title: "settings.playback.outputs.rowTitle",
+    hint: "settings.playback.outputs.rowHint",
+    needs: "audioOutputs",
+  }),
+  e("playback", "outputs", "settings.outputs.micDevice", ["микрофон", "голос", "захват", "microphone", "voice"], { needs: "audioOutputs" }),
+  e("playback", "outputs", "settings.outputs.micGain", ["громкость голоса", "голос", "voice volume"], { needs: "audioOutputs" }),
+  e("playback", null, "settings.playback.normalize", ["громкость", "выравнивание", "normalize"]),
+  e("playback", null, "settings.playback.speedSteps", ["скорость", "1.5x", "2x", "speed"]),
+  e("playback", null, "settings.playback.radioEndless", ["радио", "бесконечно", "radio"]),
+  e("playback", null, "settings.playback.recs", ["рекомендации", "recs"]),
+  e("playback", null, "settings.playback.recs.novelty", ["новизна", "рекомендации"]),
+  e("playback", null, "settings.playback.recs.repeats", ["повторы", "рекомендации"]),
+  e("playback", null, "settings.playback.resumePosition", ["продолжить", "позиция", "resume"]),
+  e("playback", null, "settings.playback.streamQuality", ["качество", "трафик", "quality"]),
+  e("playback", null, "settings.playback.queuePrep", ["очередь", "подготовка", "заранее", "трафик", "queue", "warm"]),
+  e("playback", null, "settings.playback.queuePrep.warm", ["наготове", "очередь", "треков вперёд", "warm"]),
+  e("playback", null, "settings.playback.queuePrep.preload", ["следующий трек", "заранее", "preload"]),
+  e("playback", null, "settings.playback.seekStep", ["перемотка", "шаг", "стрелки", "секунды", "seek"]),
+  e("playback", null, "settings.playback.sleepTimer", ["таймер сна", "sleep", "луна"]),
+  // ── Источники ─────────────────────────────────────────────────────────
+  e("sources", null, "settings.sources.policy", ["источники", "soundcloud", "youtube", "откуда"], { needs: "sourcePicker" }),
+  e("sources", null, "settings.sources.searchScope", ["поиск", "каталог", "где искать"]),
+  e("sources", null, "settings.sources.instantSearch", ["мгновенный поиск", "instant"]),
+  e("sources", null, "settings.sources.searchGrouping", ["группировка", "ремиксы", "версии"]),
+  e("sources", null, "settings.sources.directLocal", ["локальные", "файлы", "ссылки", "local"], { needs: "localFiles" }),
+  // ── Тексты песен ──────────────────────────────────────────────────────
+  e("lyrics", null, "settings.lyrics.synced", ["синхронный текст", "караоке", "lyrics"]),
+  e("lyrics", null, "settings.lyrics.autoScroll", ["автоскролл", "прокрутка текста"]),
+  e("lyrics", null, "settings.lyrics.endNote", ["нотка", "конец текста"]),
+  e("lyrics", null, "settings.lyrics.videoNowPlaying", ["видео", "клип", "обложка", "video"]),
+  e("lyrics", null, "settings.lyrics.karaokeSize", ["караоке", "размер строки"]),
+  e("lyrics", null, "settings.lyrics.karaokeLines", ["строки", "сколько строк", "караоке", "lines"]),
+  e("lyrics", null, "settings.lyrics.panelLines", ["строки", "сколько строк", "панель", "сейчас играет", "lines"]),
+  // «Перевод» из индекса убран (аудит 22.07): фича ещё не существует —
+  // поиск не должен приводить к ряду-заглушке. Вернуть вместе с фичей.
+  e("lyrics", null, "settings.lyrics.meaningMode", ["смысл", "значение", "meaning"]),
+  // ── Медиатека ─────────────────────────────────────────────────────────
+  e("library", null, "settings.library.localFiles", ["локальные файлы", "папки", "folders"], { needs: "localFiles" }),
+  e("library", null, "settings.library.cache", ["скачанное", "кэш", "место", "диск", "cache"], { needs: "offlineCache" }),
+  e("library", null, "settings.library.offline", ["оффлайн", "без интернета", "offline"], { needs: "offlineCache" }),
+  e("library", null, "settings.library.importPlaylists", ["импорт", "spotify", "яндекс", "перенос"]),
+  e("library", null, "settings.library.stats", ["статистика", "итоги", "wrapped"]),
+  e("library", "stats", "settings.stats.period", ["период", "неделя", "месяц", "год"]),
+  // ── Интеграции ────────────────────────────────────────────────────────
+  e("integrations", null, "settings.integrations.discord", ["дискорд", "discord", "статус"], { title: "settings.integrations.discord.rowTitle", hint: "settings.integrations.discord.rowHint", needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.enable", ["дискорд", "discord"], { needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.cover", ["обложка", "discord"], { needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.line1", undefined, { needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.line2", undefined, { needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.btnOn", ["кнопка", "discord"], { needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.btnLabel", undefined, { needs: "discord" }),
+  e("integrations", "discord", "settings.integrations.discord.btnUrl", undefined, { needs: "discord" }),
+  e("integrations", null, "settings.integrations.lastfm", ["last.fm", "скробблинг", "scrobble"]),
+  e("integrations", null, "settings.integrations.listenbrainz", ["listenbrainz", "скробблинг"]),
+  e("integrations", null, "settings.integrations.mediaKeys", ["медиа-клавиши", "клавиатура", "media keys"]),
+  // ── Горячие клавиши ───────────────────────────────────────────────────
+  e("hotkeys", null, "settings.hotkeys.help", ["горячие клавиши", "хоткеи", "shortcuts", "hotkeys"]),
+  // ── Расширения ────────────────────────────────────────────────────────
+  // Ряды визуализатора/баса уехали в appearance/customize (см. выше); здесь
+  // осталась строка-указатель на новое место.
+  e("extensions", null, "settings.extensions.visualizerMoved", ["визуализатор", "бас", "visualizer", "bass"], { needs: "plugins" }),
+  e("extensions", null, "settings.extensions.installFromFile", ["установить плагин", "файл"], { needs: "plugins" }),
+  e("extensions", null, "settings.extensions.installed", ["плагины", "установленные", "plugins"], { needs: "plugins" }),
+  e("extensions", null, "settings.extensions.errorLog", ["ошибки плагинов", "журнал"], { needs: "plugins" }),
+  e("extensions", null, "settings.extensions.pluginMarket", ["маркетплейс", "плагины"], { needs: "plugins" }),
+  e("extensions", null, "settings.extensions.themeMarket", ["маркетплейс", "темы"], { needs: "themeMarket" }),
+  // ── Система ───────────────────────────────────────────────────────────
+  e("system", null, "settings.system.autostart", ["автозапуск", "старт с windows", "autostart"], { needs: "autostart" }),
+  e("system", null, "settings.system.tray", ["трей", "область уведомлений", "tray"], { needs: "tray" }),
+  e("system", null, "settings.system.closeAction", ["закрытие", "крестик", "свернуть"], { needs: "tray" }),
+  e("system", null, "settings.system.update", ["обновление", "версия", "update"], { needs: "updates" }),
+  e("system", null, "settings.system.miniPlayer", ["мини-плеер", "маленькое окно", "miniplayer"], { needs: "miniPlayer" }),
+  e("system", null, "settings.system.stage0", ["диагностика", "медленно", "долго грузится", "журнал", "diagnostics", "slow"], {
+    title: "settings.system.stage0.rowTitle",
+    hint: "settings.system.stage0.rowHint",
+    needs: "diagnostics",
+  }),
+  e("system", null, "settings.system.version", ["версия", "version"]),
+  e("system", null, "settings.system.licenses", ["лицензии", "licenses"], { title: "settings.system.licenses.rowTitle", hint: "settings.system.licenses.rowHint" }),
+  e("system", null, "settings.system.website", ["сайт", "website"]),
+  e("system", null, "settings.system.sourceCode", ["исходный код", "github", "source"]),
+];
+
+export interface SettingsSearchHit {
+  tab: string;
+  sub: string | null;
+  titleKey: string;
+  /** Переведённое название — для рендера результата и data-rowtitle-прокрутки. */
+  title: string;
+}
+
+/** Поиск: все слова запроса должны найтись в «название + подсказка + синонимы».
+ *  t обязан возвращать ключ при отсутствии перевода (конвенция translate) —
+ *  такой результат не индексируется.
+ *
+ *  `caps` — что умеет ЭТА площадка. Не передан (приложение) — умеет всё, ответ
+ *  ровно тот же, что до переезда индекса в общий пакет. Передан (браузер) —
+ *  ряды, которых на площадке нет, из выдачи исчезают: поиск, приводящий к
+ *  несуществующему ряду, хуже, чем ненайденный ряд. */
+export function searchSettings(
+  query: string,
+  t: (key: string) => string,
+  caps?: Iterable<SettingsCapability>,
+): SettingsSearchHit[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const has = caps ? new Set(caps) : null;
+  const hits: SettingsSearchHit[] = [];
+  for (const entry of SETTINGS_INDEX) {
+    if (entry.needs && has && !has.has(entry.needs)) continue; // площадка так не умеет
+    const title = t(entry.titleKey);
+    if (title === entry.titleKey) continue; // ключа нет в словаре — ряда нет
+    const hint = t(entry.hintKey);
+    const hay = [title, hint === entry.hintKey ? "" : hint, ...(entry.syn ?? [])].join(" ").toLowerCase();
+    if (words.every((w) => hay.includes(w))) hits.push({ tab: entry.tab, sub: entry.sub, titleKey: entry.titleKey, title });
+  }
+  return hits.slice(0, 20);
+}

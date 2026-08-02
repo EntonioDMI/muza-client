@@ -29,7 +29,12 @@ export interface SharedLyricLine {
   note?: string;
 }
 
-/** Трек, как его видит экран «Сейчас играет». */
+/** Трек, как его видит экран «Сейчас играет».
+ *
+ *  ⚠️ НЕ СВОДИТЬ с QueueTrackData и LocalFileEntry из shell/contextTargets.ts
+ *  (проверено чисткой дублей волны 3, 2026-08-02): те описывают, что меню
+ *  ЧИТАЕТ для решения о пунктах, этот — что экран РИСУЕТ. Отсюда и разные
+ *  поля: тут обложка/альбом/длительность, там `kind` и отпечаток файла. */
 export interface NowPlayingTrack {
   id: string;
   title: string;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, ChipGroup, Dialog, EmptyState, Icon, Tile, TrackRow } from "@muza/ui";
-import type { MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
+import type { HistoryItem, MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
 import { fmtTime } from "../lib/format";
 import { tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { gridInsertionIndex } from "../lib/dragEngine";
@@ -231,7 +231,9 @@ function PlaylistDropTile({
  *  десктоп»:
  *  - нет порта localFiles (браузер) → вкладки «Локальные» нет вовсе, не серой;
  *  - нет обработчика (onAddLink/onImport/onJoinCode/onCreatePlaylist) → нет и
- *    кнопки в шапке. Приложение передаёт свои три — его шапка не изменилась. */
+ *    кнопки в шапке. Приложение передаёт свои три — его шапка не изменилась;
+ *  - нет обработчика onPlayHistory → нет и вкладки «История» (тем же правилом:
+ *    список слушать нечем, значит показывать его нечестно). */
 export function LibraryView({
   api,
   canSearch,
@@ -248,6 +250,7 @@ export function LibraryView({
   onImport,
   onJoinCode,
   onCreatePlaylist,
+  onPlayHistory,
   onNotify,
   onDropTrack,
   onReorderPlaylists,
@@ -283,10 +286,19 @@ export function LibraryView({
   onImport?: () => void;
   /** Вход в совместный плейлист по инвайт-коду (Stage 7). */
   onJoinCode?: () => void;
-  /** Создать плейлист прямо из шапки. Приложение его НЕ передаёт (создание
-   *  живёт в боковой панели, кнопки в шапке там никогда не было), а вебу он
-   *  нужен: на телефоне панели нет вовсе, и создавать было бы негде. */
+  /** Создать плейлист прямо из шапки. Кнопка — запасная дверь, а не вторая:
+   *  обычно создание живёт в боковой панели, и там, где панель есть, шапке
+   *  дублировать её незачем (в приложении такой кнопки никогда и не было).
+   *  Поэтому проп передают ТОЛЬКО когда другой двери на экране нет — веб
+   *  делает это на телефоне, где панель спрятана (apps/web .../library/
+   *  page.tsx → useSidebarVisible). На широком экране обе программы
+   *  показывают одну и ту же шапку. */
   onCreatePlaylist?: () => void;
+  /** Слушать трек из «Истории»: весь список + позиция, как в любом контексте
+   *  воспроизведения. Экран сам историю НЕ играет — очередь заводит программа
+   *  (в приложении playCatalog, в вебе playContext). Нет обработчика — нет и
+   *  вкладки. */
+  onPlayHistory?: (tracks: Track[], startIndex: number) => void;
   onNotify: (text: string, icon?: string) => void;
   /** Массовое удаление плиток прошло — App перечитывает список (2026-07-20). */
   onPlaylistsChanged?: () => void;
@@ -308,21 +320,26 @@ export function LibraryView({
     resolveTo: (rects, _from, x, y) => gridInsertionIndex(rects, x, y),
     onCommit: (id, to) => onReorderPlaylists?.(id, to),
   });
-  const chips = local
-    ? [
-        { key: "playlists", label: t("views.library.chips.playlists") },
-        { key: "local", label: t("views.library.chips.local") },
-        { key: "albums", label: t("views.library.chips.albums") },
-        { key: "artists", label: t("views.library.chips.artists") },
-      ]
-    : [
-        { key: "playlists", label: t("views.library.chips.playlists") },
-        { key: "albums", label: t("views.library.chips.albums") },
-        { key: "artists", label: t("views.library.chips.artists") },
-      ];
+  // Набор вкладок собирается из умений, а не из площадки: «Локальные» держит
+  // порт файлов, «История» — обработчик воспроизведения. Отсутствующая вкладка
+  // не рисуется вовсе (правило розетки), поэтому список и складывается из
+  // кусков, а не выбирается готовым.
+  const historyTab = Boolean(onPlayHistory) && canSearch;
+  const chips = [
+    { key: "playlists", label: t("views.library.chips.playlists") },
+    ...(local ? [{ key: "local", label: t("views.library.chips.local") }] : []),
+    // ⚠️ ключ временно из веб-раздела словаря: вкладка была веб-страницей и
+    // потеряна при переезде экрана в общий пакет (2026-08-02), а словари в эту
+    // волну править нельзя. Правильный дом — views.library.chips.history.
+    ...(historyTab ? [{ key: "history", label: t("web.library.tabHistory") }] : []),
+    { key: "albums", label: t("views.library.chips.albums") },
+    { key: "artists", label: t("views.library.chips.artists") },
+  ];
   const [chip, setChip] = useState("playlists");
   const [locals, setLocals] = useState<LocalFileEntry[] | null>(null);
   const [scanning, setScanning] = useState(false);
+  /** История прослушиваний: null — ещё не спрашивали (или спрашиваем). */
+  const [history, setHistory] = useState<HistoryItem[] | null>(null);
   // контекстные меню — общий механизм (shell/ContextMenu.tsx, 2026-07-20):
   // локальные файлы + пустое место медиатеки (создать/по ссылке/импорт/код).
   // Тип — MenuAbilities (не полный набор десктопа): у браузера половины умений
@@ -390,6 +407,17 @@ export function LibraryView({
   useEffect(() => {
     if (chip === "local") void reloadLocals();
   }, [chip]);
+
+  // История приходит с сервера и одна на все устройства. Спрашиваем её один
+  // раз — при первом открытии вкладки: пока человек листает плитки, ходить за
+  // ней незачем, а перечитывать при каждом возврате — дёргать сервер зря.
+  useEffect(() => {
+    if (chip !== "history" || history !== null) return;
+    void api
+      .getHistory(50)
+      .then(setHistory)
+      .catch(() => setHistory([])); // не ответила — покажем «пусто», а не белый экран
+  }, [chip, history, api]);
 
   const addLocal = async (kind: "files" | "folder") => {
     if (scanning || !local) return;
@@ -504,6 +532,35 @@ export function LibraryView({
         <div style={{ padding: "var(--sp-6) 0", color: "var(--text-2)" }}>
           {t("views.library.artistsPlaceholder")}
         </div>
+      ) : chip === "history" && historyTab ? (
+        // «История» — последние 50 прослушиваний с сервера, общие для всех
+        // устройств. Одна и та же песня попадает в список столько раз, сколько
+        // её слушали, поэтому ключ строки — трек ПЛЮС момент прослушивания:
+        // по одному id React склеил бы повторы в одну строку.
+        history === null ? (
+          <div style={{ padding: "var(--sp-6) 0", color: "var(--text-3)" }}>{t("common.loading")}</div>
+        ) : history.length === 0 ? (
+          <EmptyState icon="history" title={t("web.library.historyEmptyTitle")} hint={t("web.library.historyEmptyHint")} />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
+            {history.map((h, i) => (
+              <TrackRow
+                key={`${h.track.id}:${h.playedAt}`}
+                {...trackRowL10n(t)}
+                index={i + 1}
+                cover={h.track.coverUrl}
+                title={h.track.title}
+                artist={h.track.artist}
+                duration={fmtTime(h.track.durationSec)}
+                active={currentId === h.track.id}
+                playing={currentId === h.track.id && playing}
+                // Играем ВЕСЬ список с этой позиции: история — такой же
+                // контекст, как плейлист, и дальше очередь идёт по нему.
+                onPlay={() => onPlayHistory?.(history.map((x) => x.track), i)}
+              />
+            ))}
+          </div>
+        )
       ) : chip === "local" && local ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", paddingBottom: "var(--sp-6)" }}>
           <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>

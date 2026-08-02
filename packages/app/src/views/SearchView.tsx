@@ -13,6 +13,7 @@ import { SearchGroupCard, type VersionsSlot } from "./SearchGroupCard";
 import { useContextMenu, type MenuAbilities } from "../shell/ContextMenu";
 import { SelectionBar } from "../shell/SelectionBar";
 import { useMultiSelect } from "../lib/useMultiSelect";
+import type { WarmRow } from "../lib/rowWarm";
 import { useT } from "../i18n";
 
 /** Пустая выдача плоского режима — ОДНА ссылка на всё время жизни модуля.
@@ -107,16 +108,11 @@ export function SearchView({
   /** Показанные треки сменились (в порядке строк). Нужен площадке, которая
    *  собирает меню по треку, а не по id (веб: лайк принимает Track целиком). */
   onResultsChange?: (tracks: Track[]) => void;
-  /** Прогрев строк — умение приложения: пока курсор над строкой, оно уже
-   *  тянет метаданные добычи. Пропа нет (браузер) — на обёртку строки просто
-   *  ничего не вешается. Форма повторяет WarmRowProps приложения
-   *  (apps/desktop/src/player/useWarmer.ts): импортировать её оттуда нельзя —
-   *  тот модуль тянет движок и в общий пакет не поедет. */
-  warmRow?: (id: string) => {
-    ref?: (el: HTMLDivElement | null) => (() => void) | undefined;
-    onMouseEnter?: () => void;
-    onPointerDown?: () => void;
-  };
+  /** Готовит трек заранее — умение приложения: пока курсор над строкой, оно уже
+   *  разбирает, откуда возьмётся звук. Пропа нет (браузер) — на обёртку строки
+   *  просто ничего не вешается. Форма общая для всех экранов (lib/rowWarm.ts):
+   *  раньше она была тут расписана инлайном — одной из пяти копий. */
+  warmRow?: WarmRow;
   /** Стили корня экрана. Веб гасит ими собственные отступы: его зона контента
    *  уже с полями, иначе поля удвоились бы. */
   style?: React.CSSProperties;

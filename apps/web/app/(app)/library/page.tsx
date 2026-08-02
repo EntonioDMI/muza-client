@@ -8,6 +8,9 @@ import { ApiError, type PlaylistMeta } from "@muza/api-client";
 import { useT } from "@muza/app";
 import { moveItem } from "@muza/app/lib/dragEngine";
 import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
+import { AddLinkDialog } from "@muza/app/shell/AddLinkDialog";
+import { ImportDialog } from "@muza/app/shell/ImportDialog";
+import { JoinPlaylistDialog } from "@muza/app/shell/JoinPlaylistDialog";
 import { LibraryView } from "@muza/app/views/LibraryView";
 import { getApi } from "../../../src/api";
 import { useLikes } from "../../../src/likes";
@@ -28,12 +31,13 @@ import { useToast } from "../../../src/toast";
  *
  *  ЧЕГО НЕТ И БЫТЬ НЕ МОЖЕТ: вкладки «Локальные» — браузер не знает путей к
  *  файлам на диске (порт localFiles ему не выдан), поэтому вкладка не серая,
- *  а отсутствует; «Добавить по ссылке» и «Импорт плейлиста» — обработчиков
- *  страница не передаёт, и кнопок нет.
+ *  а отсутствует.
  *
- *  ⚠️ Вкладка «История» отсюда УШЛА вместе со своей реализацией: в приложении
- *  такой вкладки нет, а волна ведёт веб к виду «один в один». Понадобится —
- *  заводить надо в ОБЩЕМ экране, сразу для обеих программ. */
+ *  ДОБРАНО В ХВОСТАХ (2026-08-02): «По ссылке», «Импорт плейлиста» и «История»
+ *  вернулись/появились здесь. Все три — чистая работа сервера (addDirectTrack,
+ *  importPlaylist, getHistory) без единого касания устройства, так что браузеру
+ *  для них ничего особенного не нужно; «По коду» переехал на общий диалог
+ *  (@muza/app/shell/JoinPlaylistDialog) — своей копии у веба больше нет. */
 export default function LibraryPage() {
   const router = useRouter();
   const notify = useToast();
@@ -48,9 +52,9 @@ export default function LibraryPage() {
   const [createBusy, setCreateBusy] = useState(false);
 
   const [joinOpen, setJoinOpen] = useState(false);
-  const [joinCode, setJoinCode] = useState("");
-  const [joinBusy, setJoinBusy] = useState(false);
-  const [joinError, setJoinError] = useState<string | null>(null);
+  const [addLinkOpen, setAddLinkOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const sidebarVisible = useSidebarVisible();
 
   /** Порядок, применённый оптимистично (перетаскиванием), пока сервер не
    *  ответил. Тот же приём и тот же расчёт, что у боковой панели
@@ -134,32 +138,6 @@ export default function LibraryPage() {
     }
   };
 
-  const closeJoin = () => {
-    setJoinOpen(false);
-    setJoinCode("");
-    setJoinError(null);
-  };
-
-  const join = async () => {
-    const code = joinCode.trim().toUpperCase();
-    if (code.length < 4) {
-      setJoinError(t("dialogs.codeTooShort"));
-      return;
-    }
-    setJoinBusy(true);
-    setJoinError(null);
-    try {
-      const playlist = await getApi().joinPlaylist(code);
-      await refresh();
-      closeJoin();
-      router.push(`/playlist?id=${playlist.id}`);
-    } catch (e) {
-      setJoinError(e instanceof ApiError ? e.message : t("dialogs.joinPlaylist.joinFailed"));
-    } finally {
-      setJoinBusy(false);
-    }
-  };
-
   /** Умения браузера для меню плитки и пустого места. Чего тут нет (радио,
    *  офлайн, переименование, иконка плейлиста) — того и в меню нет: пункт
    *  появится сам, как только умение появится у веба. */
@@ -188,8 +166,14 @@ export default function LibraryPage() {
           onOpenFavorites={() => router.push("/favorites")}
           onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
           onPlaylistMenu={(p, e) => menuApiRef.current?.openMenu(e, { kind: "playlist", id: p.id, name: p.name })}
+          onAddLink={() => setAddLinkOpen(true)}
+          onImport={() => setImportOpen(true)}
           onJoinCode={() => setJoinOpen(true)}
-          onCreatePlaylist={() => setCreateOpen(true)}
+          // Кнопка «Создать плейлист» — только там, где боковой панели с её
+          // кнопкой нет (телефон). С панелью на экране было бы две одинаковые
+          // двери, и шапка веба переставала совпадать с шапкой приложения.
+          onCreatePlaylist={sidebarVisible ? undefined : () => setCreateOpen(true)}
+          onPlayHistory={(tracks, index) => playContext(tracks, index)}
           onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
           onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
           onPlaylistsChanged={() => void refresh()}
@@ -222,43 +206,74 @@ export default function LibraryPage() {
         </div>
       </Dialog>
 
-      <Dialog
+      {/* «По коду» — общий диалог (@muza/app/shell/JoinPlaylistDialog). Своя
+          копия у веба была и разъезжалась с приложением: другая ширина, другой
+          красный у ошибки. apiHost=null: строка «дев-сервер» — примета сборки
+          приложения, в браузере такой развилки нет. */}
+      <JoinPlaylistDialog
+        api={getApi()}
         open={joinOpen}
-        title={t("dialogs.joinPlaylist.title")}
-        onClose={closeJoin}
-        actions={
-          <>
-            <Button variant="ghost" size="lg" onClick={closeJoin}>
-              {t("common.cancel")}
-            </Button>
-            <Button variant="primary" size="lg" icon="users" disabled={joinBusy} onClick={() => void join()}>
-              {joinBusy ? t("dialogs.joinPlaylist.joining") : t("dialogs.joinPlaylist.join")}
-            </Button>
-          </>
-        }
-      >
-        <div
-          style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", minWidth: 280 }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void join();
-          }}
-        >
-          <p style={{ margin: 0, fontFamily: "var(--font-ui)", color: "var(--text-2)", lineHeight: 1.5 }}>
-            {t("dialogs.joinPlaylist.hint")}
-          </p>
-          <SearchInput
-            value={joinCode}
-            onChange={(v: string) => {
-              setJoinCode(v.toUpperCase());
-              setJoinError(null);
-            }}
-            placeholder={t("dialogs.joinPlaylist.codePlaceholder")}
-            icon="users"
-            autoFocus
-          />
-          {joinError ? <p style={{ margin: 0, fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "#e5484d" }}>{joinError}</p> : null}
-        </div>
-      </Dialog>
+        apiHost={null}
+        onClose={() => setJoinOpen(false)}
+        onJoined={(p) => {
+          setJoinOpen(false);
+          void refresh();
+          notify(t("toast.playlist.joined", { name: p.name, owner: p.ownerUsername }), "users");
+          router.push(`/playlist?id=${p.id}`);
+        }}
+      />
+
+      {/* «По ссылке»: сервер сам достаёт трек по адресу — браузеру для этого
+          ничего сверх обычного запроса не нужно. В приложении после добавления
+          сразу предлагают положить трек в плейлист; здесь выбора плейлиста на
+          странице нет, поэтому честно говорим, что трек добавлен. */}
+      <AddLinkDialog
+        api={getApi()}
+        open={addLinkOpen}
+        onClose={() => setAddLinkOpen(false)}
+        onNotify={(text, icon) => notify(text, icon)}
+        onAdded={(added) => notify(t("toast.link.trackAdded", { title: added.title }), "link")}
+      />
+
+      {/* «Импорт плейлиста»: тоже целиком серверная работа. Готовый плейлист
+          сразу открываем — как в приложении. */}
+      <ImportDialog
+        api={getApi()}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onNotify={(text, icon) => notify(text, icon)}
+        onImported={(report) => {
+          void refresh();
+          router.push(`/playlist?id=${report.playlist.id}`);
+        }}
+      />
     </ContextMenuProvider>
   );
+}
+
+/** Видна ли сейчас боковая панель.
+ *
+ *  Нужна ровно одному решению: показывать ли в шапке медиатеки «Создать
+ *  плейлист». Кнопка — запасная дверь для телефона, где панели нет; рядом с
+ *  панелью она была бы второй дверью в ту же комнату, которой в приложении
+ *  нет, — из-за неё шапки веба и приложения не совпадали.
+ *
+ *  Спрашиваем саму панель (есть ли у неё прямоугольник на экране), а НЕ
+ *  повторяем её медиа-запрос: условие в globals.css составное — ширина,
+ *  ориентация и высота окна, — и вторая копия рано или поздно разъедется с
+ *  первой. Стартуем с «панель есть»: лишней кнопки в первом кадре быть не
+ *  должно, а на телефоне она появится сразу после монтирования. */
+function useSidebarVisible(): boolean {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const check = () => setVisible((document.querySelector(".sidebar")?.getClientRects().length ?? 0) > 0);
+    check();
+    window.addEventListener("resize", check);
+    window.addEventListener("orientationchange", check);
+    return () => {
+      window.removeEventListener("resize", check);
+      window.removeEventListener("orientationchange", check);
+    };
+  }, []);
+  return visible;
 }

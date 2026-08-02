@@ -31,6 +31,7 @@ import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { WRAPPED_BANNER_PREVIEW, WRAPPED_ENABLED, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
 import { shelfL10n, tileL10n, trackRowL10n } from "../lib/dsLabels";
+import type { RowWarmProps, WarmRow } from "../lib/rowWarm";
 import { useDrag } from "../shell/DragLayer";
 import { useAltFileDrag } from "../platform";
 import { useT } from "../i18n";
@@ -61,18 +62,10 @@ const sectionH2: React.CSSProperties = {
   color: "var(--text-1)",
 };
 
-/** Пропсы обёртки строки от прогрева добычи. Форма повторяет
- *  apps/desktop/src/player/useWarmer.ts::WarmRowProps — тип структурный, так
- *  что десктопный `useWarmRow()` подставляется сюда без приведения, а сам
- *  прогрев (Tauri-движок) в общий пакет не тянется. */
-export interface HomeRowWarmProps {
-  ref: (el: HTMLElement | null) => (() => void) | undefined;
-  onMouseEnter: () => void;
-  onPointerDown: () => void;
-}
-
-const NO_WARM: HomeRowWarmProps = { ref: () => undefined, onMouseEnter: () => {}, onPointerDown: () => {} };
-const noWarmRow = (): HomeRowWarmProps => NO_WARM;
+/** Форма пропсов подготовки строки — общая для всех экранов (lib/rowWarm.ts).
+ *  Своё объявление тут было одним из пяти разъезжавшихся дублей. */
+const NO_WARM: RowWarmProps = { ref: () => undefined, onMouseEnter: () => {}, onPointerDown: () => {} };
+const noWarmRow = (): RowWarmProps => NO_WARM;
 
 /** Площадка без оффлайн-копии: ходим на сервер и честно говорим, что данные
  *  живые (offline: false). */
@@ -143,8 +136,8 @@ export function HomeFeed({
   onSections?: (sections: HomeSection[]) => void;
   /** Оффлайн-копия ленты (приложение); нет — ходим прямо на сервер. */
   withSnapshot?: <T2>(key: string, request: () => Promise<T2>) => Promise<{ data: T2; offline: boolean }>;
-  /** Прогрев добычи (приложение); нет — пустые пропсы на обёртке строки. */
-  warmRow?: (id: string) => HomeRowWarmProps;
+  /** Готовит трек заранее (приложение); нет — пустые пропсы на обёртке строки. */
+  warmRow?: WarmRow;
   /** Отступы экрана. У приложения зона `main` без полей, и их даёт сам экран;
    *  у веба поля несёт панель-зона `.main`, поэтому веб передаёт "0" —
    *  иначе поля сложились бы вдвое. */
