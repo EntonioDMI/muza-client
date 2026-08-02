@@ -1,32 +1,31 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Dialog, Icon, Menu, TrackRow } from "@muza/ui";
-import type { GroupedSearchResult, GroupSearchResult, PlaylistMeta, Track } from "@muza/api-client";
+import { Badge, Icon, TrackRow } from "@muza/ui";
+import type { GroupedSearchResult, GroupSearchResult, Track } from "@muza/api-client";
 import { useT } from "@muza/app";
-import { getApi } from "../api";
+import { ContextMenuProvider } from "@muza/app/shell/ContextMenu";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
-import { usePlaylists } from "../playlists";
-import { useToast } from "../toast";
 import { pluralVersions, variantLabel } from "../variantLabels";
-import { TRACK_DND_MIME, setTrackDragImage } from "./TrackList";
+import { TRACK_DND_MIME, setTrackDragImage, useWebTrackMenu } from "./TrackList";
 
 /** Список результатов поиска с группировкой ремиксов/версий (T41, ?group=1
  *  сервера T36): "single" — обычная строка, "group" — карточка канона с
  *  разворотом вариантов. Лайк на карточке всегда бьёт по canonical; у
  *  развёрнутых вариантов — свой лайк (обычное поведение). Плейбек — общая
  *  для всей выдачи очередь (canonical и все variants по порядку карточек),
- *  чтобы «следующий трек» листал всю страницу, а не только один список. */
+ *  чтобы «следующий трек» листал всю страницу, а не только один список.
+ *
+ *  ПКМ и множественный выбор — общие с приложением (useWebTrackMenu в
+ *  TrackList.tsx): свой массив пунктов список больше не собирает. Выделение
+ *  считается по ПОЛНОЙ выдаче (flat), включая свёрнутые варианты — иначе
+ *  Shift-диапазон менялся бы от того, что человек развернул. */
 export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }) {
   const { likedIds, toggle } = useLikes();
   const { current, playing, playContext } = usePlayer();
-  const { playlists, loaded, refresh: refreshPlaylists } = usePlaylists();
-  const notify = useToast();
   const { t, lang } = useT();
-  const [menu, setMenu] = useState<{ x: number; y: number; track: Track } | null>(null);
-  const [plPick, setPlPick] = useState<Track | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   // новая выдача — сворачиваем всё заново (индексы прошлой выдачи не про то же)
@@ -44,6 +43,12 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
     return list;
   }, [results]);
 
+  // Выделение и меню считаются по ПОЛНОЙ выдаче (flat), а не по видимым
+  // строкам: свёрнутые варианты — часть того же списка, и Shift-диапазон
+  // обязан их захватывать так же, как в приложении (SearchView).
+  const menu = useWebTrackMenu(flat);
+  const { multi } = menu;
+
   const playTrack = (track: Track) => {
     const idx = flat.findIndex((t) => t.id === track.id);
     if (idx >= 0) playContext(flat, idx);
@@ -56,37 +61,6 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
       else next.add(i);
       return next;
     });
-
-  const openPlaylistPick = (track: Track) => {
-    setPlPick(track);
-    if (!loaded) void refreshPlaylists();
-  };
-
-  const addToPlaylist = async (pl: PlaylistMeta, track: Track) => {
-    setPlPick(null);
-    try {
-      await getApi().addPlaylistTrack(pl.id, track.id);
-      notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
-      void refreshPlaylists();
-    } catch (e) {
-      notify(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x");
-    }
-  };
-
-  const download = async (track: Track) => {
-    try {
-      const { url } = await getApi().getStreamUrl(track.id);
-      const a = document.createElement("a");
-      a.href = `${url}&dl=1`;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      notify(t("web.trackList.downloadStarted"), "download");
-    } catch (e) {
-      notify(e instanceof Error ? e.message : t("web.trackList.downloadFailed"), "x");
-    }
-  };
 
   /** Общая обвязка строки — тач-таргет/драг-источник, как в TrackList. */
   const rowWrap = (track: Track, key: string, children: React.ReactNode) => {
@@ -101,6 +75,7 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
           setTrackDragImage(e, track);
         }}
         style={isLocal ? { opacity: 0.45, pointerEvents: "none" } : { cursor: "pointer" }}
+        onClickCapture={(e) => menu.eatSelectionClick(track.id, e)}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest("button")) return;
           playTrack(track);
@@ -120,9 +95,10 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
       active={current?.id === track.id}
       playing={current?.id === track.id && playing}
       liked={likedIds.has(track.id)}
+      selected={multi.has(track.id)}
       onPlay={() => playTrack(track)}
       onLike={() => toggle(track)}
-      onMore={(e) => setMenu({ x: e.clientX, y: e.clientY, track })}
+      onMore={(e) => menu.openRowMenu(track, e)}
     />
   );
 
@@ -204,73 +180,15 @@ export function GroupedTrackList({ results }: { results: GroupedSearchResult[] }
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      {results.map((r, i) =>
-        r.kind === "single" ? rowWrap(r.track, `s-${r.track.id}-${i}`, trackRowFor(r.track)) : groupCard(r, i),
-      )}
-
-      <Menu
-        open={menu !== null}
-        x={menu?.x}
-        y={menu?.y}
-        onClose={() => setMenu(null)}
-        items={
-          menu
-            ? [
-                { icon: "play", label: t("menu.playlist.play"), onClick: () => playTrack(menu.track) },
-                {
-                  icon: "heart",
-                  label: likedIds.has(menu.track.id) ? t("menu.catalog.unlike") : t("menu.catalog.like"),
-                  onClick: () => toggle(menu.track),
-                },
-                "-",
-                { icon: "list-music", label: t("menu.addToPlaylist"), onClick: () => openPlaylistPick(menu.track) },
-                { icon: "download", label: t("common.download"), onClick: () => void download(menu.track) },
-              ]
-            : []
-        }
-      />
-
-      <Dialog open={plPick !== null} title={t("web.trackList.choosePlaylist")} onClose={() => setPlPick(null)}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 300, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
-          {!loaded ? (
-            <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>{t("common.loading")}</span>
-          ) : playlists.length === 0 ? (
-            <span style={{ fontFamily: "var(--font-ui)", color: "var(--text-3)", padding: "var(--sp-2)" }}>
-              {t("web.trackList.noPlaylistsHint")}
-            </span>
-          ) : (
-            playlists.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => plPick && void addToPlaylist(p, plPick)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--sp-3)",
-                  padding: "var(--sp-2) var(--sp-3)",
-                  border: "none",
-                  borderRadius: "var(--r-sm)",
-                  background: "transparent",
-                  color: "var(--text-1)",
-                  fontFamily: "var(--font-ui)",
-                  fontSize: "var(--fs-body)",
-                  fontWeight: 500,
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <Icon name="list-music" size={18} color="var(--accent-text)" />
-                <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
-                <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{p.trackCount}</span>
-              </button>
-            ))
-          )}
-        </div>
-      </Dialog>
-    </div>
+    // Провайдер меню — свой у каждого списка (см. TrackList): у списка свои
+    // умения и своё выделение, общего стора здесь не нужно.
+    <ContextMenuProvider ctx={menu.abilities} apiRef={menu.apiRef} suppressNativeMenu={false}>
+      <div style={{ display: "flex", flexDirection: "column" }} onContextMenu={menu.openBlankMenu}>
+        {results.map((r, i) =>
+          r.kind === "single" ? rowWrap(r.track, `s-${r.track.id}-${i}`, trackRowFor(r.track)) : groupCard(r, i),
+        )}
+      </div>
+      {menu.overlay}
+    </ContextMenuProvider>
   );
 }

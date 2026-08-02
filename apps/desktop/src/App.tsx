@@ -75,6 +75,8 @@ import { ImportDialog } from "./shell/ImportDialog";
 import { JamDialog } from "./shell/JamDialog";
 import { JoinPlaylistDialog } from "./shell/JoinPlaylistDialog";
 import { PlaylistIconPicker } from "@muza/app";
+import { PlatformProvider } from "@muza/app/platform";
+import { createDesktopPlatform } from "./platform/desktopAdapter";
 import { ShareDialog } from "./shell/ShareDialog";
 import { HomeFeed } from "./views/HomeFeed";
 import { SearchView } from "./views/SearchView";
@@ -91,7 +93,21 @@ import { PluginFrames } from "./plugins/PluginFrames";
 import { pluginHost } from "./plugins/host";
 import { createPluginBridge, type PluginBridgeLive } from "./plugins/appBridge";
 
+/** Э2 веб-паритета (2026-08-02): вилка площадки вставляется в самом корне —
+ *  ВЫШЕ экрана входа (умения площадки от входа не зависят) и выше языка.
+ *  Обёртка ничего не рисует: в дереве появляется только провайдер контекста,
+ *  ни одного DOM-узла, ни одного стиля — картинка приложения не меняется. */
 export function App() {
+  // Один раз за жизнь окна: вилка спрашивает у площадки, что она умеет.
+  const platform = useMemo(() => createDesktopPlatform(), []);
+  return (
+    <PlatformProvider adapter={platform}>
+      <AppRoot />
+    </PlatformProvider>
+  );
+}
+
+function AppRoot() {
   const apiBaseUrl = useMemo(
     () =>
       resolveApiBaseUrl(

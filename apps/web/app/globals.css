@@ -451,8 +451,13 @@ a {
     grid-template-columns: 240px 1fr;
   }
 
+  /* !important — не украшение: панель «Сейчас играет» теперь общий экран из
+     @muza/app, и раскладку колонки (display:flex) он несёт инлайн-стилем, как
+     это делает приложение. Инлайн сильнее любого селектора, поэтому без
+     !important панель не пряталась бы на узком окне вовсе. Правило одно на
+     обе ветки — вторая ниже, в ландшафтной. */
   .np-panel {
-    display: none;
+    display: none !important;
   }
 }
 
@@ -535,10 +540,12 @@ a {
       calc(var(--w-navrail) + var(--safe-left) + var(--sp-2));
   }
 
+  /* !important — по той же причине, что в ветке ≤1199px выше: общий экран
+     панели несёт display инлайном. */
   .sidebar,
   .np-panel,
   .playerbar {
-    display: none;
+    display: none !important;
   }
 
   .main {

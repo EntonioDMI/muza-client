@@ -4,7 +4,9 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { LanguageProvider } from "@muza/app";
 import { comboFromEvent, isTypingTarget, matchAction, withDefaults } from "@muza/app/lib/hotkeys";
+import { PlatformProvider } from "@muza/app/platform";
 import { ThemeRoot } from "@muza/app/theme/ThemeRoot";
+import { webPlatform } from "./platform/webAdapter";
 import { LikesProvider, useLikes } from "./likes";
 import { PlayerProvider, usePlayer, usePosition } from "./player";
 import { PlaylistsProvider } from "./playlists";
@@ -144,8 +146,13 @@ export function AppHotkeys() {
   return null;
 }
 
+/** Э2 веб-паритета (2026-08-02): вилка площадки — самым внешним провайдером,
+ *  выше сессии и /login. Общий код из @muza/app спрашивает у неё умения
+ *  площадки (usePlatform); чего браузер не умеет — того в вилке просто нет,
+ *  и пункт/жест не появляется вовсе (см. src/platform/webAdapter.ts). */
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
+    <PlatformProvider adapter={webPlatform}>
     <SessionProvider>
       <PrefsProvider>
         <ThemedTree>
@@ -161,5 +168,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
         </ThemedTree>
       </PrefsProvider>
     </SessionProvider>
+    </PlatformProvider>
   );
 }

@@ -3,11 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Badge, Cover, Icon } from "@muza/ui";
-import type { PlaylistMeta } from "@muza/api-client";
+import { Badge, Button, Cover, Dialog, Icon, SearchInput } from "@muza/ui";
+import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
+import { ApiError, type PlaylistMeta } from "@muza/api-client";
 import { useT } from "@muza/app";
+import { moveItem } from "@muza/app/lib/dragEngine";
+import { DragLayer } from "@muza/app/shell/DragLayer";
+import { Sidebar, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
 import { getApi } from "../api";
-import { tracksLabel } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
 import { usePlaylists } from "../playlists";
@@ -17,7 +20,6 @@ import { useToast } from "../toast";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { NowPlayingPanel } from "./NowPlayingPanel";
 import { PlayerBar } from "./PlayerBar";
-import { PlaylistCover } from "./PlaylistCover";
 import { TRACK_DND_MIME } from "./TrackList";
 
 /** Каркас залогиненного веба. Живёт в layout группы (app) — плеер НЕ
@@ -28,114 +30,31 @@ import { TRACK_DND_MIME } from "./TrackList";
  *  играет» (автооткрытие); 900–1199px и планшет-портрет 700–899px — сайдбар +
  *  контент; телефон-портрет — нижняя навигация + мини-бар + полноэкранный
  *  now-playing; ландшафт высотой ≤480px — .bottomnav превращается в левый
- *  иконный рельс, мини-бар ужат. */
+ *  иконный рельс, мини-бар ужат.
+ *
+ *  Э3 веб-паритета (2026-08-02): боковая панель больше НЕ своя — это общая
+ *  @muza/app/shell/Sidebar, та же, что в приложении. Вместе с ней приехало то,
+ *  чего в вебе не было вообще: порядок плейлистов перетаскиванием за ручку-⠿
+ *  (жест на Pointer Events — работает и пальцем), закреплённые с булавкой,
+ *  подписки, приём трека на «Любимое» и подсветка цели. Плашка «Web» осталась
+ *  (просил владелец) — теперь пропом. */
 
 /* «Любимое» — НЕ пункт навигации, а особая первая строка блока плейлистов
-   (как FavoritesRow десктопа) — паритет шелла 2026-07-21. Подписи — media.nav.*
-   (реюз десктопного словаря, И5-веб 22.07), собираются в AppShell() ниже. */
+   (её рисует общая панель) — паритет шелла 2026-07-21. Подписи — media.nav.*
+   (реюз десктопного словаря, И5-веб 22.07). Иконки и ключи те же, что у
+   компоновки приложения (lib/navItems.ts NAV_ITEM_META), чтобы активная
+   вкладка выглядела одинаково в обоих клиентах. */
 const NAV_KEYS = [
   { href: "/home", icon: "home", labelKey: "home" as const },
   { href: "/search", icon: "search", labelKey: "search" as const },
   { href: "/library", icon: "library-big", labelKey: "library" as const },
-  { href: "/stats", icon: "bar-chart-3", labelKey: "stats" as const },
+  { href: "/stats", icon: "chart-line", labelKey: "stats" as const },
 ];
 
-/** Заливаемые глифы активной вкладки — зеркало NAV_FILLABLE десктопа
- *  (lib/navItems.ts): lucide рисует штрихом, активная вкладка — ЗАЛИТАЯ. */
+/** Заливаемые глифы активной вкладки — зеркало NAV_FILLABLE десктопа: lucide
+ *  рисует штрихом, активная вкладка — ЗАЛИТАЯ. Остался ради НИЖНЕЙ навигации
+ *  (телефон): у боковой панели это правило теперь своё, внутри @muza/app. */
 const NAV_FILLABLE = new Set(["heart", "home", "house", "library-big", "library"]);
-
-function NavLink({ href, icon, label, active }: { href: string; icon: string; label: string; active: boolean }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <Link
-      href={href}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "var(--sp-3)",
-        height: 48,
-        padding: "0 var(--sp-4)",
-        borderRadius: "var(--r-sm)",
-        background: active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
-        color: active || hover ? "var(--text-1)" : "var(--text-2)",
-        fontFamily: "var(--font-ui)",
-        fontSize: "var(--fs-body)",
-        fontWeight: active ? 600 : 500,
-        textDecoration: "none",
-        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
-      }}
-    >
-      {/* активная вкладка — залитая иконка, как в десктопе (Sidebar.tsx) */}
-      <Icon
-        name={icon}
-        size={20}
-        color={active ? "var(--accent-text)" : "currentColor"}
-        filled={active && NAV_FILLABLE.has(icon)}
-      />
-      {label}
-    </Link>
-  );
-}
-
-/** «Любимое» над плейлистами: сердце на фирменном градиенте глифа —
- *  зеркало FavoritesRow десктопа (Sidebar.tsx:296). */
-function FavoritesRow({ count, active }: { count: number; active: boolean }) {
-  const { t, lang } = useT();
-  const [hover, setHover] = useState(false);
-  return (
-    <Link
-      href="/favorites"
-      aria-label={t("media.nav.favorites")}
-      aria-current={active ? "page" : undefined}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "var(--sp-3)",
-        padding: "var(--sp-2)",
-        borderRadius: "var(--r-sm)",
-        textDecoration: "none",
-        background: active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
-        transition: "background var(--dur-fast) var(--ease-out)",
-      }}
-    >
-      <span
-        style={{
-          width: 40,
-          height: 40,
-          flex: "none",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: "var(--r-xs)",
-          // тот же фирменный градиент, что в десктопе и у глифа лого
-          background: "linear-gradient(160deg, #F76967 0%, #3B82F6 100%)",
-        }}
-      >
-        <Icon name="heart" size={20} color="#fff" filled />
-      </span>
-      <span style={{ minWidth: 0 }}>
-        <span
-          style={{
-            display: "block",
-            fontFamily: "var(--font-ui)",
-            fontSize: "var(--fs-body)",
-            fontWeight: 500,
-            color: "var(--text-1)",
-          }}
-        >
-          {t("media.nav.favorites")}
-        </span>
-        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-          {tracksLabel(count, lang)}
-        </span>
-      </span>
-    </Link>
-  );
-}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { session, ready } = useSession();
@@ -146,28 +65,110 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const notify = useToast();
   const router = useRouter();
   const pathname = usePathname();
-  const { t, lang } = useT();
+  const { t } = useT();
   const [mobileNp, setMobileNp] = useState(false);
-  /** плейлист под перетаскиваемым треком — подсветка drop-таргета */
-  const [dropPl, setDropPl] = useState<string | null>(null);
+  /** Порядок плейлистов, применённый оптимистично (перетаскиванием), пока
+   *  сервер не ответил. null — показываем то, что дал контекст. Провайдер
+   *  плейлистов общий на весь веб и своего «переставить» не умеет; заводить
+   *  его ради одного жеста не стали — копия живёт ровно здесь и умирает, как
+   *  только список перечитан с сервера (эффект ниже). */
+  const [optimistic, setOptimistic] = useState<PlaylistMeta[] | null>(null);
+  useEffect(() => setOptimistic(null), [playlists]);
+  const list = optimistic ?? playlists;
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
 
   useEffect(() => {
     if (ready && !session) router.replace("/login");
   }, [ready, session, router]);
 
-  /** Drop трека на плейлист сайдбара (DnD из любого списка). */
-  const dropOnPlaylist = async (e: React.DragEvent, pl: PlaylistMeta) => {
-    e.preventDefault();
-    setDropPl(null);
+  /** Строки панели: ровно та же раскладка признаков, что в приложении
+   *  (App.tsx → sidebarPlaylists). fixed = «в перетаскивание не входит»:
+   *  у подписок сервер не хранит позиций, а смысл закрепа — «случайно не
+   *  сдвинуть». */
+  const sidebarPlaylists: SidebarPlaylist[] = list.map((p) => ({
+    id: p.id,
+    name: p.name,
+    meta:
+      p.role === "follower"
+        ? p.available === false
+          ? t("sidebar.playlistMeta.hiddenByOwner")
+          : t("sidebar.playlistMeta.followedFrom", { count: p.trackCount, owner: p.ownerUsername })
+        : p.role === "collaborator"
+          ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername })
+          : p.collaboratorsCount > 0
+            ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
+            : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
+    shared: p.role === "collaborator" || p.collaboratorsCount > 0,
+    fixed: p.role === "follower" || p.pinned,
+    pinned: p.pinned,
+    dimmed: p.role === "follower" && p.available === false,
+    cover: p.iconCoverUrl ?? playlistIconSrc(p.icon) ?? undefined,
+  }));
+
+  /** Трек уронили на плейлист панели (перетаскиванием из любого списка). */
+  const dropOnPlaylist = async (playlistId: string, trackId: string) => {
+    const pl = list.find((p) => p.id === playlistId);
+    if (!pl) return;
     try {
-      const raw = e.dataTransfer.getData(TRACK_DND_MIME);
-      if (!raw) return;
-      const { id } = JSON.parse(raw) as { id: string };
-      await getApi().addPlaylistTrack(pl.id, id);
+      await getApi().addPlaylistTrack(playlistId, trackId);
       notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
       void reloadPlaylists();
     } catch (err) {
       notify(err instanceof Error ? err.message : t("toast.playlist.addFailed"), "x");
+    }
+  };
+
+  /** Новый порядок плейлистов после перетаскивания за ручку-⠿.
+   *
+   *  ⚠️ toIndex приходит в координатах УРЕЗАННОГО списка: в перетаскивание
+   *  панель отдаёт только подвижные строки (подписки и закреплённые
+   *  исключены). Складывать его с позицией из ПОЛНОГО списка нельзя — промах
+   *  равен числу исключённых, а закреплённые всегда сверху, так что промах
+   *  гарантирован: сдвиг на позицию молча не даёт ничего, а испорченный
+   *  порядок уходит на сервер и переживает перезапуск. Ровно эту ошибку
+   *  чинили в приложении 2026-08-02 (App.tsx → reorderPlaylists) — здесь она
+   *  не повторяется by design. */
+  const reorderPlaylists = async (draggedId: string, toIndex: number) => {
+    const movable = list.filter((p) => p.role !== "follower" && !p.pinned);
+    const from = movable.findIndex((p) => p.id === draggedId);
+    if (from < 0 || from === toIndex || toIndex < 0 || toIndex >= movable.length) return;
+    const moved = moveItem(movable, from, toIndex);
+    // Неподвижные остаются на СВОИХ местах в общем списке, подвижные
+    // перетасовываются только между своими слотами.
+    let k = 0;
+    const next = list.map((p) => (p.role !== "follower" && !p.pinned ? moved[k++] : p));
+    setOptimistic(next);
+    try {
+      await getApi().reorderPlaylists(next.map((p) => p.id));
+    } catch {
+      void reloadPlaylists(); // не сохранилось — вернём серверный порядок
+    }
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setCreateName("");
+  };
+
+  /** Создание с «+» у заголовка списка — как в приложении. Логика та же, что
+   *  на странице библиотеки: случайная свободная иконка, затем переход в
+   *  созданный плейлист. */
+  const createPlaylist = async () => {
+    const name = createName.trim();
+    if (!name) return;
+    setCreateBusy(true);
+    try {
+      const used = list.map((p) => p.icon).filter((v): v is string => Boolean(v));
+      const created = await getApi().createPlaylist(name, pickRandomPlaylistIcon(used));
+      await reloadPlaylists();
+      closeCreate();
+      router.push(`/playlist?id=${created.id}`);
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : t("toast.playlist.createFailed"), "x");
+    } finally {
+      setCreateBusy(false);
     }
   };
 
@@ -178,7 +179,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const npVisible = prefs.npOpen && Boolean(current);
 
   return (
-    // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь
+    // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь.
+    // DragLayer — слой внутреннего переноса (превью под курсором + реестр зон
+    // приёма). Он ОБЯЗАН быть выше панели (её строки — зоны приёма) и выше
+    // страниц (их списки — будущие источники переноса). Живёт здесь, а не в
+    // layout группы (app): layout — серверный компонент, а слой на хуках.
+    <DragLayer>
     <div className="shell">
       {/* Сценография: фирменный вид Muza — размытая обложка за интерфейсом.
           Картинку рисует Cover ДС, а не голый <img>, и это принципиально.
@@ -222,107 +228,54 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div className={npVisible ? "shell-grid with-np" : "shell-grid"}>
-        {/* Сайдбар (≥900px) */}
-        <aside className="zone sidebar">
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", padding: "var(--sp-1) var(--sp-3) var(--sp-5)" }}>
-            <img src="/glyph.svg" alt="" style={{ width: 24, height: 28 }} />
-            <span
-              style={{
-                fontFamily: "var(--font-display)",
-                fontWeight: 600,
-                fontSize: 19,
-                letterSpacing: "var(--ls-display)",
-                color: "var(--text-1)",
-              }}
-            >
-              Muza
-            </span>
-            <Badge>web</Badge>
-          </div>
-          <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {NAV_KEYS.map((n) => (
-              <NavLink key={n.href} href={n.href} icon={n.icon} label={t(`media.nav.${n.labelKey}`)} active={pathname === n.href} />
-            ))}
-          </nav>
-          <span
-            style={{
-              fontSize: "var(--fs-caption)",
-              fontWeight: 600,
-              letterSpacing: "var(--ls-caps)",
-              textTransform: "uppercase",
-              color: "var(--text-3)",
-              padding: "var(--sp-5) var(--sp-3) var(--sp-2)",
+        {/* Сайдбар (≥900px).
+            Обёртка нужна ровно за двумя вещами: она — ячейка сетки и она же
+            прячет панель на телефоне (.sidebar{display:none} в медиа-ветках).
+            Прятать саму панель классом нельзя: её display:flex стоит инлайном
+            (она общая и не вправе рассчитывать на чужие классы), а инлайн
+            сильнее любого правила таблицы. Свои фон и отступы обёртка гасит —
+            панель несёт их сама, иначе была бы двойная рамка. */}
+        <div className="zone sidebar" style={{ padding: 0, background: "transparent" }}>
+          <Sidebar
+            logoSrc="/glyph.svg"
+            badge={<Badge>web</Badge>}
+            style={{ flex: 1, minHeight: 0 }}
+            nav={NAV_KEYS.map((n) => ({ key: n.href, icon: n.icon, label: t(`media.nav.${n.labelKey}`) }))}
+            activeNavKey={pathname}
+            onSelectNav={(href) => router.push(href)}
+            playlists={sidebarPlaylists}
+            favoritesCount={favorites.length}
+            favoritesActive={pathname === "/favorites"}
+            onOpenFavorites={() => router.push("/favorites")}
+            onCreatePlaylist={() => setCreateOpen(true)}
+            onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
+            onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
+            onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
+            // Мост к HTML5-перетаскиванию: строки треков в вебе пока таскаются
+            // им (TrackList.tsx), а не общим pointer-слоем. Когда списки
+            // переедут на @muza/app, этот проп можно снять — приём тогда
+            // пойдёт по родному пути, как в приложении.
+            externalDrop={{
+              accepts: (e) => e.dataTransfer.types.includes(TRACK_DND_MIME),
+              trackId: (e) => {
+                const raw = e.dataTransfer.getData(TRACK_DND_MIME);
+                if (!raw) return null;
+                try {
+                  return (JSON.parse(raw) as { id?: string }).id ?? null;
+                } catch {
+                  return null;
+                }
+              },
             }}
-          >
-            {t("sidebar.playlistsHeading")}
-          </span>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, overflowY: "auto", minHeight: 0, scrollbarWidth: "none" }}>
-            {/* «Любимое» — всегда первой строкой, как в приложении */}
-            <FavoritesRow count={favorites.length} active={pathname === "/favorites"} />
-            {playlists.length === 0 ? (
+            emptyHint={
               <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", padding: "0 var(--sp-3)" }}>
                 {t("web.nav.playlistsEmptyHint")}
               </span>
-            ) : (
-              playlists.map((p) => (
-                <Link
-                  key={p.id}
-                  href={`/playlist?id=${p.id}`}
-                  onDragOver={(e) => {
-                    if (!e.dataTransfer.types.includes(TRACK_DND_MIME)) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "copy";
-                    setDropPl(p.id);
-                  }}
-                  onDragLeave={() => setDropPl((v) => (v === p.id ? null : v))}
-                  onDrop={(e) => void dropOnPlaylist(e, p)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "var(--sp-3)",
-                    padding: "var(--sp-2)",
-                    borderRadius: "var(--r-sm)",
-                    textDecoration: "none",
-                    background: dropPl === p.id ? "var(--accent-soft)" : undefined,
-                    outline: dropPl === p.id ? "var(--focus-ring)" : undefined,
-                    outlineOffset: -2,
-                    transition: "background var(--dur-fast) var(--ease-out)",
-                  }}
-                >
-                  <PlaylistCover
-                    icon={p.icon}
-                    coverUrl={p.iconCoverUrl}
-                    shared={p.role === "collaborator" || p.collaboratorsCount > 0}
-                    size={40}
-                    iconSize={18}
-                  />
-                  <span style={{ minWidth: 0 }}>
-                    <span
-                      style={{
-                        display: "block",
-                        fontFamily: "var(--font-ui)",
-                        fontSize: "var(--fs-body)",
-                        fontWeight: 500,
-                        color: "var(--text-1)",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {p.name}
-                    </span>
-                    <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-                      {tracksLabel(p.trackCount, lang)}
-                    </span>
-                  </span>
-                </Link>
-              ))
-            )}
-          </div>
-          <div style={{ marginTop: "auto", paddingTop: "var(--sp-3)" }}>
-            <NavLink href="/settings" icon="settings" label={t("settings.title")} active={pathname === "/settings"} />
-          </div>
-        </aside>
+            }
+            onOpenSettings={() => router.push("/settings")}
+            settingsActive={pathname === "/settings"}
+          />
+        </div>
 
         {/* Контент */}
         <main key={pathname} className="zone main muza-view">
@@ -357,7 +310,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ))}
       </nav>
 
+      <Dialog
+        open={createOpen}
+        title={t("app.newPlaylistName")}
+        onClose={closeCreate}
+        actions={
+          <>
+            <Button variant="ghost" size="lg" onClick={closeCreate}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" size="lg" icon="check" disabled={createBusy || !createName.trim()} onClick={() => void createPlaylist()}>
+              {createBusy ? t("common.busy") : t("app.newPlaylistDialog.create")}
+            </Button>
+          </>
+        }
+      >
+        <div
+          style={{ minWidth: 280 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void createPlaylist();
+          }}
+        >
+          <SearchInput value={createName} onChange={setCreateName} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
+        </div>
+      </Dialog>
+
       {mobileNp ? <MobileNowPlaying onClose={() => setMobileNp(false)} /> : null}
     </div>
+    </DragLayer>
   );
 }
