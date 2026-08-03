@@ -45,7 +45,7 @@ describe("useWindowVisible", () => {
   it("подписывается на то же имя события, что шлёт Rust", async () => {
     const { useWindowVisible } = await freshModule();
     renderHook(() => useWindowVisible());
-    expect(listenMock).toHaveBeenCalledWith("muza://window-visible", expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith("muza-window-visible", expect.any(Function));
   });
 
   it("false гасит, true возвращает обратно", async () => {

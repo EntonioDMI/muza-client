@@ -33,7 +33,7 @@ import { useSyncExternalStore } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /** Имя события. Зеркало `EVENT` из src-tauri/src/window_visibility.rs. */
-const EVENT = "muza://window-visible";
+const EVENT = "muza-window-visible";
 
 let visible = true;
 /** Подписчики React. Подписка на нативное событие ОДНА на всё приложение —

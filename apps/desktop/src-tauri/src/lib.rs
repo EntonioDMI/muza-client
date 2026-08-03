@@ -11,6 +11,7 @@ mod state_kv;
 mod sysproxy;
 mod tray;
 mod window_stage;
+mod window_visibility;
 
 use tauri::Manager;
 
@@ -60,6 +61,10 @@ pub fn run() {
             // Уборка брошенного стейджинга плагинов (закрыли окно согласия,
             // крэш) — живых стейджингов на старте не бывает, см. plugins::init
             plugins::init(app.handle());
+            // Наблюдение «видно ли окно на самом деле»: страница в WebView2 про
+            // свёрнутое окно не узнаёт вовсе (замер — шапка модуля), поэтому
+            // состояние спрашиваем у системы и шлём фронту событием.
+            window_visibility::spawn(app.handle());
             // Иконка трея; видимость и «закрыть = свернуть» задаёт фронт из prefs
             tray::init(app.handle())?;
             Ok(())
@@ -116,6 +121,7 @@ pub fn run() {
             miniplayer::miniplayer_hide,
             window_stage::window_auth_compact,
             window_stage::window_auth_expand,
+            window_visibility::window_visible_now,
             plugins::list_installed,
             plugins::set_plugin_enabled,
             plugins::uninstall_plugin,

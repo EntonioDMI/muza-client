@@ -110,8 +110,8 @@ function seedAnimatedBackground() {
 
 /** Доставить нагрузку тому обработчику, которого App отдал в listen. */
 function emitVisible(value: boolean) {
-  const call = h.listen.mock.calls.find((c) => c[0] === "muza://window-visible");
-  if (!call) throw new Error("App не подписался на muza://window-visible");
+  const call = h.listen.mock.calls.find((c) => c[0] === "muza-window-visible");
+  if (!call) throw new Error("App не подписался на muza-window-visible");
   act(() => (call[1] as (e: { payload: boolean }) => void)({ payload: value }));
 }
 

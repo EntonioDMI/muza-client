@@ -68,5 +68,13 @@ getrandom = "0.3"
 # Windows-таргет. Версия 0.61 уже разрешена в дереве через tao/wry/tauri
 # (cargo tree -i windows@0.61.3) — вторую мажорную не плодим. Win32_Foundation
 # несёт GlobalFree/HGLOBAL (освобождение строк WinHTTP-конфига).
+#
+# Win32_UI_WindowsAndMessaging добавлен 03.08 для window_visibility.rs: страница
+# в WebView2 НЕ узнаёт, что окно свёрнуто (замер — docs/subsystems/
+# производительность-интерфейса.md), поэтому состояние окна спрашиваем у системы.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Networking_WinHttp", "Win32_Foundation"] }
+windows = { version = "0.61", features = [
+  "Win32_Networking_WinHttp",
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
