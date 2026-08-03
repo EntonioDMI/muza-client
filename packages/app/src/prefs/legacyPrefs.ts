@@ -23,11 +23,28 @@ export const LEGACY_ENUM_TO_NUMBER: Record<string, Record<string, number>> = {
   animSpeed: { fast: 60, normal: 100, slow: 170 },
 };
 
+/** Диапазон числовой настройки. `offAbove` — значение выше max означает не
+ *  «зажать до max», а сентинел RADIUS_OVERRIDE_OFF («как в ДС»). */
+export interface NumberRange {
+  min: number;
+  max: number;
+  offAbove?: boolean;
+}
+
 /** Диапазоны клампинга (мусор из чужих тем не должен ломать вид).
  *  Для radiusControls/Fields значения выше max трактуются как сентинел OFF.
  *  T7: углы «до упора» — radiusTiles/Panels 0–200% (было 50–160), radius-
- *  Controls/Fields минимум 0px (было 6px, max/сентинел не менялись). */
-const RANGES: Record<string, { min: number; max: number; offAbove?: boolean }> = {
+ *  Controls/Fields минимум 0px (было 6px, max/сентинел не менялись).
+ *
+ *  ЭКСПОРТИРУЕТСЯ (2026-08-03): границы нужны не только миграции строковых
+ *  пресетов, но и фильтру чужих тем — themes.ts достраивает из этой таблицы
+ *  THEME_NUMBER_RANGES на ВСЕ числовые ключи темы. Вторая таблица тех же чисел
+ *  разъехалась бы с этой на первой же правке диапазона, поэтому таблица ОДНА.
+ *  Отсюда же чинится строка radiusTabs: этот ключ строковым пресетом никогда не
+ *  был, в LEGACY_ENUM_TO_NUMBER его нет — а migrateLegacyValue зовут ТОЛЬКО для
+ *  ключей оттуда, так что до правки его диапазон был недостижим. Теперь его
+ *  читает sanitizeTokens по общей числовой ветке. */
+export const PREF_RANGES: Record<string, NumberRange> = {
   radiusTiles: { min: 0, max: 200 },
   radiusPanels: { min: 0, max: 200 },
   radiusControls: { min: 0, max: 26, offAbove: true },
@@ -40,17 +57,22 @@ const RANGES: Record<string, { min: number; max: number; offAbove?: boolean }> =
 
 export const MIGRATED_PREF_KEYS = Object.keys(LEGACY_ENUM_TO_NUMBER);
 
+/** Число в границы диапазона; не число, NaN или Infinity → undefined
+ *  (звонящий подставляет дефолт). Отдельной функцией, потому что зовут её из
+ *  двух мест: миграция старых сохранений и фильтр чужих тем. */
+export function clampToRange(range: NumberRange, value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (range.offAbove && value > range.max) return RADIUS_OVERRIDE_OFF;
+  return Math.min(range.max, Math.max(range.min, Math.round(value)));
+}
+
 /** Строка-пресет или число → валидное число; не распозналось → undefined
  *  (звонящий подставляет дефолт). */
 export function migrateLegacyValue(key: string, value: unknown): number | undefined {
-  const range = RANGES[key];
+  const range = PREF_RANGES[key];
   if (!range) return undefined;
   if (typeof value === "string") {
     return LEGACY_ENUM_TO_NUMBER[key]?.[value];
   }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    if (range.offAbove && value > range.max) return RADIUS_OVERRIDE_OFF;
-    return Math.min(range.max, Math.max(range.min, Math.round(value)));
-  }
-  return undefined;
+  return clampToRange(range, value);
 }

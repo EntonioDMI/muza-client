@@ -51,6 +51,41 @@ describe("mergePrefs", () => {
     expect(mergePrefs({ language: "en" }).language).toBe("en");
   });
 
+  // ── Битый/чужой профиль (аудит 2026-08-03) ──────────────────────────
+  // Профиль переносимый (шапка load.ts), то есть вход извне штатный. Раньше
+  // слияние было спредом, и в Prefs попадало что угодно: `statsBlocks: null`
+  // роняло страницу статистики, `rowShow: null` — «Кастомизацию».
+  it("null вместо объекта/массива не проезжает: поле берёт дефолт", () => {
+    const prefs = mergePrefs({ rowShow: null, statsBlocks: null, sourcesEnabled: null, eqBands: null } as never);
+    expect(prefs.rowShow).toEqual(DEFAULT_PREFS.rowShow);
+    expect(prefs.statsBlocks).toEqual(DEFAULT_PREFS.statsBlocks);
+    expect(prefs.sourcesEnabled).toEqual(DEFAULT_PREFS.sourcesEnabled);
+    expect(prefs.eqBands).toEqual(DEFAULT_PREFS.eqBands);
+  });
+
+  it("подмена вида значения не проезжает (число ↔ строка, массив ↔ объект)", () => {
+    const prefs = mergePrefs({ uiScale: "большой", anims: "да", statsBlocks: {}, rowShow: [] } as never);
+    expect(prefs.uiScale).toBe(DEFAULT_PREFS.uiScale);
+    expect(prefs.anims).toBe(DEFAULT_PREFS.anims);
+    expect(prefs.statsBlocks).toEqual(DEFAULT_PREFS.statsBlocks);
+    expect(prefs.rowShow).toEqual(DEFAULT_PREFS.rowShow);
+  });
+
+  it("битые хоткеи не оставляют плашку клавиши без строки", () => {
+    const prefs = mergePrefs({ hotkeys: { playPause: 5, next: null, prev: "KeyZ" } } as never);
+    expect(prefs.hotkeys.playPause).toBe(DEFAULT_PREFS.hotkeys.playPause);
+    expect(prefs.hotkeys.next).toBe(DEFAULT_PREFS.hotkeys.next);
+    expect(prefs.hotkeys.prev).toBe("KeyZ");
+    expect(Object.values(prefs.hotkeys).every((v) => typeof v === "string")).toBe(true);
+  });
+
+  it("язык не из словаря → язык площадки (иначе интерфейс без словаря)", () => {
+    expect(mergePrefs({ language: "de" } as never).language).toBe(DEFAULT_PREFS.language);
+    expect(mergePrefs({ language: 7 } as never).language).toBe(DEFAULT_PREFS.language);
+    // а вот отсутствие поля — по-прежнему старый профиль, ему «ru»
+    expect(mergePrefs({ blur: 1 }).language).toBe("ru");
+  });
+
   it("base главнее DEFAULT_PREFS, но сохранённое главнее base (профиль площадки)", () => {
     const webBase = { ...DEFAULT_PREFS, bgType: "cover" as const };
     expect(mergePrefs({ blur: 10 }, webBase).bgType).toBe("cover");

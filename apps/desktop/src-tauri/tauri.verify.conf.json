@@ -1,7 +1,0 @@
-{
-  "identifier": "lol.muza.app.verify",
-  "build": {
-    "devUrl": "http://localhost:1421",
-    "beforeDevCommand": "pnpm exec vite --port 1421 --strictPort"
-  }
-}

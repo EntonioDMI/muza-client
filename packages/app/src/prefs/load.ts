@@ -15,8 +15,8 @@
  *  ничего не ломает. Вложенные объекты мерджатся на уровень глубже по той же
  *  причине (иначе новое под-поле теряло бы соседей). */
 
-import { resolveMigratedLanguage } from "../i18n";
-import { withDefaults } from "../lib/hotkeys";
+import { LANGS, resolveMigratedLanguage, type Lang } from "../i18n";
+import { withDefaults, type HotkeyAction } from "../lib/hotkeys";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./legacyPrefs";
 import { DEFAULT_PREFS, type Prefs } from "./types";
 
@@ -30,6 +30,37 @@ export const PREFS_KEY = "muza.prefs.v1";
  *  типов (строковые пресеты вместо чисел). Всё это разбирается ниже. */
 export type StoredPrefs = Partial<Prefs> & { bgCover?: boolean };
 
+/** НАЛОЖИТЬ СОХРАНЁННОЕ НА ДЕФОЛТЫ, СВЕРЯЯ ВИД ЗНАЧЕНИЯ (2026-08-03).
+ *
+ *  Профиль задуман переносимым (шапка файла) — значит, вход извне тут штатный,
+ *  а не экзотика: файл правят руками, приносят с чужой машины, пишут скриптом.
+ *  До этой правки слияние было простым спредом, и в Prefs попадало ЧТО УГОДНО:
+ *  `"statsBlocks": null` роняло под-экран «Статистика» и страницу статистики
+ *  (lib/statsBlocks.ts итерировал список без защиты), `"rowShow": null` —
+ *  «Кастомизацию». Отдельные поля валидировались ниже по функции, но списком
+ *  «какие вспомнили», а дырой оказывалось как раз невспомненное.
+ *
+ *  Правило одно на все поля: значение берётся, только если оно ТОГО ЖЕ ВИДА,
+ *  что дефолт (массив ↔ массив, объект ↔ объект, число ↔ число). Не совпало —
+ *  поле берёт дефолт площадки, как будто его в сохранении не было. Ключи,
+ *  которых в модели нет вовсе (bgCover старых профилей), сюда не переезжают —
+ *  их разбирают миграции ниже. */
+function typedOverlay(stored: StoredPrefs, base: Prefs): Prefs {
+  const defaults = base as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...defaults };
+  const src = stored as Record<string, unknown>;
+  for (const key of Object.keys(defaults)) {
+    const v = src[key];
+    if (v === undefined) continue;
+    const d = defaults[key];
+    if (d !== null && typeof d === "object") {
+      if (v === null || typeof v !== "object" || Array.isArray(v) !== Array.isArray(d)) continue;
+    } else if (typeof v !== typeof d) continue;
+    out[key] = v;
+  }
+  return out as unknown as Prefs;
+}
+
 /** Слить сохранённое с дефолтами и прогнать миграции.
  *
  *  `base` — профиль дефолтов ЭТОЙ площадки: приложение отдаёт DEFAULT_PREFS,
@@ -37,19 +68,33 @@ export type StoredPrefs = Partial<Prefs> & { bgCover?: boolean };
  *  Значение из сохранения всегда главнее base: приехавший профиль не
  *  переписывается предпочтениями площадки. */
 export function mergePrefs(stored: StoredPrefs, base: Prefs = DEFAULT_PREFS): Prefs {
-  const prefs = { ...base, ...stored } as Prefs;
+  const prefs = typedOverlay(stored, base);
   // миграция Stage 6: старый bgCover=true → bgType="cover"
   if (stored.bgCover && stored.bgType === undefined) prefs.bgType = "cover";
-  // вложенные объекты мерджатся глубже: новое под-поле не теряет соседей
-  prefs.sourcesEnabled = { ...base.sourcesEnabled, ...stored.sourcesEnabled };
-  prefs.rowShow = { ...base.rowShow, ...stored.rowShow };
+  // вложенные объекты мерджатся глубже: новое под-поле не теряет соседей.
+  // Спред здесь идёт от УЖЕ проверенного значения (typedOverlay выше отбросил
+  // null и не-объекты), а не напрямую от stored.
+  prefs.sourcesEnabled = { ...base.sourcesEnabled, ...prefs.sourcesEnabled };
+  prefs.rowShow = { ...base.rowShow, ...prefs.rowShow };
   // хоткеи — так же: новое действие (напр. T16 navBack/navForward) не теряется
-  // в старых сохранениях, где его ещё не было (иначе бинд молча пуст, "—" в хелпе)
-  prefs.hotkeys = withDefaults(stored.hotkeys);
+  // в старых сохранениях, где его ещё не было (иначе бинд молча пуст, "—" в хелпе).
+  // Не-строковые бинды выбрасываются: сочетание печатает formatCombo, число или
+  // null превратились бы в мусор на плашке клавиши в справке.
+  prefs.hotkeys = withDefaults(
+    Object.fromEntries(Object.entries(prefs.hotkeys).filter(([, v]) => typeof v === "string")) as Partial<
+      Record<HotkeyAction, string>
+    >,
+  );
   // T28 (i18n): раз мы здесь, сохранение СУЩЕСТВОВАЛО (первый запуск в
   // loadPrefs ниже до слияния не доходит) — см. i18n/index.tsx::
   // resolveMigratedLanguage для полного обоснования «старый профиль → ru».
-  prefs.language = resolveMigratedLanguage(stored.language);
+  // Язык не из словаря (чужой/битый профиль) — как будто площадка своё и
+  // оставила: интерфейс без словаря показывал бы голые ключи строк.
+  prefs.language = LANGS.includes(stored.language as Lang)
+    ? (stored.language as Lang)
+    : stored.language === undefined
+      ? resolveMigratedLanguage(undefined)
+      : base.language;
   // миграция «пресеты → ползунки»: строковые значения старых сохранений
   // («sharper», «compact»…) конвертируются в числа, мусор — к дефолту
   const bag = prefs as unknown as Record<string, unknown>;

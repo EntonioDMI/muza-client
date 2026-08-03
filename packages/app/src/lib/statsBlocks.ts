@@ -18,15 +18,21 @@ export interface StatsBlockPref {
 }
 
 /** Сохранённый список → полный: чужие ключи выбрасываются, отсутствующие
- *  (новые блоки будущих версий) дописываются в конец включёнными. */
-export function normalizeStatsBlocks(saved: StatsBlockPref[]): StatsBlockPref[] {
+ *  (новые блоки будущих версий) дописываются в конец включёнными.
+ *
+ *  Вход не обязан быть массивом объектов. Профиль настроек переносимый
+ *  (prefs/load.ts), и `"statsBlocks": null` в нём роняло `for…of` — а вместе с
+ *  ним и под-экран «Статистика», и всю страницу статистики. У соседей по модели
+ *  (lib/barButtons.ts, lib/navItems.ts) такая защита стояла с самого начала,
+ *  здесь её просто забыли; элементы проверяются по той же причине. */
+export function normalizeStatsBlocks(saved: readonly StatsBlockPref[]): StatsBlockPref[] {
   const known = new Set<string>(STATS_BLOCK_KEYS);
   const seen = new Set<string>();
   const out: StatsBlockPref[] = [];
-  for (const b of saved) {
-    if (!known.has(b.key) || seen.has(b.key)) continue;
+  for (const b of Array.isArray(saved) ? saved : []) {
+    if (!b || typeof b !== "object" || !known.has(b.key) || seen.has(b.key)) continue;
     seen.add(b.key);
-    out.push({ key: b.key, on: b.on });
+    out.push({ key: b.key, on: b.on === true });
   }
   for (const key of STATS_BLOCK_KEYS) {
     if (!seen.has(key)) out.push({ key, on: true });
