@@ -14,6 +14,7 @@ import { loadPrefs, PREFS_KEY } from "@muza/app/prefs/load";
 // Общий движок темы: профиль настроек → CSS-переменные корня, одни и те же
 // формулы у приложения и у веба (см. шапку themeVars.ts).
 import { buildThemeVars } from "@muza/app/theme/themeVars";
+import { backdropViewFromPrefs } from "@muza/app/prefs/backdrop";
 import { LanguageProvider, translate, type TParams, type TranslationKey } from "./i18n";
 import { compactForAuth, expandAfterAuth, shouldAnimateStage } from "./lib/authWindowStage";
 import { devApiHost } from "./lib/devApiHost";
@@ -1691,6 +1692,11 @@ function Player({
   // протухнет на следующей добавленной настройке: человек дёрнет новый
   // ползунок — и не произойдёт НИЧЕГО, пока он не тронет какую-нибудь другую
   // настройку. Целый prefs ошибается в сторону лишнего пересчёта — верную.
+  //
+  // Фон караоке: собирается из настроек ОДИН раз на изменение профиля, а не на
+  // каждый рендер — иначе новый объект пропа заставлял бы оверлей перерисовывать
+  // задник на каждый тик позиции, то есть ровно то, от чего мы только что ушли.
+  const karaokeBackdrop = useMemo(() => backdropViewFromPrefs(prefs, "scene"), [prefs]);
   const rootStyle = useMemo(
     () =>
       ({
@@ -2747,6 +2753,11 @@ function Player({
       <PositionScope store={posStore} live={expanded}>{(pos) => (
       <ListeningMode
         open={expanded}
+        // Фон караоке — СВОЙ, а не тот же, что у интерфейса (заявка владельца
+        // 03.08: «основной фон и фон в режиме караоке — разные вещи»). Значение
+        // по умолчанию — обложка трека, поэтому у того, кто ничего не настраивал,
+        // вид не меняется. Разбор веток — packages/app/src/prefs/backdrop.ts.
+        backdrop={karaokeBackdrop}
         track={track}
         lyrics={lyrics}
         lyricsLoading={lyricsLoading}
