@@ -55,6 +55,10 @@ const EXPECTED_ALLOWED_HTTP_LITERALS = [
 const EXPECTED_MAIN_PERMISSIONS = [
   "core:default",
   "core:window:allow-start-dragging",
+  // Своя полоса заголовка (03.08) — дубль эталона намеренный, см. шапку файла.
+  "core:window:allow-minimize",
+  "core:window:allow-toggle-maximize",
+  "core:window:allow-close",
   "dialog:allow-open",
   "dialog:allow-save",
   "autostart:default",
@@ -190,6 +194,30 @@ describe("API environment and exact CSP contracts", () => {
     ];
     for (const csp of variants) {
       assert.throws(() => validateTauriConfig({ app: { security: { csp } } }), /production CSP/);
+    }
+  });
+
+  // Своя полоса заголовка живёт в паре с двумя полями окна "main". Оба здесь
+  // проверяются на реальном конфиге и по отдельности на мутациях: снятый
+  // shadow — это окно, которое не тянется мышью ни за один край, и никакой
+  // другой гейт этого не увидит (см. validateMainWindowFrame).
+  test("requires the frameless main window to keep decorations:false and shadow:true", () => {
+    const base = readJson(baseConfigPath);
+    const main = base.app.windows.find((w) => w.label === "main");
+    assert.equal(main.decorations, false);
+    assert.equal(main.shadow, true);
+    assert.doesNotThrow(() => validateTauriConfig(base));
+
+    for (const [mutate, re] of [
+      [(v) => { delete v.app.windows.find((w) => w.label === "main").shadow; }, /shadow:true/],
+      [(v) => { v.app.windows.find((w) => w.label === "main").shadow = false; }, /shadow:true/],
+      [(v) => { delete v.app.windows.find((w) => w.label === "main").decorations; }, /decorations:false/],
+      [(v) => { v.app.windows.find((w) => w.label === "main").decorations = true; }, /decorations:false/],
+      [(v) => { v.app.windows = v.app.windows.filter((w) => w.label !== "main"); }, /main window missing/],
+    ]) {
+      const invalid = clone(base);
+      mutate(invalid);
+      assert.throws(() => validateTauriConfig(invalid), re);
     }
   });
 

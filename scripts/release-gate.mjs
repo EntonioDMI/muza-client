@@ -48,6 +48,13 @@ const EXPECTED_ASSET_PROTOCOL = { enable: true, scope: ["$APPDATA/audio-cache/**
 const EXPECTED_MAIN_PERMISSIONS = [
   "core:default",
   "core:window:allow-start-dragging",
+  // Три права своей полосы заголовка (03.08): системной рамки у окна больше
+  // нет ("decorations": false), кнопки рисует приложение — packages/app/src/
+  // shell/TitleBar.tsx. Двойной клик по полосе идёт мимо этого списка:
+  // internal_toggle_maximize входит в core:default.
+  "core:window:allow-minimize",
+  "core:window:allow-toggle-maximize",
+  "core:window:allow-close",
   "dialog:allow-open",
   "dialog:allow-save",
   "autostart:default",
@@ -118,6 +125,21 @@ export function validateTauriConfig(config) {
   if (!isDeepStrictEqual(config.plugins?.updater?.endpoints, EXPECTED_UPDATER_ENDPOINTS)) {
     throw new Error("production updater endpoints mismatch");
   }
+  validateMainWindowFrame(config);
+}
+
+// Рамка главного окна: своя полоса заголовка (03.08) работает ТОЛЬКО в паре
+// decorations:false + shadow:true, и вторая половина пары не выглядит нужной —
+// её легко снять «как лишнюю». Цена ошибки в JSON без комментариев: `shadow`
+// на Windows 11 даёт окну без рамки скруглённые углы И родные зоны изменения
+// размера за краями. Снял — окно перестаёт тянуться мышью совсем, а собирается
+// и запускается при этом молча зелёным. Развёрнутое объяснение — в шапке
+// packages/app/src/shell/TitleBar.tsx.
+function validateMainWindowFrame(config) {
+  const main = (config.app?.windows ?? []).find((w) => w?.label === "main");
+  if (!main) throw new Error("production main window missing");
+  if (main.decorations !== false) throw new Error("production main window must set decorations:false");
+  if (main.shadow !== true) throw new Error("production main window must set shadow:true (rounded corners + resize borders)");
 }
 
 export function validateDevTauriOverlay(base, overlay) {

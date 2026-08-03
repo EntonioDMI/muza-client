@@ -19,6 +19,8 @@
         "minWidth": 1024,
         "minHeight": 700,
         "center": true,
+        "decorations": false,
+        "shadow": true,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --use-fake-ui-for-media-stream --autoplay-policy=no-user-gesture-required"
       },
       {

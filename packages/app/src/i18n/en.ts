@@ -1556,6 +1556,17 @@ export const en = {
     },
   },
 
+  // ── Своя полоса заголовка (03.08): shell/TitleBar.tsx. Подписи не видны
+  //    глазом — они для скринридера и голосового управления. Слово «окно» в
+  //    каждой НЕ лишнее: голые «Свернуть»/«Закрыть» уже заняты караоке и
+  //    очередью, и без уточнения человек не понимает, что именно свернётся ─
+  window: {
+    minimize: "Minimize window",
+    maximize: "Maximize window",
+    restore: "Restore window size",
+    close: "Close window",
+  },
+
   // ── Мини-плеер (T34a): mini/MiniPlayer.tsx — отдельный webview, вне
   //    LanguageProvider; строки читаются через translate(prefs.language, …) ─
   mini: {

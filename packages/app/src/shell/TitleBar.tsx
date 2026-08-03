@@ -1,0 +1,161 @@
+/** ВЕРХНЯЯ ПОЛОСА ОКНА — своя вместо системной (заявка владельца 03.08.2026:
+ *  «серые полоски выбиваются из общего вида, как у Discord — под свой стиль»).
+ *
+ *  ⚠️⚠️ САМОЕ ВАЖНОЕ, ЧТО НАДО ЗНАТЬ ПРО ЭТУ ПОЛОСУ: она работает В ПАРЕ с
+ *  двумя строчками в apps/desktop/src-tauri/tauri.conf.json у окна "main":
+ *
+ *      "decorations": false,   ← убирает системную рамку, чтобы была видна эта
+ *      "shadow": true          ← ⛔ НЕ УБИРАТЬ, это не косметика ⛔
+ *
+ *  `shadow` у окна БЕЗ рамки на Windows 11 даёт ДВЕ вещи, которых иначе нет
+ *  вовсе (Tauri 2.3.0+):
+ *   1) СКРУГЛЁННЫЕ УГЛЫ окна — ровно то, что просил владелец. Своим CSS их не
+ *      сделать: скругляется контур ОКНА, а не страницы внутри него.
+ *   2) РОДНЫЕ ЗОНЫ ИЗМЕНЕНИЯ РАЗМЕРА за пределами клиентской области — те
+ *      несколько пикселей по краям и углам, за которые окно тянут мышью.
+ *      Без `shadow` их нет: окно перестаёт тянуться совсем, ни за край, ни за
+ *      угол. Это не «мелочь оформления», это неработающее окно.
+ *  Плата за `shadow` — рамка в 1px по контуру окна (документация Tauri про
+ *  Windows). У нас она гасится тем, что фон окна (--bg-0) тёмный, а сама
+ *  рамка тонкая и совпадает с тенью; проверено пикселями 03.08.
+ *
+ *  ЧТО ЧЕСТНО ПОТЕРЯНО вместе с системной рамкой: всплывающее меню раскладок
+ *  Windows 11 (Snap Layouts) при наведении на «развернуть». Вернуть его можно
+ *  только перехватом системных сообщений WM_NCHITTEST в Rust — сознательно не
+ *  делали. Сами раскладки живы: Win+←/→ и перетаскивание к краю работают.
+ *
+ *  ПОЧЕМУ КОМПОНЕНТ В ОБЩЕМ ПАКЕТЕ, А ДЕЙСТВИЯ — ПРОПАМИ. В packages/** нельзя
+ *  импортировать `@tauri-apps/*` (веб такой модуль не соберёт — см. шапку
+ *  platform/types.ts). Поэтому свернуть/развернуть/закрыть приходят пропами, а
+ *  настоящие вызовы окна живут в apps/desktop/src/lib/windowControls.ts. У
+ *  вкладки браузера своей рамки нет и быть не может — веб этот компонент
+ *  просто не рендерит.
+ *
+ *  ПЕРЕТАСКИВАНИЕ. `data-tauri-drag-region="deep"` на корне: тащится вся
+ *  полоса, любой её вложенной точкой. Кнопки при этом НЕ тащат окно и без
+ *  единой строчки от нас — обработчик Tauri (src/window/scripts/drag.js)
+ *  идёт от цели события вверх и на первом же <button> без атрибута
+ *  возвращает false. Двойной клик по полосе Tauri сам переводит в
+ *  internal_toggle_maximize (входит в core:default) — своего onDoubleClick
+ *  тут нет и не нужно.
+ *  Правило `*[data-tauri-drag-region] { app-region: drag }` живёт в
+ *  apps/desktop/src/app.css — оно нужно пальцу и перу, у которых нет
+ *  mousedown-жеста, разбираемого скриптом выше. */
+
+import { useState } from "react";
+import { Icon } from "@muza/ui";
+import { useT } from "../i18n";
+
+/** Высота полосы в пикселях. Ровно по кнопкам (24px) плюс по 2px воздуха —
+ *  больше в полосе ничего нет. Глиф и надпись «Muza» здесь БЫЛИ и убраны в
+ *  тот же день по заявке владельца: те же логотип и название стоят в шапке
+ *  боковой панели, и два одинаковых логотипа один под другим выглядели
+ *  ошибкой. Логотип — якорь опознания и живёт РОВНО В ОДНОМ месте (Sidebar).
+ *  ⚠️ Не возвращать сюда ни глиф, ни название.
+ *
+ *  Числом, а не CSS-переменной: токены живут в @muza/ui — вендорной копии
+ *  дизайн-системы (правка там умрёт на следующей синхронизации вендора, см.
+ *  CLAUDE.md). Читатель один — раскладка App.tsx, которая на эту же величину
+ *  задаёт верхнее поле сетки: полоса ЗАМЕНЯЕТ верхний отступ, а не
+ *  добавляется к нему. */
+export const TITLEBAR_H = 28;
+
+export interface TitleBarProps {
+  /** Окно развёрнуто — меняет глиф кнопки на «восстановить». Углы в этом
+   *  состоянии система не скругляет сама, своего CSS для этого не нужно. */
+  maximized?: boolean;
+  onMinimize: () => void;
+  onToggleMaximize: () => void;
+  onClose: () => void;
+}
+
+function WindowButton({
+  icon,
+  label,
+  danger = false,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 34,
+        height: 24,
+        flex: "none",
+        padding: 0,
+        border: "none",
+        borderRadius: "var(--r-sm)",
+        // Наведение у «закрыть» — красным, у остальных — обычной поверхностью
+        // (договорённость с владельцем: «как у всех», но своими токенами).
+        background: hover ? (danger ? "var(--danger)" : "var(--surface-3)") : "transparent",
+        // Покой — --text-3: полоса не должна кричать. Наведение выводит глиф
+        // в полную яркость; на красном — всегда светлый, у --danger обе темы
+        // достаточно тёмные (#d13c3a / #f76967).
+        color: hover ? (danger ? "#fff" : "var(--text-1)") : "var(--text-3)",
+        cursor: "pointer",
+        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+      }}
+    >
+      <Icon name={icon} size={14} strokeWidth={2} />
+    </button>
+  );
+}
+
+export function TitleBar({ maximized = false, onMinimize, onToggleMaximize, onClose }: TitleBarProps) {
+  const { t } = useT();
+  return (
+    <div
+      data-testid="titlebar"
+      // "deep", а не голый атрибут: тащить окно можно за любую точку полосы, а
+      // не только по самому корню. Сейчас в полосе кроме кнопок ничего нет, но
+      // "deep" — единственный вариант, который останется верным, если завтра
+      // тут что-то появится: у голого варианта любой вложенный элемент
+      // становится мёртвой зоной, за которую окно не тянется.
+      data-tauri-drag-region="deep"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: TITLEBAR_H,
+        // Выше караоке (zIndex 100): кнопки окна — системная функция, терять
+        // её в полноэкранном режиме нельзя (с системной рамкой она там была).
+        // Ниже диалогов и меню (150/200): модалка обязана перекрывать всё.
+        zIndex: 110,
+        display: "flex",
+        alignItems: "center",
+        // Слева пусто — кнопки прижаты вправо, вся остальная ширина полосы
+        // работает зоной перетаскивания окна.
+        justifyContent: "flex-end",
+        // Фона НЕТ намеренно — задник приложения должен просвечивать сквозь
+        // полосу ровно так же, как везде (заявка: «чтобы не выбивались»).
+        background: "transparent",
+        paddingRight: "var(--sp-2)",
+        gap: "var(--sp-1)",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+      }}
+    >
+      <WindowButton icon="minus" label={t("window.minimize")} onClick={onMinimize} />
+      <WindowButton
+        icon={maximized ? "copy" : "square"}
+        label={t(maximized ? "window.restore" : "window.maximize")}
+        onClick={onToggleMaximize}
+      />
+      <WindowButton icon="x" label={t("window.close")} danger onClick={onClose} />
+    </div>
+  );
+}

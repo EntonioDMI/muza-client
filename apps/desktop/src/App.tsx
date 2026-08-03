@@ -76,6 +76,12 @@ import { MeaningDialog } from "./shell/MeaningDialog";
 import { VersionsDialog } from "./shell/VersionsDialog";
 import { ReplaceVersionDialog, type ReplaceCtx } from "./shell/ReplaceVersionDialog";
 import { DragLayer } from "./shell/DragLayer";
+// Своя полоса заголовка вместо системной рамки Windows (03.08). Сам компонент
+// общий и про Tauri не знает — действия окна ему передаём отсюда, из
+// lib/windowControls.ts. Почему у окна ОБЯЗАН стоять shadow:true — в шапке
+// packages/app/src/shell/TitleBar.tsx (углы + зоны изменения размера).
+import { TitleBar, TITLEBAR_H } from "@muza/app/shell/TitleBar";
+import { closeWindow, minimizeWindow, toggleMaximizeWindow, useMaximized } from "./lib/windowControls";
 import { ErrorBoundary, ViewCrash } from "./shell/ErrorBoundary";
 import { ContextMenuProvider, type ContextMenuApi } from "./shell/ContextMenu";
 import type { MenuContext } from "./shell/menuActions";
@@ -788,6 +794,10 @@ function Player({
   // даже когда оно не в фокусе. Окно на втором мониторе человек видит, и
   // замершая там анимация — заметный регресс, а не экономия.
   const windowVisible = useWindowVisible();
+
+  // Развёрнуто ли окно — нужно ровно для глифа кнопки в своей полосе заголовка
+  // («развернуть» ↔ «восстановить»), см. lib/windowControls.ts.
+  const maximized = useMaximized();
 
   // Медиаклавиши и системный медиа-оверлей (SMTC) через Media Session API
   useMediaSession(
@@ -2030,6 +2040,17 @@ function Player({
         <div style={{ position: "absolute", inset: 0, background: `rgba(${scrimRgb}, ${prefs.bgDim / 100})` }} />
       ) : null}
 
+      {/* Своя полоса заголовка: три кнопки окна справа, остальное — зона
+          перетаскивания. Логотипа тут НЕТ намеренно (он один, в сайдбаре).
+          Стоит ПЕРЕД сеткой в разметке, но позиционирована абсолютно и несёт
+          свой zIndex — порядок в DOM тут ничего не решает. */}
+      <TitleBar
+        maximized={maximized}
+        onMinimize={minimizeWindow}
+        onToggleMaximize={toggleMaximizeWindow}
+        onClose={closeWindow}
+      />
+
       <div
         style={{
           position: "absolute",
@@ -2038,6 +2059,10 @@ function Player({
           gridTemplateColumns: showNowPlaying ? "var(--w-sidebar) 1fr var(--w-nowplaying)" : "var(--w-sidebar) 1fr",
           gap: "var(--gap-zone)",
           padding: "var(--gap-zone)",
+          // Полоса ЗАМЕНЯЕТ верхнее поле, а не добавляется к нему: иначе зоны
+          // уехали бы вниз на её высоту и содержимого стало бы видно меньше.
+          // Отдельным свойством после padding — оно перебивает верх шортхенда.
+          paddingTop: TITLEBAR_H,
           paddingBottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
         }}
       >

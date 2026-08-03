@@ -1514,6 +1514,13 @@ export const ru: typeof en = {
     },
   },
 
+  window: {
+    minimize: "Свернуть окно",
+    maximize: "Развернуть окно",
+    restore: "Вернуть прежний размер",
+    close: "Закрыть окно",
+  },
+
   mini: {
     waitingForMusic: "ждём музыку из главного окна",
     closeMiniPlayer: "Закрыть мини-плеер",
