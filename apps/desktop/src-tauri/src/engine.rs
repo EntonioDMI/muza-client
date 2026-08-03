@@ -13,7 +13,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Manager, State};
 use url::{Host, Url};
@@ -139,11 +139,20 @@ pub struct EngineState {
     /// client_id SC-ступени (2026-07-19): добыт из JS-бандлов soundcloud.com,
     /// живёт неделями (TTL 7 суток); 401/403 на api-v2 сбрасывает и
     /// передобывает один раз (образец оркестрации — visitorData выше).
+    /// С 2026-08-03 переживает перезапуск (soundcloud_cid_path ниже): владелец
+    /// слушает в основном SC, а холодный старт оплачивал главную + до 12
+    /// бандлов прямо на пути «клик → звук» первого SC-трека сессии.
     soundcloud_client_id: Mutex<Option<(String, SystemTime)>>,
     /// Момент свежего провала добычи client_id: пока soundcloud.com лежит или
     /// сменил вёрстку, каждый клик не имеет права заново тянуть главную и
     /// мегабайтные бандлы — минутный кулдаун, дальше лестница yt-dlp.
+    /// НЕ персистится нарочно: минутный предохранитель не должен переживать
+    /// перезапуск, иначе перезапуск «чтобы починилось» ничего не чинит.
     soundcloud_cid_fail: Mutex<Option<SystemTime>>,
+    /// Путь файла-персиста ключа SC (app_data/soundcloud-cid.json, сеется в
+    /// init() по образцу stage0_log_path); None — тесты/ранний старт, ключ
+    /// живёт только в памяти.
+    soundcloud_cid_path: Mutex<Option<PathBuf>>,
     /// Журнал ступени 0 (2026-07-20, жалоба «через два часа всё стало
     /// медленно»): предохранители срабатывали МОЛЧА, и жалобу нельзя было
     /// разобрать постфактум. Кольцо последних событий (переходы breaker'а,
@@ -173,6 +182,7 @@ impl Default for EngineState {
             stage0_breaker: Mutex::new(Stage0Breaker::default()),
             soundcloud_client_id: Mutex::new(None),
             soundcloud_cid_fail: Mutex::new(None),
+            soundcloud_cid_path: Mutex::new(None),
             stage0_events: Mutex::new(VecDeque::new()),
             stage0_log_path: Mutex::new(None),
         }
@@ -203,6 +213,22 @@ pub fn init(app: &AppHandle) {
             SystemTime::now(),
             format!("сеть: найден системный прокси {proxy} — добыча идёт через него"),
         );
+    }
+    // Ключ SoundCloud — тоже ДО ранних return'ов рецепта. Без персиста первый
+    // же SC-трек КАЖДОГО запуска заново тянул главную soundcloud.com и до 12
+    // JS-бандлов, и всё это лежало прямо на пути «клик → звук». Поднятое из
+    // файла значение перепроверяется грамматикой и TTL (parse_stored_sc_cid);
+    // не сошлось — ведём себя ровно как при отсутствии файла.
+    let cid_path = dir.join("soundcloud-cid.json");
+    {
+        let state = app.state::<EngineState>();
+        *state.soundcloud_cid_path.lock().unwrap() = Some(cid_path.clone());
+        if let Some(restored) = fs::read_to_string(&cid_path)
+            .ok()
+            .and_then(|raw| parse_stored_sc_cid(&raw, SystemTime::now()))
+        {
+            *state.soundcloud_client_id.lock().unwrap() = Some(restored);
+        }
     }
     let path = dir.join("recipe-cache.json");
     let Ok(raw) = fs::read_to_string(&path) else {
@@ -666,22 +692,79 @@ fn is_legacy_root_cache_file(name: &str) -> bool {
         && AUDIO_EXTS.contains(&ext.to_ascii_lowercase().as_str())
 }
 
-fn namespaced_cache_dir(base: &Path, ns: &str) -> Result<PathBuf, String> {
-    validate_cache_ns(ns)?;
-    // одноразовая (идемпотентная) зачистка ядовитого легаси в корне
-    if let Ok(entries) = fs::read_dir(base) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            if is_legacy_root_cache_file(&name.to_string_lossy()) {
-                let _ = fs::remove_file(&path);
-            }
+/// Тип записи каталога БЕЗ лишнего обращения к диску.
+///
+/// `path.is_file()` открывает файл заново (на Windows —
+/// CreateFile + GetFileInformation + CloseHandle на КАЖДУЮ запись), хотя
+/// перечисление каталога уже принесло атрибуты. Обход кэша на 500 файлов
+/// (дефолтный лимит 2 ГиБ / типичный opus ~4 МБ) стоил ~1500 лишних
+/// системных вызовов, а обходы идут на каждой смене трека, после каждой
+/// закачки и на каждом Range-запросе стрима.
+///
+/// Почему не просто `entry.file_type().map(|t| t.is_file())`: `file_type()`
+/// НЕ разыменовывает симлинк, а `path.is_file()` разыменовывает. Быстрый
+/// ответ берём только там, где он заведомо совпадает с прежним (обычный файл
+/// и каталог — 100% реальных записей кэша); всё прочее (симлинк, reparse
+/// point, ошибка чтения атрибутов) перепроверяем старым вызовом. Иначе на
+/// путях удаления («Очистить кэш») файл мог бы молча остаться, а в
+/// `find_cached` запись превратилась бы в промах кэша — то есть в повторную
+/// закачку и слышимую паузу вместо мгновенного старта.
+fn entry_is_file(entry: &fs::DirEntry) -> bool {
+    match entry.file_type() {
+        Ok(t) if t.is_file() => true,
+        Ok(t) if t.is_dir() => false,
+        _ => entry.path().is_file(),
+    }
+}
+
+/// Корни audio-cache, уже подметённые в этом процессе (см. `namespaced_cache_dir`).
+static SWEPT_ROOTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+/// Отметить корень подметённым; `true` — этот путь встретился впервые.
+/// Ключ — САМ ПУТЬ, а не «первый вызов за процесс»: в одном тест-бинаре у
+/// каждого теста своя временная база, и флаг-на-процесс отдавался бы первому
+/// же тесту, а `namespaced_cache_dir_sweeps_legacy_root_audio` краснел бы в
+/// зависимости от порядка выполнения.
+fn mark_root_swept(base: &Path) -> bool {
+    SWEPT_ROOTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap()
+        .insert(base.to_path_buf())
+}
+
+/// Зачистка ядовитого легаси в КОРНЕ audio-cache (файлы до неймспейсов).
+fn sweep_legacy_root(base: &Path) {
+    let Ok(entries) = fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry_is_file(&entry) {
+            continue;
+        }
+        let name = entry.file_name();
+        if is_legacy_root_cache_file(&name.to_string_lossy()) {
+            let _ = fs::remove_file(entry.path());
         }
     }
+}
+
+fn namespaced_cache_dir(base: &Path, ns: &str) -> Result<PathBuf, String> {
+    validate_cache_ns(ns)?;
+    // Зачистка легаси — ОДИН РАЗ НА КАТАЛОГ за сессию (раньше комментарий
+    // обещал «одноразовая», а по факту полный read_dir корня шёл на КАЖДЫЙ
+    // вызов: на каждом Range-запросе стрима, резолве, прогреве, сохранении
+    // пинов). Легаси-файлы в корне может оставить только СТАРАЯ версия
+    // приложения, то есть они существуют ещё до старта процесса — повторные
+    // проходы за сессию заведомо ничего нового не находят.
+    if mark_root_swept(base) {
+        sweep_legacy_root(base);
+    }
     let dir = base.join(ns);
+    // create_dir_all НЕ гейтить ни здесь, ни в cache_base: каталог может
+    // исчезнуть при работающем приложении (чистильщик диска, антивирус, сам
+    // пользователь), и тогда клик по некэшированному треку не смог бы открыть
+    // .part — вместо музыки ошибка добычи. Сейчас каталог молча пересоздаётся.
     fs::create_dir_all(&dir).map_err(|e| format!("не создался кэш-каталог: {e}"))?;
     Ok(dir)
 }
@@ -704,12 +787,60 @@ fn cache_dir(app: &AppHandle, ns: &str) -> Result<PathBuf, String> {
     namespaced_cache_dir(&cache_base(app)?, ns)
 }
 
+/// Расширения, которые `find_cached` пробует ПРЯМЫМ именем до полного обхода,
+/// и одновременно приоритет выбора при дублях stem.
+///
+/// `.part`/`.ytdl` сюда не добавлять НИКОГДА: это обломки недокачки
+/// (инвариант теста `part_file_is_not_a_cache_hit`).
+const CACHE_PROBE_EXTS: [&str; 6] = ["webm", "m4a", "mp3", "opus", "ogg", "aac"];
+
+/// Приоритет расширения при выборе файла кэша; незнакомые — последними.
+///
+/// Нужен, чтобы быстрая проба прямых имён и полный обход выбирали ОДИН И ТОТ
+/// ЖЕ файл, если в каталоге окажутся два полных файла с одним stem и разными
+/// расширениями (теоретически: «выбрать другую версию» сносит через
+/// `find_cached` ровно один файл). Раньше выбор определял порядок `read_dir`
+/// — на NTFS алфавитный, то есть случайный побочный эффект ФС; теперь правило
+/// записано явно и сторожится `cache_probe_matches_full_scan`.
+fn cache_ext_rank(path: &Path) -> usize {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .and_then(|ext| {
+            let lower = ext.to_ascii_lowercase();
+            CACHE_PROBE_EXTS.iter().position(|known| *known == lower)
+        })
+        .unwrap_or(CACHE_PROBE_EXTS.len())
+}
+
 /// Файл кэша трека: `<track_id>.<ext>` (ext заранее неизвестен — webm/m4a/…).
 fn find_cached(dir: &Path, track_id: &str) -> Option<PathBuf> {
+    // Быстрая проба известных расширений: ~6 обращений по точному имени
+    // вместо перечисления сотен записей. Ради этого пути функция и правилась —
+    // WebView2 просит следующее окно стрима примерно дважды в минуту всё
+    // время фонового воспроизведения, и каждый такой запрос перебирал кэш
+    // целиком. Проба только для id, прошедшего валидацию: `format!` с чужой
+    // строкой в `join` — это выход за каталог, а полный обход ниже к такому
+    // невосприимчив по построению (сравнивает уже перечисленные имена).
+    if validate_track_id(track_id).is_ok() {
+        for ext in CACHE_PROBE_EXTS {
+            let candidate = dir.join(format!("{track_id}.{ext}"));
+            // именно is_file(), не exists(): каталог с таким именем полный
+            // обход отсекает, ложного попадания быть не должно
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    // Полный обход — фолбэк, УДАЛЯТЬ НЕЛЬЗЯ: расширение задаёт yt-dlp через
+    // `-o "{track_id}.%(ext)s"`, шестёркой выше оно не ограничено, а матч идёт
+    // по `file_stem()` — то есть находится и файл вообще без расширения.
+    // Уберут фолбэк «чтобы было чище» — промах кэша на легаси-файле, повторная
+    // закачка и слышимая пауза вместо мгновенного старта.
     let entries = fs::read_dir(dir).ok()?;
+    let mut best: Option<(usize, PathBuf)> = None;
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() {
+        if !entry_is_file(&entry) {
             continue;
         }
         let name = entry.file_name();
@@ -723,10 +854,15 @@ fn find_cached(dir: &Path, track_id: &str) -> Option<PathBuf> {
             .map(|s| s.to_string_lossy() == track_id)
             .unwrap_or(false)
         {
-            return Some(path);
+            // Выбор при дублях — по cache_ext_rank, а не по порядку read_dir:
+            // так полный обход и проба выше сходятся на одном файле.
+            let rank = cache_ext_rank(&path);
+            if best.as_ref().map(|(r, _)| rank < *r).unwrap_or(true) {
+                best = Some((rank, path));
+            }
         }
     }
-    None
+    best.map(|(_, path)| path)
 }
 
 #[derive(Clone, Debug)]
@@ -856,28 +992,91 @@ fn command(program: &Path) -> Command {
     cmd
 }
 
+/// Длина ОДНОГО захода ожидания на хендле процесса, мс.
+///
+/// Приведение НАСЫЩАЮЩЕЕ и зажатое в 1..=1000. INFINITE (0xFFFF_FFFF) не
+/// передаётся никогда и ни при какой арифметике: поток блокирующего пула,
+/// зависший на хендле, держит single-flight-гейт трека — человек кликнул бы по
+/// строке и не получил ни звука, ни ошибки до перезапуска приложения. Верхняя
+/// граница 1000 мс делает худший случай деградации «1 пробуждение в секунду»,
+/// то есть всё равно лучше нынешних 16/с.
+fn wait_chunk_ms(remaining: Duration) -> u32 {
+    u32::try_from(remaining.as_millis())
+        .unwrap_or(1000)
+        .clamp(1, 1000)
+}
+
+/// Ожидание на хендле дочернего процесса вместо сна (Windows).
+///
+/// `true` — заход состоялся (процесс завершился либо истёк кусок бюджета),
+/// вызывающему спать не нужно. `false` — ждать на хендле не вышло, вызывающий
+/// спит по-старому.
+///
+/// Хендл берётся ВНУТРИ итерации, не переживает `Child` и не закрывается
+/// вручную: владелец — `std::process::Child`. Код выхода по-прежнему забирает
+/// `child.try_wait()`; `GetExitCodeProcess` руками не читаем, иначе разъедется
+/// учёт внутри std.
+#[cfg(windows)]
+fn park_on_child(child: &Child, remaining: Duration, broken: &mut bool) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::WaitForSingleObject;
+
+    if *broken {
+        return false;
+    }
+    let handle = HANDLE(child.as_raw_handle());
+    let result = unsafe { WaitForSingleObject(handle, wait_chunk_ms(remaining)) };
+    if result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT {
+        return true;
+    }
+    // WAIT_FAILED и всё прочее: до конца ЭТОГО вызова падаем на сон. Повторно
+    // Wait не зовём — иначе ошибка превратилась бы в спин на 100% CPU, ровно
+    // наоборот к цели правки.
+    *broken = true;
+    false
+}
+
+#[cfg(not(windows))]
+fn park_on_child(_child: &Child, _remaining: Duration, _broken: &mut bool) -> bool {
+    false
+}
+
 /// Подождать ребёнка не дольше timeout; на таймауте — убить.
+///
+/// Цикл с `try_wait()` и пересчётом дедлайна от `started.elapsed()` на КАЖДОМ
+/// проходе остаётся единственным авторитетом по таймауту — он же страховка,
+/// если ожидание на хендле откажет. Заменён только сон: раньше поток
+/// блокирующего пула просыпался каждые 5 мс первые 2 с и каждые 60 мс дальше
+/// (≈1400 пробуждений на минутную закачку, и так на каждой попытке лестницы —
+/// включая ФОНОВЫЙ прогрев очереди, когда человек просто слушает). Пробуждения
+/// не дают ядру уйти в глубокие C-состояния — это и есть «греется в фоне».
 fn wait_with_timeout(
     child: &mut Child,
     timeout: Duration,
 ) -> Result<std::process::ExitStatus, String> {
     let started = Instant::now();
+    let mut handle_wait_broken = false;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {
-                if started.elapsed() > timeout {
+                let elapsed = started.elapsed();
+                if elapsed > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err("yt-dlp не уложился в таймаут".into());
                 }
-                // Адаптивный шаг (И3 2026-07-22): прежний фикс-шаг 120 мс
-                // добавлял в среднем ~60 мс к КАЖДОМУ ladder-резолву чисто на
-                // детект завершения процесса. Первые 2 с опрашиваем часто
-                // (быстрые прогоны — simulate, probe — ловятся за единицы мс),
-                // дальше крупнее: длинные закачки не жгут CPU опросом.
-                let step = if started.elapsed() < Duration::from_secs(2) { 5 } else { 60 };
-                std::thread::sleep(Duration::from_millis(step));
+                let remaining = timeout.saturating_sub(elapsed);
+                if !park_on_child(child, remaining, &mut handle_wait_broken) {
+                    // Адаптивный шаг (И3 2026-07-22): прежний фикс-шаг 120 мс
+                    // добавлял в среднем ~60 мс к КАЖДОМУ ladder-резолву чисто на
+                    // детект завершения процесса. Первые 2 с опрашиваем часто
+                    // (быстрые прогоны — simulate, probe — ловятся за единицы мс),
+                    // дальше крупнее: длинные закачки не жгут CPU опросом.
+                    let step = if elapsed < Duration::from_secs(2) { 5 } else { 60 };
+                    std::thread::sleep(Duration::from_millis(step));
+                }
             }
             Err(e) => return Err(format!("ожидание yt-dlp: {e}")),
         }
@@ -1207,7 +1406,7 @@ fn evict_lru(dir: &Path, limit_bytes: u64, keep: &Path, pins: &HashSet<String>) 
         .flatten()
         .filter_map(|e| {
             let path = e.path();
-            if !path.is_file() {
+            if !entry_is_file(&e) {
                 return None;
             }
             let meta = e.metadata().ok()?;
@@ -3061,6 +3260,54 @@ fn sc_bundle_urls(html: &str) -> Vec<String> {
     out
 }
 
+/// Грамматика значения client_id: ровно 32 ASCII-алфанумерных символа.
+///
+/// ⚠️ Это единственное, что делает законной СЫРУЮ интерполяцию значения в URL
+/// (`sc_api_lookup_url`). Поэтому проверка обязана применяться к КАЖДОМУ
+/// источнику значения — и к добыче из бандла, и к подъёму из файла в
+/// пользовательской папке, который могли подменить или побить.
+fn sc_client_id_is_valid(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Файл-персист ключа SC. Отдельный от recipe-cache.json нарочно: у рецепта
+/// своя подпись и анти-даунгрейд, подмешивать туда чужое состояние нельзя.
+#[derive(Serialize, Deserialize)]
+struct StoredSoundcloudCid {
+    client_id: String,
+    /// Момент добычи, unix-мс.
+    obtained_at_ms: u64,
+}
+
+/// Разбор файла-персиста. Значение поднимается, только если проходит ТУ ЖЕ
+/// грамматику, что добыча, и не протухло по тому же TTL. Не сошлось — файл
+/// игнорируется целиком (как init() молча игнорирует битый recipe-cache.json).
+fn parse_stored_sc_cid(raw: &str, now: SystemTime) -> Option<(String, SystemTime)> {
+    let stored: StoredSoundcloudCid = serde_json::from_str(raw).ok()?;
+    if !sc_client_id_is_valid(&stored.client_id) {
+        return None;
+    }
+    let at = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(stored.obtained_at_ms))?;
+    // Формула свежести — та же, что в sc_cached_client_id, включая
+    // `unwrap_or(false)`: метка ИЗ БУДУЩЕГО (часы съехали назад, метка чужой
+    // машины) даёт Err и читается как «протух», а не как «свежий».
+    now.duration_since(at)
+        .map(|age| age < SOUNDCLOUD_CLIENT_ID_TTL)
+        .unwrap_or(false)
+        .then_some((stored.client_id, at))
+}
+
+/// Сериализация для файла-персиста; None — значение непредставимо (метка до
+/// эпохи или за пределами u64-мс), тогда просто ничего не пишем.
+fn serialize_stored_sc_cid(id: &str, at: SystemTime) -> Option<String> {
+    let ms = at.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_millis();
+    serde_json::to_string(&StoredSoundcloudCid {
+        client_id: id.to_string(),
+        obtained_at_ms: u64::try_from(ms).ok()?,
+    })
+    .ok()
+}
+
 /// client_id из текста бандла: за словом client_id — `:` или `=`, кавычка,
 /// ровно 32 алфанумерных символа, закрывающая кавычка. Жёсткая грамматика
 /// отсеивает конкатенации вида `"?client_id="+e` и мусорные совпадения.
@@ -3078,9 +3325,7 @@ fn sc_client_id_from_js(js: &str) -> Option<String> {
                 if let Some(body) = rest.strip_prefix(quote) {
                     if let Some(end) = body.find(quote) {
                         let candidate = &body[..end];
-                        if candidate.len() == 32
-                            && candidate.bytes().all(|b| b.is_ascii_alphanumeric())
-                        {
+                        if sc_client_id_is_valid(candidate) {
                             return Some(candidate.to_string());
                         }
                     }
@@ -3109,14 +3354,34 @@ fn sc_cached_client_id(state: &EngineState, now: SystemTime) -> Option<String> {
 }
 
 /// Свежедобытый client_id: в состояние; успех добычи стирает кулдаун.
+/// Плюс best-effort персист, чтобы следующий запуск не платил главной и
+/// бандлами заново. Запись идёт ВНЕ ЛОКОВ (fs::write под мьютексом состояния
+/// подвесил бы соседние клики на время дискового ввода-вывода), ошибки
+/// глотаются: не записалось — просто следующий запуск добудет ключ сам.
 fn sc_note_client_id(state: &EngineState, id: &str, now: SystemTime) {
     *state.soundcloud_client_id.lock().unwrap() = Some((id.to_string(), now));
     *state.soundcloud_cid_fail.lock().unwrap() = None;
+    let path = state.soundcloud_cid_path.lock().unwrap().clone();
+    if let (Some(path), Some(raw)) = (path, serialize_stored_sc_cid(id, now)) {
+        // каталог app_data мог ещё не появиться (чистая установка) — тот же
+        // приём, что при сохранении recipe-cache.json
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(path, raw);
+    }
 }
 
-/// Сброс client_id (401/403 на api-v2 — значение протухло).
+/// Сброс client_id (401/403 на api-v2 — значение протухло). Файл-персист тоже
+/// удаляем: иначе, если передобыча следом провалилась (SoundCloud лежит) и
+/// сессия закончилась, следующий запуск поднял бы МЁРТВЫЙ ключ и снова оплатил
+/// лишний round-trip до того же 401.
 fn sc_drop_client_id(state: &EngineState) {
     *state.soundcloud_client_id.lock().unwrap() = None;
+    let path = state.soundcloud_cid_path.lock().unwrap().clone();
+    if let Some(path) = path {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn sc_cid_recently_failed(state: &EngineState, now: SystemTime) -> bool {
@@ -4138,6 +4403,12 @@ fn stream_206(
     let Ok(body) = read_slice(file, start, end) else {
         return stream_error(500, "срез не читается");
     };
+    // Только dev: релиз собирается с windows_subsystem = "windows" (main.rs:1) —
+    // консоли нет, показать эту строку физически негде, а печатается она на
+    // КАЖДЫЙ Range-запрос играющего трека (аллокация имени файла + мьютекс
+    // stderr всё время воспроизведения). В `pnpm desktop` трасса окон стрима
+    // остаётся байт-в-байт прежней — это единственный след Range-запросов.
+    #[cfg(debug_assertions)]
     eprintln!(
         "[muza-stream] 206 bytes {start}-{end}/{total} ({})",
         file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
@@ -4555,7 +4826,7 @@ pub fn engine_cache_stats(
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
+            if entry_is_file(&entry) {
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
                 bytes += size;
                 files += 1;
@@ -4646,7 +4917,7 @@ pub fn engine_cache_clear(
             // свежий .part — возможно, живой стрим Фазы 2 (не рвать на ходу).
             // Список закреплённых обязан пережить чистку вместе с самими
             // файлами — иначе они останутся на диске без защиты.
-            if path.is_file()
+            if entry_is_file(&entry)
                 && !is_cache_bookkeeping(&path)
                 && !is_pinned(&path, &pins)
                 && !is_live_stream_part(&path)
@@ -6068,6 +6339,210 @@ mod sidecar_policy_tests {
         let p = pins_file(&base, "a1b2c3d4").unwrap();
         assert_eq!(p, base.join("a1b2c3d4").join("offline-pins.json"));
         assert!(pins_file(&base, "../evil").is_err());
+    }
+
+    /// `entry_is_file` обязан отвечать ровно то же, что прежний
+    /// `path.is_file()`, — иначе обходы кэша начнут пропускать реальные файлы
+    /// (промах кэша, повторная закачка) или чистить каталоги.
+    #[test]
+    fn entry_is_file_matches_path_is_file() {
+        let base = ns_test_base("entrytype");
+        fs::write(base.join("song.webm"), b"x").unwrap();
+        fs::create_dir_all(base.join("subdir")).unwrap();
+        let mut seen = 0;
+        for entry in fs::read_dir(&base).unwrap().flatten() {
+            let path = entry.path();
+            assert_eq!(
+                entry_is_file(&entry),
+                path.is_file(),
+                "разошлись на {}",
+                path.display()
+            );
+            seen += 1;
+        }
+        assert_eq!(seen, 2, "должны быть перечислены и файл, и каталог");
+    }
+
+    /// Зачистка корня — один раз НА КАТАЛОГ за сессию (а не на каждый вызов,
+    /// как было до 03.08). Второй заход по тому же base уже не подметает.
+    #[test]
+    fn legacy_root_swept_once_per_base() {
+        let base = ns_test_base("sweep-once");
+        fs::write(base.join("7.webm"), b"x").unwrap();
+        namespaced_cache_dir(&base, "deadbeef").unwrap();
+        assert!(!base.join("7.webm").exists(), "первый проход подметает");
+        // легаси в корне может оставить только СТАРАЯ версия приложения, то
+        // есть до старта процесса: файл, появившийся позже, — синтетика теста
+        fs::write(base.join("8.webm"), b"x").unwrap();
+        namespaced_cache_dir(&base, "deadbeef").unwrap();
+        assert!(
+            base.join("8.webm").exists(),
+            "второй заход по тому же корню не должен читать каталог заново"
+        );
+        // ...а другой корень подметается независимо: ключ — путь, не процесс
+        let other = ns_test_base("sweep-once-other");
+        fs::write(other.join("9.webm"), b"x").unwrap();
+        namespaced_cache_dir(&other, "deadbeef").unwrap();
+        assert!(!other.join("9.webm").exists());
+    }
+
+    /// Быстрая проба прямых имён обязана давать РОВНО тот же путь, что полный
+    /// обход, включая случай дублей stem с разными расширениями (иначе выбор
+    /// начал бы зависеть от порядка CACHE_PROBE_EXTS вместо порядка read_dir).
+    #[test]
+    fn cache_probe_matches_full_scan() {
+        let base = ns_test_base("probe");
+        // дубли одного stem + незнакомое расширение + файл без расширения
+        for name in ["42.webm", "42.m4a", "42.opus", "77.flac", "88"] {
+            fs::write(base.join(name), b"x").unwrap();
+        }
+        for id in ["42", "77", "88", "zzz"] {
+            assert_eq!(
+                find_cached(&base, id),
+                find_cached_full_scan(&base, id),
+                "проба и полный обход разошлись на id={id}"
+            );
+        }
+        // порядок проб зафиксирован: первым идёт webm (а НЕ 42.m4a, который
+        // на NTFS идёт раньше по алфавиту — раньше выбирал именно read_dir)
+        assert_eq!(find_cached(&base, "42"), Some(base.join("42.webm")));
+        // фолбэк живой: незнакомое расширение и файл без расширения находятся
+        assert_eq!(find_cached(&base, "77"), Some(base.join("77.flac")));
+        assert_eq!(find_cached(&base, "88"), Some(base.join("88")));
+        // знакомый контейнер выигрывает у незнакомого при том же stem
+        fs::write(base.join("77.mp3"), b"x").unwrap();
+        assert_eq!(find_cached(&base, "77"), Some(base.join("77.mp3")));
+        assert_eq!(find_cached(&base, "77"), find_cached_full_scan(&base, "77"));
+    }
+
+    /// Полный обход в чистом виде — эталон для `cache_probe_matches_full_scan`.
+    /// Тот же отбор кандидатов, что в `find_cached`, но БЕЗ быстрой пробы:
+    /// именно он должен совпадать с результатом пробы.
+    fn find_cached_full_scan(dir: &Path, track_id: &str) -> Option<PathBuf> {
+        let mut best: Option<(usize, PathBuf)> = None;
+        for entry in fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".part") || name.ends_with(".ytdl") {
+                continue;
+            }
+            if path
+                .file_stem()
+                .map(|s| s.to_string_lossy() == track_id)
+                .unwrap_or(false)
+            {
+                let rank = cache_ext_rank(&path);
+                if best.as_ref().map(|(r, _)| rank < *r).unwrap_or(true) {
+                    best = Some((rank, path));
+                }
+            }
+        }
+        best.map(|(_, path)| path)
+    }
+
+    /// Проба прямым именем не имеет права строить путь из невалидированного
+    /// id: `engine_pins` кормит find_cached строками из offline-pins.json,
+    /// то есть с диска. Такие id идут только полным обходом.
+    #[test]
+    fn cache_probe_skipped_for_unvalidated_id() {
+        let base = ns_test_base("probe-escape");
+        let outside = base.join("наружу.webm");
+        fs::write(&outside, b"x").unwrap();
+        let inner = namespaced_cache_dir(&base, "deadbeef").unwrap();
+        assert_eq!(
+            find_cached(&inner, "../наружу"),
+            None,
+            "id с выходом за каталог не имеет права стать кэш-хитом"
+        );
+        assert!(outside.exists());
+    }
+
+    /// Живой прогон ожидания: короткий процесс ловится быстро и с правильным
+    /// кодом выхода (статус по-прежнему берётся у `child.try_wait()`, а не у
+    /// GetExitCodeProcess — иначе разъехался бы учёт внутри std).
+    #[cfg(windows)]
+    #[test]
+    fn wait_with_timeout_catches_quick_child() {
+        let mut child = command(Path::new("cmd"))
+            .args(["/c", "exit", "7"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("cmd есть на любой Windows");
+        let started = Instant::now();
+        let status = wait_with_timeout(&mut child, Duration::from_secs(10)).unwrap();
+        assert_eq!(status.code(), Some(7));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "завершение процесса должно ловиться сразу, а не по таймауту"
+        );
+    }
+
+    /// Главный риск правки: дедлайн обязан жить. Долгий процесс с коротким
+    /// бюджетом убивается ПО БЮДЖЕТУ, а не висит на хендле — иначе поток
+    /// блокирующего пула держал бы single-flight-гейт трека навсегда (человек
+    /// кликнул бы и не получил ни звука, ни ошибки до перезапуска).
+    #[cfg(windows)]
+    #[test]
+    fn wait_with_timeout_kills_child_over_budget() {
+        let mut child = command(Path::new("ping"))
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("ping есть на любой Windows");
+        let started = Instant::now();
+        let err = wait_with_timeout(&mut child, Duration::from_millis(300)).unwrap_err();
+        let elapsed = started.elapsed();
+        assert!(err.contains("таймаут"), "ошибка бюджета: {err}");
+        assert!(
+            elapsed >= Duration::from_millis(250) && elapsed < Duration::from_secs(5),
+            "убить обязаны около бюджета, а не через 30 с: {elapsed:?}"
+        );
+    }
+
+    /// Парковка обязана РЕАЛЬНО ждать на хендле. Без этой проверки правка
+    /// могла бы молча выродиться обратно в опрос со сном: WAIT_FAILED на
+    /// каждом заходе тоже даёт зелёные тесты выше, только пробуждения
+    /// возвращаются, а вместе с ними и «греется в фоне».
+    #[cfg(windows)]
+    #[test]
+    fn park_on_child_actually_waits_on_handle() {
+        let mut child = command(Path::new("ping"))
+            .args(["-n", "5", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("ping есть на любой Windows");
+        let mut broken = false;
+        let started = Instant::now();
+        let parked = park_on_child(&child, Duration::from_millis(200), &mut broken);
+        let elapsed = started.elapsed();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(parked && !broken, "ожидание на хендле не сработало");
+        assert!(
+            elapsed >= Duration::from_millis(150),
+            "заход обязан ждать ~200 мс, а не возвращаться сразу: {elapsed:?}"
+        );
+        assert!(elapsed < Duration::from_secs(2), "и не дольше куска: {elapsed:?}");
+    }
+
+    /// Кусок ожидания хендла процесса: НИКОГДА не 0 и никогда не INFINITE.
+    #[test]
+    fn wait_chunk_is_clamped() {
+        assert_eq!(wait_chunk_ms(Duration::ZERO), 1);
+        assert_eq!(wait_chunk_ms(Duration::from_millis(5)), 5);
+        assert_eq!(wait_chunk_ms(Duration::from_millis(1000)), 1000);
+        assert_eq!(wait_chunk_ms(Duration::from_secs(180)), 1000);
+        // переполнение u32 (в мс это ~49 суток) — насыщаем, а не усекаем:
+        // усечение могло бы дать 0xFFFFFFFF, то есть вечное ожидание
+        assert_eq!(wait_chunk_ms(Duration::from_secs(60 * 60 * 24 * 365)), 1000);
+        assert_eq!(wait_chunk_ms(Duration::MAX), 1000);
     }
 }
 
@@ -7833,6 +8308,126 @@ mod soundcloud_tests {
             None,
             "протухший не переиспользуем"
         );
+    }
+
+    // ── Персист client_id между запусками (2026-08-03) ─────────────
+    //
+    // Без него первый SC-трек КАЖДОГО запуска заново тянул главную
+    // soundcloud.com и до 12 JS-бандлов. Файл лежит в пользовательской папке,
+    // поэтому поднятое значение проходит ТУ ЖЕ грамматику, что добыча.
+
+    fn stored_json(id: &str, at: SystemTime) -> String {
+        let ms = at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        format!("{{\"client_id\":\"{id}\",\"obtained_at_ms\":{ms}}}")
+    }
+
+    #[test]
+    fn stored_sc_cid_roundtrips() {
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let now = at + Duration::from_secs(3600);
+        let raw = serialize_stored_sc_cid(SYNTH_CLIENT_ID, at).expect("сериализуется");
+        assert_eq!(
+            parse_stored_sc_cid(&raw, now),
+            Some((SYNTH_CLIENT_ID.to_string(), at))
+        );
+    }
+
+    /// Главный инвариант правки: значение из файла подставляется в URL СЫРЫМ,
+    /// поэтому всё, что не проходит грамматику добычи, обязано вести себя как
+    /// отсутствие файла — иначе файл в пользовательской папке становится
+    /// точкой подстановки в запрос к api-v2.
+    #[test]
+    fn stored_sc_cid_rejects_substitution_and_bad_length() {
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let now = at + Duration::from_secs(3600);
+        let bad_values: Vec<String> = vec![
+            "abc&client_id=x".to_string(),               // подстановка в query
+            "a".repeat(33),                              // длиннее 32
+            "a".repeat(31),                              // короче 32
+            "0123456789012345678901234567890 ".to_string(), // пробел вместо алфанум
+            "0123456789012345678901234567890/".to_string(), // разделитель пути
+            String::new(),
+        ];
+        for bad in &bad_values {
+            assert_eq!(
+                parse_stored_sc_cid(&stored_json(bad, at), now),
+                None,
+                "значение {bad:?} обязано игнорироваться целиком"
+            );
+        }
+        // битый/чужой файл — тоже как отсутствие файла
+        assert_eq!(parse_stored_sc_cid("не json", now), None);
+        assert_eq!(parse_stored_sc_cid("{}", now), None);
+    }
+
+    #[test]
+    fn stored_sc_cid_respects_ttl_and_clock_skew() {
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(30 * 24 * 3600);
+        assert!(
+            parse_stored_sc_cid(&stored_json(SYNTH_CLIENT_ID, at), at + SOUNDCLOUD_CLIENT_ID_TTL)
+                .is_none(),
+            "протухший ключ поднимать нельзя"
+        );
+        assert!(parse_stored_sc_cid(
+            &stored_json(SYNTH_CLIENT_ID, at),
+            at + SOUNDCLOUD_CLIENT_ID_TTL - Duration::from_secs(1)
+        )
+        .is_some());
+        // метка из БУДУЩЕГО (часы съехали назад, файл с чужой машины) читается
+        // как «протух», а не как «вечно свежий»
+        assert!(
+            parse_stored_sc_cid(
+                &stored_json(SYNTH_CLIENT_ID, at + Duration::from_secs(60)),
+                at
+            )
+            .is_none(),
+            "метка из будущего не даёт свежести"
+        );
+    }
+
+    /// Персист пишется при успехе добычи и СНОСИТСЯ при сбросе по 401/403:
+    /// иначе следующий запуск поднял бы мёртвый ключ и снова оплатил 401.
+    #[test]
+    fn sc_client_id_persist_written_and_dropped() {
+        let dir = std::env::temp_dir().join(format!(
+            "muza-sccid-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("soundcloud-cid.json");
+        let state = EngineState::default();
+        *state.soundcloud_cid_path.lock().unwrap() = Some(file.clone());
+
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, t0);
+        let raw = fs::read_to_string(&file).expect("файл записан");
+        assert_eq!(
+            parse_stored_sc_cid(&raw, t0 + Duration::from_secs(60)),
+            Some((SYNTH_CLIENT_ID.to_string(), t0))
+        );
+
+        sc_drop_client_id(&state);
+        assert!(!file.exists(), "сброс по 401/403 сносит и файл");
+        assert_eq!(sc_cached_client_id(&state, t0), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Без пути персиста (тесты, ранний старт) поведение прежнее: только память.
+    #[test]
+    fn sc_client_id_persist_is_optional() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, t0);
+        assert_eq!(sc_cached_client_id(&state, t0).as_deref(), Some(SYNTH_CLIENT_ID));
+        sc_drop_client_id(&state);
+        assert_eq!(sc_cached_client_id(&state, t0), None);
     }
 
     #[test]

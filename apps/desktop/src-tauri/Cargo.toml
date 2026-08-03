@@ -72,9 +72,15 @@ getrandom = "0.3"
 # Win32_UI_WindowsAndMessaging добавлен 03.08 для window_visibility.rs: страница
 # в WebView2 НЕ узнаёт, что окно свёрнуто (замер — docs/subsystems/
 # производительность-интерфейса.md), поэтому состояние окна спрашиваем у системы.
+#
+# Win32_System_Threading добавлен 03.08 для wait_with_timeout (engine.rs):
+# ожидание yt-dlp было опросом в цикле со сном — сотни пробуждений в секунду на
+# каждой добыче и на каждом фоновом прогреве; теперь поток паркуется на хендле
+# процесса. Новых крейтов не нужно — только фича уже присутствующего windows.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
   "Win32_Networking_WinHttp",
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Threading",
 ] }
