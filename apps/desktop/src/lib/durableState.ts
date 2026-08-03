@@ -21,6 +21,10 @@
  *  иначе потерянный state_del воскрешал отозванную сессию. На старте
  *  сравниваем номера и берём новее; проигравшую копию догоняем.
  *
+ *  ⚠️ Запись на диск для prefs СКЛЕИВАЕТСЯ окном в 200мс (см. mirrorWrite):
+ *  ползунок настроек шлёт значение на каждое движение мыши. В localStorage
+ *  всё по-прежнему ложится сразу — отложена только дорогая половина.
+ *
  *  Патчим Storage.prototype, а не оборачиваем вызовы: сессию пишет
  *  @muza/api-client (общий с вебом пакет — Tauri туда не затащить), prefs —
  *  App.tsx; одна точка зеркалирования ловит всех писателей разом. */
@@ -96,10 +100,76 @@ export async function initDurableState(): Promise<void> {
   patchStorage();
 }
 
+/** Ключи, чью запись НА ДИСК разрешено склеивать (см. mirrorWrite).
+ *  Только prefs: их пишет живой ползунок настроек, и цена ошибки — «одно
+ *  движение ручки не доехало». Сессию и id устройства НЕ склеиваем никогда:
+ *  они пишутся редко, а их потеря стоит пользователю входа — ради чего вся
+ *  эта машинерия и заведена. */
+const COALESCED_KEYS = new Set<string>(["muza.prefs.v1"]);
+/** Потолок задержки записи на диск, мс. Это НЕ «подождать, пока успокоится»
+ *  (тогда затянутое перетаскивание не писало бы вообще), а окно склейки:
+ *  первая запись открывает окно, все попавшие в него схлопываются в одну, и
+ *  свежайшее значение уезжает на диск не позже чем через DISK_COALESCE_MS
+ *  после любого движения. 200мс = максимум 5 записей в секунду вместо 60–120. */
+const DISK_COALESCE_MS = 200;
+
+/** Что ждёт отправки: ключ → готовый конверт (побеждает последний). */
+const queued = new Map<string, string>();
+let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sendMirror(key: string, envelope: string): void {
+  // Promise.resolve поверх invoke: зеркалирование не имеет права ронять
+  // сам setItem, даже если мост вернул не-Promise (тесты, чужие среды)
+  void Promise.resolve(invoke("state_set", { key, value: envelope })).catch(() => undefined);
+}
+
+/** Отправить всё отложенное немедленно. Зовётся по таймеру И перед уходом
+ *  окна (см. слушатели в patchStorage) — окно закрывается редко, а вот
+ *  «свернул и убил задачу» — обычный сценарий владельца. */
+function flushMirror(): void {
+  if (coalesceTimer !== null) {
+    clearTimeout(coalesceTimer);
+    coalesceTimer = null;
+  }
+  if (queued.size === 0) return;
+  const batch = [...queued];
+  queued.clear();
+  for (const [key, envelope] of batch) sendMirror(key, envelope);
+}
+
+/** ⚠️ ЦЕНА ЗАПИСИ (жалоба владельца 02.08: приложение жрёт производительность).
+ *  Каждый setItem зеркалируемого ключа — это межпроцессный вызов и запись
+ *  файла на диск. «Живые» ползунки настроек шлют новое значение НА КАЖДОЕ
+ *  движение указателя, то есть 60–120 раз в секунду, и профиль целиком
+ *  уезжал на диск столько же раз. Само значение в localStorage кладём
+ *  по-прежнему СРАЗУ (читатели не должны видеть отставание) — склеивается
+ *  только дорогая половина. */
+function mirrorWrite(key: string, envelope: string): void {
+  if (!COALESCED_KEYS.has(key)) {
+    sendMirror(key, envelope);
+    return;
+  }
+  queued.set(key, envelope);
+  // Именно «если окна ещё нет»: перезапуск таймера на каждой записи означал
+  // бы, что во время непрерывного перетаскивания на диск не уходит ничего.
+  if (coalesceTimer === null) coalesceTimer = setTimeout(flushMirror, DISK_COALESCE_MS);
+}
+
 let patched = false;
 function patchStorage(): void {
   if (patched) return;
   patched = true;
+  // Уходим со сцены — дописываем немедленно. blur ловит alt-tab (после него
+  // пользователь и «завершает задачу»), visibilitychange — сворачивание,
+  // pagehide/beforeunload — закрытие окна и перезагрузку webview.
+  if (typeof window !== "undefined") {
+    window.addEventListener("blur", flushMirror);
+    window.addEventListener("pagehide", flushMirror);
+    window.addEventListener("beforeunload", flushMirror);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) flushMirror();
+    });
+  }
   const set = Storage.prototype.setItem;
   const del = Storage.prototype.removeItem;
   Storage.prototype.setItem = function (key: string, value: string) {
@@ -107,11 +177,7 @@ function patchStorage(): void {
       const seq = memSeq(key) + 1;
       set.call(this, seqKey(key), String(seq));
       set.call(this, key, value);
-      // Promise.resolve поверх invoke: зеркалирование не имеет права ронять
-      // сам setItem, даже если мост вернул не-Promise (тесты, чужие среды)
-      void Promise.resolve(invoke("state_set", { key, value: JSON.stringify({ seq, value } satisfies Envelope) })).catch(
-        () => undefined,
-      );
+      mirrorWrite(key, JSON.stringify({ seq, value } satisfies Envelope));
       return;
     }
     set.call(this, key, value);
@@ -127,9 +193,10 @@ function patchStorage(): void {
       // записи не страшна — счётчик в LevelDB всё равно старше файла.
       const seq = memSeq(key) + 1;
       set.call(this, seqKey(key), String(seq));
-      void Promise.resolve(
-        invoke("state_set", { key, value: JSON.stringify({ seq, value: null } satisfies Envelope) }),
-      ).catch(() => undefined);
+      // Через ту же очередь, что и setItem: порядок «удалили → записали
+      // заново» обязан сохраниться, а склейка по ключу всегда оставляет
+      // последнее, то есть верное.
+      mirrorWrite(key, JSON.stringify({ seq, value: null } satisfies Envelope));
     }
   };
 }

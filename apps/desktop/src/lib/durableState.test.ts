@@ -177,3 +177,83 @@ describe("зеркалирование записей после init", () => {
     expect(h.invoke).not.toHaveBeenCalled();
   });
 });
+
+/** ⚠️ ЦЕНА ЗАПИСИ (жалоба владельца 02.08: приложение жрёт производительность).
+ *  «Живой» ползунок настроек шлёт новое значение на КАЖДОЕ движение указателя —
+ *  до 120 раз в секунду, и каждое было межпроцессным вызовом с записью файла.
+ *  Склеиваем окном (см. mirrorWrite), но только prefs: сессия и id устройства
+ *  пишутся редко, а их потеря стоит пользователю входа. */
+describe("запись на диск: склейка окном", () => {
+  const PREFS = "muza.prefs.v1";
+  const prefsWrites = () =>
+    h.invoke.mock.calls.filter(([cmd, a]) => cmd === "state_set" && (a as { key: string }).key === PREFS);
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("пачка движений ползунка = ОДНА запись на диск, и в ней последнее значение", async () => {
+    diskHas(null);
+    await initDurableState();
+    h.invoke.mockClear();
+    h.invoke.mockResolvedValue(undefined);
+
+    for (let i = 1; i <= 30; i++) localStorage.setItem(PREFS, `vol-${i}`);
+
+    // в localStorage значение легло СРАЗУ — читатели отставания не видят
+    expect(localStorage.getItem(PREFS)).toBe("vol-30");
+    expect(prefsWrites()).toHaveLength(0); // окно ещё открыто
+
+    vi.advanceTimersByTime(200);
+
+    const writes = prefsWrites();
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse((writes[0][1] as { value: string }).value)).toEqual({ seq: 30, value: "vol-30" });
+  });
+
+  it("длинное перетаскивание всё равно пишется — окно не перезапускается", async () => {
+    diskHas(null);
+    await initDurableState();
+    h.invoke.mockClear();
+    h.invoke.mockResolvedValue(undefined);
+
+    // «мышь не отпускают»: движение каждые 50мс на протяжении секунды
+    for (let i = 0; i < 20; i++) {
+      localStorage.setItem(PREFS, `v-${i}`);
+      vi.advanceTimersByTime(50);
+    }
+
+    // не «ни одной записи до отпускания», но и не 20 — примерно раз в 200мс
+    const n = prefsWrites().length;
+    expect(n).toBeGreaterThanOrEqual(4);
+    expect(n).toBeLessThanOrEqual(6);
+  });
+
+  it("сессия НЕ склеивается: каждая запись уезжает на диск немедленно", async () => {
+    diskHas(null);
+    await initDurableState();
+    h.invoke.mockClear();
+    h.invoke.mockResolvedValue(undefined);
+
+    localStorage.setItem(KEY, "pair-1");
+    localStorage.setItem(KEY, "pair-2");
+
+    expect(diskWrites().map((w) => w.seq)).toEqual([1, 2]); // без ожидания таймера
+  });
+
+  it("уход окна (blur) дописывает отложенное, не дожидаясь таймера", async () => {
+    diskHas(null);
+    await initDurableState();
+    h.invoke.mockClear();
+    h.invoke.mockResolvedValue(undefined);
+
+    localStorage.setItem(PREFS, "vol-9");
+    expect(prefsWrites()).toHaveLength(0);
+
+    window.dispatchEvent(new Event("blur"));
+
+    expect(prefsWrites()).toHaveLength(1);
+    // таймер после ручного сброса не должен дописать то же самое второй раз
+    vi.advanceTimersByTime(500);
+    expect(prefsWrites()).toHaveLength(1);
+  });
+});

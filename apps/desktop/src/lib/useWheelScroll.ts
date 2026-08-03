@@ -13,7 +13,12 @@
  *  Плавный режим — rAF-догон цели экспонентой (полураспад ~90мс): колесо
  *  двигает target, кадры дотягивают scrollTop. Прямой режим — мгновенный
  *  scrollTop += delta. Оба пишут в DOM напрямую, React не ре-рендерится
- *  (гоча прогресс-бара 19.07: краска мимо React). */
+ *  (гоча прогресс-бара 19.07: краска мимо React).
+ *
+ *  ⚠️ ИНВАРИАНТ цикла догона (02.08): у него ТРИ выхода, и все обязательны —
+ *  дошли до цели, контейнер ушёл из DOM, контейнер стоит на месте N кадров
+ *  подряд. Раньше выход был один (дошли до цели), и недостижимая цель
+ *  оставляла цикл крутиться 60 Гц до конца сессии. Подробности — у tick. */
 import { useEffect } from "react";
 
 /** Пиксельный шаг колеса: deltaMode 1 (строки) и 2 (страницы) приводим к
@@ -31,6 +36,10 @@ export function stepToward(current: number, target: number, dtMs: number, halfLi
   const k = 1 - Math.pow(0.5, dtMs / halfLifeMs);
   return current + diff * k;
 }
+
+/** Сколько кадров без сдвига терпим, прежде чем признать цель недостижимой.
+ *  6 ≈ 100мс: столько «стояния» глазом не видно, а вечный цикл ловится. */
+const STALL_LIMIT = 6;
 
 function findScrollable(from: EventTarget | null): HTMLElement | null {
   let el = from instanceof Element ? from : null;
@@ -53,13 +62,41 @@ export function useWheelScroll(speedPct: number, smooth: boolean): void {
     let target = 0;
     let raf = 0;
     let lastT = 0;
+    /** Сколько кадров подряд scrollTop не сдвинулся (см. STALL_LIMIT). */
+    let stalled = 0;
 
     const tick = (now: number) => {
       if (!el) return;
       const dt = Math.min(64, now - lastT || 16);
       lastT = now;
-      const next = stepToward(el.scrollTop, target, dt);
+      // ⚠️ ЦЕНА КАДРОВ (жалоба владельца 02.08 про ФПС в играх). До этой
+      // проверки цикл завершался ТОЛЬКО дотянувшись до цели. Контейнер при
+      // этом мог уехать из DOM — смена вкладки пересоздаёт <main key={view}>,
+      // — а у отсоединённого узла scrollTop всегда 0 и записи в него не
+      // берутся: догон не доходил до цели НИКОГДА. Цикл продолжал крутиться
+      // 60 раз в секунду до конца сессии (и по кадру на каждую смену вкладки),
+      // держа мёртвое поддерево в памяти.
+      if (!el.isConnected) {
+        el = null;
+        return;
+      }
+      // Содержимое могло ужаться (список отфильтровали) — цель ниже нового
+      // дна недостижима по той же причине.
+      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+      if (target > max) target = max;
+      const before = el.scrollTop;
+      const next = stepToward(before, target, dt);
       el.scrollTop = next;
+      // Записали — но узел не сдвинулся. Штатно так бывает кадр-другой
+      // (субпиксельное защёлкивание), а вот подряд — значит упёрлись и цель
+      // недостижима: страховка от того же вечного цикла в случаях, которых
+      // isConnected не ловит.
+      if (Math.abs(el.scrollTop - before) < 0.01) stalled += 1;
+      else stalled = 0;
+      if (stalled > STALL_LIMIT) {
+        el = null;
+        return;
+      }
       if (next !== target) raf = requestAnimationFrame(tick);
       else el = null;
     };
@@ -77,6 +114,7 @@ export function useWheelScroll(speedPct: number, smooth: boolean): void {
       if (el !== found) {
         el = found;
         target = found.scrollTop;
+        stalled = 0; // новый контейнер — счётчик «стоим на месте» с нуля
       }
       const max = found.scrollHeight - found.clientHeight;
       target = Math.max(0, Math.min(max, target + delta));

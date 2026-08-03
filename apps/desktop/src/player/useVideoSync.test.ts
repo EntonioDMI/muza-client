@@ -104,6 +104,23 @@ describe("useVideoSync: дрейф-математика", () => {
     expect(video.currentTime).toBe(10); // est осталась 10 — диапазон не превышен
   });
 
+  it("сик НА ПАУЗЕ выравнивает видео разово, без цикла кадров", () => {
+    vi.spyOn(performance, "now").mockReturnValue(6_000);
+    const video = fakeVideo({ currentTime: 10 });
+    const videoRef = { current: video };
+
+    const { rerender } = renderHook(
+      ({ pos }) => useVideoSync(videoRef, { url: "http://x/a.mp4", pos, playing: false, speed: 1 }),
+      { initialProps: { pos: 10 } },
+    );
+    expect(rafCb).toBeNull(); // кадры на паузе не запрашиваются вовсе
+
+    rerender({ pos: 90 }); // перемотали ползунком, стоя на паузе
+
+    expect(video.currentTime).toBe(90);
+    expect(rafCb).toBeNull();
+  });
+
   it("readyState=0 (src ещё не открылся) — currentTime не трогаем, даже если дрейф большой", () => {
     const now = vi.spyOn(performance, "now").mockReturnValue(5_000);
     const video = fakeVideo({ currentTime: 0, readyState: 0 });
@@ -115,5 +132,59 @@ describe("useVideoSync: дрейф-математика", () => {
     tick();
 
     expect(video.currentTime).toBe(0); // трогать currentTime рано — readyState 0
+  });
+});
+
+/** ⚠️ ЦЕНА КАДРОВ (жалоба владельца 02.08: плеер роняет ФПС в играх). Дорого
+ *  здесь не сравнение времён, а ДЕКОДИРОВАНИЕ видео — оно идёт, пока элемент
+ *  не на паузе, даже когда кадр физически некому показать. */
+describe("useVideoSync: когда видео не должно декодироваться", () => {
+  /** Подменить document.hidden (в jsdom это read-only геттер прототипа). */
+  const setHidden = (v: boolean) =>
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => v });
+
+  afterEach(() => setHidden(false));
+
+  it("playing=false — ни одного запрошенного кадра и элемент на паузе", () => {
+    const video = fakeVideo();
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 0, playing: false, speed: 1 }));
+
+    expect(rafCb).toBeNull();
+    expect(video.pause).toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it("окно свёрнуто на момент запуска — играть не начинаем, кадр уезжает с декодера", () => {
+    setHidden(true);
+    const video = fakeVideo();
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 0, playing: true, speed: 1 }));
+
+    expect(video.play).not.toHaveBeenCalled();
+    expect(video.pause).toHaveBeenCalled();
+  });
+
+  it("свернули и развернули окно на ходу — пауза и возврат к игре", () => {
+    const video = fakeVideo();
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 0, playing: true, speed: 1 }));
+    expect(video.play).toHaveBeenCalledTimes(1);
+
+    setHidden(true);
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(video.pause).toHaveBeenCalled();
+
+    setHidden(false);
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(video.play).toHaveBeenCalledTimes(2);
+  });
+
+  it("развернули окно, но музыка на паузе — видео так и остаётся стоять", () => {
+    setHidden(true);
+    const video = fakeVideo();
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 0, playing: false, speed: 1 }));
+
+    setHidden(false);
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(video.play).not.toHaveBeenCalled();
   });
 });

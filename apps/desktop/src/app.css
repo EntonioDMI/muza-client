@@ -48,6 +48,20 @@ textarea,
 .muza-orb-spin--ccw {
   animation: muzaOrbCCW var(--orb-dur, 64s) linear infinite;
 }
+/* Караоке (режим прослушивания) накрывает фон НЕПРОЗРАЧНЫМ оверлеем — диски
+   под ним крутились впустую, и это была не мелочь: их общий контейнер несёт
+   filter: blur(--blur-scenery) = 64px, поэтому каждый кадр вращения заставлял
+   браузер заново размывать полный экран. Жалоба владельца 02.08: «в
+   полноэкранном режиме песни ФПС в играх сильно падает».
+   Атрибут ставит App.tsx (orbitPaused). Именно ПАУЗА, а не animation:none —
+   угол диска замирает там, где был, и выход из караоке (плавное гашение,
+   --dur-slow) обходится без прыжка вращения. will-change снимаем заодно:
+   пока диск стоит, держать под него отдельный слой GPU незачем. */
+.muza-orb-spin--cw[data-orb-paused],
+.muza-orb-spin--ccw[data-orb-paused] {
+  animation-play-state: paused;
+  will-change: auto;
+}
 @keyframes muzaOrbCW {
   to {
     transform: rotate(360deg);

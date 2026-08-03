@@ -30,7 +30,10 @@ export function MiniPlayer() {
 
   useEffect(() => {
     let un: (() => void) | undefined;
-    void miniOnState(setState).then((u) => {
+    // МЕРЖ, а не замена: main шлёт обложку только когда она сменилась —
+    // отсутствие поля значит «оставь прежнюю» (договор в MiniState.cover).
+    // Замена стирала бы картинку на каждом тике позиции.
+    void miniOnState((s) => setState((prev) => (prev ? { ...prev, ...s } : s))).then((u) => {
       un = u;
       void miniHello(); // main ответит свежим снапшотом
     });

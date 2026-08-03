@@ -11,13 +11,20 @@
  *  визуализатор просто не включают.
  *
  *  ⚠️ ЦЕНА КАДРОВ (жалоба владельца 02.08: караоке роняет ФПС в играх).
- *  Постоянный потребитель здесь — именно rAF-цикл 60 Гц. Он крутится ТОЛЬКО
- *  при active=true: эффект ниже выходит первой же строкой, если оверлей закрыт,
- *  а на закрытии размонтирования не происходит — цикл гасится cancelAnimationFrame
- *  в cleanup'е. Когда окно свёрнуто/перекрыто, requestAnimationFrame по спеке
- *  кадры не планирует вовсе — отдельного выключателя по document.hidden тут нет
- *  и заводить его НЕ НАДО (это была бы вторая правда о том, когда рисовать).
- *  Любая правка этого файла обязана сохранить оба свойства.
+ *  Постоянный потребитель здесь — именно rAF-цикл 60 Гц, и у него ДВА
+ *  выключателя:
+ *  1) active=false (оверлей закрыт) — эффект ниже выходит первой же строкой,
+ *     а на закрытии размонтирования не происходит, цикл гасится
+ *     cancelAnimationFrame в cleanup'е;
+ *  2) playing=false — на паузе картинке неоткуда меняться: досчитав хвост
+ *     инерции до нуля и подождав QUIET_HOLD_MS, цикл гаснет сам (02.08: до
+ *     этого clearRect + отрисовка во всю ширину × DPR крутились на паузе
+ *     бесконечно). Последний кадр НЕ стирается — он и так плоская линия, и
+ *     стирание было бы видимым «погас на паузе».
+ *  Когда окно свёрнуто/перекрыто, requestAnimationFrame по спеке кадры не
+ *  планирует вовсе — отдельного выключателя по document.hidden тут нет и
+ *  заводить его НЕ НАДО (это была бы вторая правда о том, когда рисовать).
+ *  Любая правка этого файла обязана сохранить все три свойства.
  *
  *  Математика (раскладка бинов, зеркало, сглаживание, инерция, геометрия,
  *  диапазоны ручек) — в `visualizerMath` (чистые функции, юнит-тесты без
@@ -96,6 +103,13 @@ const WAVE_FILL_ALPHA_MAX = 0.32;
  *  (раньше цвет читался один раз на маунт и до перезахода в оверлей висел
  *  старый), а getComputedStyle не дёргается каждый кадр. */
 const ACCENT_REFRESH_MS = 500;
+/** Что считаем «картинка стоит в нуле»: байт analyser'а целочисленный, полная
+ *  тишина даёт ровно 0 — порога в один байт хватает с запасом. */
+const QUIET_EPS = 1 / 255;
+/** Сколько тишины на паузе терпим до остановки цикла. Секунда — чтобы хвост
+ *  инерции (до 0.7с у баров) успел добежать, а пауза-перещёлк между треками не
+ *  дёргала выключатель туда-сюда. */
+const QUIET_HOLD_MS = 1000;
 
 /** OS-«уменьшить анимацию», jsdom-safe (без matchMedia считаем «нет»). */
 function reducedMotionQuery(): MediaQueryList | null {
@@ -110,13 +124,17 @@ function reducedMotionQuery(): MediaQueryList | null {
 export function Visualizer({
   mode,
   active,
+  playing = true,
   getAnalyser,
   tuning,
   style,
 }: {
   mode: "bars" | "wave";
-  /** false — цикл не крутится (оверлей закрыт/пауза не мешает — рисуем хвост). */
+  /** false — цикл не крутится (оверлей закрыт). */
   active: boolean;
+  /** Идёт ли звук. false — досчитав хвост инерции, цикл гаснет до следующего
+   *  play; по умолчанию true, чтобы старые вызовы вели себя как раньше. */
+  playing?: boolean;
   getAnalyser: () => AnalyserNode | null;
   /** Ручки вида (проценты, как в Prefs). Отсутствующие/мусорные значения
    *  нормализуются к дефолтам VIS_LIMITS — рендер мусора не боится. */
@@ -140,6 +158,16 @@ export function Visualizer({
   useEffect(() => {
     tuningRef.current = view;
   });
+  // playing НЕ в депсах цикла намеренно: пересоздание эффекта обнуляет
+  // скользящий максимум гейна (он копится ~5с) и огибающие — после каждой
+  // паузы визуализатор раскачивался бы заново. Вместо этого пауза гасит цикл
+  // изнутри, а play будит его сохранённой функцией: конверты переживают паузу.
+  const playingRef = useRef(playing);
+  const wakeRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    playingRef.current = playing;
+    if (playing) wakeRef.current?.();
+  }, [playing]);
 
   useEffect(() => {
     if (!active) return;
@@ -149,6 +177,12 @@ export function Visualizer({
     if (!ctx) return;
 
     let raf = 0;
+    /** С какого момента картинка стоит в нуле на паузе (-1 — не стоит).
+     *  Именно -1, а не 0: performance.now() на первом кадре после старта
+     *  страницы вполне может быть нулём, и он потерялся бы как «не стоит». */
+    let quietSince = -1;
+    /** Холст уже вычищен — не тереть его повторно каждый кадр. */
+    let blank = false;
     // Размеры буферов знает только analyser (fftSize движка), а он появляется
     // позже маунта — выделяем на первом кадре с данными. Тип с ArrayBuffer
     // явно: getByte*Data не принимает вид на SharedArrayBuffer, а без
@@ -173,9 +207,39 @@ export function Visualizer({
     const mql = reducedMotionQuery();
     let reduced = mql?.matches ?? false;
 
+    /** Выключатель паузы, один на оба выхода из draw: звук стоит и картинка
+     *  уже в нуле — следующий кадр будет пиксель в пиксель этим же. Последний
+     *  кадр оставляем как есть (плоская линия; стирать её — видимое
+     *  «погасло»), гасим только цикл. */
+    const quietCheck = (now: number, peak: number) => {
+      if (playingRef.current || peak > QUIET_EPS) {
+        quietSince = -1;
+        return;
+      }
+      if (quietSince < 0) quietSince = now;
+      else if (now - quietSince > QUIET_HOLD_MS) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
+
     const draw = () => {
       if (reduced) return; // страховка: в reduced новые кадры не планируются
       raf = requestAnimationFrame(draw);
+      const analyser = getAnalyserRef.current();
+      // plain-режим — тишина без данных. Холст чистим ОДИН раз: анализатор
+      // может появиться (сменили трек), поэтому кадры продолжаем просить, но
+      // clearRect во всю ширину × DPR каждый кадр — не бесплатная тишина.
+      // На паузе кадры и вовсе не нужны: гасим цикл тем же выключателем, что
+      // и при нулевой огибающей — «данных нет» это и есть пик 0.
+      if (!analyser) {
+        if (!blank) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          blank = true;
+        }
+        quietCheck(performance.now(), 0);
+        return;
+      }
       const dpr = window.devicePixelRatio || 1;
       const w = canvas.clientWidth * dpr;
       const h = canvas.clientHeight * dpr;
@@ -184,8 +248,7 @@ export function Visualizer({
         canvas.height = h;
       }
       ctx.clearRect(0, 0, w, h);
-      const analyser = getAnalyserRef.current();
-      if (!analyser) return; // plain-режим — тишина без данных
+      blank = false;
 
       const t = tuningRef.current;
       const now = performance.now();
@@ -318,6 +381,18 @@ export function Visualizer({
         const decay = Math.exp(-dt / GAIN_WINDOW_SEC);
         runningMax = Math.max(GAIN_FLOOR, framePeak + (runningMax - framePeak) * decay);
       }
+
+      quietCheck(now, framePeak);
+    };
+
+    // Разбудить погашенный паузой цикл (зовётся из эффекта по playing выше).
+    // lastT сбрасывается: иначе первый кадр после долгой паузы посчитал бы
+    // огромный dt и схлопнул бы инерцию с гейном одним прыжком.
+    wakeRef.current = () => {
+      if (raf !== 0 || reduced) return;
+      lastT = performance.now();
+      quietSince = -1;
+      draw();
     };
 
     // reduced на лету: выключили анимации в OS — канвас гаснет тут же,
@@ -340,6 +415,8 @@ export function Visualizer({
 
     return () => {
       cancelAnimationFrame(raf);
+      raf = 0;
+      wakeRef.current = null;
       mql?.removeEventListener?.("change", onReducedChange);
     };
   }, [mode, active]);

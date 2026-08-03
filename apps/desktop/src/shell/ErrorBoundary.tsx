@@ -18,6 +18,16 @@ interface Props {
   children: ReactNode;
   /** Тестовый шов; по умолчанию — синглтон errorReporter. */
   onError?: (error: unknown) => void;
+  /** Своя замена упавшему поддереву вместо полноэкранного крашскрина.
+   *  Зачем (02.08): единственная граница стояла на КОРНЕ (main.tsx), поэтому
+   *  ошибка рендера любого экрана уносила всё приложение — вместе с очередью,
+   *  позицией и звуком. Локальная граница гасит только свой кусок.
+   *  `reset` возвращает поддерево к нормальному рендеру. */
+  fallback?: (reset: () => void, message: string | null) => ReactNode;
+  /** Сменилось — граница сбрасывается сама. Для экранов сюда идёт активная
+   *  вкладка: ушёл с упавшего экрана и вернулся — он пробует отрисоваться
+   *  заново, руками ничего жать не надо. */
+  resetKey?: unknown;
 }
 
 /** Язык крашскрина: prefs напрямую, битые/недоступные prefs — русский. */
@@ -36,13 +46,71 @@ const COPY = {
     title: "Муза сломалась",
     hint: "Что-то пошло не так внутри плеера. Перезапусти окно — обычно этого хватает.",
     button: "Перезапустить",
+    viewTitle: "Этот экран не открылся",
+    viewHint: "Музыка играет дальше, очередь на месте. Попробуй открыть экран снова или перейди на другой.",
+    viewButton: "Попробовать снова",
   },
   en: {
     title: "Muza crashed",
     hint: "Something went wrong inside the player. Reload the window — that usually helps.",
     button: "Reload",
+    viewTitle: "This screen didn't open",
+    viewHint: "Music keeps playing and the queue is intact. Try opening the screen again, or switch to another one.",
+    viewButton: "Try again",
   },
 } as const;
+
+/** Заглушка ОДНОГО экрана: приложение вокруг живо, поэтому и вид скромный —
+ *  строка объяснения и кнопка, без крашскрина во весь экран. Тем же железным
+ *  правилом файла: ни ДС, ни i18n — только токены с фолбэками. */
+export function ViewCrash({ onRetry, message }: { onRetry: () => void; message: string | null }): ReactNode {
+  const copy = COPY[crashLang()];
+  return (
+    <div
+      role="alert"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "var(--sp-3, 12px)",
+        minHeight: "60vh",
+        padding: "var(--sp-6, 24px)",
+        textAlign: "center",
+        color: "var(--text-1, #f4f3f1)",
+        fontFamily: "var(--font-ui, 'Golos Text', sans-serif)",
+      }}
+    >
+      <div style={{ fontSize: "var(--fs-h3, 20px)", fontWeight: 600 }}>{copy.viewTitle}</div>
+      <div style={{ fontSize: "var(--fs-body, 14px)", lineHeight: 1.6, color: "var(--text-2, #b9b7b2)", maxWidth: 420 }}>
+        {copy.viewHint}
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{
+          marginTop: "var(--sp-2, 8px)",
+          padding: "10px 24px",
+          borderRadius: "var(--r-pill, 999px)",
+          border: "none",
+          background: "var(--accent, #3b82f6)",
+          color: "var(--accent-contrast, #fff)",
+          fontFamily: "inherit",
+          fontSize: "var(--fs-body, 14px)",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        {copy.viewButton}
+      </button>
+      {message ? (
+        <code style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, color: "var(--text-3, #7d7b76)" }}>
+          {message}
+        </code>
+      ) : null}
+    </div>
+  );
+}
 
 export class ErrorBoundary extends Component<Props, { broken: boolean; message: string | null }> {
   state = { broken: false, message: null };
@@ -57,8 +125,15 @@ export class ErrorBoundary extends Component<Props, { broken: boolean; message: 
     (this.props.onError ?? errorReporter.reportReactError)(error);
   }
 
+  componentDidUpdate(prev: Props): void {
+    if (this.state.broken && prev.resetKey !== this.props.resetKey) this.reset();
+  }
+
+  reset = (): void => this.setState({ broken: false, message: null });
+
   render(): ReactNode {
     if (!this.state.broken) return this.props.children;
+    if (this.props.fallback) return this.props.fallback(this.reset, this.state.message);
     const copy = COPY[crashLang()];
     return (
       <div

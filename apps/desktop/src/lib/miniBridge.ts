@@ -11,7 +11,15 @@ import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 export interface MiniState {
   title: string | null;
   artist: string | null;
-  cover: string | null;
+  /** ⚠️ ПОЛЕ НЕОБЯЗАТЕЛЬНОЕ, и это не мелочь: обложка приезжает сюда уже
+   *  КАРТИНКОЙ ЦЕЛИКОМ (useCoverArt кропает её на канве в data-URL) — сотни
+   *  килобайт. Снапшот уходит на каждый тик позиции, то есть раз в секунду,
+   *  и до 02.08 эти килобайты сериализовались и переезжали между процессами
+   *  заново каждую секунду при неизменной картинке.
+   *  Договор: поле ОТСУТСТВУЕТ — «не менялась, оставь прежнюю»; поле есть
+   *  (в том числе null) — «вот новая». Поэтому приёмник обязан МЕРЖИТЬ
+   *  снапшот в предыдущий, а не заменять (см. mini/MiniPlayer.tsx). */
+  cover?: string | null;
   playing: boolean;
   pos: number;
   duration: number;

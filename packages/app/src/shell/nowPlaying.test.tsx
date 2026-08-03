@@ -112,6 +112,61 @@ describe("Визуализатор — кадры только когда он �
     }
   });
 
+  it("звук стоит: досчитав тишину, цикл гаснет САМ, без размонтирования", () => {
+    const restore = stubCanvas();
+    let frame: FrameRequestCallback | null = null;
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((fn) => {
+      frame = fn;
+      return 7 as unknown as number;
+    });
+    const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    try {
+      // playing=false + анализатора нет = картинке неоткуда меняться
+      render(<Visualizer mode="bars" active playing={false} getAnalyser={() => null} />);
+      expect(raf).toHaveBeenCalledTimes(1); // первый кадр — засечь тишину
+
+      now.mockReturnValue(1_500); // полсекунды тишины — рано, хвост ещё мог идти
+      frame!(0);
+      expect(cancel).not.toHaveBeenCalled();
+
+      now.mockReturnValue(3_000); // две секунды: держать цикл больше не за что
+      frame!(0);
+      expect(cancel).toHaveBeenCalledWith(7);
+    } finally {
+      now.mockRestore();
+      cancel.mockRestore();
+      raf.mockRestore();
+      restore();
+    }
+  });
+
+  it("play после тишины будит цикл обратно (конверты гейна при этом целы)", () => {
+    const restore = stubCanvas();
+    let frame: FrameRequestCallback | null = null;
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((fn) => {
+      frame = fn;
+      return 7 as unknown as number;
+    });
+    const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    try {
+      const view = render(<Visualizer mode="bars" active playing={false} getAnalyser={() => null} />);
+      now.mockReturnValue(3_000);
+      frame!(0);
+      expect(cancel).toHaveBeenCalledWith(7);
+      raf.mockClear();
+
+      view.rerender(<Visualizer mode="bars" active playing getAnalyser={() => null} />);
+      expect(raf).toHaveBeenCalled(); // разбудили, не пересоздав эффект
+    } finally {
+      now.mockRestore();
+      cancel.mockRestore();
+      raf.mockRestore();
+      restore();
+    }
+  });
+
   it("active=true: цикл заведён, а на размонтировании погашен", () => {
     const restore = stubCanvas();
     // кадр не выполняем — иначе draw() зарядит следующий и тест зациклится
@@ -160,6 +215,110 @@ describe("ListeningMode — закрытый оверлей ничего не ж
       raf.mockRestore();
       restore();
     }
+  });
+
+  /** Дыра, которую закрыли 02.08: прежний тест выше проверял закрытый оверлей
+   *  на ПАУЗЕ, а музыка при закрытом караоке как раз играет. Прогресс-бар
+   *  оверлея (Slider с rate>0) знал только про playing и крутил собственный
+   *  цикл кадров, переписывая transform'ы узлов под visibility:hidden. */
+  it("open=false, но МУЗЫКА ИДЁТ: кадры всё равно не запрашиваются", () => {
+    const restore = stubCanvas();
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    try {
+      render(
+        <ListeningMode
+          open={false}
+          track={track}
+          lyrics={lines}
+          playing
+          pos={12}
+          speed={1}
+          activeLine={0}
+          onTogglePlay={noop}
+          onPrev={noop}
+          onNext={noop}
+          onSeek={noop}
+          onSeekLine={noop}
+          onClose={noop}
+          visualizer="bars"
+          getAnalyser={() => null}
+          bassShake
+          anims
+        />,
+      );
+      expect(raf).not.toHaveBeenCalled();
+    } finally {
+      raf.mockRestore();
+      restore();
+    }
+  });
+
+  it("open=true при играющей музыке — кадры, наоборот, идут (гейт не залип)", () => {
+    const restore = stubCanvas();
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      render(
+        <ListeningMode
+          open
+          track={track}
+          lyrics={lines}
+          playing
+          pos={12}
+          speed={1}
+          activeLine={0}
+          onTogglePlay={noop}
+          onPrev={noop}
+          onNext={noop}
+          onSeek={noop}
+          onSeekLine={noop}
+          onClose={noop}
+          visualizer="bars"
+          getAnalyser={() => null}
+          bassShake
+          anims
+        />,
+      );
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+      restore();
+    }
+  });
+
+  /** Размывать подложке нечего: ниже по стопке только задник, уже размытый на
+   *  --blur-scenery, и непрозрачный корень. Полноэкранный backdrop-filter при
+   *  этом пересчитывался каждый кадр, потому что предок каждый кадр меняет
+   *  transform (качание при басах) — снят 02.08. */
+  it("подложка оверлея не несёт backdrop-filter", () => {
+    const { getByTestId } = render(
+      <ListeningMode
+        open
+        track={track}
+        lyrics={lines}
+        playing={false}
+        pos={0}
+        activeLine={0}
+        onTogglePlay={noop}
+        onPrev={noop}
+        onNext={noop}
+        onSeek={noop}
+        onSeekLine={noop}
+        onClose={noop}
+      />,
+    );
+    const root = getByTestId("listening-mode");
+    // именно затемняющая плёнка сцены, а не стеклянные плашки контролов —
+    // у тех размывать есть что, и они не полноэкранные
+    const scrim = [...root.querySelectorAll<HTMLElement>("div")].find(
+      (d) => d.style.background === "var(--glass-deep)",
+    );
+    expect(scrim).toBeTruthy();
+    // через getPropertyValue, а не через камель-свойства: webkitBackdropFilter
+    // в типе CSSStyleDeclaration не объявлено, а вендорный префикс на плёнке
+    // стоял вторым — проверять надо оба написания
+    expect(scrim!.style.getPropertyValue("backdrop-filter")).toBe("");
+    expect(scrim!.style.getPropertyValue("-webkit-backdrop-filter")).toBe("");
   });
 
   it("без обработчика ПКМ (веб) оверлей рисуется и не падает", () => {

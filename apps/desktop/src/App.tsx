@@ -69,6 +69,7 @@ import { MeaningDialog } from "./shell/MeaningDialog";
 import { VersionsDialog } from "./shell/VersionsDialog";
 import { ReplaceVersionDialog, type ReplaceCtx } from "./shell/ReplaceVersionDialog";
 import { DragLayer } from "./shell/DragLayer";
+import { ErrorBoundary, ViewCrash } from "./shell/ErrorBoundary";
 import { ContextMenuProvider, type ContextMenuApi } from "./shell/ContextMenu";
 import type { MenuContext } from "./shell/menuActions";
 import { AddLinkDialog } from "./shell/AddLinkDialog";
@@ -233,8 +234,17 @@ function Player({
   rawUsername: string | null;
   onLogout: () => void;
 }) {
-  // Скоуп снапшотов — до первых загрузок (эффекты ниже читают через withSnapshot)
-  setSnapshotScope(userId);
+  // Скоуп снапшотов — до первых загрузок (эффекты ниже читают через
+  // withSnapshot), поэтому именно в теле рендера, а не в эффекте.
+  // ⚠️ Но РОВНО ОДИН РАЗ на userId: внутри полный обход ключей localStorage
+  // (выметание чужих снапшотов старого формата), а Player перерисовывается
+  // несколько раз в секунду от тика позиции — до 02.08 это был обход всего
+  // хранилища на каждый тик.
+  const scopedForRef = useRef<string | null>(null);
+  if (scopedForRef.current !== userId) {
+    scopedForRef.current = userId;
+    setSnapshotScope(userId);
+  }
   // Стартовый экран — из prefs (Stage 6, «Поведение»)
   const [view, setView] = useState<View>(() => loadPrefs().startView);
   // Пусто, пока не приедут серверные фавориты (эффект ниже). Раньше тут был
@@ -315,6 +325,13 @@ function Player({
   } | null>(null);
   const [iconPickerBusy, setIconPickerBusy] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Таймер тоста переживал размонтирование (02.08): вылет из аккаунта или
+  // перезаход снимает Player, а через 2.4с сработавший setTimeout звал
+  // setToast на мёртвом компоненте — предупреждение React и удержанное
+  // замыкание. Снимаем при размонтировании.
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
   // Кастомизация переживает перезапуск: без этого все настройки слетали
   const [prefs, setPrefsState] = useState<Prefs>(loadPrefs);
   const setPrefs = (p: Prefs) => {
@@ -427,6 +444,15 @@ function Player({
     [pbRaw, cleanCover],
   );
   const { track, playing, pos, vol } = pb;
+
+  // Режим прослушивания живёт при КОНКРЕТНОМ треке (см. условие ?: у
+  // <ListeningMode/> в разметке). Когда трек уходит — убрали последний из
+  // очереди прямо из полноэкранного режима — оверлей исчезает вместе с ним,
+  // а expanded оставался true: следующий запуск ЛЮБОГО трека сразу выбрасывал
+  // на весь экран, хотя пользователь просто нажал play (02.08).
+  useEffect(() => {
+    if (!track) setExpanded(false);
+  }, [track]);
 
   // Прогрев метаданных добычи (Фаза 1): hover/видимость подают вьюхи через
   // useWarmRow (контекст ниже), очередь воспроизведения — отсюда.
@@ -602,24 +628,38 @@ function Player({
       .catch(() => undefined);
   }, []);
 
-  /** Закрепить трек оффлайн: пин + немедленная догрузка в кэш добычи. */
-  const saveOffline = async (t: CatalogTrack) => {
-    await enginePin(t.id, true);
+  /** Закрепить трек оффлайн: пин + немедленная догрузка в кэш добычи.
+   *  "saved" — лежит на диске; "pinned" — закрепление есть, файл подтянется
+   *  при первом прослушивании; "failed" — движок не ответил, закрепления НЕТ.
+   *  ⚠️ enginePin до 02.08 стоял ВНЕ try: его отказ ронял всю цепочку, из-за
+   *  чего тост «Сохраняем N треков…» висел вечно, а ошибка уходила в
+   *  необработанное отклонение промиса (вызов идёт через void). */
+  const saveOffline = async (t: CatalogTrack): Promise<"saved" | "pinned" | "failed"> => {
+    try {
+      await enginePin(t.id, true);
+    } catch {
+      return "failed";
+    }
     setPins((p) => new Set([...p, t.id]));
-    if (t.sources.every((s) => s === "local")) return; // локальный и так на диске
+    if (t.sources.every((s) => s === "local")) return "saved"; // локальный и так на диске
     try {
       const sources = await api.getTrackSources(t.id);
       // оффлайн-копия — всегда в полном качестве и по политике источников
       await resolvePlayable(t.id, applySourcePolicy(sources, prefs), "auto", prefs.language);
-      return true;
+      return "saved";
     } catch {
-      return false; // пин остался — докачается при первом прослушивании
+      return "pinned";
     }
   };
 
   const toggleOffline = async (track: CatalogTrack) => {
     if (pins.has(track.id)) {
-      await enginePin(track.id, false);
+      try {
+        await enginePin(track.id, false);
+      } catch {
+        showToast(t("toast.offline.failed"), "x");
+        return;
+      }
       setPins((p) => {
         const next = new Set(p);
         next.delete(track.id);
@@ -629,9 +669,13 @@ function Player({
       return;
     }
     showToast(t("toast.offline.saving"), "download");
-    const ok = await saveOffline(track);
+    const r = await saveOffline(track);
+    if (r === "failed") {
+      showToast(t("toast.offline.failed"), "x");
+      return;
+    }
     showToast(
-      ok === false ? t("toast.offline.pinnedWillDownload") : t("toast.offline.saved"),
+      r === "pinned" ? t("toast.offline.pinnedWillDownload") : t("toast.offline.saved"),
       "download",
     );
   };
@@ -642,11 +686,16 @@ function Player({
     if (targets.length === 0) return;
     showToast(t("toast.offline.savingPlaylist", { count: targets.length }), "download");
     let ok = 0;
+    // Закрепились — только те, у кого движок принял пин: раньше в pins
+    // безусловно уезжал ВЕСЬ список, и после отказа движка треки выглядели
+    // сохранёнными, ничем при этом не будучи.
+    const pinned: string[] = [];
     for (const track of targets) {
       const r = await saveOffline(track);
-      if (r !== false) ok += 1;
+      if (r === "saved") ok += 1;
+      if (r !== "failed") pinned.push(track.id);
     }
-    setPins((p) => new Set([...p, ...targets.map((track) => track.id)]));
+    setPins((p) => new Set([...p, ...pinned]));
     showToast(t("toast.offline.playlistDone", { ok, count: targets.length }), "download");
   };
 
@@ -702,18 +751,39 @@ function Player({
   // Мини-плеер: окно "mini" живёт/умирает по prefs; состояние уходит событиями
   // (1 Гц по целым секундам позиции), команды приходят обратно (ref-паттерн —
   // подписка одна, замыкания свежие)
-  const miniStateNow = (): MiniState => ({
-    title: track?.title ?? null,
-    artist: track?.artist ?? null,
-    cover: track?.cover ?? null,
-    playing,
-    pos,
-    duration: track?.duration ?? 0,
-    liked: track ? likes.includes(track.id) : false,
-  });
-  const miniRef = useRef({ send: () => {}, cmd: (_c: MiniCommand) => {} });
+  // Что за обложку мини уже получил. undefined — не получал ничего (первый
+  // снапшот и любой ответ на hello обязаны везти картинку целиком).
+  const miniCoverSentRef = useRef<string | null | undefined>(undefined);
+  const miniStateNow = (): MiniState => {
+    const cover = track?.cover ?? null;
+    const state: MiniState = {
+      title: track?.title ?? null,
+      artist: track?.artist ?? null,
+      playing,
+      pos,
+      duration: track?.duration ?? 0,
+      liked: track ? likes.includes(track.id) : false,
+    };
+    // Обложка — сотни килобайт байтов картинки (data-URL после кропа
+    // useCoverArt), а снапшот уходит раз в секунду по тику позиции. Кладём
+    // поле, ТОЛЬКО когда картинка правда сменилась; мини мержит снапшот в
+    // прежний, поэтому отсутствие поля для него = «оставь что было»
+    // (договор — в MiniState.cover). До 02.08 эти байты ездили между
+    // процессами каждую секунду впустую.
+    if (cover !== miniCoverSentRef.current) {
+      miniCoverSentRef.current = cover;
+      state.cover = cover;
+    }
+    return state;
+  };
+  const miniRef = useRef({ send: (_full?: boolean) => {}, cmd: (_c: MiniCommand) => {} });
   miniRef.current = {
-    send: () => void miniSendState(miniStateNow()),
+    // full=true — «мини только что открылось/перезапустилось, оно не знает
+    // ничего»: забываем отправленное, чтобы обложка уехала вместе со снапшотом.
+    send: (full = false) => {
+      if (full) miniCoverSentRef.current = undefined;
+      void miniSendState(miniStateNow());
+    },
     cmd: (c: MiniCommand) => {
       if (c === "toggle") pb.toggle();
       else if (c === "next") pb.next();
@@ -736,7 +806,7 @@ function Player({
       // (см. miniListen ниже). Досылаем свежий снапшот сразу после show(),
       // чтобы первое появление окна не оставалось пустым до следующего
       // изменения трека/позиции.
-      void miniShow().then(() => miniRef.current.send());
+      void miniShow().then(() => miniRef.current.send(true));
     } else {
       void miniHide();
     }
@@ -746,7 +816,9 @@ function Player({
     let un: (() => void) | undefined;
     void miniListen(
       (c) => miniRef.current.cmd(c),
-      () => miniRef.current.send(),
+      // hello = мини поднялось заново и ничего о треке не знает — снапшот
+      // целиком, вместе с обложкой
+      () => miniRef.current.send(true),
     ).then((u) => {
       un = u;
     });
@@ -1554,6 +1626,15 @@ function Player({
   // просит reduced-motion (двойная защита — как bassShake в ListeningMode).
   // Выключено → диски остаются на месте (статичная версия), не пропадают.
   const orbitActive = prefs.anims && !reducedMotion;
+  // Караоке-оверлей непрозрачен и накрывает фон целиком, а диски продолжали
+  // крутиться под ним — и не «просто крутиться»: их общий контейнер несёт
+  // filter: blur(--blur-scenery)=64px, поэтому каждый кадр вращения заставлял
+  // браузер заново размывать полный экран. Ровно то, на что жаловался владелец
+  // 02.08 («в полноэкранном режиме песни ФПС в играх падает»).
+  // ПАУЗА, а не снятие класса: снятый класс сбрасывает угол в 0, и на выходе
+  // из караоке (плавное гашение, --dur-slow) прыжок был бы виден. Пауза
+  // замораживает текущий угол и отпускает GPU-слой вместе с will-change.
+  const orbitPaused = expanded;
 
   // Фон за интерфейсом (Stage 6): тип + затемнение поверх (читаемость).
   // Фоны из обложки требуют самой обложки — нет её (ничего не играет / у трека
@@ -1619,6 +1700,7 @@ function Player({
             className={
               orbitActive ? (prefs.bgAnimatedInvert ? "muza-orb-spin--ccw" : "muza-orb-spin--cw") : undefined
             }
+            data-orb-paused={orbitPaused ? "" : undefined}
             style={{ width: "100%", height: "100%" }}
           >
             <img
@@ -1646,6 +1728,7 @@ function Player({
             className={
               orbitActive ? (prefs.bgAnimatedInvert ? "muza-orb-spin--cw" : "muza-orb-spin--ccw") : undefined
             }
+            data-orb-paused={orbitPaused ? "" : undefined}
             style={{ width: "100%", height: "100%" }}
           >
             <img
@@ -1895,6 +1978,15 @@ function Player({
         {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
             прошлого экрана не протекает в новый (короткий экран улетал вверх) */}
         <main key={view} style={{ overflowY: "auto", scrollbarWidth: "none", borderRadius: "var(--r-lg)" }}>
+          {/* Своя граница на экран (02.08). Раньше единственная жила на корне
+              (main.tsx), и ошибка рендера ЛЮБОГО экрана уносила всё окно в
+              крашскрин: очередь, позиция и звук вместе с ним. Теперь падает
+              только содержимое вкладки — бар, сайдбар и музыка целы.
+              Граница ВНУТРИ <main>, а не снаружи: так уцелевает скролл-
+              контейнер и раскладка сетки, заглушка садится ровно на его место.
+              resetKey={view} — ушёл с упавшего экрана и вернулся, он пробует
+              снова; кнопка в заглушке делает то же, не сходя с места. */}
+          <ErrorBoundary resetKey={view} fallback={(retry, msg) => <ViewCrash onRetry={retry} message={msg} />}>
           <div className="muza-view">
             {view === "home" ? (
               <HomeFeed
@@ -2063,6 +2155,7 @@ function Player({
               />
             )}
           </div>
+          </ErrorBoundary>
         </main>
         {showNowPlaying ? (
           <NowPlayingPanel
@@ -2079,13 +2172,23 @@ function Player({
             onExplain={setMeaningLine}
             videoUrl={trackVideoUrl}
             pos={pos}
-            playing={playing}
+            // `&& !expanded` — единственный потребитель этого пропа внутри
+            // панели — часы видео (useVideoSync), а видео ДЕКОДИРУЕТСЯ, пока
+            // элемент не на паузе, даже когда его никто не видит. Открытый
+            // караоке накрывает панель непрозрачным оверлеем целиком; из
+            // самой панели «меня перекрыли» не видно (CSS-видимость у неё
+            // честная), поэтому решение принимает хозяин — здесь.
+            // Жалоба владельца 02.08 про ФПС в играх.
+            playing={playing && !expanded}
             speed={pb.speed}
             onVideoError={refreshTrackVideo}
           />
         ) : null}
       </div>
 
+      {/* Очередь — тоже отдельный оверлей: её падение не должно уносить окно.
+          Заглушка пустая (панель просто не откроется), сброс — на закрытии. */}
+      <ErrorBoundary resetKey={queueOn} fallback={() => null}>
       <QueuePanel
         open={queueOn}
         tracks={pb.queue}
@@ -2126,6 +2229,7 @@ function Player({
           })
         }
       />
+      </ErrorBoundary>
 
       <PlayerBar
         track={track}
@@ -2508,8 +2612,14 @@ function Player({
       </Dialog>
 
       {/* Режим прослушивания — про КОНКРЕТНЫЙ трек: нет трека, нет и режима
-          (оба входа в него, обложка и кнопка бара, тоже недоступны). */}
+          (оба входа в него, обложка и кнопка бара, тоже недоступны).
+          Своя граница с ПУСТОЙ заглушкой: если караоке упало (кривой текст,
+          визуализатор, обложка), правильный исход — оверлея просто нет, а
+          музыка играет дальше в обычном окне. Крашскрин на весь экран ради
+          украшения поверх плеера — обмен не в пользу владельца.
+          resetKey={track.id} — новый трек пробует открыть режим заново. */}
       {track ? (
+      <ErrorBoundary resetKey={track.id} fallback={() => null}>
       <ListeningMode
         open={expanded}
         track={track}
@@ -2552,6 +2662,7 @@ function Player({
         bassReach={prefs.bassReach}
         anims={prefs.anims}
       />
+      </ErrorBoundary>
       ) : null}
       <MeaningDialog
         open={meaningLine !== null}
