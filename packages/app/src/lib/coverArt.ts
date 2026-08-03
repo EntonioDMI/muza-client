@@ -13,7 +13,38 @@
 
 import { useEffect, useState } from "react";
 
+/** Потолок кэша обложек в записях.
+ *
+ *  Значение здесь — не ссылка, а САМ КАДР: dataURL JPEG 720×720 в base64,
+ *  100–150 КБ штука. Без потолка Map росла всю сессию и никогда не сжималась —
+ *  за вечер прослушивания это сотни записей и десятки мегабайт в куче. Утечку
+ *  не видно глазом: картинок на экране единицы, а память съедена давно
+ *  доигранными. 64 × ~150 КБ ≈ 10 МБ — с запасом покрывает открытый экран и
+ *  очередь вперёд, дальше вытесняется самое давно не нужное. */
+const CACHE_MAX = 64;
+
+/** Готовые обложки в MRU-порядке: свежее — в хвосте Map, вытесняем голову. */
 const cache = new Map<string, string>();
+
+/** Чтение с перекладыванием в хвост — обложка играющего трека не вылетит
+ *  из-за того, что её положили давно. */
+function cacheGet(src: string): string | undefined {
+  const hit = cache.get(src);
+  if (hit === undefined) return undefined;
+  cache.delete(src);
+  cache.set(src, hit);
+  return hit;
+}
+
+function cacheSet(src: string, value: string): void {
+  cache.delete(src); // перезапись обязана уехать в хвост, а не остаться на месте
+  cache.set(src, value);
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 /** Допуск на канал при сравнении с цветом угла. Поле сплошное (проверено на
  *  живых тумбах: RGB не «плывёт» вообще), но JPEG звенит на границе с артом,
@@ -193,14 +224,14 @@ function cropLetterbox(img: HTMLImageElement): string | null {
  *  трека её нет), null и на выходе: плейсхолдер рисует ДС, а не подставная
  *  картинка. */
 export function useCoverArt(src: string | null): string | null {
-  const [out, setOut] = useState<string | null>(() => (src === null ? null : (cache.get(src) ?? src)));
+  const [out, setOut] = useState<string | null>(() => (src === null ? null : (cacheGet(src) ?? src)));
 
   useEffect(() => {
     if (src === null) {
       setOut(null);
       return;
     }
-    const cached = cache.get(src);
+    const cached = cacheGet(src);
     if (cached) {
       setOut(cached);
       return;
@@ -215,7 +246,7 @@ export function useCoverArt(src: string | null): string | null {
     );
     const tryLoad = (i: number) => {
       if (i >= candidates.length) {
-        cache.set(src, src);
+        cacheSet(src, src);
         return;
       }
       const img = new Image();
@@ -240,7 +271,7 @@ export function useCoverArt(src: string | null): string | null {
         } catch {
           /* CORS/декодер подвёл — оригинал */
         }
-        cache.set(src, result);
+        cacheSet(src, result);
         if (alive) setOut(result);
       };
       img.onerror = () => tryLoad(i + 1);

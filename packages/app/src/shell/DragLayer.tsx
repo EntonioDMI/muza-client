@@ -60,7 +60,7 @@ export function DragLayer({ children }: { children: ReactNode }) {
   const drops = useRef(new Map<string, (p: DragPayload) => void>());
   /** Состояние жеста ДО подъёма — в ref, чтобы не гонять ререндер на каждый
    *  pointermove: пока карточка не поднята, перерисовывать нечего. */
-  const pending = useRef<{ payload: DragPayload; x0: number; y0: number; timer: number; pointerId: number } | null>(null);
+  const pending = useRef<{ payload: DragPayload; x0: number; y0: number; timer: number } | null>(null);
   /** Идёт ли перенос ПРЯМО СЕЙЧАС, с точки зрения обработчиков указателя.
    *
    *  Ref, а не `drag`, и заполняется СИНХРОННО в lift/up — не рендером. Раньше
@@ -125,7 +125,13 @@ export function DragLayer({ children }: { children: ReactNode }) {
           const p = pending.current;
           if (p) lift(p.x0, p.y0);
         }, HOLD_MS);
-        pending.current = { payload, x0: e.clientX, y0: e.clientY, timer, pointerId: e.pointerId };
+        // pointerId здесь ЛЕЖАЛ мёртвым грузом: писался и не читался никем —
+        // обработчики на окне по нему не фильтровались, и вид «жест знает свой
+        // указатель» был обманом. Одиночность жеста и так держат два ref'а:
+        // новый pointerdown гасит прошлое ожидание (cancelPending), а поднятый
+        // перенос завершает любой pointerup. Убран, чтобы не изображать защиту,
+        // которой нет; понадобится мультитач — вводить осознанно и с проверкой.
+        pending.current = { payload, x0: e.clientX, y0: e.clientY, timer };
       },
     }),
     [cancelPending, lift],
@@ -180,6 +186,10 @@ export function DragLayer({ children }: { children: ReactNode }) {
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       window.removeEventListener("keydown", key);
+      // Слой сняли, пока палец ещё держал строку: таймер ожидания переживал
+      // компонент и через HOLD_MS звал lift — тот ставил состояние переноса в
+      // дереве, которого уже нет, и поднимал карточку в никуда.
+      cancelPending();
     };
   }, [cancelPending, lift]);
 

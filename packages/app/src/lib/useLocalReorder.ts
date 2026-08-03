@@ -108,12 +108,17 @@ export function useLocalReorder({
 
   /** Таймер посадки: пока он жив, новый захват не стартует (180мс). */
   const settleTimer = useRef<number | null>(null);
+  /** Порядок, который ждёт конца посадки. Нужен размонтированию: dragRef к
+   *  этому моменту уже пуст (курсор больше не рулит), а коммит ещё не сделан. */
+  const pendingCommit = useRef<DragState | null>(null);
 
   const settle = useCallback((d: DragState, target: { x: number; y: number }) => {
     setDrag({ ...d, dx: target.x, dy: target.y, settling: true });
     if (settleTimer.current) clearTimeout(settleTimer.current);
+    pendingCommit.current = d;
     settleTimer.current = window.setTimeout(() => {
       settleTimer.current = null;
+      pendingCommit.current = null;
       setDrag(null);
       if (d.to !== d.from) commitRef.current(d.id, d.to);
     }, SETTLE_MS);
@@ -197,6 +202,31 @@ export function useLocalReorder({
       window.removeEventListener("keydown", key);
     };
   }, [cancelPending, lift, settle]);
+
+  // Экран закрыли посреди жеста — таймеры переживали компонент.
+  //
+  // Таймер удержания: ушёл со страницы, не отпустив кнопку, — через HOLD_MS
+  // срабатывал lift и поднимал плашку у списка, которого на экране уже нет.
+  // Снимаем без разговоров: жест даже не начался.
+  //
+  // Таймер посадки: отпустил плашку и в те же SETTLE_MS ушёл на другой экран.
+  // Задержка тут ЧИСТО ЗРИТЕЛЬНАЯ — ждём, пока плашка доедет до слота; если
+  // смотреть уже некому, ждать нечего. Порядок пользователь задал по-настоящему,
+  // терять его нельзя — поэтому таймер снимаем, а коммит делаем СРАЗУ, здесь же.
+  // setDrag при этом не трогаем: компонента больше нет.
+  useEffect(
+    () => () => {
+      if (pending.current) clearTimeout(pending.current.timer);
+      if (settleTimer.current) {
+        clearTimeout(settleTimer.current);
+        settleTimer.current = null;
+        const d = pendingCommit.current;
+        pendingCommit.current = null;
+        if (d && d.to !== d.from) commitRef.current(d.id, d.to);
+      }
+    },
+    [],
+  );
 
   // Список сменился под живым переносом (перечитка с сервера) — переносу
   // больше нечего двигать честно; тихо отменяем.
