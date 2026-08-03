@@ -20,7 +20,9 @@ describe("buildThemeVars — дефолтный профиль", () => {
     expect(v["--blur-glass"]).toBe("28px");
     expect(v["--glass-panel"]).toBe("rgba(23, 22, 20, 0.62)");
     expect(v["--text-2"]).toBe("rgba(244, 243, 241, 0.62)");
-    expect(v["--text-3"]).toBe("rgba(244, 243, 241, 0.48)");
+    // 0.48 давало 4.22:1 на выделенной строке (surface-4) при норме 4.5 —
+    // подняли до минимума, проходящего на ВСЕХ поверхностях тёмной темы.
+    expect(v["--text-3"]).toBe("rgba(244, 243, 241, 0.52)");
   });
 
   it("размеры зон и списков = токенам ДС (профиль ничего не двигает)", () => {
@@ -131,21 +133,55 @@ describe("buildThemeVars — ручки настроек", () => {
 
   it("светлая тема переворачивает базы текста и стекла", () => {
     const v = vars({ ...DEFAULT_PREFS, theme: "light" });
-    expect(v["--text-2"]).toBe("rgba(28, 26, 23, 0.62)");
+    // Прозрачность на светлой теме ПЛОТНЕЕ, чем на тёмной, при той же ручке:
+    // тёмные чернила по светлому теряют контраст быстрее. Раньше здесь стояло
+    // 0.62 — то же число, что у тёмной, — и это давало 4.66:1 у второго тона и
+    // 3.06:1 у третьего при норме 4.5. Замер 03.08, разбор — в шапке themeVars.
+    expect(v["--text-2"]).toBe("rgba(28, 26, 23, 0.78)");
+    expect(v["--text-3"]).toBe("rgba(28, 26, 23, 0.66)");
     expect(v["--glass-panel"]).toBe("rgba(250, 249, 246, 0.62)");
+  });
+
+  // Сторож на СУТЬ, а не на числа: что бы ни сделали с формулой, обычный текст
+  // обеих ступеней обязан добирать норму WCAG на своём фоне. Худший фон —
+  // surface-4 поверх bg-0 (выделенная строка трека).
+  it("обе текстовые ступени добирают 4.5:1 на своём фоне в обеих темах", () => {
+    const lin = (c: number) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : Math.pow((c / 255 + 0.055) / 1.055, 2.4));
+    const lum = ([r, g, b]: number[]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    const over = (fg: number[], a: number, bg: number[]) => fg.map((c, i) => c * a + bg[i] * (1 - a));
+    const ratio = (a: number[], b: number[]) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    // surface-4 = базовая поверхность с прозрачностью 0.10 поверх фона темы
+    const cases = [
+      { theme: "dark" as const, ink: [244, 243, 241], bg0: [18, 17, 16], surf: [255, 255, 255] },
+      { theme: "light" as const, ink: [28, 26, 23], bg0: [243, 241, 237], surf: [20, 18, 15] },
+    ];
+    for (const c of cases) {
+      const v = vars({ ...DEFAULT_PREFS, theme: c.theme });
+      const bg = over(c.surf, 0.1, c.bg0);
+      for (const key of ["--text-2", "--text-3"] as const) {
+        const alpha = Number(/, ([\d.]+)\)$/.exec(String(v[key]))![1]);
+        const got = ratio(over(c.ink, alpha, bg), bg);
+        expect(got, `${c.theme} ${key} = ${got.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 });
 
-/** Шаг 0.14 — не вкусовое число, а разница токенов ДС --text-2 (0.62) и
- *  --text-3 (0.48). Копий формулы было две (App.tsx и веб), теперь одна —
- *  этот тест сторожит и сам шаг, и нижний клэмп. */
+/** Шаг между вторым и третьим тоном = разница токенов ДС: на тёмной теме 0.62 и
+ *  0.52 (шаг 0.10), на светлой 0.78 и 0.66 (шаг 0.12). Копий формулы было две
+ *  (App.tsx и веб), теперь одна — этот тест сторожит и шаг, и нижний клэмп. */
 describe("третий тон текста", () => {
-  it("всегда на 0.14 глуше второго", () => {
-    for (const textDim of [40, 55, 62, 80]) {
-      const v = vars({ ...DEFAULT_PREFS, textDim });
-      const second = Number(/, ([\d.]+)\)$/.exec(String(v["--text-2"]))![1]);
-      const third = Number(/, ([\d.]+)\)$/.exec(String(v["--text-3"]))![1]);
-      expect(Number((second - third).toFixed(2))).toBe(0.14);
+  it("держит шаг своей темы на всём ходу ручки", () => {
+    for (const [theme, step] of [["dark", 0.1] as const, ["light", 0.12] as const]) {
+      for (const textDim of [40, 55, 62, 80]) {
+        const v = vars({ ...DEFAULT_PREFS, theme, textDim });
+        const second = Number(/, ([\d.]+)\)$/.exec(String(v["--text-2"]))![1]);
+        const third = Number(/, ([\d.]+)\)$/.exec(String(v["--text-3"]))![1]);
+        expect(Number((second - third).toFixed(2)), `${theme} textDim=${textDim}`).toBe(step);
+      }
     }
   });
 
