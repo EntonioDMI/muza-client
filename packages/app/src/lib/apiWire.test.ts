@@ -192,4 +192,36 @@ describe("сессия в хранилище", () => {
     await expect(api().restoreSession()).resolves.toBeNull();
     expect(localStorage.getItem(SESSION_KEY)).toBeNull();
   });
+
+  // ⚠️ ПАРНЫЙ сторож к тесту выше, и он важнее его. Стирание не по схеме
+  // завели 03.08 — до этого мёртвая запись лежала вечно. Но у такой правки
+  // есть цена: стоит схеме стать хоть на волос строже того, что мы САМИ
+  // пишем в хранилище, и обновление молча разлогинит всех до единого,
+  // причём необратимо — запись уже стёрта. Поэтому здесь лежит ровно та
+  // форма, которую кладёт persist после входа, и она обязана выживать.
+  it("живая сессия ПЕРЕЖИВАЕТ восстановление и остаётся в хранилище", async () => {
+    const live = {
+      user: { id: "42", username: "sivren", anonymous: false, createdAt: "2026-07-01T10:00:00.000Z" },
+      accessToken: "at",
+      refreshToken: "rt",
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(live));
+    vi.stubGlobal("fetch", vi.fn());
+
+    await expect(api().restoreSession()).resolves.toEqual(live);
+    expect(localStorage.getItem(SESSION_KEY)).toBe(JSON.stringify(live));
+  });
+
+  it("анонимная сессия без refresh-токена тоже переживает", async () => {
+    const anon = {
+      user: { id: "7", username: null, anonymous: true, createdAt: "2026-07-01T10:00:00.000Z" },
+      accessToken: "at",
+      refreshToken: null,
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(anon));
+    vi.stubGlobal("fetch", vi.fn());
+
+    await expect(api().restoreSession()).resolves.toEqual(anon);
+    expect(localStorage.getItem(SESSION_KEY)).toBe(JSON.stringify(anon));
+  });
 });
