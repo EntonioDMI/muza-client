@@ -114,11 +114,26 @@ describe("mergePrefs", () => {
     expect(Object.values(prefs.hotkeys).every((v) => typeof v === "string")).toBe(true);
   });
 
-  it("язык не из словаря → язык площадки (иначе интерфейс без словаря)", () => {
-    expect(mergePrefs({ language: "de" } as never).language).toBe(DEFAULT_PREFS.language);
-    expect(mergePrefs({ language: 7 } as never).language).toBe(DEFAULT_PREFS.language);
-    // а вот отсутствие поля — по-прежнему старый профиль, ему «ru»
+  it("язык не из словаря → как у СУЩЕСТВУЮЩЕГО профиля, а не как у нового", () => {
+    // Раньше здесь стоял DEFAULT_PREFS.language ("en"), и это была тихая
+    // ловушка: дефолт площадки по замыслу для НОВЫХ профилей, а сюда попадает
+    // заведомо не новый. Подмена ещё и необратима — стоит человеку тронуть
+    // любую настройку, и «en» уезжает на диск как его осознанный выбор.
+    expect(mergePrefs({ language: "de" } as never).language).toBe("ru");
+    expect(mergePrefs({ language: 7 } as never).language).toBe("ru");
+    // отсутствие поля — по-прежнему старый профиль, ему «ru»
     expect(mergePrefs({ blur: 1 }).language).toBe("ru");
+  });
+
+  it("локаль с регионом читается как язык: ru-RU → ru, en-GB → en", () => {
+    // Профиль мог прийти из места, где язык хранится локалью. Буквального
+    // совпадения со словарём нет, но выбор человека очевиден — уважаем его,
+    // а не сбрасываем.
+    expect(mergePrefs({ language: "ru-RU" } as never).language).toBe("ru");
+    expect(mergePrefs({ language: "en-GB" } as never).language).toBe("en");
+    expect(mergePrefs({ language: "EN-us" } as never).language).toBe("en");
+    // Регион от НЕизвестного языка — по-прежнему «ru», словаря-то нет.
+    expect(mergePrefs({ language: "de-DE" } as never).language).toBe("ru");
   });
 
   it("base главнее DEFAULT_PREFS, но сохранённое главнее base (профиль площадки)", () => {

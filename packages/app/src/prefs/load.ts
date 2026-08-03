@@ -103,13 +103,24 @@ export function mergePrefs(stored: StoredPrefs, base: Prefs = DEFAULT_PREFS): Pr
   // T28 (i18n): раз мы здесь, сохранение СУЩЕСТВОВАЛО (первый запуск в
   // loadPrefs ниже до слияния не доходит) — см. i18n/index.tsx::
   // resolveMigratedLanguage для полного обоснования «старый профиль → ru».
-  // Язык не из словаря (чужой/битый профиль) — как будто площадка своё и
-  // оставила: интерфейс без словаря показывал бы голые ключи строк.
-  prefs.language = LANGS.includes(stored.language as Lang)
-    ? (stored.language as Lang)
-    : stored.language === undefined
-      ? resolveMigratedLanguage(undefined)
-      : base.language;
+  //
+  // ⚠️ ЗАПАСНОЙ ВАРИАНТ ДЛЯ СУЩЕСТВУЮЩЕГО ПРОФИЛЯ — "ru", А НЕ ДЕФОЛТ ПЛОЩАДКИ.
+  // Раньше нераспознанное значение уходило в base.language ("en"), и это тихая
+  // ловушка: дефолт "en" по замыслу предназначен НОВЫМ профилям (так и написано
+  // в шапке resolveMigratedLanguage), а тут профиль заведомо не новый. Хуже
+  // того, подмена НЕОБРАТИМА: стоит человеку тронуть любую настройку — и
+  // "en" уезжает на диск уже как его осознанный выбор. Ровно так профиль
+  // владельца оказался английским (03.08; момент подмены восстановить не
+  // удалось, значение уже перезаписано).
+  //
+  // Сюда попадает всё, что не совпало со словарём буква в букву: локаль вида
+  // "ru-RU", язык из будущей версии, значение из чужого профиля. Для таких
+  // случаев «как у существующих профилей» честнее, чем «как у новых».
+  const storedLang = typeof stored.language === "string" ? stored.language : undefined;
+  prefs.language = LANGS.includes(storedLang as Lang)
+    ? (storedLang as Lang)
+    : // Локаль с регионом: "ru-RU" → "ru", если такой словарь у нас есть.
+      (LANGS.find((l) => storedLang?.toLowerCase().startsWith(`${l}-`)) ?? resolveMigratedLanguage(undefined));
   // миграция «пресеты → ползунки»: строковые значения старых сохранений
   // («sharper», «compact»…) конвертируются в числа, мусор — к дефолту
   const bag = prefs as unknown as Record<string, unknown>;
