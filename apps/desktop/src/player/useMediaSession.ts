@@ -3,6 +3,7 @@
  *  WebView2 — хромиум: mediaSession прокидывается в SMTC сам. */
 
 import { useEffect, useRef } from "react";
+import type { PositionStore } from "./positionStore";
 import type { PlayerTrack } from "./types";
 
 interface MediaSessionControls {
@@ -16,7 +17,11 @@ interface MediaSessionControls {
 export function useMediaSession(
   track: PlayerTrack | null,
   playing: boolean,
-  pos: number,
+  /** Хранилище позиции, а НЕ число (03.08, см. шапку positionStore.ts):
+   *  позиция перестала быть состоянием React, и проп-число заставлял бы App
+   *  перерисовываться целиком ради одного вызова setPositionState — то есть
+   *  вернул бы ровно ту цену, ради снятия которой позицию оттуда и убрали. */
+  posStore: PositionStore,
   controls: MediaSessionControls,
   enabled = true,
   /** Скорость воспроизведения. Оверлей Windows сам двигает полоску между
@@ -56,22 +61,29 @@ export function useMediaSession(
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
   }, [playing, enabled]);
 
-  // Позиция в оверлее (целые секунды, чтобы не дёргать API 4 раза в секунду)
-  const wholePos = Math.floor(pos);
+  // Позиция в оверлее (целые секунды, чтобы не дёргать API 4 раза в секунду).
+  // Подписка на смену секунды, а не эффект по пропу: обновление уходит в SMTC
+  // без единого рендера React — ни здесь, ни у родителя. Полоску между нашими
+  // обновлениями оверлей дорисовывает сам по playbackRate (см. speed ниже).
   useEffect(() => {
     if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState) return;
     if (!enabled || !track || track.duration <= 0) return;
-    try {
-      navigator.mediaSession.setPositionState({
-        duration: track.duration,
-        position: Math.min(wholePos, track.duration),
-        playbackRate: speed,
-      });
-    } catch {
-      /* некорректные значения на границах треков — не критично */
-    }
+    const duration = track.duration;
+    const push = () => {
+      try {
+        navigator.mediaSession.setPositionState?.({
+          duration,
+          position: Math.min(posStore.getSecond(), duration),
+          playbackRate: speed,
+        });
+      } catch {
+        /* некорректные значения на границах треков — не критично */
+      }
+    };
+    push(); // трек/скорость только что сменились — не ждём следующей секунды
+    return posStore.subscribeSecond(push);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wholePos, track?.duration, enabled, speed]);
+  }, [posStore, track?.duration, enabled, speed]);
 
   // Обработчики: медиаклавиши и кнопки оверлея (выключено — сняты).
   //

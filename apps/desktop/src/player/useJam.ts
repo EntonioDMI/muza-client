@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JamMember, JamSnapshot, JamState, MuzaApi } from "@muza/api-client";
 import { DEFAULT_LANG, translate, type Lang, type TParams, type TranslationKey } from "../i18n";
+import type { PositionStore } from "./positionStore";
 import { fromCatalog, type PlayerTrack } from "./types";
 
 /** Порог дрейфа позиции у гостя, сек. */
@@ -22,7 +23,13 @@ const HEARTBEAT_MS = 10_000;
 
 export interface JamPlayback {
   track: PlayerTrack | null;
-  pos: number;
+  /** Позиция ХРАНИЛИЩЕМ, а не числом-пропом (03.08, см. positionStore.ts).
+   *  Здесь это не оптимизация, а корректность: jam — самый чувствительный к
+   *  точности потребитель во всём приложении. Хост шлёт позицию гостю, гость
+   *  сверяет её со своей, порог дрейфа 3 секунды — загрубление на секунду с
+   *  обеих сторон пробивает порог шумом, и у гостя срабатывает seek: музыка в
+   *  наушниках прыгает на ходу. Читаем всегда живое значение. */
+  posStore: PositionStore;
   playing: boolean;
   speed: number;
   playContext: (tracks: PlayerTrack[], id: string) => void;
@@ -128,7 +135,7 @@ export function useJam({
         });
       return; // позиция догонится следующим событием/heartbeat
     }
-    if (Math.abs(p.pos - expectedPos) > DRIFT_SEC && state.playing) p.seek(Math.max(0, expectedPos));
+    if (Math.abs(p.posStore.get() - expectedPos) > DRIFT_SEC && state.playing) p.seek(Math.max(0, expectedPos));
     if (state.playing && !p.playing) p.toggle();
     else if (!state.playing && p.playing) p.pause();
   };
@@ -237,7 +244,7 @@ export function useJam({
         artist: p.track.artist,
         coverUrl: p.track.cover?.startsWith("http") ? p.track.cover : null,
         durationSec: Math.round(p.track.duration),
-        posSec: Math.round(p.pos * 10) / 10,
+        posSec: Math.round(p.posStore.get() * 10) / 10,
         playing: p.playing,
       })
       .catch(() => undefined); // сеть мигнула — heartbeat повторит
@@ -254,21 +261,33 @@ export function useJam({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHostActive, pb.track?.id, pb.playing]);
 
-  // детект сика: фактическая позиция разорвалась с ожидаемой
+  // Детект сика: фактическая позиция разорвалась с ожидаемой.
+  //
+  // Подписка на тик, а не эффект по пропу-числу: позиция перестала быть
+  // состоянием React (см. positionStore.ts), и эффект «по pb.pos» здесь просто
+  // перестал бы срабатывать — хост молча возил бы гостя на устаревшей позиции
+  // до ближайшего heartbeat (10 секунд). Ритм проверки прежний: каждый
+  // timeupdate, то есть ~4 раза в секунду.
   const lastPosRef = useRef<{ pos: number; at: number } | null>(null);
   useEffect(() => {
     if (!isHostActive) {
       lastPosRef.current = null;
       return;
     }
-    const last = lastPosRef.current;
-    const now = Date.now();
-    lastPosRef.current = { pos: pb.pos, at: now };
-    if (!last || !pb.playing) return;
-    const expected = last.pos + ((now - last.at) / 1000) * pb.speed;
-    if (Math.abs(pb.pos - expected) > SEEK_JUMP_SEC) pushStateRef.current();
+    const check = () => {
+      const p = pbRef.current;
+      const pos = p.posStore.get();
+      const last = lastPosRef.current;
+      const now = Date.now();
+      lastPosRef.current = { pos, at: now };
+      if (!last || !p.playing) return;
+      const expected = last.pos + ((now - last.at) / 1000) * p.speed;
+      if (Math.abs(pos - expected) > SEEK_JUMP_SEC) pushStateRef.current();
+    };
+    check(); // первая отметка — как и раньше, сразу при входе в роль хоста
+    return pbRef.current.posStore.subscribe(check);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHostActive, pb.pos]);
+  }, [isHostActive]);
 
   // heartbeat: поздно вошедшие получают свежую позицию и без событий
   useEffect(() => {

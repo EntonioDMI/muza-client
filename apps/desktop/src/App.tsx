@@ -49,6 +49,10 @@ import {
 } from "./lib/historyStack";
 import { loadServerIds, localScanPaths, registerLocalTracks, type LocalEntry } from "./lib/localFiles";
 import { usePlayback } from "./player/usePlayback";
+// Позиция воспроизведения живёт ВНЕ состояния React (03.08). Почему именно
+// так и что ломает наивная версия — в шапке player/positionStore.ts.
+import { DerivedPositionScope, PositionScope } from "./player/positionStore";
+import { activeLyricLine } from "./player/activeLine";
 import { useWarmer, WarmerProvider } from "./player/useWarmer";
 import { useWheelScroll } from "./lib/useWheelScroll";
 import { applyCustomFont } from "./lib/customFont";
@@ -431,7 +435,9 @@ function Player({
     lang: prefs.language,
     pb: {
       track: pbRaw.track,
-      pos: pbRaw.pos,
+      // хранилище, а не число: гость ловит слышимый seek от позиции, снятой
+      // на последнем рендере (см. шапку JamPlayback.posStore)
+      posStore: pbRaw.posStore,
       playing: pbRaw.playing,
       speed: pbRaw.speed,
       playContext: pbRaw.playContext,
@@ -470,7 +476,16 @@ function Player({
     () => ({ ...pbRaw, track: pbRaw.track ? { ...pbRaw.track, cover: cleanCover } : null }),
     [pbRaw, cleanCover],
   );
-  const { track, playing, pos, vol } = pb;
+  const { track, playing, vol } = pb;
+  // Позиции-числа здесь нарочно НЕТ (03.08). Пока она была обычным состоянием,
+  // каждый её тик (~4 раза в секунду) перерисовывал весь этот компонент — а с
+  // ним сайдбар, весь экран со строками треков, очередь, обе копии текста
+  // песни и полосу плеера. Теперь значение живёт в хранилище: точное — всегда
+  // (posStore.get(), для jam/мини-плеера/Discord), а подписываются на него
+  // только рисующие узлы, обёрнутые в PositionScope ниже.
+  // ⚠️ Не возвращать сюда `pos` и не звать здесь usePosition: любой из этих
+  // способов мгновенно вернёт перерисовку всего дерева.
+  const posStore = pb.posStore;
 
   // Режим прослушивания живёт при КОНКРЕТНОМ треке (см. условие ?: у
   // <ListeningMode/> в разметке). Когда трек уходит — убрали последний из
@@ -519,10 +534,14 @@ function Player({
   useEffect(() => {
     pluginHost.emit("playback:state", { state: pb.buffering ? "loading" : playing ? "playing" : "paused" });
   }, [playing, pb.buffering]);
+  // Событие «position» плагинам — целыми секундами, как и было. Подписка на
+  // хранилище вместо эффекта по зависимости: рендера ради этого не нужно
+  // вообще (см. positionStore.ts), а ритм остался прежним — раз в секунду.
   useEffect(() => {
-    pluginHost.emit("position", { position: Math.floor(pos) });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Math.floor(pos)]);
+    const emit = () => pluginHost.emit("position", { position: posStore.getSecond() });
+    emit();
+    return posStore.subscribeSecond(emit);
+  }, [posStore]);
   useEffect(() => {
     pluginHost.emit("queue:change", pb.queue.map(safeTrack));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -773,7 +792,7 @@ function Player({
   useMediaSession(
     track,
     playing,
-    pos,
+    posStore,
     {
       toggle: pb.toggle,
       next: pb.next,
@@ -797,7 +816,11 @@ function Player({
       title: track?.title ?? null,
       artist: track?.artist ?? null,
       playing,
-      pos,
+      // ТОЧНАЯ позиция, а не снимок рендера: мини-плеер живёт поверх игры, и
+      // его часы — второй из трёх сценариев, которые ломает загрубление
+      // (см. шапку positionStore.ts). Рендеров при играющей музыке тут больше
+      // почти нет — снимок протух бы на секунды.
+      pos: posStore.get(),
       duration: track?.duration ?? 0,
       liked: track ? likes.includes(track.id) : false,
     };
@@ -861,16 +884,21 @@ function Player({
     });
     return () => un?.();
   }, []);
-  const miniPos = Math.floor(pos);
   useEffect(() => {
     if (!prefs.miniPlayer || !engineAvailable()) return;
     miniRef.current.send();
     // track.cover В ДЕПСАХ ОБЯЗАТЕЛЬНА: useCoverArt чистит обложку асинхронно,
     // и на смену трека снапшот уходит ещё с сырой. Без этой зависимости эффект
-    // не перезапускался, и мини освежался только со следующим тиком miniPos —
-    // то есть на паузе не освежался никогда и держал недокропленную картинку.
+    // не перезапускался, и мини освежался только со следующей секундой — то
+    // есть на паузе не освежался никогда и держал недокропленную картинку.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.miniPlayer, track?.id, track?.cover, playing, likes, miniPos]);
+  }, [prefs.miniPlayer, track?.id, track?.cover, playing, likes]);
+  // Ход времени — отдельной подпиской, раз в секунду (ровно прежний ритм: до
+  // 03.08 эффект выше сидел на Math.floor(pos)). Рендер для этого не нужен.
+  useEffect(() => {
+    if (!prefs.miniPlayer || !engineAvailable()) return;
+    return posStore.subscribeSecond(() => miniRef.current.send());
+  }, [prefs.miniPlayer, posStore]);
 
   // Discord Rich Presence: активность на смену трека/паузу (RPC живёт в Rust;
   // Discord не запущен или client_id не настроен — no-op). Строки — из
@@ -886,7 +914,10 @@ function Player({
       return;
     }
     const vars = { track: track.title, artist: track.artist, album: track.album };
-    const startTs = Math.floor(Date.now() / 1000 - pos);
+    // Позиция — точная, на момент отправки активности: Discord показывает
+    // ЧУЖИМ людям время трека, и снимок последнего рендера врал бы им
+    // (третий из трёх сценариев в шапке positionStore.ts).
+    const startTs = Math.floor(Date.now() / 1000 - posStore.get());
     void updateDiscordActivity({
       details: formatTemplate(prefs.discordLine1, vars) || track.title,
       state: formatTemplate(prefs.discordLine2, vars) || track.artist,
@@ -1006,26 +1037,21 @@ function Player({
   useEffect(() => setMeaningLine(null), [track?.id, prefs.meaningMode]);
 
   // Активная строка — только у синхронизированного текста (plain не подсвечиваем);
-  // выключенный prefs.syncedLyrics превращает synced в plain-список (-1)
-  const activeLine = useMemo(() => {
-    if (!lyricsSynced || !prefs.syncedLyrics) return -1;
-    let a = 0;
-    lyrics.forEach((l, i) => {
-      if (l.t <= pos) a = i;
+  // выключенный prefs.syncedLyrics превращает synced в plain-список (-1).
+  //
+  // Считается НА ТИКЕ, а не в рендере App: позиция больше не состояние React
+  // (positionStore.ts), а подсветка строки обязана жить дальше. Замыкание
+  // отдаётся в DerivedPositionScope — тот зовёт его на каждый тик, но
+  // перерисовывает текст, только когда сменился НОМЕР строки (раз в
+  // несколько секунд вместо четырёх раз в секунду).
+  // ⚠️ Номер строки не гейтится «видно ли»: текст обязан следить за песней и
+  // невидимым, иначе на открытии караоке он поедет плавной прокруткой через
+  // весь куплет — а это видно.
+  const lineAt = (sec: number) =>
+    activeLyricLine(sec, lyrics, {
+      synced: lyricsSynced && prefs.syncedLyrics,
+      endNote: prefs.lyricsEndNote,
     });
-    // Нотка-финал (prefs.lyricsEndNote): после последней строки активная
-    // «переезжает» на нотку (виртуальный индекс lyrics.length) — «конец, текст
-    // кончился, доигрывает музыка». Последнюю строку держим примерно столько,
-    // сколько типичную (зазор до предпоследней), в рамках 2..8с — иначе нотка
-    // загоралась бы синей ещё пока последняя строка поётся.
-    if (prefs.lyricsEndNote && lyrics.length > 0 && a === lyrics.length - 1) {
-      const last = lyrics[a].t;
-      const prev = lyrics.length > 1 ? lyrics[a - 1].t : last - 4;
-      const hold = Math.min(8, Math.max(2, last - prev));
-      if (pos - last >= hold) a = lyrics.length;
-    }
-    return a;
-  }, [pos, lyrics, lyricsSynced, prefs.syncedLyrics, prefs.lyricsEndNote]);
 
   const showToast = (text: string, icon = "check") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -1268,11 +1294,14 @@ function Player({
       case "prev":
         pb.prev();
         break;
+      // Шаг считаем от ТОЧНОЙ позиции на момент нажатия (posStore.get()).
+      // Раньше здесь стоял снимок последнего рендера — он отставал до 250 мс
+      // даже тогда, когда рендеры шли непрерывно.
       case "seekFwd":
-        if (track) pb.seek(Math.min(pos + prefs.seekStepSec, track.duration));
+        if (track) pb.seek(Math.min(posStore.get() + prefs.seekStepSec, track.duration));
         break;
       case "seekBack":
-        pb.seek(Math.max(pos - prefs.seekStepSec, 0));
+        pb.seek(Math.max(posStore.get() - prefs.seekStepSec, 0));
         break;
       case "mute":
         toggleMute();
@@ -1650,14 +1679,30 @@ function Player({
   // знал лишь восемь ключей из сорока: ряд настройки в браузере было нечем
   // применить. Объект тот же до символа, изменилось только место сборки; сюда
   // движку передаётся то, чего он знать не может, — состояние окна и трека.
-  const rootStyle = {
-    position: "absolute",
-    inset: 0,
-    background: "var(--bg-0)",
-    overflow: "hidden",
-    fontFamily: "var(--font-ui)",
-    ...buildThemeVars(prefs, { coverTint, wideSidebar: wideEnoughForSidebar }),
-  } as React.CSSProperties;
+  //
+  // Мемоизация (03.08): buildThemeVars — чистая, но не дешёвая функция (клон
+  // всего профиля настроек, полтора десятка условных spread'ов, цветовая
+  // арифметика с Math.pow на канал, объект из ~40 CSS-переменных). Вход у неё
+  // ровно этот, поэтому те же аргументы дают побайтово тот же результат — ни
+  // один пиксель и ни одна переменная не меняются, меняется только число
+  // вызовов.
+  // ⚠️ В зависимостях — ВЕСЬ `prefs`, а не подполя. Движок читает все ключи
+  // ThemePrefs (packages/app/src/theme/themeVars.ts), и точечный деп-лист
+  // протухнет на следующей добавленной настройке: человек дёрнет новый
+  // ползунок — и не произойдёт НИЧЕГО, пока он не тронет какую-нибудь другую
+  // настройку. Целый prefs ошибается в сторону лишнего пересчёта — верную.
+  const rootStyle = useMemo(
+    () =>
+      ({
+        position: "absolute",
+        inset: 0,
+        background: "var(--bg-0)",
+        overflow: "hidden",
+        fontFamily: "var(--font-ui)",
+        ...buildThemeVars(prefs, { coverTint, wideSidebar: wideEnoughForSidebar }),
+      }) as React.CSSProperties,
+    [prefs, coverTint, wideEnoughForSidebar],
+  );
 
   // T15: вращение диска включено только когда общий anims включён и OS не
   // просит reduced-motion (двойная защита — как bassShake в ListeningMode).
@@ -1811,7 +1856,13 @@ function Player({
       queue: pb.queue,
       playing,
       buffering: pb.buffering,
-      pos,
+      // ГЕТТЕР, а не поле: этот объект пересобирается на рендере App, а
+      // рендеров при играющей музыке почти нет (позиция уехала из состояния,
+      // см. positionStore.ts). Полем плагин получал бы позицию, застывшую на
+      // момент последней смены трека. Не «упрощать» обратно в `pos,`.
+      get pos() {
+        return posStore.get();
+      },
       vol,
       toggle: pb.toggle,
       pause: pb.pause,
@@ -2199,6 +2250,16 @@ function Player({
           </ErrorBoundary>
         </main>
         {showNowPlaying ? (
+          // Два гейта позиции (03.08, см. positionStore.ts):
+          // • номер активной строки — ЖИВОЙ всегда: текст обязан следить за
+          //   песней, иначе на выходе из караоке он поедет прокруткой;
+          // • само число pos — только когда караоке НЕ открыто. Единственный
+          //   потребитель этого пропа внутри панели — часы догона видео
+          //   (useVideoSync), а видео при открытом караоке и так на паузе (см.
+          //   playing ниже). Караоке закрылось — панель получит точную позицию
+          //   в ТОМ ЖЕ коммите, что и playing: догонять нечего.
+          <DerivedPositionScope store={posStore} compute={lineAt}>{(activeLine) => (
+          <PositionScope store={posStore} live={!expanded}>{(pos) => (
           <NowPlayingPanel
             track={track}
             lyrics={lyrics}
@@ -2227,6 +2288,8 @@ function Player({
             windowVisible={windowVisible}
             onVideoError={refreshTrackVideo}
           />
+          )}</PositionScope>
+          )}</DerivedPositionScope>
         ) : null}
       </div>
 
@@ -2275,6 +2338,11 @@ function Player({
       />
       </ErrorBoundary>
 
+      {/* Единственный узел, который перерисовывается на КАЖДЫЙ тик позиции:
+          полоса плеера её рисует — и часами, и бегунком. Всё остальное дерево
+          (сайдбар, экран со строками треков, очередь, диалоги) тик больше не
+          трогает — в этом и был смысл переноса, см. positionStore.ts. */}
+      <PositionScope store={posStore}>{(pos) => (
       <PlayerBar
         track={track}
         playing={playing}
@@ -2355,6 +2423,7 @@ function Player({
             : undefined
         }
       />
+      )}</PositionScope>
 
       {/* Оверлей drag-and-drop файлов: «отпусти — добавим» (события идут
           нативно через Tauri, слой только визуальный) */}
@@ -2666,6 +2735,16 @@ function Player({
           resetKey={track.id} — новый трек пробует открыть режим заново. */}
       {track ? (
       <ErrorBoundary resetKey={track.id} fallback={() => null}>
+      {/* Те же два гейта, что у панели «Сейчас играет», зеркально (03.08):
+          номер строки живой ВСЕГДА (текст следит за песней и под закрытым
+          оверлеем — иначе на открытии караоке он поедет плавной прокруткой
+          через весь куплет, это видно), а само число pos — только пока
+          караоке ОТКРЫТО. У закрытого оверлея этот проп кормит часы и бегунок
+          под visibility:hidden — работа, которой никто не видит. Открыли —
+          точная позиция приезжает в том же коммите, что и open: первый же
+          кадр появления правильный. */}
+      <DerivedPositionScope store={posStore} compute={lineAt}>{(activeLine) => (
+      <PositionScope store={posStore} live={expanded}>{(pos) => (
       <ListeningMode
         open={expanded}
         track={track}
@@ -2710,6 +2789,8 @@ function Player({
         // Гасит все три цикла кадров оверлея, когда окна не видно.
         windowVisible={windowVisible}
       />
+      )}</PositionScope>
+      )}</DerivedPositionScope>
       </ErrorBoundary>
       ) : null}
       <MeaningDialog

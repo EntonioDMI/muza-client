@@ -28,6 +28,7 @@ import {
   type OutputDeviceInfo,
 } from "./outputDevices";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
+import { createPositionStore } from "./positionStore";
 import { ensureSources, invalidateCachedSources } from "./sourcesCache";
 import { beginStart, markError, markPlayCall, markSound, markSources, markUrl } from "./startTelemetry";
 import { shouldSilenceBeforeResolve } from "./startPlan";
@@ -128,7 +129,11 @@ export function usePlayback({
   // подтвердил механизм). Восстановление трека — см. initialQueue/initialPos.
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
-  const [pos, setPos] = useState(initialPos);
+  // Позиция — НЕ состояние React (см. шапку positionStore.ts). Она обновляется
+  // ~4 раза в секунду, а состояние здесь перерисовывает App целиком: сайдбар,
+  // весь экран со строками треков, обе копии текста песни. Значение точное
+  // всегда, подписываются на него только те узлы, которые его рисуют.
+  const [posStore] = useState(() => createPositionStore(initialPos));
   const [vol, setVolState] = useState(64);
   const [speed, setSpeed] = useState(1);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
@@ -140,8 +145,10 @@ export function usePlayback({
   const track: PlayerTrack | null = queue[index] ?? queue[0] ?? null;
 
   // refs для колбэков движка/таймеров (без пересоздания и стейл-замыканий)
-  const stateRef = useRef({ queue, index, playing, repeat, shuffle, speed, track, pos });
-  stateRef.current = { queue, index, playing, repeat, shuffle, speed, track, pos };
+  // pos здесь нет намеренно: он живёт в posStore и точен всегда — дублировать
+  // его снимком рендера значило бы завести второй, отстающий источник правды.
+  const stateRef = useRef({ queue, index, playing, repeat, shuffle, speed, track });
+  stateRef.current = { queue, index, playing, repeat, shuffle, speed, track };
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   // Громкость держим и ref'ом: движок создаётся лениво, первым же треком, и в
@@ -228,7 +235,7 @@ export function usePlayback({
           // секунды в его скробблинг. Ранний стык старого трека и так
           // подавлен ниже (alreadyAdvanced учитывает startPending).
           if (startPendingRef.current) return;
-          setPos(sec);
+          posStore.set(sec);
           tickPlayed(sec);
           // «Продолжить с места»: троттленная запись позиции текущего трека
           if (prefsRef.current.resumePosition && sec > 5) resumeStore.save(s.track.id, sec);
@@ -422,12 +429,12 @@ export function usePlayback({
     beginStart(t.id, t.title, opts?.auto ? "auto" : "manual");
     const seq = ++playSeqRef.current;
     setIndex(i);
-    setPos(0);
+    posStore.set(0);
     setPlaying(true);
     // advance/nextIndexFor могут читать stateRef ДО того, как React дольёт
     // эти set'ы до рефа (авто-скип из catch ниже зовёт advance немедленно) —
     // кладём свежие индекс/трек туда сразу, тем же приёмом, что playContext.
-    stateRef.current = { ...stateRef.current, index: i, track: t, pos: 0, playing: true };
+    stateRef.current = { ...stateRef.current, index: i, track: t, playing: true };
     autoAdvancedRef.current = false;
     stopGaplessPoll(); // новый трек — старый прицел точного триггера уже неактуален
     rememberPlayed(t.id);
@@ -503,7 +510,7 @@ export function usePlayback({
           // keepCrossfade: стык, который мы только что запустили выше, обрывать
           // нельзя — входящий трек ещё на нуле кривой (см. AudioEngine.seek).
           engine().seek(saved, true);
-          setPos(saved);
+          posStore.set(saved);
         }
       }
     } catch (e) {
@@ -573,7 +580,7 @@ export function usePlayback({
       // «играющим» баром — повтор молча умирал на первой же границе
       // (жалоба 2026-07-16). resume() = el.play() на том же src.
       engine().seek(0);
-      setPos(0);
+      posStore.set(0);
       const seqBefore = playSeqRef.current;
       const ok = await engine().resume();
       // Рестарт мог не завестись (файл выпал из LRU-кэша, элемент в ошибке):
@@ -607,7 +614,7 @@ export function usePlayback({
       }
       flushPlayEnd(true);
       setPlaying(false);
-      setPos(s.track.duration);
+      posStore.set(s.track.duration);
       stopGaplessPoll(); // конец очереди без продолжения — опрашивать больше нечего
       return;
     }
@@ -811,7 +818,7 @@ export function usePlayback({
     const s = stateRef.current;
     if (!s.track) return; // сик по пустой очереди — некуда
     const clamped = Math.max(0, Math.min(sec, s.track.duration));
-    setPos(clamped);
+    posStore.set(clamped);
     engine().seek(clamped);
     // Позиция скакнула — старый прицел точного триггера (посчитан от
     // старой remaining) неактуален; пересчитываем, если всё ещё играем.
@@ -870,7 +877,7 @@ export function usePlayback({
       if (nextQueue.length === 0) {
         engine().stop();
         setPlaying(false);
-        setPos(0);
+        posStore.set(0);
         // Тот же класс, что пауза на добыче: убрали последний трек, пока он
         // добывался — engine().stop() тишины не гарантирует, незавершённый
         // startAt завёл бы уже удалённый трек поверх пустой очереди.
@@ -1115,7 +1122,12 @@ export function usePlayback({
       index,
       playing,
       buffering,
-      pos,
+      // Позиции-числа здесь нет намеренно (см. шапку positionStore.ts): поле
+      // pos в этом объекте вернуло бы тик в зависимости useMemo, а с ним — и
+      // перерисовку всего App четыре раза в секунду. Точное значение читают
+      // через getPos(), рисующие узлы подписываются на posStore.
+      posStore,
+      getPos: posStore.get,
       vol,
       speed,
       repeat,
@@ -1146,6 +1158,6 @@ export function usePlayback({
       refreshOutputDevices,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [queue, track, index, playing, buffering, pos, vol, speed, repeat, shuffle, outputDevices],
+    [queue, track, index, playing, buffering, vol, speed, repeat, shuffle, outputDevices],
   );
 }

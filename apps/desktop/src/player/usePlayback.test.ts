@@ -504,7 +504,7 @@ describe("usePlayback: граница трека — повтор и авто-п
     expect(h.engine.play).toHaveBeenCalledTimes(1); // на другой трек не уехали
     expect(hook.result.current.track?.id).toBe("a");
     expect(hook.result.current.playing).toBe(true);
-    expect(hook.result.current.pos).toBe(0);
+    expect(hook.result.current.getPos()).toBe(0);
   });
 
   it("авто-переход: мёртвый следующий трек скипается, очередь не встаёт", async () => {
@@ -584,7 +584,7 @@ describe("usePlayback: граница трека — повтор и авто-п
     expect(h.engine.play).toHaveBeenLastCalledWith("b.webm", 1, 4);
     expect(hook.result.current.track?.id).toBe("b");
     expect(hook.result.current.playing).toBe(true);
-    expect(hook.result.current.pos).toBe(0);
+    expect(hook.result.current.getPos()).toBe(0);
   });
 
   it("timeupdate старого трека во время добычи следующего не даёт второй ранний стык", async () => {
@@ -627,18 +627,18 @@ describe("usePlayback: граница трека — повтор и авто-п
       h.cb.current?.onTime(197); // ранний стык → добыча B повисла
     });
     expect(hook.result.current.track?.id).toBe("b"); // UI уже показывает новый трек
-    expect(hook.result.current.pos).toBe(0);
+    expect(hook.result.current.getPos()).toBe(0);
 
     // Старый трек продолжает звучать и тикать — полоска нового не шевелится
     await act(async () => {
       h.cb.current?.onTime(198.2);
     });
-    expect(hook.result.current.pos).toBe(0);
+    expect(hook.result.current.getPos()).toBe(0);
 
     await act(async () => {
       releaseB();
     });
-    expect(hook.result.current.pos).toBe(0); // новый честно начинается с нуля
+    expect(hook.result.current.getPos()).toBe(0); // новый честно начинается с нуля
     expect(hook.result.current.track?.id).toBe("b");
   });
 });
@@ -1132,5 +1132,70 @@ describe("usePlayback: вывод на устройства и голос → д
     // старте у всех, кто голос вообще не настраивал, незачем.
     expect(h.listInputDevices).not.toHaveBeenCalled();
     expect(h.engine.setMicConfig).toHaveBeenCalledWith({ deviceId: null, gain: DEFAULT_PREFS.micGain });
+  });
+});
+
+/** ПОЗИЦИЯ БОЛЬШЕ НЕ СОСТОЯНИЕ REACT (03.08, перенос в positionStore).
+ *
+ *  Сторожим ровно две половины сделки, потому что дёшево сломать любую:
+ *  1) тик timeupdate НЕ вызывает рендер — раньше каждый из ~4 тиков в секунду
+ *     перерисовывал весь App (сайдбар, экран со всеми строками, обе копии
+ *     текста песни). Тест краснеет на старом коде: там setPos — useState.
+ *  2) при этом значение остаётся ТОЧНЫМ на каждый тик, а не округлённым до
+ *     секунды. Это второй запрет: на неточной позиции гость «Слушаем вместе»
+ *     ловит слышимый seek, часы мини-плеера отстают, Discord врёт чужим
+ *     людям (подробности — в шапке positionStore.ts). */
+describe("тик позиции: значение точное, рендера нет", () => {
+  it("четыре timeupdate подряд не дают ни одного рендера", async () => {
+    let renders = 0;
+    const hook = renderHook(() => {
+      renders++;
+      return usePlayback({ api, initialQueue: [A, B], prefs: { ...DEFAULT_PREFS }, onError: h.onError });
+    });
+    await playA(hook);
+
+    const before = renders;
+    for (const sec of [12.25, 12.5, 12.75, 13]) {
+      await act(async () => {
+        h.cb.current?.onTime(sec);
+      });
+    }
+
+    expect(renders).toBe(before);
+  });
+
+  it("значение точное на каждом тике — не округляется до целой секунды", async () => {
+    const hook = mount();
+    await playA(hook);
+
+    for (const sec of [12.25, 12.5, 12.75]) {
+      await act(async () => {
+        h.cb.current?.onTime(sec);
+      });
+      expect(hook.result.current.getPos()).toBe(sec);
+    }
+  });
+
+  it("подписчик получает каждый тик, а «секундный» — только смену целой секунды", async () => {
+    const hook = mount();
+    await playA(hook);
+    await act(async () => {
+      h.cb.current?.onTime(12); // встаём ровно на 12-й секунде, до подписки
+    });
+    const ticks = vi.fn();
+    const seconds = vi.fn();
+    const offTicks = hook.result.current.posStore.subscribe(ticks);
+    const offSeconds = hook.result.current.posStore.subscribeSecond(seconds);
+
+    for (const sec of [12.25, 12.5, 12.75, 13.0, 13.25]) {
+      await act(async () => {
+        h.cb.current?.onTime(sec);
+      });
+    }
+    offTicks();
+    offSeconds();
+
+    expect(ticks).toHaveBeenCalledTimes(5);
+    expect(seconds).toHaveBeenCalledTimes(1); // 12 → 13, и только она
   });
 });
