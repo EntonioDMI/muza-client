@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState, SearchInput, Shelf, TrackRow } from "@muza/ui";
+import { humanError } from "@muza/api-client";
 import type { GroupedSearchResult, MuzaApi, PublicPlaylist, PublicPlaylistHit, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
@@ -196,7 +197,7 @@ export function SearchView({
         .catch((e: unknown) => {
           if (seqRef.current === seq) {
             setCodeResult(null);
-            setCodeError(e instanceof Error ? e.message : t("views.search.somethingWrong"));
+            setCodeError(humanError(e, t("views.search.somethingWrong")));
             setCodeBusy(false);
           }
         });
@@ -296,9 +297,15 @@ export function SearchView({
         }
       }
     } catch (e) {
-      if (seqRef.current === seq) setError(e instanceof Error ? e.message : t("views.search.somethingWrong"));
+      if (seqRef.current === seq) setError(humanError(e, t("views.search.somethingWrong")));
     } finally {
-      if (seqRef.current === seq) setBusy(false);
+      // ⚠️ БЕЗ сверки номера. Номер отсекает УСТАРЕВШИЕ ДАННЫЕ — но признак
+      // занятости принадлежит кнопке, а не ответу. Живой ввод двигает seqRef на
+      // каждую букву (эффект ниже), поэтому «дописал букву, пока идёт полный
+      // поиск» означало: ответ пришёл с чужим номером, busy не сбросился —
+      // кнопка «Искать в источниках» навсегда серая, под выдачей навсегда
+      // «Ищем в источниках…». Лечилось только очисткой строки поиска.
+      setBusy(false);
     }
   };
   // Enter/кнопка: «только каталог» не запускает yt-dlp на сервере
@@ -332,9 +339,9 @@ export function SearchView({
         if (nextCount <= prevCount) setGroupExhausted(true);
       }
     } catch (e) {
-      if (seqRef.current === seq) setError(e instanceof Error ? e.message : t("views.search.loadMoreFailed"));
+      if (seqRef.current === seq) setError(humanError(e, t("views.search.loadMoreFailed")));
     } finally {
-      if (seqRef.current === seq) setMoreBusy(false);
+      setMoreBusy(false); // тот же случай, что в runSearch: кнопка не заложник номера
     }
   };
 
@@ -426,7 +433,7 @@ export function SearchView({
       if (tracks.length > 0) onPlayCatalog(tracks, tracks[0].id);
       else onNotify(t("views.playlist.empty"), "x");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      onNotify(humanError(e, t("views.search.somethingWrong")), "x");
     }
   };
 
@@ -439,7 +446,7 @@ export function SearchView({
       onNotify(t("views.search.publicPlaylist.added"), "list-music");
       onPlaylistsChanged?.();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      onNotify(humanError(e, t("views.search.somethingWrong")), "x");
     }
   };
 

@@ -85,6 +85,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Что показать человеку вместо пойманной ошибки.
+ *
+ *  Человеческий текст есть ТОЛЬКО у ApiError: его пишет сервер («Имя занято»)
+ *  либо мы сами («Сервер недоступен…»). Всё остальное — TypeError, ошибка
+ *  разбора схемы, падение библиотеки — язык разработчика, и в интерфейсе ему
+ *  места нет: `e.message` уносил на экран простыню JSON от проверки схемы.
+ *  Такие случаи получают заготовленную фразу вьюхи. */
+export function humanError(e: unknown, fallback: string): string {
+  return e instanceof ApiError && e.message.trim() !== "" ? e.message : fallback;
+}
+
 interface TokenPair {
   access_token: string;
   refresh_token: string;
@@ -107,8 +118,12 @@ interface TrackWire {
   local_hash?: string | null;
 }
 
-function trackFromWire(wire: TrackWire): Track {
-  return TrackSchema.parse({
+/** Проводная форма → форма схемы. Единственное место, где snake_case сервера
+ *  превращается в camelCase трека. `loudness` приводится к null явно: сервер
+ *  волен перестать слать необязательное поле, и это НЕ повод считать строку
+ *  битой (в схеме оно `.nullable()` без `.optional()` — undefined не прошло бы). */
+function toTrackShape(wire: TrackWire): unknown {
+  return {
     id: wire.id,
     artist: wire.artist,
     title: wire.title,
@@ -117,9 +132,48 @@ function trackFromWire(wire: TrackWire): Track {
     coverUrl: wire.cover_url,
     isCached: wire.is_cached,
     sources: wire.sources,
-    loudness: wire.loudness,
+    loudness: wire.loudness ?? null,
     localHash: wire.local_hash ?? null,
-  });
+  };
+}
+
+/** Строгий разбор ОДИНОЧНОГО трека (открыть трек, добавить по ссылке): там
+ *  битый ответ и есть провал самой операции — молчать о нём нельзя. */
+function trackFromWire(wire: TrackWire): Track {
+  return TrackSchema.parse(toTrackShape(wire));
+}
+
+/** Мягкий разбор строки СПИСКА; null — строка схему не прошла.
+ *
+ *  Почему списки собираются мягко (2026-08-03): раньше каждый элемент шёл через
+ *  строгий `.parse`, и ОДНА битая запись от сервера роняла весь запрос целиком —
+ *  поиск, Любимое, плейлист и главная показывали вместо сотни живых треков
+ *  пустой экран с текстом ошибки библиотеки проверки. Одна плохая строка должна
+ *  стоить одной строки, а не всего экрана. */
+function trackOrNull(wire: TrackWire): Track | null {
+  const parsed = TrackSchema.safeParse(toTrackShape(wire));
+  return parsed.success ? parsed.data : null;
+}
+
+/** Список треков без битых строк (см. `trackOrNull`). */
+function tracksFromWire(rows: readonly TrackWire[]): Track[] {
+  const out: Track[] = [];
+  for (const w of rows) {
+    const t = trackOrNull(w);
+    if (t !== null) out.push(t);
+  }
+  return out;
+}
+
+/** То же для строк вида «трек + цифры» (история, топы статистики, кандидаты
+ *  на замену): битая строка выпадает, соседние остаются. */
+function rowsWithTrack<W extends { track: TrackWire }, R>(rows: readonly W[], make: (track: Track, row: W) => R): R[] {
+  const out: R[] = [];
+  for (const row of rows) {
+    const track = trackOrNull(row.track);
+    if (track !== null) out.push(make(track, row));
+  }
+  return out;
 }
 
 /** Проводная форма одного варианта внутри группы (snake_case сервера). */
@@ -143,17 +197,32 @@ interface SingleResultWire {
 }
 type GroupedResultWire = GroupResultWire | SingleResultWire;
 
-function groupedResultFromWire(wire: GroupedResultWire): GroupedSearchResult {
+/** Карточка выдачи; null — показывать нечем (канон/одиночка не прошли схему).
+ *  Мягко по той же причине, что и списки треков: битая карточка выпадает из
+ *  выдачи, соседние остаются на экране. Битый вариант внутри живой группы
+ *  выпадает сам, группу это не рушит. */
+function groupedResultOrNull(wire: GroupedResultWire): GroupedSearchResult | null {
   if (wire.kind === "single") {
-    return GroupedSearchResultSchema.parse({ kind: "single", track: trackFromWire(wire.track) });
+    const track = trackOrNull(wire.track);
+    if (track === null) return null;
+    const parsed = GroupedSearchResultSchema.safeParse({ kind: "single", track });
+    return parsed.success ? parsed.data : null;
   }
-  return GroupedSearchResultSchema.parse({
+  const canonical = trackOrNull(wire.canonical);
+  if (canonical === null) return null;
+  const variants: { track: Track; variantType: VariantType }[] = [];
+  for (const v of wire.variants) {
+    const track = trackOrNull(v.track);
+    if (track !== null) variants.push({ track, variantType: v.variant_type });
+  }
+  const parsed = GroupedSearchResultSchema.safeParse({
     kind: "group",
-    canonical: trackFromWire(wire.canonical),
+    canonical,
     hasOriginal: wire.has_original,
     canonicalVariantType: wire.canonical_variant_type,
-    variants: wire.variants.map((v) => ({ track: trackFromWire(v.track), variantType: v.variant_type })),
+    variants,
   });
+  return parsed.success ? parsed.data : null;
 }
 
 /** Проводной формат плейлиста (Stage 7: роль/владелец/участники; T47: icon;
@@ -289,8 +358,13 @@ function parseJamEvent(data: string): JamEvent | null {
       return { type: "state", state: jamStateFromWire(wire.state as Parameters<typeof jamStateFromWire>[0]) };
     case "members":
       return { type: "members", members: wire.members as { id: string; username: string }[] };
-    case "queue_add":
-      return { type: "queueAdd", track: trackFromWire(wire.track as TrackWire), by: wire.by as string };
+    case "queue_add": {
+      // Мягко, как обещает шапка («мусор — null»): строгий разбор здесь бросал
+      // прямо в цикле чтения потока, и один кривой кадр рвал подключение к jam
+      // целиком — вместо того чтобы стоить одного пропущенного добавления.
+      const track = trackOrNull(wire.track as TrackWire);
+      return track ? { type: "queueAdd", track, by: wire.by as string } : null;
+    }
     case "ended":
       return { type: "ended" };
     default:
@@ -552,7 +626,7 @@ export class HttpMuzaApi implements MuzaApi {
     if (opts?.scope) params.set("scope", opts.scope);
     if (opts?.limit) params.set("limit", String(opts.limit));
     const out = await this.authedRequest<{ query: string; results: TrackWire[] }>(`/search?${params}`);
-    return out.results.map(trackFromWire);
+    return tracksFromWire(out.results);
   }
 
   /** T41: тот же поиск, но с группировкой ремиксов/версий (T36 сервера,
@@ -569,7 +643,12 @@ export class HttpMuzaApi implements MuzaApi {
     if (opts?.scope) params.set("scope", opts.scope);
     if (opts?.limit) params.set("limit", String(opts.limit));
     const out = await this.authedRequest<{ query: string; results: GroupedResultWire[] }>(`/search?${params}`);
-    return out.results.map(groupedResultFromWire);
+    const cards: GroupedSearchResult[] = [];
+    for (const w of out.results) {
+      const card = groupedResultOrNull(w);
+      if (card !== null) cards.push(card);
+    }
+    return cards;
   }
 
   async getTrack(id: string): Promise<Track> {
@@ -628,7 +707,7 @@ export class HttpMuzaApi implements MuzaApi {
     const out = await this.authedRequest<{
       alternatives: { track: TrackWire; score: number; matched: boolean }[];
     }>(`/tracks/${encodeURIComponent(id)}/alternatives`);
-    return out.alternatives.map((a) => ({ track: trackFromWire(a.track), score: a.score, matched: a.matched }));
+    return rowsWithTrack(out.alternatives, (track, a) => ({ track, score: a.score, matched: a.matched }));
   }
 
   // ---------- Источники и версии (Stage 4) ----------
@@ -704,7 +783,7 @@ export class HttpMuzaApi implements MuzaApi {
 
   async getFavorites(): Promise<Track[]> {
     const rows = await this.authedRequest<TrackWire[]>("/me/favorites");
-    return rows.map(trackFromWire);
+    return tracksFromWire(rows);
   }
 
   async addFavorite(trackId: string): Promise<void> {
@@ -774,7 +853,7 @@ export class HttpMuzaApi implements MuzaApi {
     return PlaylistDetailSchema.parse({
       id: p.id,
       name: p.name,
-      tracks: p.tracks.map(trackFromWire),
+      tracks: tracksFromWire(p.tracks),
       isOwner: p.is_owner ?? true,
       role: p.role ?? "owner",
       ownerUsername: p.owner_username ?? "",
@@ -894,7 +973,7 @@ export class HttpMuzaApi implements MuzaApi {
       artworkUrl: w.artwork_url ?? null,
       permalinkUrl: w.permalink_url,
       trackCount: w.track_count,
-      tracks: w.tracks.map(trackFromWire),
+      tracks: tracksFromWire(w.tracks),
     });
   }
 
@@ -1000,7 +1079,7 @@ export class HttpMuzaApi implements MuzaApi {
     const rows = await this.authedRequest<{ track: TrackWire; played_at: string; completed: boolean }[]>(
       `/me/history?limit=${limit}`,
     );
-    return rows.map((r) => ({ track: trackFromWire(r.track), playedAt: r.played_at, completed: r.completed }));
+    return rowsWithTrack(rows, (track, r) => ({ track, playedAt: r.played_at, completed: r.completed }));
   }
 
   // ---------- Внешний скробблинг (Last.fm / ListenBrainz) ----------
@@ -1086,7 +1165,7 @@ export class HttpMuzaApi implements MuzaApi {
     const out = await this.authedRequest<{ sections: { key: string; title: string; tracks: TrackWire[] }[] }>(
       "/home",
     );
-    return out.sections.map((s) => ({ key: s.key, title: s.title, tracks: s.tracks.map(trackFromWire) }));
+    return out.sections.map((s) => ({ key: s.key, title: s.title, tracks: tracksFromWire(s.tracks) }));
   }
 
   async getHomeSection(key: string, opts?: { offset?: number; limit?: number }): Promise<Track[]> {
@@ -1097,14 +1176,14 @@ export class HttpMuzaApi implements MuzaApi {
     const out = await this.authedRequest<{ tracks: TrackWire[] }>(
       `/home/section/${encodeURIComponent(key)}${qs}`,
     );
-    return out.tracks.map(trackFromWire);
+    return tracksFromWire(out.tracks);
   }
 
   async getRadio(seedTrackId: string): Promise<Track[]> {
     const out = await this.authedRequest<{ tracks: TrackWire[] }>(
       `/radio?seed=${encodeURIComponent(seedTrackId)}`,
     );
-    return out.tracks.map(trackFromWire);
+    return tracksFromWire(out.tracks);
   }
 
   async getRecsSettings(): Promise<RecsSettings> {
@@ -1276,9 +1355,9 @@ export class HttpMuzaApi implements MuzaApi {
       peakDay: w.peak_day,
       topHour: w.top_hour,
       favoritesAdded: w.favorites_added,
-      topTracks: w.top_tracks.map((t) => ({ track: trackFromWire(t.track), plays: t.plays, playedMs: t.played_ms })),
+      topTracks: rowsWithTrack(w.top_tracks, (track, t) => ({ track, plays: t.plays, playedMs: t.played_ms })),
       topArtists: w.top_artists.map((a) => ({ artist: a.artist, plays: a.plays, playedMs: a.played_ms })),
-      firstTrack: w.first_track ? trackFromWire(w.first_track) : null,
+      firstTrack: w.first_track ? trackOrNull(w.first_track) : null,
       firstPlayAt: w.first_play_at,
     };
   }
@@ -1310,7 +1389,7 @@ export class HttpMuzaApi implements MuzaApi {
       series: s.series,
       hours: s.hours,
       topHour: s.top_hour,
-      topTracks: s.top_tracks.map((t) => ({ track: trackFromWire(t.track), plays: t.plays, playedMs: t.played_ms })),
+      topTracks: rowsWithTrack(s.top_tracks, (track, t) => ({ track, plays: t.plays, playedMs: t.played_ms })),
       topArtists: s.top_artists.map((a) => ({ artist: a.artist, plays: a.plays, playedMs: a.played_ms })),
       activeDays: s.active_days,
       currentStreakDays: s.current_streak_days,
@@ -1447,9 +1526,9 @@ export class HttpMuzaApi implements MuzaApi {
       coverage: { tracks: number; with_lyrics: number; with_synced: number; with_annotations: number };
     }>("/admin/content");
     return {
-      topTracks: c.top_tracks.map((r) => ({ track: trackFromWire(r.track), plays: r.plays })),
+      topTracks: rowsWithTrack(c.top_tracks, (track, r) => ({ track, plays: r.plays })),
       topArtists: c.top_artists,
-      recentTracks: c.recent_tracks.map(trackFromWire),
+      recentTracks: tracksFromWire(c.recent_tracks),
       sourcesByProvider: c.sources_by_provider,
       coverage: {
         tracks: c.coverage.tracks,
@@ -1767,6 +1846,12 @@ export class HttpMuzaApi implements MuzaApi {
       return null;
     }
     const parsed = SessionSchema.safeParse(json);
-    return parsed.success ? parsed.data : null;
+    if (parsed.success) return parsed.data;
+    // Запись есть, но по форме уже не сессия (сменился формат, обрезалось поле).
+    // Стираем ТАК ЖЕ, как битый JSON выше: раньше её оставляли, приложение
+    // каждый раз честно считало «сессии нет», а мёртвая запись лежала в
+    // хранилище и переживала выход и вход — навсегда.
+    localStorage.removeItem(STORAGE_KEY);
+    return null;
   }
 }

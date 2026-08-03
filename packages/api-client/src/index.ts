@@ -342,4 +342,4 @@ export interface MuzaApi {
 // «Mock Artist»/«Mock Song». В проде он не инстанцировался ни разу (мёртвый
 // код), но оставался миной на релизной кодовой базе. Тесты мокают api точечно,
 // каждый под свой сценарий (см. views/PlaylistView.test.tsx).
-export { HttpMuzaApi, ApiError } from "./http";
+export { HttpMuzaApi, ApiError, humanError } from "./http";

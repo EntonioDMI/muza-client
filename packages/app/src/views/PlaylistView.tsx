@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog, Icon, IconButton, SearchInput, TrackRow, cssZoom } from "@muza/ui";
+import { humanError } from "@muza/api-client";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
@@ -170,17 +171,25 @@ export function PlaylistView({
   // Stage 4: сервер лёг — читаем последнюю копию с устройства (закреплённое
   // играет с диска). Площадка так не умеет — просто идём на сервер.
   const [offline, setOffline] = useState(false);
+  /** Номер актуальной загрузки страницы. Клик по плейлисту A, сразу по B, ответ
+   *  A пришёл вторым — и на экране оказывались имя и треки A под открытым B, а
+   *  «убрать трек»/перестановка били уже по B. Ответ с чужим номером не пишет
+   *  НИЧЕГО (тот же приём, что seqRef в общем поиске). */
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
       const fetchDetail = () => api.getPlaylist(playlistId);
       const { data, offline: fromSnapshot } = readWithSnapshot
         ? await readWithSnapshot(`playlist:${playlistId}`, fetchDetail)
         : { data: await fetchDetail(), offline: false };
+      if (loadSeq.current !== seq) return;
       setDetail(data);
       setOffline(fromSnapshot);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("views.playlist.loadFailed"));
+      if (loadSeq.current !== seq) return;
+      setError(humanError(e, t("views.playlist.loadFailed")));
     }
     // ⚠️ readWithSnapshot обязан быть СТАБИЛЬНОЙ ссылкой (модульная функция
     // или useCallback у вызывателя): новая функция на каждый рендер пересоздаёт
@@ -253,7 +262,7 @@ export function PlaylistView({
       await load();
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      onNotify(humanError(e, t("views.search.somethingWrong")), "x");
     }
   };
 
@@ -353,7 +362,7 @@ export function PlaylistView({
       onChanged();
     } catch (e) {
       setDetail({ ...detail, tracks: prev }); // сервер отказал — возвращаем как было
-      onNotify(e instanceof Error ? e.message : t("views.playlist.reorderFailed"), "x");
+      onNotify(humanError(e, t("views.playlist.reorderFailed")), "x");
     }
   };
 
@@ -375,7 +384,7 @@ export function PlaylistView({
       onChanged();
     } catch (e) {
       setDetail({ ...detail, tracks: prev });
-      onNotify(e instanceof Error ? e.message : t("views.playlist.reorderFailed"), "x");
+      onNotify(humanError(e, t("views.playlist.reorderFailed")), "x");
     }
   };
 

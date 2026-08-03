@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { MuzaApi, PublicPlaylistHit } from "@muza/api-client";
+import { ApiError, type MuzaApi, type PublicPlaylistHit } from "@muza/api-client";
 import { DragLayer } from "../shell/DragLayer";
 import { TestMenuProvider } from "../shell/menuTestUtils";
 import { SearchView } from "./SearchView";
@@ -104,9 +104,12 @@ describe("SearchView — режим кода PL_…", () => {
     expect(screen.getByText(/by creator/)).toBeTruthy();
   });
 
+  // ⚠️ Отказ имитируется ApiError, а не голым Error: на экран пускается ТОЛЬКО
+  // текст сервера (humanError). Голый Error — язык разработчика, и вьюха
+  // покажет вместо него свою заготовку — как и должна.
   it("ошибка кода → деликатный текст сервера, без падения", async () => {
     const api = makeApi({
-      getPublicPlaylistByCode: vi.fn().mockRejectedValue(new Error("Код не найден")),
+      getPublicPlaylistByCode: vi.fn().mockRejectedValue(new ApiError(404, "Код не найден")),
     });
     renderView(api);
 
@@ -146,7 +149,7 @@ describe("SearchView — режим @адреса", () => {
 
   it("замороженный/кривой адрес → деликатный текст сервера", async () => {
     const api = makeApi({
-      getPublicPlaylistByHandle: vi.fn().mockRejectedValue(new Error("Адрес не найден")),
+      getPublicPlaylistByHandle: vi.fn().mockRejectedValue(new ApiError(404, "Адрес не найден")),
     });
     renderView(api);
 
