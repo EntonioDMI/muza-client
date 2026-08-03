@@ -10,7 +10,7 @@ import {
   type StatsBlockPref,
 } from "@muza/app/shell/StatsBlocksDialog";
 import { getApi } from "../../../src/api";
-import { useWebTrackMenu } from "../../../src/components/TrackList";
+import { useWebTrackMenu } from "../../../src/components/trackMenu";
 import { useLikes } from "../../../src/likes";
 import { usePlayer } from "../../../src/player";
 import { usePrefs } from "../../../src/prefs";

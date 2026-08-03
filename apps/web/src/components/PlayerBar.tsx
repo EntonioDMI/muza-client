@@ -34,8 +34,14 @@ export function PlayerBar({
   onOpenMobile,
   onExpand,
 }: {
+  /** Панель «Сейчас играет» РАСКРЫТА СЕЙЧАС — не «включена в настройках».
+   *  Разные вещи там, где панели быть не может (см. onToggleNp): кнопка
+   *  горела нажатой, хотя показывать было нечего. */
   npOpen: boolean;
-  onToggleNp: () => void;
+  /** Нет обработчика — нет и кнопки (правило умений площадки). На экране
+   *  настроек панель не помещается, и кнопка-переключатель там просто
+   *  отсутствует, а не стоит нажатой и бездействующей. */
+  onToggleNp?: () => void;
   onOpenMobile: () => void;
   /** Открыть полноэкранный режим прослушивания (караоке). Общая полоса даёт
    *  ДВА входа сразу и оба — те же, что в приложении: клик по обложке трека
@@ -121,18 +127,20 @@ export function PlayerBar({
         // боковая панель «Сейчас играет» — веб-специфика: в приложении её
         // место занимает режим прослушивания, кнопки такой в компоновке нет
         extraButtons={
-          <Tooltip label={t("nowPlaying.heading")}>
-            <IconButton
-              icon="panel-right"
-              size="sm"
-              // имя панели — общее (nowPlaying.heading), тем же ключом подписан
-              // тултип этой кнопки: два имени одной панели разъезжались
-              label={t("nowPlaying.heading")}
-              active={npOpen}
-              onClick={onToggleNp}
-              disabled={!current}
-            />
-          </Tooltip>
+          onToggleNp ? (
+            <Tooltip label={t("nowPlaying.heading")}>
+              <IconButton
+                icon="panel-right"
+                size="sm"
+                // имя панели — общее (nowPlaying.heading), тем же ключом подписан
+                // тултип этой кнопки: два имени одной панели разъезжались
+                label={t("nowPlaying.heading")}
+                active={npOpen}
+                onClick={onToggleNp}
+                disabled={!current}
+              />
+            </Tooltip>
+          ) : undefined
         }
       />
 

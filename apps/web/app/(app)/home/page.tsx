@@ -10,7 +10,7 @@ import { useLikes } from "../../../src/likes";
 import { usePlayer } from "../../../src/player";
 import { useSession } from "../../../src/session";
 import { useToast } from "../../../src/toast";
-import { useWebTrackMenu } from "../../../src/components/TrackList";
+import { useWebTrackMenu } from "../../../src/components/trackMenu";
 
 /** Главная веба = ОБЩИЙ экран @muza/app/views/HomeFeed, тот же самый, что
  *  рисует приложение (волна экранов веб-паритета, 2026-08-02).
@@ -56,6 +56,9 @@ export default function HomePage() {
     // suppressNativeMenu={false}: у браузера своё меню — на сайте отбирать его
     // целиком нельзя, строки и плитки гасят нативное меню сами.
     <ContextMenuProvider ctx={menu.abilities} apiRef={menu.apiRef} suppressNativeMenu={false}>
+      {/* .shared-screen гасит отступ зоны: общий экран приносит свои поля,
+          как в приложении, где <main> голый (globals.css) */}
+      <div className="shared-screen">
       <HomeFeed
         api={getApi()}
         canSearch={Boolean(session)}
@@ -75,10 +78,8 @@ export default function HomePage() {
         onNotify={(text, icon) => notify(text, icon)}
         onOpen={(v) => router.push(`/${v}`)}
         onSections={setSections}
-        // Поля несёт панель-зона `.main` (globals.css) — экран свои гасит,
-        // иначе отступ сложился бы вдвое.
-        padding="0"
       />
+      </div>
       {menu.overlay}
     </ContextMenuProvider>
   );

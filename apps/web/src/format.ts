@@ -1,28 +1,13 @@
-import { DEFAULT_LANG, translate, type Lang } from "@muza/app";
-
-/** "3:47" из секунд; NaN/бесконечность → "0:00" (метаданные ещё не пришли). */
-export function fmtTime(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "0:00";
-  const s = Math.floor(sec);
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, "0")}`;
-}
-
-/** «N трек/трека/треков» (RU) / «N track(s)» (EN) — вместо канцелярского
- *  «трек(ов)» (паритет 21.07). И5-веб (22.07): принимает lang, тот же приём
- *  склонения по mod10/mod100, что pluralVersions десктопа (lib/searchGrouping.ts) —
- *  ключи common.pluralTracks.{one,few,many} (@muza/app i18n). */
-export function tracksLabel(n: number, lang: Lang = DEFAULT_LANG): string {
-  const word =
-    lang !== "ru"
-      ? translate(lang, n === 1 ? "common.pluralTracks.one" : "common.pluralTracks.many")
-      : (() => {
-          const mod100 = n % 100;
-          if (mod100 >= 11 && mod100 <= 14) return translate(lang, "common.pluralTracks.many");
-          const mod10 = n % 10;
-          if (mod10 === 1) return translate(lang, "common.pluralTracks.one");
-          if (mod10 >= 2 && mod10 <= 4) return translate(lang, "common.pluralTracks.few");
-          return translate(lang, "common.pluralTracks.many");
-        })();
-  return `${n} ${word}`;
-}
+/** Пенёк: тайм-код у веба и приложения ОДИН — @muza/app/lib/format.
+ *
+ *  Здесь жила вторая реализация `fmtTime`, и считала она иначе общей: общая
+ *  округляет (Math.round, поведение приложения), веб-копия отбрасывала дробь
+ *  (Math.floor). Расхождение уже ловили при переезде плеера — на одном и том же
+ *  треке подписи разъезжались на секунду. К 2026-08-03 копия осталась ровно у
+ *  одного потребителя, MobileNowPlaying: на телефоне время под ползунком было
+ *  на секунду меньше, чем в очереди и в полосе плеера, которые рисует общий
+ *  код. Одно время в одном месте — теперь буквально.
+ *
+ *  Вместе с копией уехало склонение `tracksLabel`: у него не осталось ни одного
+ *  потребителя — счётчики треков рисуют общие экраны своими строками. */
+export { fmtTime } from "@muza/app/lib/format";

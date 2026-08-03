@@ -1,62 +1,59 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Dialog, Icon, TrackRow } from "@muza/ui";
+import { Dialog, Icon } from "@muza/ui";
 import type { PlaylistMeta, Track } from "@muza/api-client";
 import { useT } from "@muza/app";
-import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
-import { SelectionBar } from "@muza/app/shell/SelectionBar";
-import { useMultiSelect, type MultiSelect } from "@muza/app/lib/useMultiSelect";
+import type { ContextMenuApi, MenuAbilities, TrackPlace } from "@muza/app/shell/ContextMenu";
+import { ReplaceVersionDialog, type ReplaceCtx } from "@muza/app/shell/ReplaceVersionDialog";
+import { ShareDialog } from "@muza/app/shell/ShareDialog";
+import { VersionsDialog } from "@muza/app/shell/VersionsDialog";
+import type { ShareData } from "@muza/app/lib/shareCard";
 import { getApi } from "../api";
-import { fmtTime } from "../format";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
 import { usePlaylists } from "../playlists";
 import { useToast } from "../toast";
 
-/** Тип данных внутреннего DnD (строка трека → плейлист сайдбара). */
-export const TRACK_DND_MIME = "application/x-muza-track";
-
-/** Кастомный ghost для драга: мини-пилюля с названием вместо полупрозрачного
- *  скриншота строки. Убирается сам после старта драга. Экспортирован для
- *  других веб-списков (единственный потребитель, выдача поиска, переехал на
- *  общий экран @muza/app 2026-08-02 и таскает строки уже общим слоем). */
-export function setTrackDragImage(e: React.DragEvent, track: Track) {
-  const ghost = document.createElement("div");
-  ghost.textContent = `${track.artist} — ${track.title}`;
-  Object.assign(ghost.style, {
-    position: "fixed",
-    top: "-100px",
-    left: "-100px",
-    maxWidth: "260px",
-    padding: "8px 14px",
-    borderRadius: "999px",
-    background: "var(--glass-panel)",
-    color: "var(--text-1)",
-    font: "600 13px var(--font-ui)",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    pointerEvents: "none",
-    zIndex: "100",
-  } as CSSStyleDeclaration);
-  document.body.appendChild(ghost);
-  e.dataTransfer.setDragImage(ghost, 16, 16);
-  setTimeout(() => ghost.remove(), 0);
-}
-
-/** Правая кнопка и множественный выбор для списков треков веба.
+/** Правая кнопка по строке трека в вебе: умения площадки + диалоги, которые
+ *  эти умения открывают.
  *
- *  ПОЧЕМУ ХУК, А НЕ КОПИЯ В КАЖДОМ СПИСКЕ: меню и выделение одинаковы у
- *  плоского списка и у выдачи с группировкой — а до 2026-08-02 у веба меню
- *  собиралось прямо в JSX двумя почти одинаковыми массивами, как когда-то в
- *  приложении (урок menuActions.ts). Здесь набор пунктов собирает та же общая
+ *  ФАЙЛ БЫЛ TrackList.tsx. Своего списка треков у веба больше нет: строки
+ *  рисуют общие экраны (@muza/app/views/*), они же таскают их общим слоем
+ *  переноса. Компонент `TrackList`, кастомный ghost для HTML5-драга
+ *  (`setTrackDragImage`) и его MIME (`TRACK_DND_MIME`) умерли вместе с
+ *  переездом и снесены 2026-08-03 — вместе с мостом `externalDrop` в
+ *  AppShell.tsx, который без источника ничего не принимал.
+ *
+ *  Тем же движением снят СВОЙ множественный выбор (`useMultiSelect`, своя
+ *  панель `SelectionBar`, `openBlankMenu`/`eatSelectionClick`): выделение
+ *  начиналось Ctrl/Shift-кликом ПО СТРОКЕ, а строки теперь чужие и про него не
+ *  знают — счётчик всегда стоял на нуле, панель не показывалась, меню
+ *  выделения было недостижимо.
+ *
+ *  ⚠️ А вот МАССОВЫЕ УМЕНИЯ (`addManyToPlaylist`, `likeMany`) остаются и живее
+ *  всех живых: выделение теперь ведут сами общие экраны (SearchView,
+ *  PlaylistView — свой useMultiSelect, своя панель), и пункты своей панели и
+ *  своего меню выделения они берут ИЗ ЭТИХ ПОЛЕЙ через menuCtxRef. Уберёшь
+ *  «мёртвое» поле — на поиске и в плейлисте молча исчезнут «В плейлист» и
+ *  «В Любимое» у пачки треков.
+ *
+ *  ПОЧЕМУ ХУК, А НЕ КОПИЯ В КАЖДОМ СПИСКЕ: меню одинаково у ленты, поиска,
+ *  «Любимого», статистики и плейлиста — а до 2026-08-02 у веба оно собиралось
+ *  прямо в JSX двумя почти одинаковыми массивами, как когда-то в приложении
+ *  (урок menuActions.ts). Здесь набор пунктов собирает та же общая
  *  buildMenuItems, что и в приложении.
  *
- *  ЧТО БРАУЗЕР НЕ УМЕЕТ — того в меню НЕТ (не серым): вставки в очередь, радио,
- *  версий, «сохранить офлайн», плагинов и «показать в папке». Проверка — по
- *  наличию поля-умения, поэтому пункт появится сам, как только умение появится
- *  у веба (правило описано в шапке общего menuActions.ts).
+ *  ЧТО БРАУЗЕР НЕ УМЕЕТ — того в меню НЕТ (не серым): вставок в очередь,
+ *  «сохранить офлайн», плагинов и «показать в папке». Проверка — по наличию
+ *  поля-умения, поэтому пункт появится сам, как только умение появится у веба
+ *  (правило описано в шапке общего menuActions.ts).
+ *
+ *  ЧТО ПРИЕХАЛО 2026-08-03: «Радио по треку», «Источники», «Поделиться» и
+ *  «Заменить версию» в Любимом. Их не было не по умению, а по недосмотру — все
+ *  четыре суть обычные запросы к серверу, ничего от устройства им не нужно.
+ *  Диалоги трёх последних — ОБЩИЕ, те же, что в приложении, и живут в `overlay`
+ *  этого хука: иначе их пришлось бы монтировать на пяти страницах поимённо.
  *
  *  Взамен есть умение, которого нет у приложения: «Скачать» — файл забирает
  *  браузер обычной загрузкой. */
@@ -64,34 +61,36 @@ export interface WebTrackMenu {
   /** Умения площадки — в <ContextMenuProvider ctx=…>. */
   abilities: MenuAbilities;
   apiRef: React.RefObject<ContextMenuApi<MenuAbilities> | null>;
-  multi: MultiSelect;
-  /** ПКМ или «⋯» по строке: по выделенному — меню выделения, иначе — трека. */
+  /** ПКМ или «⋯» по строке. */
   openRowMenu: (tr: Track, e: React.MouseEvent) => void;
-  /** ПКМ по пустому месту списка: вход в выбор («Выбрать треки»). */
-  openBlankMenu: (e: React.MouseEvent) => void;
-  /** onClickCapture строки: true — клик съело выделение, играть не надо. */
-  eatSelectionClick: (id: string, e: React.MouseEvent) => boolean;
-  /** Диалог «В плейлист» и панель выделения — рендерить внутри провайдера. */
+  /** Диалоги меню — рендерить внутри провайдера. */
   overlay: React.ReactNode;
 }
 
 export function useWebTrackMenu(
   tracks: Track[],
   opts: {
-    /** Есть только на странице плейлиста: добавляет «Убрать из плейлиста»
-     *  и в меню трека, и в меню выделения. */
+    /** Есть только на странице плейлиста: добавляет «Убрать из плейлиста». */
     onRemoveFromPlaylist?: (track: Track) => void;
+    /** Откуда открыли меню. Решает ровно один пункт: «Заменить версию» есть
+     *  только в «Любимом» (в плейлисте у замены свой путь — через ctl экрана).
+     *  По умолчанию "search" — как у приложения, где хоум, поиск и статистика
+     *  идут одним и тем же местом. */
+    place?: TrackPlace;
   } = {},
 ): WebTrackMenu {
-  const { onRemoveFromPlaylist } = opts;
-  const { likedIds, toggle } = useLikes();
+  const { onRemoveFromPlaylist, place = "search" } = opts;
+  const { likedIds, toggle, refresh: refreshLikes } = useLikes();
+  const { current, playing, playContext } = usePlayer();
   const { playlists, loaded, refresh: refreshPlaylists } = usePlaylists();
   const notify = useToast();
   const { t } = useT();
   const apiRef = useRef<ContextMenuApi<MenuAbilities> | null>(null);
   // пикер «В плейлист» работает и на один трек, и на пачку — список, а не трек
   const [plPick, setPlPick] = useState<Track[] | null>(null);
-  const multi = useMultiSelect(tracks.map((tr) => tr.id));
+  const [shareData, setShareData] = useState<ShareData | null>(null);
+  const [versionsTrack, setVersionsTrack] = useState<Track | null>(null);
+  const [replaceCtx, setReplaceCtx] = useState<ReplaceCtx | null>(null);
 
   const openPlaylistPick = (picked: Track[]) => {
     if (picked.length === 0) return;
@@ -115,6 +114,19 @@ export function useWebTrackMenu(
     }
   };
 
+  /** «Радио по треку»: очередь = сам трек + похожие с сервера. Тот же вызов и
+   *  те же тосты, что в приложении (App.tsx → startRadio). */
+  const startRadio = async (track: Track) => {
+    notify(t("toast.radio.building"), "radio");
+    try {
+      const radio = await getApi().getRadio(track.id);
+      playContext([track, ...radio], 0);
+      notify(t("toast.radio.byTrack", { title: track.title }), "radio");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t("toast.radio.buildFailed"), "x");
+    }
+  };
+
   /** Скачать: сервер отдаёт файл с Content-Disposition (?dl=1). Холодный трек
    *  сервер сперва подготовит — браузер честно покажет ожидание в загрузках. */
   const download = async (track: Track) => {
@@ -133,7 +145,6 @@ export function useWebTrackMenu(
   };
 
   const byId = (id: string) => tracks.find((tr) => tr.id === id);
-  const selectedTracks = () => tracks.filter((tr) => multi.has(tr.id));
 
   /** Массовый лайк только ДОБАВЛЯЕТ: toggle снял бы лайк с уже лайкнутых
    *  (тот же урок, что у приложения — favoritesDrop 20.07). */
@@ -147,45 +158,29 @@ export function useWebTrackMenu(
     notify(t("toast.favorites.likedMany", { count: fresh.length }), "heart");
   };
 
-  const removeSelected = () => {
-    if (!onRemoveFromPlaylist) return;
-    for (const tr of selectedTracks()) onRemoveFromPlaylist(tr);
-    multi.clear();
-  };
-
   const abilities: MenuAbilities = {
+    startRadio: (tr) => void startRadio(tr),
     addToPlaylist: (tr) => openPlaylistPick([tr]),
     isLiked: (id) => likedIds.has(id),
     toggleLike: (id) => {
       const tr = byId(id);
       if (tr) toggle(tr);
     },
+    shareTrack: (tr) => setShareData({ kind: "track", title: tr.title, artist: tr.artist, coverUrl: tr.coverUrl }),
+    showVersions: (tr) => setVersionsTrack(tr),
+    replaceInFavorites: (tr) => setReplaceCtx({ track: tr, target: { kind: "favorites" } }),
     downloadTrack: (tr) => void download(tr),
+    // Массовые: их читают ОБЩИЕ экраны — своя панель выделения и своё меню
+    // выделения (menuCtxRef). См. предупреждение в шапке файла.
     addManyToPlaylist: (picked) => openPlaylistPick(picked),
     likeMany,
   };
 
   const openRowMenu = (tr: Track, e: React.MouseEvent) => {
-    // ПКМ по выделенному — меню выделения; по невыделенному — сброс, как в
-    // приложении (SearchView/PlaylistView): иначе действие уехало бы не туда
-    if (multi.count > 0 && multi.has(tr.id)) {
-      apiRef.current?.openMenu(e, {
-        kind: "selection",
-        tracks: selectedTracks(),
-        count: multi.count,
-        place: "list",
-        ctl: {
-          remove: onRemoveFromPlaylist ? { scope: "playlist", run: removeSelected } : undefined,
-          clear: multi.clear,
-        },
-      });
-      return;
-    }
-    if (multi.count > 0) multi.clear();
     apiRef.current?.openMenu(e, {
       kind: "track",
       track: tr,
-      place: onRemoveFromPlaylist ? "playlist" : "search",
+      place: onRemoveFromPlaylist ? "playlist" : place,
       ctl: onRemoveFromPlaylist
         ? {
             canEdit: true,
@@ -198,50 +193,12 @@ export function useWebTrackMenu(
     });
   };
 
-  const openBlankMenu = (e: React.MouseEvent) => {
-    apiRef.current?.openMenu(e, {
-      kind: "playlistBlank",
-      ctl: { enterSelect: multi.enterMode, selectAll: multi.selectAll },
-    });
-  };
-
-  const eatSelectionClick = (id: string, e: React.MouseEvent) => {
-    if (!multi.onItemClick(id, e)) return false;
-    e.preventDefault();
-    e.stopPropagation();
-    return true;
-  };
-
   const overlay = (
     <>
-      {multi.count > 0 ? (
-        <SelectionBar
-          label={t("menu.selection.count", { count: multi.count })}
-          clearLabel={t("menu.selection.clear")}
-          onClear={multi.clear}
-          actions={[
-            { icon: "plus", label: t("menu.addToPlaylist"), onClick: () => openPlaylistPick(selectedTracks()) },
-            { icon: "heart", label: t("menu.catalog.like"), onClick: () => likeMany(multi.ids) },
-            ...(onRemoveFromPlaylist
-              ? [
-                  {
-                    icon: "list-x",
-                    label: t("views.playlist.removeFromPlaylist"),
-                    danger: true,
-                    onClick: removeSelected,
-                  },
-                ]
-              : []),
-          ]}
-        />
-      ) : null}
-
-      {/* Выбор плейлиста для «В плейлист…» */}
-      {/* Заголовок и пустой список — ОБЩИЕ строки диалога «В плейлист»
+      {/* Выбор плейлиста для «В плейлист…». Заголовок — ОБЩАЯ строка диалога
           (app.addToPlaylistDialog.*): у веба был свой текст про то же самое
           («В какой плейлист?»), и одно понятие звучало на двух клиентах
-          по-разному. Один трек — с названием, пачка — со счётчиком, как в
-          приложении (волна 8, 2026-08-02). */}
+          по-разному. */}
       <Dialog
         open={plPick !== null}
         title={
@@ -290,79 +247,35 @@ export function useWebTrackMenu(
           )}
         </div>
       </Dialog>
+
+      {/* «Поделиться» — общая карточка-картинка. glyphSrc пропом: ссылка на
+          глиф у площадок разная (в вебе он лежит в public/). Кнопку «Сохранить
+          PNG» диалог прячет сам — порта saveImage у браузера нет. */}
+      <ShareDialog data={shareData} glyphSrc="/glyph.svg" onClose={() => setShareData(null)} onNotify={notify} />
+
+      {/* «Источники»: выбор конкретной версии трека — чистая серверная
+          настройка (UserTrackSource). Шаг «забыть подготовленное» диалог
+          пропускает сам, браузер заранее ничего не готовит. */}
+      <VersionsDialog api={getApi()} track={versionsTrack} onClose={() => setVersionsTrack(null)} onNotify={notify} />
+
+      {/* «Заменить версию» в Любимом. Позиции сохраняет сервер; список лайков
+          после замены перечитываем целиком — править его оптимистично нечем:
+          старого id уже нет, а новый трек знает только сервер. */}
+      <ReplaceVersionDialog
+        api={getApi()}
+        ctx={replaceCtx}
+        onClose={() => setReplaceCtx(null)}
+        onNotify={notify}
+        onPlayCatalog={(list, id) => {
+          const i = list.findIndex((tr) => tr.id === id);
+          playContext(list, i < 0 ? 0 : i);
+        }}
+        currentId={current?.id ?? null}
+        playing={playing}
+        onReplaced={() => void refreshLikes()}
+      />
     </>
   );
 
-  return { abilities, apiRef, multi, openRowMenu, openBlankMenu, eatSelectionClick, overlay };
-}
-
-/** Список треков на TrackRow ДС: клик/даблклик — playContext, лайк — общий
- *  контекст, «⋯» и ПКМ — общее меню приложения (см. useWebTrackMenu), строка
- *  перетаскивается в плейлисты сайдбара. Ctrl/Shift-клик — множественный
- *  выбор с панелью массовых действий внизу. Локальные треки других устройств
- *  не играбельны на вебе — приглушены. */
-export function TrackList({
-  tracks,
-  onRemoveFromPlaylist,
-}: {
-  tracks: Track[];
-  /** Передаётся только со страницы плейлиста: добавляет в меню пункт
-   *  «Убрать из плейлиста» (список — не общий контекст, только владелец
-   *  страницы знает playlistId и умеет перезагрузить detail). */
-  onRemoveFromPlaylist?: (track: Track) => void;
-}) {
-  const { likedIds, toggle } = useLikes();
-  const { current, playing, playContext } = usePlayer();
-  const { t } = useT();
-  const menu = useWebTrackMenu(tracks, { onRemoveFromPlaylist });
-  const { multi } = menu;
-
-  return (
-    // suppressNativeMenu={false}: у браузера своё меню («Открыть в новой
-    // вкладке», «Назад») — на сайте отбирать его нельзя. Строкам это не
-    // мешает: их openMenu гасит нативное меню сам.
-    <ContextMenuProvider ctx={menu.abilities} apiRef={menu.apiRef} suppressNativeMenu={false}>
-      <div style={{ display: "flex", flexDirection: "column" }} onContextMenu={menu.openBlankMenu}>
-        {tracks.map((tr, i) => {
-          const isLocal = Boolean(tr.localHash);
-          return (
-            // вся строка — тач-таргет и драг-источник; клики по кнопкам внутри
-            // (лайк/⋯) не перехватываем
-            <div
-              key={`${tr.id}-${i}`}
-              draggable={!isLocal}
-              onDragStart={(e) => {
-                e.dataTransfer.setData(TRACK_DND_MIME, JSON.stringify({ id: tr.id, title: tr.title }));
-                e.dataTransfer.effectAllowed = "copy";
-                setTrackDragImage(e, tr);
-              }}
-              style={isLocal ? { opacity: 0.45, pointerEvents: "none" } : { cursor: "pointer" }}
-              // Ctrl/Shift/режим — клик выделяет (capture: раньше play-кнопки строки)
-              onClickCapture={(e) => menu.eatSelectionClick(tr.id, e)}
-              onClick={(e) => {
-                if ((e.target as HTMLElement).closest("button")) return;
-                playContext(tracks, i);
-              }}
-            >
-              <TrackRow
-                index={i + 1}
-                cover={tr.coverUrl ?? undefined}
-                title={isLocal ? t("web.trackList.fileOnOtherDevice", { title: tr.title }) : tr.title}
-                artist={tr.artist}
-                duration={fmtTime(tr.durationSec)}
-                active={current?.id === tr.id}
-                playing={current?.id === tr.id && playing}
-                liked={likedIds.has(tr.id)}
-                selected={multi.has(tr.id)}
-                onPlay={() => playContext(tracks, i)}
-                onLike={() => toggle(tr)}
-                onMore={(e) => menu.openRowMenu(tr, e)}
-              />
-            </div>
-          );
-        })}
-      </div>
-      {menu.overlay}
-    </ContextMenuProvider>
-  );
+  return { abilities, apiRef, openRowMenu, overlay };
 }

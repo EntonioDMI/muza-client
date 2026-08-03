@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ListeningMode } from "@muza/app/shell/ListeningMode";
 import { usePlayer, usePosition } from "../player";
 import { usePrefs } from "../prefs";
-import { useTrackLyrics } from "./LyricsPanel";
+import { useLyricsMenu, useTrackLyrics } from "./LyricsPanel";
 
 /** Полноэкранный режим прослушивания (караоке) в БРАУЗЕРЕ — тот же общий
  *  оверлей, что в приложении (@muza/app/shell/ListeningMode). Здесь только
@@ -72,6 +72,9 @@ export function ListeningModeHost({ open, onClose }: { open: boolean; onClose: (
   const { position, duration } = usePosition();
   const { prefs, set } = usePrefs();
   const { lines, activeLine, loading, seekLine, panelPrefs, explainLine, meaningDialog } = useTrackLyrics();
+  // ПКМ по строке — то же меню текста, что у панели «Сейчас играет» и у
+  // приложения (копировать всё/строку, «Смысл строки»)
+  const openLyricsMenu = useLyricsMenu(lines, explainLine);
   const phone = usePhoneLayout();
   const current = p.current;
 
@@ -120,6 +123,7 @@ export function ListeningModeHost({ open, onClose }: { open: boolean; onClose: (
         onSeek={p.seek}
         onSeekLine={seekLine}
         onExplain={explainLine}
+        onLineContextMenu={openLyricsMenu}
         onClose={onClose}
         lyricsShown={prefs.listeningLyricsShown}
         onToggleLyrics={() => set({ listeningLyricsShown: !prefs.listeningLyricsShown })}

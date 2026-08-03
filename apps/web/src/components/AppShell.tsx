@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Badge, Button, Cover, Dialog, Icon, SearchInput } from "@muza/ui";
 import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
-import { ApiError, type PlaylistMeta } from "@muza/api-client";
+import { ApiError } from "@muza/api-client";
 import { useT } from "@muza/app";
-import { moveItem } from "@muza/app/lib/dragEngine";
+import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
 import { DragLayer } from "@muza/app/shell/DragLayer";
-import { Sidebar, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
+import { Sidebar, isFillableNavIcon, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
 import { getApi } from "../api";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
-import { usePlaylists } from "../playlists";
+import { usePlayPlaylist, usePlaylists } from "../playlists";
 import { usePrefs } from "../prefs";
 import { useSession } from "../session";
 import { useToast } from "../toast";
@@ -21,7 +21,6 @@ import { ListeningModeHost } from "./ListeningModeHost";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { NowPlayingPanel } from "./NowPlayingPanel";
 import { PlayerBar } from "./PlayerBar";
-import { TRACK_DND_MIME } from "./TrackList";
 
 /** Каркас залогиненного веба. Живёт в layout группы (app) — плеер НЕ
  *  размонтируется при навигации. Визуальная модель десктопа: сценография
@@ -40,8 +39,17 @@ import { TRACK_DND_MIME } from "./TrackList";
  *  @muza/app/shell/Sidebar, та же, что в приложении. Вместе с ней приехало то,
  *  чего в вебе не было вообще: порядок плейлистов перетаскиванием за ручку-⠿
  *  (жест на Pointer Events — работает и пальцем), закреплённые с булавкой,
- *  подписки, приём трека на «Любимое» и подсветка цели. Плашка «Web» осталась
- *  (просил владелец) — теперь пропом. */
+ *  подписки и подсветка цели. Плашка «Web» осталась (просил владелец) — теперь
+ *  пропом.
+ *
+ *  ХВОСТЫ ПАРИТЕТА, ЗАКРЫТЫЕ 2026-08-03. Оба — не «решение веба», а пропущенные
+ *  пропы: панель рисует умение ровно по наличию колбэка, и без него молчит.
+ *  - `onDropTrackOnFavorites` — без него строка «Любимое» не была зоной приёма
+ *    вовсе, и трек на неё уронить было нельзя (шапка обещала обратное, что и
+ *    сбивало с толку);
+ *  - `onPlaylistMenu` — правой кнопки у плейлистов панели не было, хотя все
+ *    четыре пункта (переименовать/удалить/закрепить/отписаться) — чистые
+ *    серверные вызовы, доступные браузеру наравне с приложением. */
 
 /* «Любимое» — НЕ пункт навигации, а особая первая строка блока плейлистов
    (её рисует общая панель) — паритет шелла 2026-07-21. Подписи — media.nav.*
@@ -55,38 +63,41 @@ const NAV_KEYS = [
   { href: "/stats", icon: "chart-line", labelKey: "stats" as const },
 ];
 
-/** Заливаемые глифы активной вкладки — зеркало NAV_FILLABLE десктопа: lucide
- *  рисует штрихом, активная вкладка — ЗАЛИТАЯ. Остался ради НИЖНЕЙ навигации
- *  (телефон): у боковой панели это правило теперь своё, внутри @muza/app. */
-const NAV_FILLABLE = new Set(["heart", "home", "house", "library-big", "library"]);
-
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { session, ready } = useSession();
   const { prefs, set } = usePrefs();
   const { current } = usePlayer();
-  const { favorites } = useLikes();
-  const { playlists, refresh: reloadPlaylists } = usePlaylists();
+  const { likedIds, favorites, refresh: reloadLikes } = useLikes();
+  const { playlists, refresh: reloadPlaylists, reorder: reorderPlaylists } = usePlaylists();
+  const playPlaylist = usePlayPlaylist();
   const notify = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useT();
   const [mobileNp, setMobileNp] = useState(false);
+  /** Ссылки на «открыть/закрыть» держим СТАБИЛЬНЫМИ: MobileNowPlaying берёт
+   *  onClose в зависимости сразу двух эффектов — слушателя Esc и «очередь
+   *  кончилась, закрываемся сами». Со стрелкой, рождённой в рендере, оба
+   *  переподписывались при каждой перерисовке оболочки (а её дёргает любая
+   *  смена трека, настройки и списка плейлистов), то есть окно теряло и
+   *  заводило глобальный слушатель клавиатуры вхолостую. */
+  const openMobileNp = useCallback(() => setMobileNp(true), []);
+  const closeMobileNp = useCallback(() => setMobileNp(false), []);
   /** Полноэкранный режим прослушивания (караоке) — как `expanded` в
    *  приложении: состояние живёт в оболочке, потому что вход даёт полоса
    *  плеера, а сцена накрывает всё окно целиком. На телефоне не включается —
    *  там полный экран это MobileNowPlaying (см. ListeningModeHost.tsx). */
   const [listening, setListening] = useState(false);
-  /** Порядок плейлистов, применённый оптимистично (перетаскиванием), пока
-   *  сервер не ответил. null — показываем то, что дал контекст. Провайдер
-   *  плейлистов общий на весь веб и своего «переставить» не умеет; заводить
-   *  его ради одного жеста не стали — копия живёт ровно здесь и умирает, как
-   *  только список перечитан с сервера (эффект ниже). */
-  const [optimistic, setOptimistic] = useState<PlaylistMeta[] | null>(null);
-  useEffect(() => setOptimistic(null), [playlists]);
-  const list = optimistic ?? playlists;
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
+  /** Контекст-меню плейлиста панели: открывается ИЗ обработчика, а не из
+   *  дерева, поэтому через apiRef — тот же приём, что у App.tsx приложения
+   *  (он тоже снаружи собственного провайдера). */
+  const menuApiRef = useRef<ContextMenuApi<MenuAbilities> | null>(null);
+  const [plRename, setPlRename] = useState<{ id: string; name: string } | null>(null);
+  const [plRenameValue, setPlRenameValue] = useState("");
+  const [plDelete, setPlDelete] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (ready && !session) router.replace("/login");
@@ -123,7 +134,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    *  (App.tsx → sidebarPlaylists). fixed = «в перетаскивание не входит»:
    *  у подписок сервер не хранит позиций, а смысл закрепа — «случайно не
    *  сдвинуть». */
-  const sidebarPlaylists: SidebarPlaylist[] = list.map((p) => ({
+  const sidebarPlaylists: SidebarPlaylist[] = playlists.map((p) => ({
     id: p.id,
     name: p.name,
     meta:
@@ -145,7 +156,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   /** Трек уронили на плейлист панели (перетаскиванием из любого списка). */
   const dropOnPlaylist = async (playlistId: string, trackId: string) => {
-    const pl = list.find((p) => p.id === playlistId);
+    const pl = playlists.find((p) => p.id === playlistId);
     if (!pl) return;
     try {
       await getApi().addPlaylistTrack(playlistId, trackId);
@@ -156,31 +167,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
-  /** Новый порядок плейлистов после перетаскивания за ручку-⠿.
+  /** Трек уронили на «Любимое».
    *
-   *  ⚠️ toIndex приходит в координатах УРЕЗАННОГО списка: в перетаскивание
-   *  панель отдаёт только подвижные строки (подписки и закреплённые
-   *  исключены). Складывать его с позицией из ПОЛНОГО списка нельзя — промах
-   *  равен числу исключённых, а закреплённые всегда сверху, так что промах
-   *  гарантирован: сдвиг на позицию молча не даёт ничего, а испорченный
-   *  порядок уходит на сервер и переживает перезапуск. Ровно эту ошибку
-   *  чинили в приложении 2026-08-02 (App.tsx → reorderPlaylists) — здесь она
-   *  не повторяется by design. */
-  const reorderPlaylists = async (draggedId: string, toIndex: number) => {
-    const movable = list.filter((p) => p.role !== "follower" && !p.pinned);
-    const from = movable.findIndex((p) => p.id === draggedId);
-    if (from < 0 || from === toIndex || toIndex < 0 || toIndex >= movable.length) return;
-    const moved = moveItem(movable, from, toIndex);
-    // Неподвижные остаются на СВОИХ местах в общем списке, подвижные
-    // перетасовываются только между своими слотами.
-    let k = 0;
-    const next = list.map((p) => (p.role !== "follower" && !p.pinned ? moved[k++] : p));
-    setOptimistic(next);
-    try {
-      await getApi().reorderPlaylists(next.map((p) => p.id));
-    } catch {
-      void reloadPlaylists(); // не сохранилось — вернём серверный порядок
+   *  НЕ toggleLike: тот переключает, а перенос — жест «положить сюда». Бросок
+   *  уже любимого трека снимал бы лайк, то есть трек исчезал бы ровно тем
+   *  движением, которым его кладут (урок приложения 2026-07-20,
+   *  apps/desktop/src/shell/favoritesDrop.ts). Модуль оттуда не переиспользуем:
+   *  он живёт в приложении, а не в общем пакете, и правило короче импорта.
+   *
+   *  Лайк веба (likes.tsx → toggle) принимает трек ЦЕЛИКОМ — он же кладёт его
+   *  в список оптимистично, — а слой переноса отдаёт зоне только id с подписью.
+   *  Поэтому здесь прямой серверный путь и перечитка: собирать половинчатый
+   *  Track из полей превью значило бы класть в «Любимое» огрызок. */
+  const dropOnFavorites = (trackId: string) => {
+    if (likedIds.has(trackId)) {
+      notify(t("toast.favorites.already"), "heart");
+      return;
     }
+    getApi()
+      .addFavorite(trackId)
+      .then(() => reloadLikes())
+      .then(() => notify(t("toast.favorites.added"), "heart"))
+      .catch(() => notify(t("toast.favorites.syncFailed"), "x"));
   };
 
   const closeCreate = () => {
@@ -196,7 +204,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!name) return;
     setCreateBusy(true);
     try {
-      const used = list.map((p) => p.icon).filter((v): v is string => Boolean(v));
+      const used = playlists.map((p) => p.icon).filter((v): v is string => Boolean(v));
       const created = await getApi().createPlaylist(name, pickRandomPlaylistIcon(used));
       await reloadPlaylists();
       closeCreate();
@@ -206,6 +214,97 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     } finally {
       setCreateBusy(false);
     }
+  };
+
+  /** Закреп плейлиста СВЕРХУ СПИСКА (не офлайн-пин): PATCH и перечитка.
+   *  Порядок пересобирает сервер — своего правила сортировки веб не заводит,
+   *  иначе список после перечитки прыгал бы. */
+  const togglePinned = async (id: string) => {
+    const pl = playlists.find((p) => p.id === id);
+    if (!pl) return;
+    try {
+      await getApi().setPlaylistPinned(id, !pl.pinned);
+      await reloadPlaylists();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+    }
+  };
+
+  const renameFromMenu = async () => {
+    const target = plRename;
+    const name = plRenameValue.trim();
+    if (!target || !name) return;
+    setPlRename(null);
+    try {
+      await getApi().renamePlaylist(target.id, name);
+      await reloadPlaylists();
+      notify(t("toast.playlist.renamed"), "pencil");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t("toast.playlist.renameFailed"), "x");
+    }
+  };
+
+  /** Удаление после подтверждения. Открытая страница удалённого плейлиста
+   *  уводится в медиатеку — иначе она осталась бы висеть с ошибкой загрузки
+   *  (в приложении ровно то же, App.tsx → deleteFromMenu). */
+  const deleteFromMenu = async () => {
+    const target = plDelete;
+    if (!target) return;
+    setPlDelete(null);
+    try {
+      await getApi().deletePlaylist(target.id);
+      await reloadPlaylists();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t("toast.playlist.deleteFailed"), "x");
+      return;
+    }
+    notify(t("toast.playlist.deleted"), "trash-2");
+    // id открытого плейлиста читаем из адреса, а НЕ через useSearchParams:
+    // хук требует Suspense, а оболочка — общий layout всей группы (app), и
+    // заворачивать в него весь сайт ради одной строки нельзя. Здесь мы уже в
+    // обработчике клика, то есть заведомо в браузере.
+    if (pathname === "/playlist" && new URLSearchParams(window.location.search).get("id") === target.id) {
+      router.replace("/library");
+    }
+  };
+
+  /** Отписка: уходит «ссылка» из библиотеки, сам плейлист у владельца цел. */
+  const unfollowFromMenu = async (target: { id: string; name: string }) => {
+    try {
+      await getApi().unfollowPlaylist(target.id);
+      await reloadPlaylists();
+      notify(t("views.search.publicPlaylist.removed"), "list-x");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+    }
+  };
+
+  /** Умения меню ОБОЛОЧКИ: плейлисты боковой панели + текст песни (панель
+   *  «Сейчас играет» и караоке живут здесь же, внутри этого провайдера).
+   *  Ровно то, что браузер УМЕЕТ: все пункты — серверные вызовы либо буфер
+   *  обмена. Чего нет (очередь-вставка, «сохранить офлайн», иконка плейлиста,
+   *  плагины) — того в меню и не появляется: набор собирается по наличию поля
+   *  (menuActions.ts). */
+  const shellMenuAbilities: MenuAbilities = {
+    openPlaylist: (id) => router.push(`/playlist?id=${id}`),
+    playlistRole: (id) => playlists.find((p) => p.id === id)?.role ?? "owner",
+    playPlaylist: (id) => void playPlaylist(id),
+    playlistPinned: (id) => playlists.find((p) => p.id === id)?.pinned ?? false,
+    togglePlaylistPinned: (id) => void togglePinned(id),
+    renamePlaylist: (pl) => {
+      setPlRenameValue(pl.name);
+      setPlRename(pl);
+    },
+    deletePlaylist: (pl) => setPlDelete(pl),
+    unfollowPlaylist: (pl) => void unfollowFromMenu(pl),
+    // Буфер обмена — навигаторский, как в приложении (там тоже не плагин Tauri,
+    // а navigator.clipboard: паттерн ShareDialog).
+    copyText: (text, doneToast) => {
+      navigator.clipboard
+        .writeText(text)
+        .then(() => notify(doneToast, "copy"))
+        .catch(() => notify(t("dialogs.copyFailed"), "x"));
+    },
   };
 
   if (!ready || !session) {
@@ -228,7 +327,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // правило и по той же причине (App.tsx → showNowPlaying: `view !==
   // "settings"`). Слушать музыку и крутить настройки одновременно не сценарий:
   // что играет, видно в полосе плеера снизу, она никуда не делась.
-  const npVisible = prefs.npOpen && pathname !== "/settings";
+  //
+  // Два РАЗНЫХ вопроса, и путать их нельзя: npAllowed — «панель на этом экране
+  // вообще бывает», npVisible — «раскрыта прямо сейчас». Полоса плеера
+  // получала сырую НАСТРОЙКУ prefs.npOpen, поэтому на /settings её кнопка
+  // «Сейчас играет» горела нажатой и по нажатию не показывала ничего.
+  const npAllowed = pathname !== "/settings";
+  const npVisible = prefs.npOpen && npAllowed;
 
   return (
     // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь.
@@ -237,6 +342,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // страниц (их списки — будущие источники переноса). Живёт здесь, а не в
     // layout группы (app): layout — серверный компонент, а слой на хуках.
     <DragLayer>
+    {/* Провайдер меню ОБОЛОЧКИ: правая кнопка по плейлистам боковой панели и
+        по тексту песни (панель «Сейчас играет», караоке). Страницы держат свой
+        (у них другие умения: треки, плитки), и вложенность здесь безобидна —
+        каждый провайдер рисует свой <Menu>, а оболочка открывает СВОЙ через
+        apiRef, будучи снаружи собственного дерева, как App.tsx приложения.
+        suppressNativeMenu={false}: у браузера своё меню, на сайте отбирать его
+        целиком нельзя — строки гасят нативное меню сами. */}
+    <ContextMenuProvider ctx={shellMenuAbilities} apiRef={menuApiRef} suppressNativeMenu={false}>
     <div className="shell">
       {/* Сценография: фирменный вид Muza — размытая обложка за интерфейсом.
           Картинку рисует Cover ДС, а не голый <img>, и это принципиально.
@@ -247,9 +360,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           тёмная кайма, которой в приложении нет. Cover доворачивает геометрию
           сам и знает, какие варианты ссылок трогать нельзя, — знание остаётся
           в одном месте, копии регулярки в вебе не заводим.
-          Квадрат max(120vw,120vh) центрирован в .scenery: он заведомо
-          перекрывает окно с тем же запасом ±10%, что был у прежнего <img>,
-          и виден ровно центральный кроп арта — как в приложении. */}
+          РАЗМЕР КВАДРАТА — по тому же правилу, что запас рамки .scenery: окно
+          по большей стороне ПЛЮС шесть радиусов размытия (по три с каждой
+          стороны, столько гаусс гасит внутрь). Прежние max(120vw,120vh) на
+          телефоне были меньше рамки — картинка не доставала до её краёв, и
+          размытие тянуло прозрачность уже от СВОЕЙ кромки, у самого экрана.
+          Виден по-прежнему центральный кроп арта — как в приложении. */}
       {/* bgType вместо прежнего веб-поля bgCover (слияние моделей 2026-08-02):
           в общей модели фон — перечисление, и веб применяет из него ровно
           один вариант, «из обложки». Остальные (цвет, градиент, картинка,
@@ -259,13 +375,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* overflow скрыт не для вида, а ради размытия: без него браузер
               растрирует и размывает весь квадрат целиком (на широком окне это
               заметно больше пикселей, чем видно). Обрезка идёт по рамке
-              .scenery — она на 10% больше окна с каждой стороны, так что край
-              размытия остаётся за экраном, как и раньше. */}
+              .scenery — она выходит за окно на три радиуса размытия, так что
+              его край остаётся за экраном (см. globals.css → .scenery). */}
           <div className="scenery" aria-hidden="true" style={{ overflow: "hidden" }}>
             <Cover
               key={current.coverUrl}
               src={current.coverUrl}
-              size="max(120vw, 120vh)"
+              size="calc(max(100vw, 100vh) + 6 * var(--blur-scenery))"
               radius="0"
               className="muza-fade"
               style={{
@@ -305,24 +421,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             onOpenFavorites={() => router.push("/favorites")}
             onCreatePlaylist={() => setCreateOpen(true)}
             onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
+            onPlaylistMenu={(p, e) => menuApiRef.current?.openMenu(e, { kind: "playlist", id: p.id, name: p.name })}
             onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
+            onDropTrackOnFavorites={dropOnFavorites}
             onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
-            // Мост к HTML5-перетаскиванию: строки треков в вебе пока таскаются
-            // им (TrackList.tsx), а не общим pointer-слоем. Когда списки
-            // переедут на @muza/app, этот проп можно снять — приём тогда
-            // пойдёт по родному пути, как в приложении.
-            externalDrop={{
-              accepts: (e) => e.dataTransfer.types.includes(TRACK_DND_MIME),
-              trackId: (e) => {
-                const raw = e.dataTransfer.getData(TRACK_DND_MIME);
-                if (!raw) return null;
-                try {
-                  return (JSON.parse(raw) as { id?: string }).id ?? null;
-                } catch {
-                  return null;
-                }
-              },
-            }}
+            // externalDrop (мост к HTML5-перетаскиванию) здесь БЫЛ и снят
+            // 2026-08-03 вместе со своим единственным источником: списки веба
+            // переехали на общие экраны @muza/app и таскают строки родным
+            // pointer-слоем (DragLayer выше), как приложение. Мост без
+            // источника ничего не принимал — только обещал приём в разметке.
             emptyHint={
               <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", padding: "0 var(--sp-3)" }}>
                 {t("web.nav.playlistsEmptyHint")}
@@ -352,9 +459,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <PlayerBar
-        npOpen={prefs.npOpen}
-        onToggleNp={() => set({ npOpen: !prefs.npOpen })}
-        onOpenMobile={() => setMobileNp(true)}
+        npOpen={npVisible}
+        // где панели не бывает — там и кнопки нет (правило умений площадки)
+        onToggleNp={npAllowed ? () => set({ npOpen: !prefs.npOpen }) : undefined}
+        onOpenMobile={openMobileNp}
         onExpand={() => setListening(true)}
       />
 
@@ -370,7 +478,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           { href: "/settings", icon: "settings", label: t("settings.title") },
         ].map((n) => (
           <Link key={n.href} href={n.href} className={pathname === n.href ? "active" : undefined}>
-            <Icon name={n.icon} size={22} filled={pathname === n.href && NAV_FILLABLE.has(n.icon)} />
+            {/* Заливка активного глифа — правило ОБЩЕЙ панели (isFillableNavIcon
+                из @muza/app/shell/Sidebar): lucide рисует штрихом, и заливка
+                годится только замкнутым силуэтам. Своя копия набора здесь была
+                третьей и ровно так и разъезжается. */}
+            <Icon name={n.icon} size={22} filled={pathname === n.href && isFillableNavIcon(n.icon)} />
             {n.label}
           </Link>
         ))}
@@ -401,7 +513,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </Dialog>
 
-      {mobileNp ? <MobileNowPlaying onClose={() => setMobileNp(false)} /> : null}
+      {/* Диалоги меню плейлиста — те же, что в приложении (App.tsx). Оба
+          подтверждают действие текстом, а не молча делают: переименование и
+          удаление необратимы для чужих глаз (совместные плейлисты). */}
+      <Dialog
+        open={plRename !== null}
+        title={t("app.renamePlaylistDialog.title")}
+        onClose={() => setPlRename(null)}
+        actions={
+          <>
+            <Button variant="ghost" size="lg" onClick={() => setPlRename(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" size="lg" icon="check" disabled={!plRenameValue.trim()} onClick={() => void renameFromMenu()}>
+              {t("common.save")}
+            </Button>
+          </>
+        }
+      >
+        {/* Enter = главная кнопка диалога (Button из ДС submit-кнопкой не станет) */}
+        <div
+          style={{ minWidth: 280 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void renameFromMenu();
+          }}
+        >
+          <SearchInput value={plRenameValue} onChange={setPlRenameValue} placeholder={t("common.namePlaceholder")} icon="list-music" autoFocus />
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={plDelete !== null}
+        title={t("app.deletePlaylistDialog.title")}
+        onClose={() => setPlDelete(null)}
+        actions={
+          <>
+            <Button variant="ghost" size="lg" onClick={() => setPlDelete(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="primary" size="lg" icon="trash-2" onClick={() => void deleteFromMenu()}>
+              {t("app.deletePlaylistDialog.confirm")}
+            </Button>
+          </>
+        }
+      >
+        {/* Только серверный текст: плейлистов «на этом устройстве» у браузера
+            не бывает, и развилки bodyLocal здесь нет. */}
+        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", fontFamily: "var(--font-ui)", lineHeight: 1.5 }}>
+          {t("app.deletePlaylistDialog.bodyServer", { name: plDelete?.name ?? "" })}
+        </div>
+      </Dialog>
+
+      {mobileNp ? <MobileNowPlaying onClose={closeMobileNp} /> : null}
 
       {/* Караоке во весь экран — ПОСЛЕДНИМ ребёнком .shell и без обёрток:
           общий оверлей позиционируется absolute inset:0 и рассчитывает, что
@@ -411,6 +574,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           слоя переноса (300), как в приложении. */}
       <ListeningModeHost open={listening} onClose={() => setListening(false)} />
     </div>
+    </ContextMenuProvider>
     </DragLayer>
   );
 }

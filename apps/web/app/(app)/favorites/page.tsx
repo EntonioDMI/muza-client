@@ -7,7 +7,7 @@ import { getApi } from "../../../src/api";
 import { useLikes } from "../../../src/likes";
 import { usePlayer } from "../../../src/player";
 import { useToast } from "../../../src/toast";
-import { useWebTrackMenu } from "../../../src/components/TrackList";
+import { useWebTrackMenu } from "../../../src/components/trackMenu";
 
 /** «Любимое» — тот же экран, что в приложении (@muza/app/views/FavoritesView,
  *  волна экранов веб-паритета 2026-08-02). Своей вёрстки у страницы больше нет:
@@ -34,7 +34,10 @@ export default function FavoritesPage() {
   // перечитывает избранное). Ссылка обязана меняться только вместе с набором:
   // новый массив на каждый рендер отправил бы экран в бесконечный перезапрос.
   const likes = useMemo(() => [...likedIds], [likedIds]);
-  const menu = useWebTrackMenu(favorites);
+  // place="favorites" — ровно ради пункта «Заменить версию»: он есть только
+  // здесь и в плейлисте (в приложении так же — App.tsx, inFavorites у
+  // FavoritesView). Остальные экраны идут местом "search" по умолчанию.
+  const menu = useWebTrackMenu(favorites, { place: "favorites" });
 
   return (
     // suppressNativeMenu={false}: у браузера своё меню — на сайте отбирать его

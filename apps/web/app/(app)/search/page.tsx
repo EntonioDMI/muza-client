@@ -14,7 +14,7 @@ import { usePlaylists } from "../../../src/playlists";
 import { usePrefs } from "../../../src/prefs";
 import { useSession } from "../../../src/session";
 import { useToast } from "../../../src/toast";
-import { useWebTrackMenu } from "../../../src/components/TrackList";
+import { useWebTrackMenu } from "../../../src/components/trackMenu";
 
 /** Поиск веба — ТОТ ЖЕ экран, что в приложении (@muza/app/views/SearchView,
  *  волна «экраны» веб-паритета, 2026-08-02). Своей реализации здесь больше
@@ -63,6 +63,9 @@ export default function SearchPage() {
     // вкладке», «Назад») — на сайте отбирать его нельзя. Строкам это не
     // мешает: их openMenu гасит нативное меню сам.
     <ContextMenuProvider ctx={menu.abilities} apiRef={menu.apiRef} suppressNativeMenu={false}>
+      {/* .shared-screen гасит отступ зоны: общий экран приносит свои поля,
+          как в приложении, где <main> голый (globals.css) */}
+      <div className="shared-screen">
       <SearchView
         api={getApi()}
         // аноним сюда не попадает (шелл уводит на /login), но экран honest:
@@ -93,10 +96,8 @@ export default function SearchPage() {
         onOpenScPlaylist={openScPlaylist}
         onPlaylistsChanged={() => void refreshPlaylists()}
         onResultsChange={setRows}
-        // Свои поля экрана гасим: зона контента веба (.main) уже с полями —
-        // иначе они удвоились бы и страница поехала бы вправо-вниз.
-        style={{ padding: 0 }}
       />
+      </div>
       {menu.overlay}
     </ContextMenuProvider>
   );

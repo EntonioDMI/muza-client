@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Dialog, Icon, IconButton, Lyrics } from "@muza/ui";
 import type { Annotation, Lyrics as LyricsData } from "@muza/api-client";
 import { useT } from "@muza/app";
+import { useContextMenu } from "@muza/app/shell/ContextMenu";
 import { usePlatform } from "@muza/app/platform";
 import { getApi } from "../api";
 import { usePlayer, usePosition } from "../player";
@@ -113,6 +114,35 @@ function cachedRequest<T>(store: Map<string, Promise<T>>, key: string, load: () 
     store.delete(oldest);
   }
   return started;
+}
+
+/** ПКМ по тексту песни: «Скопировать весь текст» / «Скопировать строку» /
+ *  «Смысл строки» — тот же набор и тем же общим меню, что в приложении
+ *  (apps/desktop/src/shell/NowPlayingPanel.tsx → openLyricsMenu).
+ *
+ *  ЖИВЁТ ЗДЕСЬ, потому что показывающих текст экранов у веба трое, а обработчик
+ *  у них один и тот же. Меню берётся из провайдера ОБОЛОЧКИ (AppShell): там
+ *  лежит умение `copyText`, и туда же попадают все три экрана. Пропа нет —
+ *  панель не вешает onContextMenu вовсе, поэтому вызывать хук обязан тот, кто
+ *  уверен, что провайдер над ним есть.
+ *
+ *  `onExplain` может не быть (режим смысла выключен) — тогда пункта «Смысл»
+ *  просто не будет: hasNote считаем только когда есть чем открыть. */
+export function useLyricsMenu(
+  lines: WebLyricLine[],
+  onExplain?: (index: number) => void,
+): (e: React.MouseEvent, i: number | null) => void {
+  const { openMenu } = useContextMenu();
+  return (e, i) =>
+    openMenu(e, {
+      kind: "lyrics",
+      allText: lines.map((l) => l.text).join("\n"),
+      // пустая инструментальная строка («•••») — копировать нечего
+      lineText: i !== null ? lines[i]?.text || null : null,
+      lineIndex: i,
+      hasNote: Boolean(onExplain) && i !== null && Boolean(lines[i]?.note),
+      ctl: { explain: (idx) => onExplain?.(idx) },
+    });
 }
 
 /** Индекс synced-строки → аннотация. Сервер уже привязал фрагменты Genius к

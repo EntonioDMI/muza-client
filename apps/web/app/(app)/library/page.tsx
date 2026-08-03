@@ -4,9 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Dialog, SearchInput } from "@muza/ui";
 import { pickRandomPlaylistIcon } from "@muza/core";
-import { ApiError, type PlaylistMeta } from "@muza/api-client";
+import { ApiError } from "@muza/api-client";
 import { useT } from "@muza/app";
-import { moveItem } from "@muza/app/lib/dragEngine";
 import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
 import { AddLinkDialog } from "@muza/app/shell/AddLinkDialog";
 import { ImportDialog } from "@muza/app/shell/ImportDialog";
@@ -15,7 +14,7 @@ import { LibraryView } from "@muza/app/views/LibraryView";
 import { getApi } from "../../../src/api";
 import { useLikes } from "../../../src/likes";
 import { usePlayer } from "../../../src/player";
-import { usePlaylists } from "../../../src/playlists";
+import { usePlayPlaylist, usePlaylists } from "../../../src/playlists";
 import { useToast } from "../../../src/toast";
 
 /** «Твоя медиатека» — тот же экран, что в приложении
@@ -43,7 +42,13 @@ export default function LibraryPage() {
   const notify = useToast();
   const { t } = useT();
   const { favorites } = useLikes();
-  const { playlists, refresh } = usePlaylists();
+  // reorder — общий с боковой панелью: порядок плиток и порядок строк панели
+  // это ОДИН порядок, и считается он теперь в одном месте (см. playlists.tsx)
+  const { playlists, refresh, reorder } = usePlaylists();
+  // «Слушать» — общий с боковой панелью хук (playlists.tsx): состав плейлиста
+  // не держит ни один из экранов, и путь «взять с сервера → отдать плееру» был
+  // тут копией
+  const playPlaylist = usePlayPlaylist();
   const { current, playing, playContext } = usePlayer();
   const menuApiRef = useRef<ContextMenuApi<MenuAbilities> | null>(null);
 
@@ -56,18 +61,9 @@ export default function LibraryPage() {
   const [importOpen, setImportOpen] = useState(false);
   const sidebarVisible = useSidebarVisible();
 
-  /** Порядок, применённый оптимистично (перетаскиванием), пока сервер не
-   *  ответил. Тот же приём и тот же расчёт, что у боковой панели
-   *  (src/components/AppShell.tsx → reorderPlaylists): общий провайдер
-   *  плейлистов своего «переставить» не умеет, а копия живёт ровно здесь и
-   *  умирает, как только список перечитан с сервера. */
-  const [optimistic, setOptimistic] = useState<PlaylistMeta[] | null>(null);
-  useEffect(() => setOptimistic(null), [playlists]);
-  const list = optimistic ?? playlists;
-
   /** Трек уронили на плитку плейлиста. */
   const dropOnPlaylist = async (playlistId: string, trackId: string) => {
-    const pl = list.find((p) => p.id === playlistId);
+    const pl = playlists.find((p) => p.id === playlistId);
     if (!pl) return;
     try {
       await getApi().addPlaylistTrack(playlistId, trackId);
@@ -75,45 +71,6 @@ export default function LibraryPage() {
       void refresh();
     } catch (err) {
       notify(err instanceof Error ? err.message : t("toast.playlist.addFailed"), "x");
-    }
-  };
-
-  /** Новый порядок после перетаскивания плитки за ручку-⠿.
-   *
-   *  ⚠️ toIndex приходит в координатах УРЕЗАННОГО списка: экран отдаёт в
-   *  перетаскивание только подвижные плитки (подписки и закреплённые
-   *  исключены). Складывать его с позицией из ПОЛНОГО списка нельзя — промах
-   *  равен числу исключённых (ровно эту ошибку чинили в приложении
-   *  2026-08-02). */
-  const reorderPlaylists = async (draggedId: string, toIndex: number) => {
-    const movable = list.filter((p) => p.role !== "follower" && !p.pinned);
-    const from = movable.findIndex((p) => p.id === draggedId);
-    if (from < 0 || from === toIndex || toIndex < 0 || toIndex >= movable.length) return;
-    const moved = moveItem(movable, from, toIndex);
-    let k = 0;
-    const next = list.map((p) => (p.role !== "follower" && !p.pinned ? moved[k++] : p));
-    setOptimistic(next);
-    try {
-      await getApi().reorderPlaylists(next.map((p) => p.id));
-    } catch {
-      void refresh(); // не сохранилось — вернём серверный порядок
-    }
-  };
-
-  /** «Слушать» из меню плитки: состав плейлиста страница не держит — берём
-   *  его на месте и отдаём общему плееру веба. Пустой плейлист играть нечем —
-   *  говорим об этом, а не молчим. */
-  const playPlaylist = async (id: string) => {
-    try {
-      const detail = await getApi().getPlaylist(id);
-      if (detail.tracks.length === 0) {
-        notify(t("views.playlist.empty"), "x");
-        return;
-      }
-      playContext(detail.tracks, 0);
-    } catch (e) {
-      // общий текст неудачи (views.playlist.loadFailed) — тот же, что в приложении
-      notify(e instanceof Error ? e.message : t("views.playlist.loadFailed"), "x");
     }
   };
 
@@ -127,7 +84,7 @@ export default function LibraryPage() {
     if (!name) return;
     setCreateBusy(true);
     try {
-      const usedIcons = list.map((p) => p.icon).filter((v): v is string => Boolean(v));
+      const usedIcons = playlists.map((p) => p.icon).filter((v): v is string => Boolean(v));
       const playlist = await getApi().createPlaylist(name, pickRandomPlaylistIcon(usedIcons));
       await refresh();
       closeCreate();
@@ -141,12 +98,20 @@ export default function LibraryPage() {
 
   /** Умения браузера для меню плитки и пустого места. Чего тут нет (радио,
    *  офлайн, переименование, иконка плейлиста) — того и в меню нет: пункт
-   *  появится сам, как только умение появится у веба. */
+   *  появится сам, как только умение появится у веба.
+   *
+   *  «По ссылке» и «Импорт» стоят и на кнопках шапки, и ЗДЕСЬ — как в
+   *  приложении: меню пустого места это второй, более быстрый вход к тем же
+   *  диалогам (они смонтированы ниже на этой же странице). Их отсутствие было
+   *  не решением, а пропуском: умения у веба есть, оба вызова чисто серверные
+   *  (addDirectTrack/importPlaylist), а половина меню разъезжалась с шапкой. */
   const abilities: MenuAbilities = {
     openPlaylist: (id) => router.push(`/playlist?id=${id}`),
-    playlistRole: (id) => list.find((p) => p.id === id)?.role ?? "owner",
+    playlistRole: (id) => playlists.find((p) => p.id === id)?.role ?? "owner",
     playPlaylist: (id) => void playPlaylist(id),
     openCreatePlaylist: () => setCreateOpen(true),
+    openAddLink: () => setAddLinkOpen(true),
+    openImport: () => setImportOpen(true),
     openJoinCode: () => setJoinOpen(true),
   };
 
@@ -160,7 +125,7 @@ export default function LibraryPage() {
         <LibraryView
           api={getApi()}
           canSearch
-          srvPlaylists={list}
+          srvPlaylists={playlists}
           currentId={current?.id ?? null}
           playing={playing}
           favoritesCount={favorites.length}
@@ -176,7 +141,7 @@ export default function LibraryPage() {
           onCreatePlaylist={sidebarVisible ? undefined : () => setCreateOpen(true)}
           onPlayHistory={(tracks, index) => playContext(tracks, index)}
           onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
-          onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
+          onReorderPlaylists={(id, to) => void reorder(id, to)}
           onPlaylistsChanged={() => void refresh()}
           onNotify={(text, icon) => notify(text, icon)}
         />
