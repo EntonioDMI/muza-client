@@ -10,9 +10,17 @@
     "./styles.css": "./src/styles.css",
     "./assets/*": "./src/assets/*"
   },
+  "scripts": {
+    "test": "vitest run"
+  },
   "peerDependencies": {
     "react": ">=19",
     "react-dom": ">=19"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@fontsource/golos-text": "^5.2.8",

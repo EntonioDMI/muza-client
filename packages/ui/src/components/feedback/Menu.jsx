@@ -98,17 +98,29 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // фокус: на открытии — в первый пункт, на закрытии — туда, откуда пришли
+  // Куда вернуть фокус — берём на коммите смены open, ДО монтирования панели
+  // (mounted включается эффектом, то есть коммитом позже): активный элемент
+  // тогда ещё снаружи меню. См. Dialog.jsx.
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement;
-    const first = panelRef.current?.querySelector('[role="menuitem"]:not([disabled])');
-    if (first) first.focus();
     return () => {
       const el = restoreRef.current;
+      restoreRef.current = null;
       if (el && typeof el.focus === "function" && document.contains(el)) el.focus();
     };
   }, [open]);
+
+  // Фокус в первый пункт. mounted В DEPS ОБЯЗАТЕЛЕН: провайдер держит один
+  // <Menu open={…}> на всё приложение, меню всегда монтируется закрытым, и на
+  // коммите открытия panelRef ещё null — с deps [open] фокус не входил в меню
+  // никогда, а стрелки/Home/End висят на панели и без фокуса не работают
+  // (аудит 02.08).
+  useEffect(() => {
+    if (!open || !mounted) return;
+    const first = panelRef.current?.querySelector('[role="menuitem"]:not([disabled])');
+    if (first) first.focus();
+  }, [open, mounted]);
 
   const moveFocus = (delta, edge) => {
     const nodes = [...(panelRef.current?.querySelectorAll('[role="menuitem"]:not([disabled])') ?? [])];

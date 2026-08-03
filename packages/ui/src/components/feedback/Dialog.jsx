@@ -25,6 +25,7 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
   const panelRef = useRef(null);
   const restoreRef = useRef(null);
   const closeTimerRef = useRef(null);
+  const pressTargetRef = useRef(null);
   const [mounted, setMounted] = useState(open);
   const [closing, setClosing] = useState(false);
 
@@ -82,19 +83,33 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
 
-  // фокус внутрь при открытии (первое поле, иначе первая кнопка) и назад при закрытии
+  // Куда вернуть фокус — запоминаем В МОМЕНТ ОТКРЫТИЯ, на том же коммите, где
+  // open стал true. Панели в DOM тогда ещё нет (mounted включается пассивным
+  // эффектом, то есть коммитом позже), значит document.activeElement
+  // гарантированно снаружи — это и есть открывший элемент.
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement;
+    return () => {
+      const el = restoreRef.current;
+      restoreRef.current = null;
+      if (el && typeof el.focus === "function" && document.contains(el)) el.focus();
+    };
+  }, [open]);
+
+  // Фокус внутрь панели (первое поле, иначе первая кнопка). mounted В DEPS
+  // ОБЯЗАТЕЛЕН: приложение держит <Dialog open={…}> всегда смонтированным, и на
+  // коммите смены open панель ещё null — эффект с deps [open] уходил впустую и
+  // больше не повторялся, поэтому фокус не входил НИ В ОДНО модальное окно
+  // (аудит 02.08). Отдельным эффектом, а не общим с возвратом фокуса: иначе
+  // уборка общего эффекта дёргала бы фокус назад на каждую смену mounted.
+  useEffect(() => {
+    if (!open || !mounted) return;
     const panel = panelRef.current;
     const field = panel?.querySelector("input, textarea, select");
     const target = field ?? panel?.querySelector(FOCUSABLE);
     if (target) target.focus();
-    return () => {
-      const el = restoreRef.current;
-      if (el && typeof el.focus === "function" && document.contains(el)) el.focus();
-    };
-  }, [open]);
+  }, [open, mounted]);
 
   // Tab не убегает под модалку: зацикливаем внутри панели
   const onTrapKeyDown = (e) => {
@@ -107,10 +122,24 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   };
 
+  // Закрытие кликом мимо — по цели НАЖАТИЯ, а не отпускания: выделяя текст в
+  // панели, мышь часто отпускают за её краем, и click тогда приходит на общего
+  // предка (затемнение) — диалог закрывался прямо под руками (аудит 02.08).
+  const onScrimMouseDown = (e) => { pressTargetRef.current = e.target; };
+  const onScrimClick = (e) => {
+    const pressed = pressTargetRef.current;
+    pressTargetRef.current = null;
+    if (closing || !onClose) return;
+    // pressed === null — клик без нажатия (программный): считаем честным.
+    if (pressed && pressed !== e.currentTarget) return; // нажали внутри панели
+    onClose();
+  };
+
   if (!mounted) return null;
   return (
     <div
-      onClick={closing ? undefined : onClose}
+      onMouseDown={onScrimMouseDown}
+      onClick={onScrimClick}
       onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finishClosing(); }}
       inert={closing || undefined}
       style={{

@@ -37,15 +37,24 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
     });
   }, [open, norm.length]);
 
-  // фокус в выбранную опцию на открытии, возврат на поле при закрытии
+  // возврат фокуса на поле при закрытии — отдельным эффектом по open
   useEffect(() => {
     if (!open) return;
+    return () => triggerRef.current?.focus();
+  }, [open]);
+
+  // Фокус в выбранную опцию. panelPos В DEPS ОБЯЗАТЕЛЕН: панель рисуется
+  // только после того, как useLayoutEffect посчитает позицию, то есть ВТОРЫМ
+  // коммитом — на коммите открытия panelRef ещё null. С deps [open] фокус в
+  // список не входил вовсе, а стрелки/Home/End/Escape висят на панели и без
+  // фокуса не срабатывают (аудит 02.08).
+  useEffect(() => {
+    if (!open || !panelPos) return;
     const nodes = panelRef.current?.querySelectorAll('[role="option"]') ?? [];
     const idx = Math.max(norm.findIndex((it) => it.key === value), 0);
     nodes[idx]?.focus();
-    return () => triggerRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, panelPos]);
 
   const moveFocus = (delta, edge) => {
     const nodes = [...(panelRef.current?.querySelectorAll('[role="option"]') ?? [])];
