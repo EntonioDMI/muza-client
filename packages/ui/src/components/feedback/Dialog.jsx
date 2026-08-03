@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 // Фолбэк-таймаут delayed-unmount: страхует на случай, если onAnimationEnd не
@@ -108,7 +109,7 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
     const panel = panelRef.current;
     const field = panel?.querySelector("input, textarea, select");
     const target = field ?? panel?.querySelector(FOCUSABLE);
-    if (target) target.focus();
+    if (target) target.focus(NO_SCROLL);
   }, [open, mounted]);
 
   // Tab не убегает под модалку: зацикливаем внутри панели
@@ -118,8 +119,8 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
     if (nodes.length === 0) return;
     const first = nodes[0];
     const last = nodes[nodes.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(NO_SCROLL); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(NO_SCROLL); }
   };
 
   // Закрытие кликом мимо — по цели НАЖАТИЯ, а не отпускания: выделяя текст в

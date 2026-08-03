@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 import { cssZoom } from "../../lib/cssZoom.js";
+import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 
 // Фолбэк-таймаут delayed-unmount: см. Dialog.jsx. Покрывает --dur-fast на
 // максимальной скорости анимаций (170% → 150ms*1.7≈255ms) с запасом.
@@ -119,16 +120,16 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   useEffect(() => {
     if (!open || !mounted) return;
     const first = panelRef.current?.querySelector('[role="menuitem"]:not([disabled])');
-    if (first) first.focus();
+    if (first) first.focus(NO_SCROLL);
   }, [open, mounted]);
 
   const moveFocus = (delta, edge) => {
     const nodes = [...(panelRef.current?.querySelectorAll('[role="menuitem"]:not([disabled])') ?? [])];
     if (nodes.length === 0) return;
-    if (edge === "first") { nodes[0].focus(); return; }
-    if (edge === "last") { nodes[nodes.length - 1].focus(); return; }
+    if (edge === "first") { nodes[0].focus(NO_SCROLL); return; }
+    if (edge === "last") { nodes[nodes.length - 1].focus(NO_SCROLL); return; }
     const i = nodes.indexOf(document.activeElement);
-    nodes[(i + delta + nodes.length) % nodes.length].focus();
+    nodes[(i + delta + nodes.length) % nodes.length].focus(NO_SCROLL);
   };
 
   const onMenuKeyDown = (e) => {

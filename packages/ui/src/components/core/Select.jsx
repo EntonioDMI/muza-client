@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
 import { cssZoom } from "../../lib/cssZoom.js";
+import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 
 /** Выпадающий список — поле в стиле инпутов ДС + морозная панель опций.
  *  position: fixed — не режется overflow-контейнерами (панели настроек
@@ -52,17 +53,17 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
     if (!open || !panelPos) return;
     const nodes = panelRef.current?.querySelectorAll('[role="option"]') ?? [];
     const idx = Math.max(norm.findIndex((it) => it.key === value), 0);
-    nodes[idx]?.focus();
+    nodes[idx]?.focus(NO_SCROLL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, panelPos]);
 
   const moveFocus = (delta, edge) => {
     const nodes = [...(panelRef.current?.querySelectorAll('[role="option"]') ?? [])];
     if (nodes.length === 0) return;
-    if (edge === "first") return nodes[0].focus();
-    if (edge === "last") return nodes[nodes.length - 1].focus();
+    if (edge === "first") return nodes[0].focus(NO_SCROLL);
+    if (edge === "last") return nodes[nodes.length - 1].focus(NO_SCROLL);
     const i = nodes.indexOf(document.activeElement);
-    nodes[(i + delta + nodes.length) % nodes.length].focus();
+    nodes[(i + delta + nodes.length) % nodes.length].focus(NO_SCROLL);
   };
 
   return (

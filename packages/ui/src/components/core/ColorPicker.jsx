@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
 import { Tooltip } from "../feedback/Tooltip.jsx";
 import { cssZoom } from "../../lib/cssZoom.js";
+import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 
 /* ── hex ⇄ HSV ─────────────────────────────────────────────────────
    SV-квадрат и hue-слайдер работают во внутренних HSV-координатах;
@@ -131,7 +132,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
   // фокус на hex-поле при открытии, Escape закрывает, фокус возвращается на свотч
   useEffect(() => {
     restoreRef.current = document.activeElement;
-    hexInputRef.current?.focus();
+    hexInputRef.current?.focus(NO_SCROLL);
     hexInputRef.current?.select();
     const onKey = (e) => {
       if (e.key === "Escape") { e.stopPropagation(); onClose && onClose(); }
