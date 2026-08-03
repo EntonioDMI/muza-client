@@ -12,6 +12,10 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
   const [hover, setHover] = useState(false);
+  // Фокус внутри полки показывает стрелки так же, как наведение мыши: раньше
+  // прозрачность зависела ТОЛЬКО от hover, и для клавиатуры стрелки были
+  // невидимыми — фокус уезжал на кнопку, которой на экране нет (аудит 02.08).
+  const [focus, setFocus] = useState(false);
 
   const sync = useCallback(() => {
     const el = rowRef.current;
@@ -57,7 +61,7 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
         pointerEvents: "none",
         padding: "0 2px",
         zIndex: 2,
-        opacity: hover && !hidden ? 1 : 0,
+        opacity: (hover || focus) && !hidden ? 1 : 0,
         transition: "opacity var(--dur-fast) var(--ease-out)",
       }}
     >
@@ -68,10 +72,14 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
           boxShadow: "0 6px 20px rgba(0, 0, 0, 0.5)",
         }}
       >
+        {/* На упоре стрелка не просто прячется, а ВЫКЛЮЧАЕТСЯ: невидимая, но
+            фокусируемая кнопка «листать назад» в начале ряда — ловушка для
+            табуляции (нажал — ничего не произошло). */}
         <IconButton
           icon={dir < 0 ? "chevron-left" : "chevron-right"}
           variant="surface"
           label={label}
+          disabled={hidden}
           onClick={() => page(dir)}
         />
       </span>
@@ -99,7 +107,13 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
           </Button>
         ) : null}
       </div>
-      <div style={{ position: "relative" }} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <div
+        style={{ position: "relative" }}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        onFocus={() => setFocus(true)}
+        onBlur={() => setFocus(false)}
+      >
         <div
           ref={rowRef}
           onScroll={sync}

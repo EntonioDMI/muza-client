@@ -55,7 +55,7 @@ describe("Lyrics meaning interaction", () => {
       />,
     );
 
-    const annotated = screen.getByRole("button", { name: "Смысл строки: Строка со смыслом" });
+    const annotated = screen.getByRole("button", { name: "Строка со смыслом. Смысл строки — Shift+Enter" });
     fireEvent.click(annotated);
     expect(onSeek).toHaveBeenCalledWith(1);
     expect(onExplain).not.toHaveBeenCalled();
@@ -63,8 +63,15 @@ describe("Lyrics meaning interaction", () => {
     fireEvent.doubleClick(annotated);
     expect(onExplain).toHaveBeenCalledWith(1);
 
-    // клавиатура — прежняя: Enter открывает смысл (a11y-путь без мыши)
+    // Клавиатура повторяет мышь (аудит 02.08): Enter = одиночный клик =
+    // перемотка, а смысл — на Shift+Enter, клавиатурной паре двойного клика.
+    // Раньше Enter открывал смысл, и одна строка делала РАЗНОЕ от того, мышью
+    // её нажали или с клавиатуры.
     fireEvent.keyDown(annotated, { key: "Enter" });
+    expect(onSeek).toHaveBeenCalledTimes(2);
+    expect(onExplain).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(annotated, { key: "Enter", shiftKey: true });
     expect(onExplain).toHaveBeenCalledTimes(2);
   });
 

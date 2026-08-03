@@ -1,23 +1,44 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
-/** Tooltip — small frosted label under (or over) its child, 450 ms hover delay. */
+/** Tooltip — small frosted label under (or over) its child, 450 ms hover delay.
+ *  Клавиатура равноправна мыши: подсказка всплывает и по ФОКУСУ. Это не
+ *  украшение — IconButton заворачивает в Tooltip каждую кнопку с label, и для
+ *  того, кто ходит табуляцией, это единственная видимая подпись у кнопок
+ *  плеера (аудит 02.08: без неё вся транспортная панель — безымянные кружки). */
 export function Tooltip({ label, placement = "top", children, style }) {
   const [show, setShow] = useState(false);
   const timer = useRef(null);
 
+  const clear = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  };
   const enter = () => {
+    clear();
     timer.current = setTimeout(() => setShow(true), 450);
   };
   const leave = () => {
-    if (timer.current) clearTimeout(timer.current);
+    clear();
     setShow(false);
   };
+  // По фокусу — СРАЗУ, без 450 мс: задержка защищает от мельтешения, когда
+  // мышь проезжает над рядом кнопок; табуляция так не «проезжает».
+  const focus = () => {
+    clear();
+    setShow(true);
+  };
+  // Таймер не должен пережить размонтирование: сработавший setState на снятом
+  // компоненте — утечка и предупреждение React (напр. кнопка исчезла, пока
+  // подсказка ещё «думала»).
+  useEffect(() => clear, []);
 
   const top = placement === "top";
   return (
     <span
       onMouseEnter={enter}
       onMouseLeave={leave}
+      onFocus={focus}
+      onBlur={leave}
       style={{ position: "relative", display: "inline-flex", ...style }}
     >
       {children}

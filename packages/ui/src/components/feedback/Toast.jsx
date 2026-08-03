@@ -5,7 +5,7 @@ import { Icon } from "../core/Icon.jsx";
  *  Optional action (undo etc.): actionLabel + onAction render a button —
  *  the pill becomes interactive while open. */
 export function Toast({ open, message, icon, actionLabel, onAction, style }) {
-  const interactive = open && actionLabel && onAction;
+  const interactive = !!(open && actionLabel && onAction);
   return (
     <div
       aria-live="polite"
@@ -34,9 +34,18 @@ export function Toast({ open, message, icon, actionLabel, onAction, style }) {
       {icon ? <Icon name={icon} size={18} color="var(--accent-text)" /> : null}
       {message}
       {actionLabel && onAction ? (
+        /* Кнопка гаснет ВМЕСТЕ с сообщением. Прозрачность и pointer-events не
+           влияют на фокусируемость, поэтому у погасшего тоста «Отменить»
+           оставалась в обходе Tab: Tab+Enter вслепую откатывали удаление трека
+           или запускали установку обновления (аудит 02.08). Узел не снимаем —
+           иначе пилюля дёрнула бы ширину посреди затухания; выводим её из
+           обхода (tabIndex/inert) и из дерева доступности (aria-hidden). */
         <button
           type="button"
-          onClick={onAction}
+          tabIndex={interactive ? 0 : -1}
+          aria-hidden={interactive ? undefined : "true"}
+          inert={!interactive || undefined}
+          onClick={interactive ? onAction : undefined}
           style={{
             border: "none",
             background: "var(--surface-3)",

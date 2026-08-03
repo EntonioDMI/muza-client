@@ -95,6 +95,39 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
     if (manualTimer.current) clearTimeout(manualTimer.current);
     manualTimer.current = setTimeout(() => setManual(false), 2500);
   };
+
+  // Одно действие строки на все способы её нажать. До 02.08 клик перематывал, а
+  // Enter на той же строке открывал «смысл» — одна и та же строка делала РАЗНОЕ
+  // от того, мышью её нажали или с клавиатуры.
+  const activateLine = (i, hasNote) => {
+    if (onSeek) {
+      onSeek(i);
+      // нажатие = «нашёл нужную строчку»: сразу возвращаем автоследование
+      if (manualTimer.current) clearTimeout(manualTimer.current);
+      setManual(false);
+    } else if (hasNote) {
+      onExplain(i);
+    }
+  };
+
+  // Ходьба по строкам стрелками. Без неё roving-tabindex (одна остановка Tab на
+  // весь текст) не имел бы смысла: перемотать можно было бы только на ТЕКУЩУЮ
+  // строку. Упор в края, а не цикл: список длинный, прыжок с конца в начало
+  // читается как потеря места.
+  const moveLine = (delta, edge) => {
+    const nodes = [...(wrapRef.current?.querySelectorAll("[data-lyric-line]") ?? [])];
+    if (nodes.length === 0) return;
+    if (edge === "first") return nodes[0].focus();
+    if (edge === "last") return nodes[nodes.length - 1].focus();
+    const i = nodes.indexOf(document.activeElement);
+    if (i < 0) return nodes[0].focus();
+    nodes[Math.min(Math.max(i + delta, 0), nodes.length - 1)].focus();
+  };
+
+  // Roving tabindex: в обходе Tab ровно ОДНА строка — текущая (в plain-тексте
+  // первая). Иначе панель на восемьдесят строк даёт восемьдесят остановок Tab
+  // по дороге к плееру.
+  const tabStopIdx = synced ? Math.min(Math.max(activeIndex, 0), Math.max(lines.length - 1, 0)) : 0;
   useEffect(() => () => {
     if (manualTimer.current) clearTimeout(manualTimer.current);
   }, []);
@@ -133,6 +166,8 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
         // самую, из-за которой правка) и молча ужимает prefs.fontScale.
         const scale = isActive ? 1 : karaoke ? (d === 1 ? 0.9 : 0.8) : 0.9;
         const hidden = synced && windowed && d > radius;
+        // строка что-то делает по нажатию — и она на экране
+        const actionable = (!!onSeek || hasNote) && !hidden;
         // Нативного title на аннотированной строке больше нет: стоковая плашка
         // WebView2 выбивалась из языка ДС (жалоба 2026-07-16); о «смысле по
         // двойному клику» говорит звёздочка-метка ниже, aria-label — скринридеру.
@@ -148,22 +183,34 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
           <div
             key={i}
             ref={isActive ? activeRef : null}
-            role={hasNote ? "button" : undefined}
-            tabIndex={hasNote ? 0 : undefined}
-            aria-label={hasNote ? `Смысл строки: ${line.text}` : undefined}
+            // Строка нажимается → значит нажимается и с клавиатуры. Раньше
+            // role/tabIndex были только у строки С ЗАМЕТКОЙ, и перемотать по
+            // тексту с клавиатуры было нельзя вообще (аудит 02.08). Скрытые
+            // строки караоке-окна из обхода выпадают — фокус на невидимом.
+            {...(actionable
+              ? {
+                  "data-lyric-line": "",
+                  role: "button",
+                  tabIndex: i === tabStopIdx ? 0 : -1,
+                }
+              : {})}
+            // Подпись описывает ДЕЙСТВИЕ строки, а оно разное: с перемоткой
+            // Enter перематывает, и про «смысл» надо сказать отдельно; без
+            // перемотки (plain-текст) Enter открывает смысл — подпись прежняя.
+            aria-label={
+              !actionable || !hasNote
+                ? undefined
+                : onSeek
+                  ? `${line.text}. Смысл строки — Shift+Enter`
+                  : `Смысл строки: ${line.text}`
+            }
+            aria-keyshortcuts={actionable && hasNote && onSeek ? "Shift+Enter" : undefined}
             onClick={() => {
               // Одиночный клик — ВСЕГДА перемотка (жалоба 2026-07-16: строка с
               // аннотацией перехватывала клик, и на неё нельзя было перемотать).
               // Аннотация — двойным кликом; без onSeek (plain-текст) прежнее
               // поведение: клик открывает объяснение.
-              if (onSeek) {
-                onSeek(i);
-                // клик = «нашёл нужную строчку»: сразу возвращаем автоследование
-                if (manualTimer.current) clearTimeout(manualTimer.current);
-                setManual(false);
-              } else if (hasNote) {
-                onExplain(i);
-              }
+              activateLine(i, hasNote);
             }}
             onDoubleClick={hasNote && onSeek ? () => onExplain(i) : undefined}
             onContextMenu={onLineContextMenu ? (e) => {
@@ -171,11 +218,18 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
               e.stopPropagation();
               onLineContextMenu(e, i);
             } : undefined}
-            onKeyDown={(e) => {
-              if (hasNote && (e.key === "Enter" || e.key === " ")) {
+            onKeyDown={!actionable ? undefined : (e) => {
+              if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                onExplain(i);
-              }
+                // Shift+Enter — клавиатурная пара двойному клику: у мыши
+                // «смысл» на двойном нажатии, у клавиатуры отдельного двойного
+                // нажатия нет. Сочетание объявлено в aria-keyshortcuts.
+                if (e.shiftKey && hasNote && onSeek) onExplain(i);
+                else activateLine(i, hasNote);
+              } else if (e.key === "ArrowDown") { e.preventDefault(); moveLine(1); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); moveLine(-1); }
+              else if (e.key === "Home") { e.preventDefault(); moveLine(0, "first"); }
+              else if (e.key === "End") { e.preventDefault(); moveLine(0, "last"); }
             }}
             style={{
               fontFamily: "var(--font-ui)",
