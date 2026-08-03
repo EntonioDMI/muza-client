@@ -52,8 +52,16 @@ export function Tooltip({ label, placement = "top", children, style }) {
           padding: "7px 12px",
           borderRadius: "var(--r-xs)",
           background: "var(--glass-panel)",
-          backdropFilter: "blur(var(--blur-glass))",
-          WebkitBackdropFilter: "blur(var(--blur-glass))",
+          // ⚠️ РАЗМЫТИЕ ТОЛЬКО ПОКА ПОДСКАЗКА ВИДНА, и это не микрооптимизация.
+          // Подсказка ЖИВЁТ В РАЗМЕТКЕ ВСЕГДА (её нельзя размонтировать: анимация
+          // появления и aria-hidden держатся на одном узле), а IconButton
+          // заворачивает в Tooltip каждую кнопку с подписью. Замер на Главной —
+          // 110 таких узлов одновременно. backdrop-filter на каждом заставляет
+          // композитор держать 110 отдельных слоёв и размывать под ними задник,
+          // хотя ни один из них не виден (opacity: 0). Условие снимает всю эту
+          // работу, не меняя ни пикселя у показанной подсказки.
+          backdropFilter: show ? "blur(var(--blur-glass))" : undefined,
+          WebkitBackdropFilter: show ? "blur(var(--blur-glass))" : undefined,
           color: "var(--text-1)",
           fontFamily: "var(--font-ui)",
           fontSize: "var(--fs-caption)",
