@@ -24,7 +24,7 @@ const h = vi.hoisted(() => {
       },
     },
   );
-  return { api, impl };
+  return { api, impl, compact: vi.fn(async () => undefined), expand: vi.fn(async () => undefined) };
 });
 
 // Сеть: App сам делает `new HttpMuzaApi(...)` — подсовываем прокси-стенд.
@@ -59,6 +59,14 @@ vi.mock("./player/audioEngine", () => ({
     analyser = vi.fn(() => null);
   },
 }));
+
+// Сцены окна: нативных команд в jsdom нет. Мокаем только две обёртки, а
+// решение «анимировать или нет» оставляем настоящим — оно чистое и его же
+// проверяет authWindowStage.test.ts.
+vi.mock("./lib/authWindowStage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/authWindowStage")>();
+  return { ...actual, compactForAuth: h.compact, expandAfterAuth: h.expand };
+});
 
 import { App } from "./App";
 
@@ -121,6 +129,49 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   for (const key of Object.keys(h.impl)) delete h.impl[key];
+  h.compact.mockClear();
+  h.expand.mockClear();
+});
+
+/** Сцены окна на входе (заказ владельца 03.08). Проверяем ПЕРЕХОДЫ, а не
+ *  «есть сессия»: разворачивать окно надо ровно один раз, на появлении входа. */
+describe("App — окно на экране входа", () => {
+  it("сессии нет — окно ужимается под карточку, разворота не было", async () => {
+    h.impl.restoreSession = vi.fn().mockResolvedValue(null);
+    render(<App />);
+
+    await waitFor(() => expect(h.compact).toHaveBeenCalled());
+    expect(h.expand).not.toHaveBeenCalled();
+  });
+
+  it("вошли — окно разворачивается ОДИН раз, и повторные перерисовки его не трогают", async () => {
+    h.impl.restoreSession = vi.fn().mockResolvedValue(null);
+    render(<App />);
+    await waitFor(() => expect(h.compact).toHaveBeenCalled());
+
+    // Экран входа отдаёт сессию — это и есть переход «не было → появилась».
+    h.impl.loginAnonymous = vi.fn().mockResolvedValue(session);
+    fireEvent.click(screen.getByRole("button", { name: /Продолжить анонимно/i }));
+    // Диалог подтверждения добавляет ВТОРУЮ кнопку со словом «Продолжить» —
+    // ждём именно появления второй, иначе селектор падает на неоднозначности.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Продолжить/i }).length).toBe(2));
+    fireEvent.click(screen.getAllByRole("button", { name: /Продолжить/i }).at(-1)!);
+
+    await waitFor(() => expect(h.expand).toHaveBeenCalledTimes(1));
+    // Перерисовка каркаса (клик по вкладке) не обязана заводить анимацию заново.
+    fireEvent.click(screen.getByRole("button", { name: "Любимое" }));
+    await waitFor(() => expect(h.expand).toHaveBeenCalledTimes(1));
+  });
+
+  it("вошедший при старте — окно не трогаем вовсе, оно уже нужного размера", async () => {
+    // restoreSession отдаёт сессию сразу: сжать окно на долю секунды ради
+    // мигания нельзя, а разворачивать нечего — оно и так развёрнуто.
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Любимое" })).toBeTruthy());
+    expect(h.compact).not.toHaveBeenCalled();
+    expect(h.expand).not.toHaveBeenCalled();
+  });
 });
 
 describe("App — выход из режима прослушивания возвращает исходную вкладку", () => {

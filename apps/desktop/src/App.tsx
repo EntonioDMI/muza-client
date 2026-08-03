@@ -15,6 +15,7 @@ import { loadPrefs, PREFS_KEY } from "@muza/app/prefs/load";
 // формулы у приложения и у веба (см. шапку themeVars.ts).
 import { buildThemeVars } from "@muza/app/theme/themeVars";
 import { LanguageProvider, translate, type TParams, type TranslationKey } from "./i18n";
+import { compactForAuth, expandAfterAuth, shouldAnimateStage } from "./lib/authWindowStage";
 import { devApiHost } from "./lib/devApiHost";
 import { dominantColor } from "./lib/coverTint";
 import { applySourcePolicy } from "./lib/sources";
@@ -125,6 +126,31 @@ function AppRoot() {
   const apiHost = useMemo(() => devApiHost(apiBaseUrl, import.meta.env.DEV), [apiBaseUrl]);
   const [session, setSession] = useState<Session | null>(null);
   const [restoring, setRestoring] = useState(true);
+
+  // Сцены окна: на входе оно размером с карточку, после входа разворачивается
+  // во все стороны (заказ владельца 03.08; механика — lib/authWindowStage.ts и
+  // src-tauri/src/window_stage.rs).
+  //
+  // Разворачиваем ТОЛЬКО если экран входа в этом запуске реально показывали.
+  // Простого «появилась сессия» мало: у вошедшего человека она появляется и на
+  // старте, после восстановления, — и окно дёргалось бы анимацией при каждом
+  // запуске, хотя оно уже нужного размера (поймано тестом, а не глазами).
+  //
+  // Пока restoring — не трогаем вовсе: сжать окно на долю секунды ради мигания
+  // нельзя, а разворачивать ещё нечего.
+  const sawLoginRef = useRef(false);
+  useEffect(() => {
+    if (restoring) return;
+    if (!session) {
+      sawLoginRef.current = true;
+      void compactForAuth();
+      return;
+    }
+    if (sawLoginRef.current) {
+      sawLoginRef.current = false;
+      void expandAfterAuth(shouldAnimateStage(loadPrefs().anims));
+    }
+  }, [session, restoring]);
 
   useEffect(() => {
     // Отзыв входа на ходу: старт больше не ходит в сеть, поэтому просроченный

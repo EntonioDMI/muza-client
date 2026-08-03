@@ -10,6 +10,7 @@ mod share;
 mod state_kv;
 mod sysproxy;
 mod tray;
+mod window_stage;
 
 use tauri::Manager;
 
@@ -50,6 +51,7 @@ pub fn run() {
         .manage(rpc::RpcState::default())
         .manage(tray::TrayState::default())
         .manage(plugins::PluginsState::default())
+        .manage(window_stage::StageState::default())
         .setup(|app| {
             // Последний доверенный рецепт из оффлайн-кэша (подпись перепроверяется)
             engine::init(app.handle());
@@ -112,6 +114,8 @@ pub fn run() {
             tray::tray_configure,
             miniplayer::miniplayer_show,
             miniplayer::miniplayer_hide,
+            window_stage::window_auth_compact,
+            window_stage::window_auth_expand,
             plugins::list_installed,
             plugins::set_plugin_enabled,
             plugins::uninstall_plugin,
