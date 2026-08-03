@@ -108,8 +108,9 @@ export function NowPlayingPanel({
     gap: "var(--sp-4)",
     padding: "var(--pad-zone)",
     borderRadius: "var(--r-lg)",
-    // зональная прозрачность: своя плотность поверхности + blur (вкл. зонами)
-    background: "var(--glass-nowplaying, var(--surface-1))",
+    // Материал зоны — как у сайдбара: общая плотность из ползунка стекла,
+    // поверх неё точная подстройка --glass-nowplaying (см. themeVars.ts).
+    background: "var(--glass-nowplaying, var(--glass-zone))",
     backdropFilter: "var(--bf-zone, none)",
     WebkitBackdropFilter: "var(--bf-zone, none)",
     overflow: "hidden",

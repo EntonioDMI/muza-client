@@ -7,18 +7,13 @@
   --bg-0: #121110;            /* app window background */
   --bg-1: #171614;            /* raised base zone (logo tile color) */
 
-  /* Surface layers — translucent white; opacity encodes elevation.
-     Stack them: a zone is exactly one layer, nested content steps up one. */
-  --surface-1: rgba(255, 255, 255, 0.04);   /* zone: sidebar, panels */
-  --surface-2: rgba(255, 255, 255, 0.07);   /* tile / card resting */
-  --surface-3: rgba(255, 255, 255, 0.11);   /* hover, input fields */
-  --surface-4: rgba(255, 255, 255, 0.15);   /* active / selected / pressed */
-
-  /* Frosted glass — panels that float over content (player bar, now-playing,
-     overlays). Pair --glass-* background with backdrop-filter: blur(var(--blur-glass)). */
-  --glass-panel: rgba(23, 22, 20, 0.62);
-  --glass-deep:  rgba(18, 17, 16, 0.78);    /* fullscreen listening-mode scrim */
-  --glass-light: rgba(255, 255, 255, 0.08); /* frosted tile ON TOP of imagery */
+  /* ⚠️ ПОВЕРХНОСТИ ЗДЕСЬ БОЛЬШЕ НЕ ЖИВУТ (переезд 2026-08-03).
+     --surface-1..4, --glass-* и --hairline уехали в tokens/glass.css целиком:
+     материалы и плёнки элевации — одна система, и держать её в двух файлах
+     значило разъезжаться (что и произошло — ползунок «Плотность стекла» двигал
+     только --glass-panel). Там же записано правило «размытие только у зон,
+     мелкие элементы — заливкой» и обоснование плотностей по контрасту.
+     В этом файле остаётся то, что стеклом не является: текст, акценты, бренд. */
 
   /* Text — warm white ramp. Never pure #fff, never gray hex (use alpha).
      Alpha floors are contrast-driven, not taste-driven: --text-3 at 0.38
@@ -26,16 +21,29 @@
      and failed AA for 13-15px labels, which is most of what it dresses.
      0.48 was picked as the lowest alpha clearing 4.5:1 — but only over bg-0
      and bg-1. Пересчёт 03.08 добавил поверхности, которые тогда не мерили:
-     наведённая строка (surface-3) даёт 4.45:1, а ВЫДЕЛЕННАЯ (surface-4) —
+     наведённая строка (surface-3) давала 4.45:1, а ВЫДЕЛЕННАЯ (surface-4) —
      4.22:1, то есть ниже нормы ровно там, где лежат длительность трека,
-     альбом и номер строки, 13px. 0.52 — минимум, проходящий на всех трёх
-     (5.22 / 4.97 / 4.68). Держать в синхроне с формулой в
-     packages/app/src/theme/themeVars.ts: пользователь видит ИНЛАЙН из неё,
-     а этот токен — только до того, как применится тема (экран входа,
-     первая отрисовка). Разъедутся — экран входа станет тусклее приложения. */
+     альбом и номер строки, 13px. Тогда подняли до 0.52.
+
+     0.56 (волна «больше стекла», 03.08). Причина — арифметическая, не вкус.
+     Третий тон лежит на СВЕТЛЕЮЩЕЙ плёнке элевации (белая плёнка поверх
+     тёмного стекла), и при альфе 0.52 он берёт 4.5:1 только на фоне не светлее
+     rgb(46). Стекло зоны опустило фон под плёнками до rgb(31) — но плёнка
+     выделенной строки возвращает его к rgb(47), то есть впритык мимо. Поднять
+     плотность стекла тут не помогает вовсе: плёнка светлит поверх ЛЮБОГО
+     стекла (проверено до непрозрачного — 4.23:1). Единственный оставшийся
+     рычаг — чернила. Замер после правки: 5.59 на голом стекле зоны, 4.98 на
+     наведённой строке, 4.68 на выделенной.
+     ⚠️ Шаг до второго тона стал 0.06 вместо 0.10 — это осознанная плата:
+     иерархия тонов чуть теснее, зато нижний тон читается везде.
+
+     Держать в синхроне с формулой в packages/app/src/theme/themeVars.ts:
+     пользователь видит ИНЛАЙН из неё, а этот токен — только до того, как
+     применится тема (экран входа, первая отрисовка). Разъедутся — экран входа
+     станет тусклее приложения. */
   --text-1: #f4f3f1;
   --text-2: rgba(244, 243, 241, 0.62);
-  --text-3: rgba(244, 243, 241, 0.52);
+  --text-3: rgba(244, 243, 241, 0.56);
   /* Контент ПОВЕРХ акцента — тёмный, а не белый: акценты тёмной темы светлые,
      и белым по ним не прочитать. Замер (WCAG 2.1) белого: синий 3.68:1, его
      наведение 2.93, красный 2.93, его наведение 2.49 — при норме 4.5 для
@@ -75,36 +83,17 @@
   color-scheme: dark;
 }
 
-/* ── Accessibility: the material has to survive the user's settings ──
-   Translucency is our ONLY device for separating zones (no borders, no
-   shadows), so when the OS says "less of that", the panels must not just
-   lose their blur — they'd become a flat wash over content with nothing
-   left to separate them. Density replaces blur: glass goes opaque, and
-   the surface ramp steps up so elevation is still readable. */
-
-@media (prefers-reduced-transparency: reduce) {
-  :root {
-    --glass-panel: #171614;
-    --glass-deep: #121110;
-    --glass-light: rgba(255, 255, 255, 0.16);
-
-    --surface-1: rgba(255, 255, 255, 0.07);
-    --surface-2: rgba(255, 255, 255, 0.11);
-    --surface-3: rgba(255, 255, 255, 0.16);
-    --surface-4: rgba(255, 255, 255, 0.22);
-  }
-}
-
 /* Higher contrast: lift the muted tiers rather than repaint the palette.
    --text-3 goes to AAA-for-large and comfortably past AA for body; the
-   accent moves to its lighter text variant so it stays legible as ink. */
+   accent moves to its lighter text variant so it stays legible as ink.
+   Поверхности под этот же запрос глушит tokens/glass.css — там вся система
+   материалов, включая обе системные ветки (меньше прозрачности / больше
+   контраста). */
 @media (prefers-contrast: more) {
   :root {
     --text-2: rgba(244, 243, 241, 0.82);
-    --text-3: rgba(244, 243, 241, 0.66);
+    --text-3: rgba(244, 243, 241, 0.7);
     --accent-text: #a8c8fb;
-    --glass-panel: #171614;
-    --glass-deep: #121110;
     --sb-thumb: rgba(255, 255, 255, 0.4);
     --sb-thumb-hover: rgba(255, 255, 255, 0.6);
   }

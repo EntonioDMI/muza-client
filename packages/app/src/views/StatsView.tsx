@@ -562,7 +562,7 @@ export function StatsView({
               </div>
               <div style={{ flex: "1 1 280px", minWidth: 240 }}>
                 <StatRow label={t("views.stats.streaks.longest")} value={`${rec} ${days}`} accent={cur > 0 && cur === rec} />
-                <div style={{ borderTop: "1px solid var(--surface-2)" }}>
+                <div style={{ borderTop: "1px solid var(--hairline)" }}>
                   <StatRow label={t("views.stats.streaks.activeDays")} value={String(d.activeDays)} />
                 </div>
               </div>
@@ -606,7 +606,7 @@ export function StatsView({
                       />
                     ) : null}
                     {every !== null ? (
-                      <div style={{ borderTop: "1px solid var(--surface-2)" }}>
+                      <div style={{ borderTop: "1px solid var(--hairline)" }}>
                         <StatRow label={t("views.stats.likes.shareLabel")} value={t("views.stats.likes.shareValue", { n: every })} />
                       </div>
                     ) : null}
@@ -638,7 +638,7 @@ export function StatsView({
           gap: "var(--sp-4)",
           flexWrap: "wrap",
           paddingBottom: "var(--sp-4)",
-          borderBottom: "1px solid var(--surface-2)",
+          borderBottom: "1px solid var(--hairline)",
         }}
       >
         <h1

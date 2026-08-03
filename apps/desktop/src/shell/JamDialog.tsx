@@ -174,9 +174,9 @@ export function JamDialog({
               {t("dialogs.jam.create")}
             </Button>
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
-              <div style={{ flex: 1, height: 1, background: "var(--surface-3)" }} />
+              <div style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
               <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("dialogs.jam.orJoinByCode")}</span>
-              <div style={{ flex: 1, height: 1, background: "var(--surface-3)" }} />
+              <div style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
             </div>
             <div
               style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}

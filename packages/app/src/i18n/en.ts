@@ -183,7 +183,7 @@ export const en = {
       },
       glass: {
         title: "Glass",
-        hint: "How dense the frosted glass of the panels is.",
+        hint: "How dense the frosted glass is across the whole window — panels, side zones, lists and dialogs.",
       },
       background: {
         title: "Background",
@@ -214,11 +214,11 @@ export const en = {
         groupTitle: "Glass and effects",
         panelBlur: { title: "Panel blur", hint: "How blurred things look through the frosted panels." },
         bgBlur: { title: "Background blur", hint: "How blurred the cover or image behind the interface is." },
-        zones: { title: "Per-zone transparency", hint: "The player, menus, dialogs, sidebar and Now Playing each get their own background density." },
+        zones: { title: "Per-zone transparency", hint: "Set the glass density of each zone separately, on top of the general Glass setting." },
         zonePlayer: { title: "Player", hint: "Glass density on the player bar and queue.", ariaLabel: "Player glass density" },
         zoneMenu: { title: "Menus", hint: "Glass density on menus and dropdown lists.", ariaLabel: "Menu glass density" },
-        zoneDialog: { title: "Dialogs", hint: "At 100% the dialog window is opaque, lower — it shows through like glass.", ariaLabel: "Dialog window density" },
-        zoneSidebar: { title: "Sidebar", hint: "Density of the left panel. It's nearly transparent by default.", ariaLabel: "Sidebar surface density" },
+        zoneDialog: { title: "Dialogs", hint: "How dense the dialog window is. At 100% nothing shows through it.", ariaLabel: "Dialog window density" },
+        zoneSidebar: { title: "Sidebar", hint: "Density of the left panel and of the matching rail in settings.", ariaLabel: "Sidebar glass density" },
         zoneNowPlaying: { title: "\"Now Playing\"", hint: "Density of the right panel with lyrics.", ariaLabel: "\"Now Playing\" panel density" },
       },
       colors: {

@@ -70,7 +70,7 @@ function MarketThemeCard({
           height: 64,
           borderRadius: "var(--r-sm)",
           background: `linear-gradient(120deg, ${bg} 0%, ${bg} 62%, ${accent} 62%)`,
-          outline: "1px solid var(--surface-3)",
+          outline: "1px solid var(--hairline)",
           outlineOffset: -1,
         }}
       ></div>

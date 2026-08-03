@@ -440,7 +440,7 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          outline: selected ? "2px solid var(--text-1)" : hover || open ? "2px solid var(--surface-4)" : "2px solid transparent",
+          outline: selected ? "2px solid var(--text-1)" : hover || open ? "2px solid var(--hairline)" : "2px solid transparent",
           outlineOffset: 2,
           transition: "outline-color var(--dur-fast) var(--ease-out)",
           flex: "none",

@@ -182,7 +182,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
         <style>{"@keyframes muzaMenuIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@keyframes muzaMenuOut{to{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=menu]{animation:none!important}}"}</style>
         {items.map((it, i) =>
           it === "-" ? (
-            <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--surface-3)", margin: "var(--sp-1) var(--sp-2)" }}></div>
+            <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--hairline)", margin: "var(--sp-1) var(--sp-2)" }}></div>
           ) : it.header !== undefined ? (
             <div
               key={i}

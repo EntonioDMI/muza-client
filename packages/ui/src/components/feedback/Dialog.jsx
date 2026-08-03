@@ -169,10 +169,14 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
           maxWidth: "calc(100% - 48px)",
           padding: "var(--sp-6)",
           borderRadius: "var(--r-xl)",
-          /* зональная прозрачность: диалог может стать стеклом (дефолт — глухой bg-1) */
+          /* Диалог — САМЫЙ ПЛОТНЫЙ материал лестницы (packages/ui/src/tokens/
+             glass.css): он лежит поверх всего, и сквозь него не должно читаться
+             содержимое под ним. До 03.08 был глухим --bg-1 и на ползунок
+             «Плотность стекла» не отзывался вовсе — единственная панель вне
+             системы. Фолбэк оставлен глухим для потребителей без движка тем. */
           background: "var(--glass-dialog, var(--bg-1))",
-          backdropFilter: "var(--bf-zone, none)",
-          WebkitBackdropFilter: "var(--bf-zone, none)",
+          backdropFilter: "blur(var(--blur-glass))",
+          WebkitBackdropFilter: "blur(var(--blur-glass))",
           display: "flex",
           flexDirection: "column",
           gap: "var(--sp-5)",

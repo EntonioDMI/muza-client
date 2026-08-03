@@ -49,7 +49,11 @@ function frameStyle(surface: Surface): React.CSSProperties {
         width: "var(--w-nowplaying)",
         bottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
         borderRadius: "var(--r-lg)",
-        background: "var(--surface-1)",
+        // Панель плагина — зона наравне с «Сейчас играет» (то же место, та же
+        // ширина), поэтому и материал тот же, а не плёнка элевации.
+        background: "var(--glass-zone)",
+        backdropFilter: "var(--bf-zone, none)",
+        WebkitBackdropFilter: "var(--bf-zone, none)",
         zIndex: 45,
       };
     default:

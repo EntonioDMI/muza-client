@@ -293,7 +293,10 @@ export function LoginScreen({
           gap: "var(--sp-5)",
           padding: "var(--sp-7)",
           borderRadius: "var(--r-lg)",
-          background: "var(--surface-1)",
+          // Карточка входа лежит прямо на --bg-0, а не внутри зоны, поэтому ей
+          // нужен МАТЕРИАЛ, а не плёнка элевации: плёнка на голом фоне почти не
+          // видна (шкала плёнок нарочно тонкая, см. tokens/glass.css).
+          background: "var(--glass-zone)",
           flex: "none",
         }}
       >

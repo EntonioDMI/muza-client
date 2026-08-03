@@ -5,5 +5,8 @@
 @import "./tokens/radius.css";
 @import "./tokens/effects.css";
 @import "./tokens/themes.css";
+/* Стекло — ПОСЛЕ themes.css: материалы и плёнки элевации живут одним файлом
+   (и тёмная, и светлая ветка), поэтому его светлый блок обязан идти последним. */
+@import "./tokens/glass.css";
 @import "./tokens/base.css";
 @import "./animations.css";

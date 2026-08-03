@@ -31,14 +31,11 @@
   --bg-0: #f3f1ed;           /* warm off-white, low chroma — light inverse of graphite */
   --bg-1: #faf9f6;           /* raised zone — toward white */
 
-  --surface-1: rgba(20, 18, 15, 0.04);   /* zone: sidebar, panels */
-  --surface-2: rgba(20, 18, 15, 0.06);   /* tile / row resting */
-  --surface-3: rgba(20, 18, 15, 0.09);   /* hover, input fields */
-  --surface-4: rgba(20, 18, 15, 0.13);   /* active / selected / pressed */
-
-  --glass-panel: rgba(250, 249, 246, 0.72);
-  --glass-deep:  rgba(248, 246, 243, 0.86);
-  --glass-light: rgba(20, 18, 15, 0.06);
+  /* ⚠️ Поверхности светлой темы уехали в tokens/glass.css (переезд 2026-08-03):
+     --surface-1..4, --glass-* и --hairline объявлены там обеими ветками сразу.
+     Держать светлые поверхности здесь, а тёмные в colors.css — ровно та вилка,
+     из-за которой ползунок «Плотность стекла» двигал одну поверхность из
+     четырёх. Здесь остаются фон, текст и акценты светлой темы. */
 
   /* Текстовая рампа СВЕТЛОЙ темы: альфы больше, чем у тёмной, и это не вкус.
      Тёмные чернила по светлому фону теряют контраст быстрее, чем светлые по

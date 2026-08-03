@@ -218,8 +218,13 @@ export interface Prefs {
   karaokeBgAnimEdge: number;
   karaokeBgAnimDiscs: BgAnimDiscs;
   karaokeBgAnimSpin: BgAnimSpin;
-  /** Прозрачность/фон по зонам: своя плотность стекла у плеера, меню,
-   *  диалогов, сайдбара и «Сейчас играет» (--glass-<зона>, % плотности). */
+  /** Точная подстройка ПОВЕРХ общего ползунка «Плотность стекла»: своя
+   *  плотность у плеера, меню, диалогов, сайдбара и «Сейчас играет»
+   *  (--glass-<зона>, % плотности). Выключено — все пять считает лестница
+   *  материалов из glassOpacity (theme/themeVars.ts).
+   *  ⚠️ С 03.08 все пять в одной шкале: сайдбар и «Сейчас играет» считались от
+   *  светлеющей плёнки (дефолт 4), теперь от того же стекла, что остальные
+   *  (дефолт 59). Сохранённая старая четвёрка означает «почти прозрачно». */
   glassZonesOn: boolean;
   glassPlayer: number;
   glassMenu: number;
@@ -564,11 +569,15 @@ export const DEFAULT_PREFS: Prefs = {
   karaokeBgAnimDiscs: "two",
   karaokeBgAnimSpin: "inward",
   glassZonesOn: false,
-  glassPlayer: 62,
-  glassMenu: 62,
-  glassDialog: 100,
-  glassSidebar: 4,
-  glassNowPlaying: 4,
+  // = лестнице материалов при ползунке 62 (theme/themeVars.ts, MATERIAL):
+  // включение «стекла по зонам» не должно ничего менять на глаз — оно только
+  // раскрывает ручки. До 03.08 диалог стоял на 100 (глухой), а зоны на 4
+  // (другая шкала), и тумблер сам по себе перекрашивал пол-окна.
+  glassPlayer: 64,
+  glassMenu: 64,
+  glassDialog: 82,
+  glassSidebar: 59,
+  glassNowPlaying: 59,
   blurScenery: 64,
   baseBg: "graphite",
   textDim: 62,

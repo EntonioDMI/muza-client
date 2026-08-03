@@ -587,8 +587,11 @@ export function Sidebar({
         gap: "var(--sp-2)",
         padding: "var(--pad-zone)",
         borderRadius: "var(--r-lg)",
-        // зональная прозрачность: своя плотность поверхности + blur (вкл. зонами)
-        background: "var(--glass-sidebar, var(--surface-1))",
+        // Материал зоны: общая плотность из ползунка «Плотность стекла»
+        // (--glass-zone), поверх неё — точная подстройка --glass-sidebar, если
+        // включено «стекло по зонам». Размытие у зоны есть: под сайдбаром лежит
+        // фон-сценография, и без blur заливка читается как краска, а не стекло.
+        background: "var(--glass-sidebar, var(--glass-zone))",
         backdropFilter: "var(--bf-zone, none)",
         WebkitBackdropFilter: "var(--bf-zone, none)",
         overflow: "hidden",

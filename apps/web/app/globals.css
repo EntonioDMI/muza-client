@@ -144,9 +144,17 @@ a {
   grid-template-columns: var(--w-sidebar) 1fr var(--w-nowplaying);
 }
 
+/* Зона — тот же материал, что у зон приложения: общая плотность из ползунка
+   «Плотность стекла». До 03.08 здесь стоял плоский --surface-1, который
+   ползунок не двигал вовсе.
+   ⚠️ Размытия здесь НЕТ намеренно, хотя зона стеклянная. Оба живых потребителя
+   класса красят себя сами и своё размытие уже несут: `.zone.sidebar` — обёртка
+   с background: transparent вокруг общей Sidebar, `.zone.np-panel` — панель
+   «Сейчас играет». backdrop-filter на обёртке размыл бы задник ВТОРОЙ раз,
+   поверх размытия самой панели: двойная цена за неотличимый глазом результат. */
 .zone {
   border-radius: var(--r-lg);
-  background: var(--surface-1);
+  background: var(--glass-zone);
   min-height: 0;
   box-sizing: border-box;
 }
@@ -173,15 +181,19 @@ a {
    • border-radius: --r-lg. Зона скруглена так же, как соседние: уезжающий
      под низ контент обрезался в приложении по дуге, а в вебе — по прямому
      углу, и на светлой обложке это было видно у нижней кромки.
-   ⚠️ Фона у .main нет намеренно (подложку носят только сайдбар, «Сейчас
-   играет» и полоса плеера) — скругление здесь работает как обрезка, а не
-   как рамка. */
+   ⚠️ С 03.08 у .main ЕСТЬ фон — тот же материал зоны, что в приложении
+   (App.tsx, <main>): содержимое обязано лежать на гарантированной подложке, а
+   не на фоне-сценографии, иначе на светлой обложке подписи не читаются.
+   Размытия здесь нет намеренно — см. развёрнутое объяснение у <main> в App.tsx
+   (под зоной неподвижная сценография, а в анимированном фоне blur пересчитывался
+   бы каждый кадр). */
 .main {
   padding: var(--pad-zone);
   overflow-y: auto;
   overscroll-behavior: contain;
   border-radius: var(--r-lg);
   scrollbar-width: none;
+  background: var(--glass-zone);
 }
 
 .main::-webkit-scrollbar {
@@ -226,7 +238,7 @@ a {
   gap: var(--sp-3);
   padding: var(--pad-zone);
   overflow: hidden;
-  background: var(--glass-nowplaying, var(--surface-1));
+  background: var(--glass-nowplaying, var(--glass-zone));
   backdrop-filter: var(--bf-zone, none);
 }
 
