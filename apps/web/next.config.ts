@@ -1,5 +1,41 @@
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { NextConfig } from "next";
+
+/** Штамп сборки. Веб-клиент выкладывается на app.muza.lol РУКАМИ, и до 03.08.2026 у
+ *  него не было ничего: ни штампа, ни автовыкладки, ни сверки. Собрали из грязного
+ *  дерева или со старым адресом сервера (`.env.local` влияет и на build — см.
+ *  предупреждение ниже) — узнать об этом было неоткуда.
+ *
+ *  Файл пишется в `public/`, а не в `out/`: Next копирует public целиком в экспорт, и
+ *  это единственный момент сборки, куда можно вклиниться из конфига. В git он не
+ *  попадает (корневой .gitignore). Читает его сторож muza-landing/scripts/check-drift.mjs
+ *  по https://app.muza.lol/build-stamp.json — он же сверяет, что коммит есть в main.
+ *
+ *  `--untracked-files=no` обязателен: без него любой мусор в дереве (тот же .next)
+ *  считался бы правкой. Грязным считается только изменение ОТСЛЕЖИВАЕМОГО файла. */
+function buildStamp(): string {
+  const git = (args: string[]): string => {
+    try {
+      return execFileSync("git", args, { cwd: __dirname, encoding: "utf8" }).trim();
+    } catch {
+      return "";
+    }
+  };
+  return `${JSON.stringify({
+    commit: git(["rev-parse", "HEAD"]),
+    ref: git(["describe", "--tags", "--always"]),
+    dirty: git(["status", "--porcelain", "--untracked-files=no"]) !== "",
+    api: process.env.NEXT_PUBLIC_API_URL ?? "",
+  }, null, 2)}\n`;
+}
+
+// Конфиг загружается и в дочерних воркерах сборки — запись идемпотентна (содержимое
+// не зависит от времени), поэтому лишние проходы безвредны. В dev штамп не нужен.
+if (process.env.NODE_ENV === "production") {
+  writeFileSync(path.join(__dirname, "public", "build-stamp.json"), buildStamp(), "utf8");
+}
 
 /** Веб-клиент Muza (Stage 8) — статический экспорт: деплой = папка out/ на
  *  любом статик-хостинге (muza_2 + Caddy, рядом с лендингом). Никакого SSR —

@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 // frame-src: песочница плагинов уровня 1 (W8) — iframe на кастомном протоколе
@@ -32,6 +32,19 @@ export const ALLOWED_HTTP_LITERALS = new Set([
 
 const DEFAULT_FS_OPS = { lstatSync, readFileSync, readdirSync };
 const EXPECTED_EXTERNAL_BINS = ["bin/yt-dlp", "bin/deno"];
+// Значимые поля production-конфига, которых гейт не касался до 2026-08-03: он сверял
+// ровно два — политику безопасности и внешние бинарники. Правка, уводящая адрес
+// манифеста обновлений или открытый ключ на чужой, проходила ВСЕ гейты зелёными:
+// сборка подписывалась боевым ключом и публиковалась, а установленные клиенты
+// начинали доверять чужому манифесту. Сравнение побайтовое — как у capabilities.
+const EXPECTED_IDENTIFIER = "lol.muza.app";
+const EXPECTED_UPDATER_PUBKEY = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyQzMyOTI2QUJDNTRDM0EKUldRNlRNV3JKaW5EWWdaZXNtZ0VEVHhLRlp0ZXd2OCtSd2VHR0VuNHYvaWFPWEROcXRiN2FBeDQK";
+const EXPECTED_UPDATER_ENDPOINTS = [
+  "https://github.com/EntonioDMI/muza-client/releases/latest/download/latest.json",
+];
+// Область asset-протокола — единственный каталог кэша. Расширение до ["**"] отдало
+// бы вебвью чтение всего диска пользователя и до этой правки прошло бы молча.
+const EXPECTED_ASSET_PROTOCOL = { enable: true, scope: ["$APPDATA/audio-cache/**"] };
 const EXPECTED_MAIN_PERMISSIONS = [
   "core:default",
   "core:window:allow-start-dragging",
@@ -51,6 +64,15 @@ const EXPECTED_MAIN_PERMISSIONS = [
 const EXPECTED_MINI_PERMISSIONS = ["core:default", "core:window:allow-start-dragging"];
 const EXPECTED_CAPABILITY_KEYS = ["$schema", "identifier", "description", "windows", "permissions"];
 const EXPECTED_CAPABILITY_SCHEMA = "../gen/schemas/desktop-schema.json";
+const NODE_TESTS_MARKER = "node --test scripts/release-gate.test.mjs";
+// Тег можно поставить на ЛЮБОЙ коммит — защиты веток и наборов правил в репозитории
+// нет (действие владельца, см. docs/release.md), а release.yml подписывает всё, на что
+// повешен тег v*. Единственная машинная преграда — доказать, что коммит есть в истории
+// origin/main, то есть через trust-gate он прошёл (там и живут фронтовые тесты).
+const ANCESTRY_MARKER = "git merge-base --is-ancestor HEAD refs/remotes/origin/main";
+const VERSION_MARKER = "node scripts/release-gate.mjs version $env:GITHUB_REF_NAME";
+const RELEASE_ONLY_MARKERS = new Set([ANCESTRY_MARKER, VERSION_MARKER]);
+const NATIVE_ERROR_GUARD = "$PSNativeCommandUseErrorActionPreference = $true";
 const PINNED_ACTIONS = {
   checkout: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
   pnpm: "pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa",
@@ -76,8 +98,25 @@ function assertExactKeys(value, expected, label) {
 export function validateTauriConfig(config) {
   const csp = config.app?.security?.csp ?? "";
   if (csp !== PRODUCTION_CSP) throw new Error("production CSP must equal PRODUCTION_CSP");
+  if (config.identifier !== EXPECTED_IDENTIFIER) {
+    throw new Error("production identifier must equal lol.muza.app");
+  }
+  if (!isDeepStrictEqual(config.app?.security?.assetProtocol, EXPECTED_ASSET_PROTOCOL)) {
+    throw new Error("production assetProtocol scope mismatch");
+  }
   if (!isDeepStrictEqual(config.bundle?.externalBin, EXPECTED_EXTERNAL_BINS)) {
     throw new Error("production externalBin must equal bin/yt-dlp,bin/deno");
+  }
+  // Без артефактов апдейтера релиз собирается зелёным, но latest.json не появляется —
+  // уже установленные клиенты не увидят обновление вовсе.
+  if (config.bundle?.createUpdaterArtifacts !== true) {
+    throw new Error("production createUpdaterArtifacts must be true");
+  }
+  if (config.plugins?.updater?.pubkey !== EXPECTED_UPDATER_PUBKEY) {
+    throw new Error("production updater pubkey mismatch");
+  }
+  if (!isDeepStrictEqual(config.plugins?.updater?.endpoints, EXPECTED_UPDATER_ENDPOINTS)) {
+    throw new Error("production updater endpoints mismatch");
   }
 }
 
@@ -117,6 +156,97 @@ export function validateCapabilities(mainCapability, miniCapability) {
   }
 }
 
+// Сверка тега с деревом. До 2026-08-03 её не было нигде: слова version в этом файле
+// не встречалось ни разу. Тег v0.1.6 на дереве с версией 0.1.5 собирался зелёным и
+// давал два вранья сразу — манифест обновлений уходил с "version":"0.1.5" (поле берётся
+// из tauri.conf.json, не из тега), и все, кто уже на 0.1.5, слышали «установлена
+// последняя»; а лендинг печатал «Muza v0.1.6» со ссылкой на Muza_0.1.5_x64-setup.exe.
+// Сторож расхождения лендинга этого не ловит принципиально — он сверяет тег с тегом.
+//
+// Шесть мест, где живёт номер (docs/release.md рабочей папки). Версии apps/web,
+// packages/*, лендинга и сервера — своя нумерация, к релизу десктопа отношения не имеют.
+const VERSION_FILES = {
+  tauriConf: "apps/desktop/src-tauri/tauri.conf.json",
+  cargoToml: "apps/desktop/src-tauri/Cargo.toml",
+  cargoLock: "apps/desktop/src-tauri/Cargo.lock",
+  rootPackage: "package.json",
+  desktopPackage: "apps/desktop/package.json",
+  changelog: "CHANGELOG.md",
+};
+const CARGO_PACKAGE_NAME = "muza-desktop";
+const CLIENT_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+function jsonVersion(text, label) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON: ${error instanceof Error ? error.message : error}`);
+  }
+  if (typeof parsed?.version !== "string" || parsed.version === "") throw new Error(`${label} has no version`);
+  return parsed.version;
+}
+
+// Берём version ТОЛЬКО из секции [package]: ниже в Cargo.toml десятки версий
+// зависимостей, и первое попавшееся `version = "…"` было бы чужим.
+function tomlPackageVersion(text, label) {
+  const header = /^\[package\]\s*$/m.exec(text);
+  if (!header) throw new Error(`${label} has no [package] section`);
+  const rest = text.slice(header.index + header[0].length);
+  const end = rest.search(/^\[/m);
+  const body = end === -1 ? rest : rest.slice(0, end);
+  const version = /^version\s*=\s*"([^"]+)"/m.exec(body)?.[1];
+  if (!version) throw new Error(`${label} has no version in [package]`);
+  return version;
+}
+
+function lockPackageVersion(text, label) {
+  const anchor = new RegExp(`^name = "${CARGO_PACKAGE_NAME}"\\s*$`, "m").exec(text);
+  if (!anchor) throw new Error(`${label} has no ${CARGO_PACKAGE_NAME} package`);
+  const rest = text.slice(anchor.index + anchor[0].length);
+  const end = rest.search(/^\[\[package\]\]/m);
+  const body = end === -1 ? rest : rest.slice(0, end);
+  const version = /^version\s*=\s*"([^"]+)"/m.exec(body)?.[1];
+  if (!version) throw new Error(`${label} has no version for ${CARGO_PACKAGE_NAME}`);
+  return version;
+}
+
+export function validateVersion(tag, sources) {
+  const match = /^v(\d+\.\d+\.\d+)$/.exec(typeof tag === "string" ? tag : "");
+  if (!match) throw new Error(`release tag must look like v0.0.0, got ${JSON.stringify(tag ?? null)}`);
+  const version = match[1];
+
+  const found = [
+    [VERSION_FILES.tauriConf, jsonVersion(sources.tauriConf, VERSION_FILES.tauriConf)],
+    [VERSION_FILES.cargoToml, tomlPackageVersion(sources.cargoToml, VERSION_FILES.cargoToml)],
+    [VERSION_FILES.cargoLock, lockPackageVersion(sources.cargoLock, VERSION_FILES.cargoLock)],
+    [VERSION_FILES.rootPackage, jsonVersion(sources.rootPackage, VERSION_FILES.rootPackage)],
+    [VERSION_FILES.desktopPackage, jsonVersion(sources.desktopPackage, VERSION_FILES.desktopPackage)],
+  ];
+  const mismatched = found.filter(([, value]) => value !== version);
+  if (mismatched.length > 0) {
+    throw new Error(
+      `tag ${tag} does not match tree version in ${mismatched.map(([file, value]) => `${file} (${value})`).join(", ")}`,
+    );
+  }
+
+  // Раздел в CHANGELOG — не бюрократия: сводка релиза готовится под парсинг
+  // Discord-ботом, и её отсутствие обнаруживается уже после публикации.
+  const heading = new RegExp(`^##\\s+${version.replace(/\./g, "\\.")}(?:\\s|$)`, "m");
+  if (typeof sources.changelog !== "string" || !heading.test(sources.changelog)) {
+    throw new Error(`${VERSION_FILES.changelog} has no "## ${version}" section`);
+  }
+  return version;
+}
+
+export function readVersionSources(root = CLIENT_ROOT, fsOps = DEFAULT_FS_OPS) {
+  const sources = {};
+  for (const [key, relative] of Object.entries(VERSION_FILES)) {
+    sources[key] = fsOps.readFileSync(join(root, relative), "utf8");
+  }
+  return sources;
+}
+
 function activeWorkflowText(text, label) {
   if (typeof text !== "string" || text.trim() === "") throw new Error(`${label} workflow is empty`);
   return text
@@ -148,6 +278,14 @@ function requireExactlyOnce(text, marker, label) {
   return first;
 }
 
+function countOccurrences(text, marker) {
+  let count = 0;
+  for (let from = text.indexOf(marker); from !== -1; from = text.indexOf(marker, from + marker.length)) {
+    count += 1;
+  }
+  return count;
+}
+
 function validateWorkflow(text, kind) {
   const active = activeWorkflowText(text, kind);
   const steps = workflowSteps(active);
@@ -162,6 +300,11 @@ function validateWorkflow(text, kind) {
   if (!checkoutStep || !/^ {10}persist-credentials: false$/m.test(checkoutStep)) {
     throw new Error(`${kind} workflow checkout credential policy mismatch`);
   }
+  // Полная история нужна ровно для гейта предков: без неё refs/remotes/origin/main
+  // в клоне не существует и git merge-base сверять нечего.
+  if (kind === "release" && !/^ {10}fetch-depth: 0$/m.test(checkoutStep)) {
+    throw new Error("release workflow checkout must fetch full history for the ancestry gate");
+  }
 
   const permissionHeaders = active.match(/^\s*permissions:\s*$/gm) ?? [];
   if (permissionHeaders.length !== 1) {
@@ -175,11 +318,15 @@ function validateWorkflow(text, kind) {
   requireExactlyOnce(active, "  VITE_API_URL: ${{ vars.MUZA_API_URL }}", kind);
   requireExactlyOnce(active, "  NEXT_PUBLIC_API_URL: ${{ vars.MUZA_API_URL }}", kind);
 
+  // ANCESTRY_MARKER и VERSION_MARKER живут только в release.yml: у trust-gate нет тега,
+  // а сам он и есть та проверка, принадлежность к которой доказывает гейт предков.
   const orderedMarkers = [
+    ANCESTRY_MARKER,
     "pnpm install --frozen-lockfile",
-    "node --test scripts/release-gate.test.mjs",
+    NODE_TESTS_MARKER,
     "node scripts/release-gate.mjs env VITE_API_URL",
     "node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL",
+    VERSION_MARKER,
     "cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib",
     "cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "pnpm --filter muza-desktop build",
@@ -188,12 +335,37 @@ function validateWorkflow(text, kind) {
     "node scripts/release-gate.mjs capabilities apps/desktop/src-tauri/capabilities/main.json apps/desktop/src-tauri/capabilities/mini.json",
     "node scripts/release-gate.mjs workflows .github/workflows/release.yml .github/workflows/trust-gate.yml",
     "node scripts/release-gate.mjs artifacts apps/desktop/dist apps/web/out",
-  ];
+  ].filter((marker) => kind === "release" || !RELEASE_ONLY_MARKERS.has(marker));
   let previous = -1;
   for (const marker of orderedMarkers) {
     const position = requireExactlyOnce(active, marker, kind);
     if (position <= previous) throw new Error(`${kind} workflow gate order mismatch`);
     previous = position;
+  }
+
+  // Строку, которая чинит сам гейт, гейт не защищал. GitHub учитывает код возврата
+  // ПОСЛЕДНЕЙ команды pwsh-блока, поэтому падение любой предыдущей исчезало бесследно:
+  // так v0.1.4 и v0.1.5 уехали с молча провалившимся гейтом наименьших привилегий.
+  // Работу делает именно $PSNativeCommandUseErrorActionPreference — соседний
+  // $ErrorActionPreference = 'Stop' раннер подставляет для shell: pwsh сам.
+  // Вхождения считаются пошагово: шаг с двумя и более гейт-командами обязан нести
+  // ровно одну копию, лишних копий нет нигде. Шаг с одной командой освобождён (там
+  // последняя команда и есть единственная), шаг sidecar-бинарей — тоже: в нём только
+  // cmdlet'ы, их накрывает подставленный раннером $ErrorActionPreference.
+  let guardTotal = 0;
+  let multiCommandSteps = 0;
+  for (const step of steps) {
+    const guards = countOccurrences(step, NATIVE_ERROR_GUARD);
+    if (guards > 1) throw new Error(`${kind} workflow duplicates the native error guard in one step`);
+    guardTotal += guards;
+    if (orderedMarkers.filter((marker) => step.includes(marker)).length < 2) continue;
+    multiCommandSteps += 1;
+    if (guards !== 1) {
+      throw new Error(`${kind} workflow multi-command step must contain exactly once: ${NATIVE_ERROR_GUARD}`);
+    }
+  }
+  if (guardTotal !== multiCommandSteps) {
+    throw new Error(`${kind} workflow native error guard count mismatch`);
   }
 
   for (const marker of [
@@ -221,7 +393,7 @@ function validateWorkflow(text, kind) {
     if (position <= sidecarPrevious) throw new Error(`${kind} workflow sidecar checksum order mismatch`);
     sidecarPrevious = position;
   }
-  const nodeTests = active.indexOf(orderedMarkers[1]);
+  const nodeTests = active.indexOf(NODE_TESTS_MARKER);
   if (nodeTests === -1 || sidecarPrevious >= nodeTests || sidecarPrevious >= previous) {
     throw new Error(`${kind} workflow sidecar checksum order mismatch`);
   }
@@ -566,8 +738,9 @@ export function main(argv = process.argv.slice(2)) {
   if (command === "workflows" && args.length === 2) {
     return validateWorkflows(readFileSync(args[0], "utf8"), readFileSync(args[1], "utf8"));
   }
+  if (command === "version" && args.length === 1) return validateVersion(args[0], readVersionSources());
   if (command === "artifacts") return scanArtifacts(args);
-  throw new Error("usage: release-gate.mjs env NAME | tauri BASE_PATH DEV_OVERLAY_PATH | capabilities MAIN MINI | workflows RELEASE TRUST | artifacts PATH...");
+  throw new Error("usage: release-gate.mjs env NAME | tauri BASE_PATH DEV_OVERLAY_PATH | capabilities MAIN MINI | workflows RELEASE TRUST | version TAG | artifacts PATH...");
 }
 
 const entryUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";

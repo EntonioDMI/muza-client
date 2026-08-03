@@ -19,6 +19,19 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          # Полная история — ровно ради шага ниже: при depth=1 ссылки
+          # refs/remotes/origin/main в клоне нет и сверять предков нечем.
+          fetch-depth: 0
+
+      # Тег можно повесить на ЛЮБОЙ коммит, в том числе никогда не бывший в main и
+      # не видевший ни одной проверки: триггер здесь — push тега v*, а защиты веток и
+      # наборов правил в репозитории нет (действие владельца). Этот шаг — единственная
+      # машинная преграда: коммит обязан быть предком origin/main, то есть уже прошедшим
+      # trust-gate (там же лежат фронтовые тесты, которых в release.yml нет).
+      # Одна команда в блоке: её код возврата и есть код шага, преамбула не нужна.
+      - name: Тег стоит на коммите из main
+        shell: pwsh
+        run: git merge-base --is-ancestor HEAD refs/remotes/origin/main
 
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
 
@@ -72,6 +85,15 @@ jobs:
           node --test scripts/release-gate.test.mjs
           node scripts/release-gate.mjs env VITE_API_URL
           node scripts/release-gate.mjs env NEXT_PUBLIC_API_URL
+
+      # Номер версии живёт в шести местах, и ни одно не выводится из тега. Тег v0.1.6 на
+      # дереве 0.1.5 собрался бы зелёным и дал два вранья: манифест обновлений с версией
+      # 0.1.5 (все, кто уже на 0.1.5, услышат «установлена последняя») и лендинг с
+      # «Muza v0.1.6» со ссылкой на Muza_0.1.5_x64-setup.exe. Шаг стоит ДО сборки —
+      # падать надо до Rust-компиляции, а не после неё. Одна команда, преамбула не нужна.
+      - name: Тег совпадает с версией дерева
+        shell: pwsh
+        run: node scripts/release-gate.mjs version $env:GITHUB_REF_NAME
 
       - name: Rust tests и schema check
         shell: pwsh

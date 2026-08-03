@@ -21,11 +21,13 @@ import {
   PRODUCTION_CSP,
   decodeHttpCandidates,
   main,
+  readVersionSources,
   scanArtifacts,
   scanText,
   validateApiEnv,
   validateDevTauriOverlay,
   validateTauriConfig,
+  validateVersion,
 } from "./release-gate.mjs";
 
 const scriptPath = fileURLToPath(new URL("./release-gate.mjs", import.meta.url));
@@ -111,6 +113,20 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+const GUARD = "$PSNativeCommandUseErrorActionPreference = $true";
+
+function countAll(text, marker) {
+  return text.split(marker).length - 1;
+}
+
+// core.autocrlf=true — в рабочем дереве workflow лежат с CRLF, и построчные мутации
+// вида replace("…\n", "") молча не срабатывали бы, делая тест вечно зелёным.
+// Сам гейт переводы строк нормализует (activeWorkflowText), так что LF-текст для него
+// такой же валидный вход.
+function readWorkflow(path) {
+  return readFileSync(path, "utf8").replace(/\r\n?/g, "\n");
+}
+
 afterEach(() => {
   while (tempRoots.length > 0) {
     rmSync(tempRoots.pop(), { recursive: true, force: true });
@@ -141,10 +157,7 @@ describe("API environment and exact CSP contracts", () => {
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost http://muza-stream.localhost muza-stream://localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; base-uri 'self'; form-action 'self'; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost",
     );
     assert.equal(DEVELOPMENT_CSP, `${PRODUCTION_CSP} http://localhost:8000`);
-    assert.doesNotThrow(() => validateTauriConfig({
-      app: { security: { csp: PRODUCTION_CSP } },
-      bundle: { externalBin: ["bin/yt-dlp", "bin/deno"] },
-    }));
+    assert.doesNotThrow(() => validateTauriConfig(readJson(baseConfigPath)));
   });
 
   test("rejects deleted, duplicated, reordered, extra, and weakened production CSP", () => {
@@ -200,6 +213,44 @@ describe("API environment and exact CSP contracts", () => {
       const invalid = clone(overlay);
       invalid.app.security.csp = csp;
       assert.throws(() => validateDevTauriOverlay(base, invalid), /dev CSP/);
+    }
+  });
+
+  test("pins updater trust anchors, bundle identifier and asset scope byte for byte", () => {
+    const base = readJson(baseConfigPath);
+    assert.equal(base.identifier, "lol.muza.app");
+    assert.equal(base.bundle?.createUpdaterArtifacts, true);
+    assert.deepEqual(base.app?.security?.assetProtocol, { enable: true, scope: ["$APPDATA/audio-cache/**"] });
+    assert.deepEqual(base.plugins?.updater?.endpoints, [
+      "https://github.com/EntonioDMI/muza-client/releases/latest/download/latest.json",
+    ]);
+
+    // До 2026-08-03 гейт сверял из значимых полей ровно два — CSP и externalBin.
+    // Правка, уводящая манифест обновлений на чужой адрес или подменяющая открытый
+    // ключ, проходила ВСЕ гейты зелёной: сборка подписывалась боевым ключом и
+    // публиковалась, а установленные клиенты начинали доверять чужому манифесту.
+    // Расширение области asset-протокола до ["**"] открывало чтение всего диска.
+    const mutations = [
+      [(value) => { value.identifier = "lol.muza.app.evil"; }, /identifier/],
+      [(value) => { delete value.identifier; }, /identifier/],
+      [(value) => { value.app.security.assetProtocol.scope = ["**"]; }, /assetProtocol/],
+      [(value) => { value.app.security.assetProtocol.scope.push("$HOME/**"); }, /assetProtocol/],
+      [(value) => { value.app.security.assetProtocol.enable = false; }, /assetProtocol/],
+      [(value) => { delete value.app.security.assetProtocol; }, /assetProtocol/],
+      [(value) => { value.bundle.createUpdaterArtifacts = false; }, /createUpdaterArtifacts/],
+      [(value) => { delete value.bundle.createUpdaterArtifacts; }, /createUpdaterArtifacts/],
+      [(value) => { value.plugins.updater.pubkey = `${value.plugins.updater.pubkey}Cg==`; }, /pubkey/],
+      [(value) => { delete value.plugins.updater.pubkey; }, /pubkey/],
+      [(value) => { delete value.plugins.updater; }, /pubkey/],
+      [(value) => { delete value.plugins; }, /pubkey/],
+      [(value) => { value.plugins.updater.endpoints = ["https://muza-updates.evil/latest.json"]; }, /endpoints/],
+      [(value) => { value.plugins.updater.endpoints.push("https://muza-updates.evil/latest.json"); }, /endpoints/],
+      [(value) => { value.plugins.updater.endpoints = []; }, /endpoints/],
+    ];
+    for (const [mutate, pattern] of mutations) {
+      const invalid = clone(base);
+      mutate(invalid);
+      assert.throws(() => validateTauriConfig(invalid), pattern);
     }
   });
 
@@ -312,6 +363,161 @@ describe("pinned trust and release workflows", () => {
     ];
     for (const [badRelease, badTrust] of mutations) {
       assert.throws(() => gate.validateWorkflows(badRelease, badTrust), /workflow|action|credential|env|gate|artifact|secret|last|order|tauri/i);
+    }
+  });
+
+  test("pins the one preamble line that actually propagates failures", () => {
+    const release = readWorkflow(releaseWorkflowPath);
+    const trust = readWorkflow(trustWorkflowPath);
+    // Ровно по одной копии на каждый многокомандный pwsh-блок. GitHub учитывает код
+    // возврата ПОСЛЕДНЕЙ команды блока — без этой строки падение любой предыдущей
+    // исчезало бесследно, и v0.1.4/v0.1.5 уехали с молча провалившимся гейтом
+    // наименьших привилегий. Соседний $ErrorActionPreference = 'Stop' избыточен:
+    // раннер подставляет его для shell: pwsh сам, поэтому пинится именно эта строка.
+    assert.equal(countAll(release, GUARD), 4);
+    assert.equal(countAll(trust, GUARD), 4);
+
+    const rustStep = "cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib";
+    const mutations = [
+      // Убрать из одного блока (первого — «Node trust tests и API env»).
+      [release.replace(`${GUARD}\n`, ""), trust],
+      [release, trust.replace(`${GUARD}\n`, "")],
+      // Убрать отовсюду.
+      [release.replaceAll(`          ${GUARD}\n`, ""), trust],
+      [release, trust.replaceAll(`          ${GUARD}\n`, "")],
+      // Лишняя копия внутри блока и копия в одношаговой команде.
+      [release.replace(GUARD, `${GUARD}\n          ${GUARD}`), trust],
+      [release.replace(`run: git merge-base`, `run: |\n          ${GUARD}\n          git merge-base`), trust],
+      // Подмена на избыточную строку, которую раннер подставляет и сам.
+      [release.replace(`${GUARD}\n          ${rustStep}`, rustStep), trust],
+    ];
+    for (const [badRelease, badTrust] of mutations) {
+      assert.throws(() => gate.validateWorkflows(badRelease, badTrust), /native error guard|must contain exactly once/i);
+    }
+  });
+
+  test("pins the ancestry and version gates that stand between a tag and a signature", () => {
+    const release = readWorkflow(releaseWorkflowPath);
+    const trust = readWorkflow(trustWorkflowPath);
+    // Триггер release.yml — push тега v*, защиты веток и наборов правил в репозитории
+    // нет: тег можно повесить на коммит, которого не было в main и который не видел ни
+    // одной проверки. Гейт предков — единственная машинная преграда, и работает он
+    // только при полной истории у checkout.
+    assert.ok(release.includes("git merge-base --is-ancestor HEAD refs/remotes/origin/main"));
+    assert.ok(release.includes("fetch-depth: 0"));
+    assert.ok(!trust.includes("git merge-base"), "trust-gate и есть та проверка, предком которой должен быть коммит");
+
+    const versionGate = "node scripts/release-gate.mjs version $env:GITHUB_REF_NAME";
+    const buildStep = "pnpm --filter muza-desktop build";
+    const mutations = [
+      [release.replace("git merge-base --is-ancestor HEAD refs/remotes/origin/main", "git rev-parse HEAD"), trust],
+      [release.replace("          fetch-depth: 0\n", ""), trust],
+      [release.replace(versionGate, "node -e \"process.exit(0)\""), trust],
+      // Сверка версии обязана стоять ДО сборки: падать надо до Rust-компиляции.
+      [release.replace(`${versionGate}\n`, "").replace(buildStep, `${versionGate}\n          ${buildStep}`), trust],
+    ];
+    for (const [badRelease, badTrust] of mutations) {
+      assert.throws(() => gate.validateWorkflows(badRelease, badTrust), /workflow|order|ancestry|fetch/i);
+    }
+  });
+});
+
+describe("release tag matches the version in the tree", () => {
+  // Синтетические источники повторяют РЕАЛЬНУЮ раскладку файлов: в Cargo.toml секция
+  // [package] стоит перед зависимостями, в Cargo.lock блок muza-desktop — не первый.
+  // Оба случая ловят наивный «первый попавшийся version = …», который взял бы версию
+  // чужого пакета.
+  function versionSources(version = "0.1.5", overrides = {}) {
+    return {
+      tauriConf: JSON.stringify({ productName: "Muza", version }),
+      cargoToml: `[package]\nname = "muza-desktop"\nversion = "${version}"\nedition = "2021"\n\n[dependencies]\nserde = { version = "9.9.9" }\n`,
+      cargoLock: `[[package]]\nname = "serde"\nversion = "9.9.9"\n\n[[package]]\nname = "muza-desktop"\nversion = "${version}"\ndependencies = []\n`,
+      rootPackage: JSON.stringify({ name: "muza-client", version }),
+      desktopPackage: JSON.stringify({ name: "muza-desktop", version }),
+      changelog: `# Changelog\n\n## ${version} — 2026-07-20\n\n### Добавлено\n- что-то\n`,
+      ...overrides,
+    };
+  }
+
+  test("the real tree agrees with itself in all six places", () => {
+    const version = readJson(baseConfigPath).version;
+    assert.match(version, /^\d+\.\d+\.\d+$/);
+    assert.equal(validateVersion(`v${version}`, readVersionSources()), version);
+  });
+
+  test("accepts the canonical tag and reads versions past foreign packages", () => {
+    assert.equal(validateVersion("v0.1.5", versionSources()), "0.1.5");
+    assert.equal(validateVersion("v1.20.300", versionSources("1.20.300")), "1.20.300");
+  });
+
+  test("rejects the v0.1.6-on-0.1.5 tree and names every file that disagrees", () => {
+    assert.throws(
+      () => validateVersion("v0.1.6", versionSources("0.1.5")),
+      (error) => {
+        assert.match(error.message, /tag v0\.1\.6 does not match tree version/);
+        for (const file of [
+          "apps/desktop/src-tauri/tauri.conf.json",
+          "apps/desktop/src-tauri/Cargo.toml",
+          "apps/desktop/src-tauri/Cargo.lock",
+          "package.json",
+          "apps/desktop/package.json",
+        ]) {
+          assert.ok(error.message.includes(`${file} (0.1.5)`), `${file} missing from ${error.message}`);
+        }
+        return true;
+      },
+    );
+  });
+
+  test("one forgotten place out of five is enough to fail", () => {
+    const stale = {
+      tauriConf: JSON.stringify({ version: "0.1.5" }),
+      cargoToml: `[package]\nname = "muza-desktop"\nversion = "0.1.5"\n`,
+      cargoLock: `[[package]]\nname = "muza-desktop"\nversion = "0.1.5"\n`,
+      rootPackage: JSON.stringify({ version: "0.1.5" }),
+      desktopPackage: JSON.stringify({ version: "0.1.5" }),
+    };
+    for (const [key, value] of Object.entries(stale)) {
+      assert.throws(
+        () => validateVersion("v0.1.6", versionSources("0.1.6", { [key]: value })),
+        /does not match tree version/,
+      );
+    }
+  });
+
+  test("requires a CHANGELOG section for exactly this version", () => {
+    for (const changelog of [
+      "# Changelog\n\n## 0.1.5 — 2026-07-20\n",
+      "# Changelog\n",
+      "# Changelog\n\n## 0.1.60 — 2026-08-01\n",
+      "# Changelog\n\nСм. 0.1.6 в коммитах\n",
+      "",
+    ]) {
+      assert.throws(() => validateVersion("v0.1.6", versionSources("0.1.6", { changelog })), /CHANGELOG/);
+    }
+    assert.doesNotThrow(() => validateVersion("v0.1.6", versionSources("0.1.6", {
+      changelog: "# Changelog\n\n## 0.1.6\n",
+    })));
+  });
+
+  test("rejects malformed and non-release tags before touching any file", () => {
+    for (const tag of [undefined, null, "", "0.1.5", "v0.1", "v0.1.5.1", "V0.1.5", "v0.1.5-rc1", "vlatest", "v0.1.5 "]) {
+      assert.throws(() => validateVersion(tag, versionSources()), /release tag must look like/);
+    }
+  });
+
+  test("fails closed on unreadable version sources", () => {
+    for (const overrides of [
+      { tauriConf: "{ broken" },
+      { tauriConf: JSON.stringify({ name: "muza" }) },
+      { cargoToml: 'name = "muza-desktop"\nversion = "0.1.5"\n' },
+      { cargoToml: "[package]\nname = \"muza-desktop\"\n" },
+      { cargoLock: '[[package]]\nname = "serde"\nversion = "9.9.9"\n' },
+      { cargoLock: '[[package]]\nname = "muza-desktop"\n' },
+      { rootPackage: JSON.stringify({}) },
+      { desktopPackage: "" },
+    ]) {
+      assert.throws(() => validateVersion("v0.1.5", versionSources("0.1.5", overrides)), /version|JSON|package/i);
     }
   });
 });
@@ -603,10 +809,13 @@ describe("CLI is synchronous, import-safe, and works from this Windows path", ()
       assert.doesNotThrow(() => main(["tauri", baseConfigPath, overlayConfigPath]));
       assert.doesNotThrow(() => main(["capabilities", mainCapabilityPath, miniCapabilityPath]));
       assert.doesNotThrow(() => main(["workflows", releaseWorkflowPath, trustWorkflowPath]));
+      assert.doesNotThrow(() => main(["version", `v${readJson(baseConfigPath).version}`]));
       assert.throws(() => main(["env"]), /usage/);
       assert.throws(() => main(["tauri", baseConfigPath]), /usage/);
       assert.throws(() => main(["capabilities", mainCapabilityPath]), /usage/);
       assert.throws(() => main(["workflows", releaseWorkflowPath]), /usage/);
+      assert.throws(() => main(["version"]), /usage/);
+      assert.throws(() => main(["version", "v0.1.5", "extra"]), /usage/);
       assert.throws(() => main(["unknown"]), /usage/);
     } finally {
       if (previous === undefined) delete process.env.MUZA_GATE_TEST_API;
@@ -641,6 +850,26 @@ describe("CLI is synchronous, import-safe, and works from this Windows path", ()
     const bad = runCli(["tauri", baseConfigPath, badOverlay]);
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /dev CSP/);
+  });
+
+  test("subprocess version command resolves the tree from its own location", () => {
+    // Путь к шести файлам версии гейт считает от СЕБЯ, не от cwd: в release.yml шаг
+    // запускается из корня клиента, но опираться на это нельзя.
+    const treeVersion = readJson(baseConfigPath).version;
+    const good = spawnSync(process.execPath, [scriptPath, "version", `v${treeVersion}`], {
+      cwd: tmpdir(),
+      encoding: "utf8",
+    });
+    assert.equal(good.status, 0, good.stderr);
+    assert.equal(good.stderr, "");
+
+    const bad = runCli(["version", "v99.99.99"]);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /does not match tree version.*tauri\.conf\.json/);
+
+    const malformed = runCli(["version", "latest"]);
+    assert.equal(malformed.status, 1);
+    assert.match(malformed.stderr, /release tag must look like/);
   });
 
   test("subprocess artifacts command scans real files and rejects localhost", () => {
