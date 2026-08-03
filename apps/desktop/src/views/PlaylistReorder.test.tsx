@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
+import { ApiError, type MuzaApi, type PlaylistDetail, type Track } from "@muza/api-client";
 import { DragLayer } from "../shell/DragLayer";
 import { TestMenuProvider } from "../shell/menuTestUtils";
 import { PlaylistView } from "./PlaylistView";
@@ -230,7 +230,10 @@ describe("Реордер плейлиста перетаскиванием", () 
   });
 
   it("сервер отказал — порядок откатывается и владелец видит тост", async () => {
-    const reorderPlaylist = vi.fn().mockRejectedValue(new Error("403 нет доступа"));
+    // ⚠️ Отказ имитируется ApiError, а не голым Error: с 2026-08-03 на экран
+    // пускается ТОЛЬКО текст сервера (humanError в @muza/api-client), всё
+    // остальное получает заготовленную фразу вьюхи.
+    const reorderPlaylist = vi.fn().mockRejectedValue(new ApiError(403, "403 нет доступа"));
     const api = { getPlaylist: vi.fn().mockResolvedValue(detail), reorderPlaylist } as unknown as MuzaApi;
     const onNotify = vi.fn();
     const { container } = renderView(api, onNotify);
