@@ -37,7 +37,6 @@ export const en = {
     on: "On",
     off: "Off",
     like: "Like",
-    showAll: "Show all",
     namePlaceholder: "Name",
     // И5-веб (2026-07-22): общий i18n для веб-клиента.
     download: "Download",
@@ -399,7 +398,6 @@ export const en = {
       title: "Equalizer",
       enable: { title: "Enable", hint: "Ten bands change the sound right as it plays." },
       resetBands: "Reset bands",
-      dbRange: "dB, from −12 to +12",
       bandAria: "Band {freq} Hz",
     },
 
@@ -831,7 +829,6 @@ export const en = {
       bassSharp: { title: "Response sharpness", hint: "Left — the pulse swells gently, right — it snaps to every bass hit." },
       bassReach: { title: "Sway reach", hint: "How far the picture moves with the bass." },
       externalGroup: "External plugins",
-      appOnly: "Only in the app (not in the browser)",
       installFromFile: {
         title: "Install from file",
         hint: "Choose a .muzaplugin file. Before installing, we'll show which permissions the plugin asks for.",
@@ -1243,10 +1240,8 @@ export const en = {
   sidebar: {
     playlistsHeading: "Playlists",
     newPlaylistTooltip: "New playlist",
-    createPlaylistAria: "Create playlist",
     admin: "Admin",
     hotkeysTooltip: "Hotkeys (?)",
-    hotkeysAria: "Hotkeys",
     playlistMeta: {
       collabFrom: "{count} tr. · from {owner}",
       shared: "{count} tr. · shared",
@@ -1383,7 +1378,6 @@ export const en = {
       onlyYou: "Just you for now.",
       createCodeAndInvite: "Create a code and invite someone.",
       removeFromPlaylist: "Remove from playlist",
-      removeAria: "Remove {username}",
       memberRemoved: "{username} removed from the playlist",
       kickFailed: "Couldn't remove the member",
       left: "You left the playlist",

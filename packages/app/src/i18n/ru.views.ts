@@ -48,7 +48,6 @@ export const viewsRu: typeof viewsEn = {
     searchingSources: "Ищем в источниках — это несколько секунд…",
     loadingMore: "Загружаем…",
     loadMore: "Загрузить ещё",
-    nothingFound: "Ничего не нашлось. Попробуй короче — например, имя артиста.",
     somethingWrong: "Что-то пошло не так",
     loadMoreFailed: "Не удалось загрузить ещё",
     groupCard: {
@@ -429,10 +428,6 @@ export const viewsRu: typeof viewsEn = {
       series: "По дням",
       topTitle: "Топ ошибок",
       emptyTop: "За окно ни одной ошибки",
-      colError: "Ошибка",
-      colCount: "Раз",
-      colLast: "Последняя",
-      colVersions: "Версии",
       note: "Сообщения проскраблены сервером: пути, токены и почты замаскированы; стеки не собираются — только хэш для группировки.",
       clear: "Очистить",
       clearConfirm: "Очистить эти ошибки? Действие необратимо.",
@@ -442,7 +437,6 @@ export const viewsRu: typeof viewsEn = {
       detailHash: "Хэш группы",
       detailLast: "Последняя",
       detailVersions: "Версии",
-      expandHint: "Нажми на строку — подробности",
     },
   },
 };

@@ -58,7 +58,6 @@ export const viewsEn = {
     searchingSources: "Searching in sources — this takes a few seconds…",
     loadingMore: "Loading…",
     loadMore: "Load more",
-    nothingFound: "Nothing found. Try something shorter — an artist's name, for example.",
     somethingWrong: "Something went wrong",
     loadMoreFailed: "Couldn't load more",
     groupCard: {
@@ -444,10 +443,6 @@ export const viewsEn = {
       series: "Per day",
       topTitle: "Top errors",
       emptyTop: "Not a single error in this window",
-      colError: "Error",
-      colCount: "Times",
-      colLast: "Last seen",
-      colVersions: "Versions",
       note: "Messages are scrubbed server-side: paths, tokens and emails are masked; stacks are never collected — only a grouping hash.",
       clear: "Clear",
       clearConfirm: "Clear these errors? This can't be undone.",
@@ -457,7 +452,6 @@ export const viewsEn = {
       detailHash: "Group hash",
       detailLast: "Last seen",
       detailVersions: "Versions",
-      expandHint: "Click a row for details",
     },
   },
 };
