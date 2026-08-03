@@ -138,7 +138,7 @@ describe("API environment and exact CSP contracts", () => {
       // PRODUCTION_CSP); connect-src остаётся последним ради DEVELOPMENT_CSP-конкатенации.
       // muza-stream в media-src — протокол стрима с первых килобайт (Фаза 2):
       // <audio> играет из кастомного протокола, пока файл ещё качается.
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost http://muza-stream.localhost muza-stream://localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: asset: http://asset.localhost; font-src 'self' data:; media-src 'self' blob: https: asset: http://asset.localhost http://muza-stream.localhost muza-stream://localhost; frame-src http://muza-plugin.localhost muza-plugin://localhost; base-uri 'self'; form-action 'self'; connect-src 'self' https://api.muza.lol ipc: http://ipc.localhost asset: http://asset.localhost",
     );
     assert.equal(DEVELOPMENT_CSP, `${PRODUCTION_CSP} http://localhost:8000`);
     assert.doesNotThrow(() => validateTauriConfig({
