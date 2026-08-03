@@ -43,6 +43,35 @@ export type StatsBlockKey = (typeof STATS_BLOCK_KEYS)[number];
  *  токен не ставится, форма кнопок/полей — как в ДС (пилюля/пресет). */
 export const RADIUS_OVERRIDE_OFF = 999;
 
+/** Что показывается за интерфейсом: выкл / из обложки / цвет / градиент /
+ *  картинка по ссылке / анимированный. Ссылка принимает и гифку — путь один и
+ *  тот же <img>, формат картинки его не касается. */
+export type BgType = "none" | "cover" | "color" | "gradient" | "image" | "animated";
+
+/** Фон караоке — те же виды плюс «как основной фон».
+ *
+ *  Почему отдельный тип, а не общий BgType: караоке и интерфейс — РАЗНЫЕ вещи
+ *  (заявка владельца 2026-08-03), и у караоке есть значение, которого у
+ *  основного фона быть не может по смыслу — «повторяй основной». Дефолт —
+ *  "cover" (см. DEFAULT_PREFS): караоке у всех выглядит одинаково с самого
+ *  Stage 3, и молча поменять людям вид нельзя. */
+export type KaraokeBgType = BgType | "same";
+
+/** Сколько обложек крутится в анимированном фоне: одна по центру или две по
+ *  бокам (две — как было до появления настройки). */
+export type BgAnimDiscs = "one" | "two";
+
+/** Куда крутятся обложки анимированного фона.
+ *
+ *  "inward" — навстречу друг другу (верхние края едут к центру): ЭТО ПРЕЖНИЙ
+ *  ВИД, левый круг по часовой, правый против. "outward" — в разные стороны,
+ *  ровно то, что делал старый тумблер bgAnimatedInvert=true. "cw"/"ccw" — оба
+ *  круга в одну сторону, раньше такого выбора не было вовсе.
+ *
+ *  Одна обложка берёт направление ЛЕВОГО круга: "inward" → по часовой,
+ *  "outward" → против (см. таблицу SPIN_PAIRS в prefs/backdrop.ts). */
+export type BgAnimSpin = "inward" | "outward" | "cw" | "ccw";
+
 /** Настраиваемые кнопки плеер-бара: порядок массива = дефолтный порядок.
  *  Несъёмное (обложка/инфо/лайк, prev/play/next, прогресс) сюда не входит. */
 export const BAR_BUTTON_KEYS = [
@@ -124,22 +153,35 @@ export interface Prefs {
    *  не ставится). Та же схема, что у radiusControls/radiusFields. */
   radiusTabs: number;
   /** Фон за интерфейсом (Stage 6): выкл / из обложки / цвет / градиент /
-   *  картинка по URL / анимированный (T15: две обложки вращаются навстречу
+   *  картинка по ссылке / анимированный (T15: две обложки вращаются навстречу
    *  друг другу к центру). Старое поле bgCover=true мигрирует в "cover". */
-  bgType: "none" | "cover" | "color" | "gradient" | "image" | "animated";
+  bgType: BgType;
   bgColor: string;
   /** Второй цвет градиента (bgType=gradient). */
   bgColor2: string;
-  /** URL картинки фона (bgType=image). */
+  /** Ссылка на картинку фона (bgType=image). Гифка сюда годится наравне с
+   *  png/jpg: картинку рисует обычный <img>, и анимированный формат он
+   *  проигрывает сам — отдельного вида фона под гифку не нужно. */
   bgImageUrl: string;
   /** Затемнение фона поверх (0–80%): контент читается на любом фоне. */
   bgDim: number;
   /** Реакция фона на обложку: --bg-0/1 подкрашиваются доминирующим цветом
    *  обложки текущего трека (lib/coverTint). */
   bgTint: boolean;
-  /** T15 (bgType=animated): направления вращения наоборот (левый диск —
-   *  против часовой, правый — по часовой; по умолчанию наоборот). */
+  /** ⚠️ УСТАРЕЛО (2026-08-03), живёт ради совместимости: T15-тумблер «направления
+   *  наоборот». Правда о вращении теперь в bgAnimSpin — этот флаг лишь ЗЕРКАЛО
+   *  (legacyInvertFromSpin в prefs/backdrop.ts держит их в согласии). Убрать
+   *  поле нельзя, пока фон приложения рисует apps/desktop/src/App.tsx: он всё
+   *  ещё читает bgAnimatedInvert. Перевели App.tsx на AnimatedBackdrop — можно
+   *  выкинуть и флаг, и зеркало. Профили и темы с ним мигрируются
+   *  (prefs/load.ts, themes.sanitizeTokens). */
   bgAnimatedInvert: boolean;
+  /** Сколько обложек крутится: одна по центру или две по бокам. Дефолт "two" —
+   *  прежний вид (см. BgAnimDiscs). */
+  bgAnimDiscs: BgAnimDiscs;
+  /** Куда крутятся обложки. Дефолт "inward" = прежний вид; старый
+   *  bgAnimatedInvert=true переезжает в "outward" (см. BgAnimSpin). */
+  bgAnimSpin: BgAnimSpin;
   /** Анимированный фон, раскрытые ручки (спека настроек 19.07, зона 1).
    *  Дефолты = прежним зашитым значениям: у существующих пользователей после
    *  обновления фон выглядит РОВНО как раньше. Пресеты — PRESETS_BG
@@ -154,6 +196,28 @@ export interface Prefs {
    *  ставит рендер — в настройке человек видит положительное «насколько
    *  спрятать за край». */
   bgAnimEdge: number;
+  /** ── ФОН КАРАОКЕ (2026-08-03, заявка владельца) ──────────────────────
+   *  Зеркало группы bg* выше, отдельным набором значений. Владелец поставил
+   *  гифку основным фоном и ждал её же в режиме прослушивания, а там намертво
+   *  сидела размытая обложка трека: «основной фон и фон в караоке — разные
+   *  вещи, эти настройки должны разделяться».
+   *
+   *  ⚠️ karaokeBgType="cover" — ЖЁСТКОЕ значение по умолчанию: у всех, кто
+   *  ничего не настраивал, караоке обязано выглядеть ровно как вчера. Значение
+   *  "same" («как основной фон») — то, чего владелец ждал изначально; оно есть,
+   *  но НЕ по умолчанию. */
+  karaokeBgType: KaraokeBgType;
+  karaokeBgColor: string;
+  karaokeBgColor2: string;
+  /** Ссылка на картинку фона караоке (годится и гифка — см. bgImageUrl). */
+  karaokeBgImageUrl: string;
+  /** Те же четыре ручки анимированного фона, что у bgAnim* — своими значениями. */
+  karaokeBgAnimSpeedSec: number;
+  karaokeBgAnimOpacity: number;
+  karaokeBgAnimScale: number;
+  karaokeBgAnimEdge: number;
+  karaokeBgAnimDiscs: BgAnimDiscs;
+  karaokeBgAnimSpin: BgAnimSpin;
   /** Прозрачность/фон по зонам: своя плотность стекла у плеера, меню,
    *  диалогов, сайдбара и «Сейчас играет» (--glass-<зона>, % плотности). */
   glassZonesOn: boolean;
@@ -481,10 +545,24 @@ export const DEFAULT_PREFS: Prefs = {
   bgDim: 40,
   bgTint: false,
   bgAnimatedInvert: false,
+  bgAnimDiscs: "two",
+  bgAnimSpin: "inward",
   bgAnimSpeedSec: 64,
   bgAnimOpacity: 22,
   bgAnimScale: 140,
   bgAnimEdge: 20,
+  // Караоке: "cover" + прежние значения ручек = сегодняшняя картинка один в
+  // один. Ни один пиксель у не трогавшего настройку не меняется.
+  karaokeBgType: "cover",
+  karaokeBgColor: "#1a1815",
+  karaokeBgColor2: "#101418",
+  karaokeBgImageUrl: "",
+  karaokeBgAnimSpeedSec: 64,
+  karaokeBgAnimOpacity: 22,
+  karaokeBgAnimScale: 140,
+  karaokeBgAnimEdge: 20,
+  karaokeBgAnimDiscs: "two",
+  karaokeBgAnimSpin: "inward",
   glassZonesOn: false,
   glassPlayer: 62,
   glassMenu: 62,

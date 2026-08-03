@@ -1,0 +1,62 @@
+/* ══ ВРАЩЕНИЕ КРУГОВ АНИМИРОВАННОГО ФОНА ══════════════════════════════════
+   Компонент носит свой вид с собой (shell/AnimatedBackdrop.tsx импортирует этот
+   файл побочным импортом — так же устроен settingsShell.css), поэтому площадке
+   не нужно помнить про подключение стилей.
+
+   ⚠️ ИМЕНА КЛАССОВ НАРОЧНО ДРУГИЕ, чем у .muza-orb-spin--cw/--ccw из
+   apps/desktop/src/app.css. Те правила сейчас крутят фон приложения, и пока
+   App.tsx не переехал на этот компонент, живут ОБЕ рисовалки. Совпади имена —
+   правка одной молча меняла бы вторую, а разъехавшаяся скорость или
+   направление ловились бы уже глазами пользователя.
+
+   Только transform: вращение уезжает на компоузинг GPU, раскладка не
+   пересчитывается ни на кадр. */
+.muza-backdrop-orb--cw,
+.muza-backdrop-orb--ccw {
+  will-change: transform;
+}
+
+/* Длительность приезжает inline-стилем из настроек (animationDuration) —
+   значение здесь только страховка на случай, если стиль не проставлен. */
+.muza-backdrop-orb--cw {
+  animation: muzaBackdropOrbCW 64s linear infinite;
+}
+
+.muza-backdrop-orb--ccw {
+  animation: muzaBackdropOrbCCW 64s linear infinite;
+}
+
+/* ПАУЗА, а не animation: none — угол круга замирает там, где был, и возврат
+   (караоке гаснет за --dur-slow, а не исчезает) обходится без прыжка вращения.
+   Ставит атрибут потребитель: у караоке это «оверлей закрыт» и «окна не видно».
+   Цена не косметическая — контейнер кругов несёт filter: blur(--blur-scenery),
+   и каждый кадр вращения заставляет браузер заново размывать полный экран
+   (жалоба владельца 02.08 про ФПС в играх). will-change снимаем заодно: пока
+   круг стоит, отдельный слой GPU под него держать незачем. */
+.muza-backdrop-orb--cw[data-orb-paused],
+.muza-backdrop-orb--ccw[data-orb-paused] {
+  animation-play-state: paused;
+  will-change: auto;
+}
+
+@keyframes muzaBackdropOrbCW {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes muzaBackdropOrbCCW {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+/* Системное «уменьшить анимацию» сильнее любой настройки. Дублирует JS-проверку
+   у потребителя (тот передаёт spinning=false) — на случай переключения системной
+   настройки на лету, когда перерисовки может и не случиться. */
+@media (prefers-reduced-motion: reduce) {
+  .muza-backdrop-orb--cw,
+  .muza-backdrop-orb--ccw {
+    animation: none;
+  }
+}

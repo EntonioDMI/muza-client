@@ -109,3 +109,62 @@ describe("sanitizeTokens: числа в границах своего ряда �
     expect(applyTheme(sanitizeTokens(tokens), DEFAULT_PREFS)).toEqual(DEFAULT_PREFS as Prefs);
   });
 });
+
+/** НАПРАВЛЕНИЕ ВРАЩЕНИЯ ФОНА В СТАРЫХ ТЕМАХ (2026-08-03).
+ *
+ *  В темах, опубликованных до этого дня, направление описано ТОЛЬКО тумблером
+ *  bgAnimatedInvert. Без сшивки applyTheme брал бы флаг из темы, а новое поле
+ *  сбрасывал к дефолту — и тема, автор которой развернул круги, вставала бы
+ *  наполовину. */
+describe("sanitizeTokens: старое направление вращения переезжает в новое поле", () => {
+  it("тема со старым тумблером получает то же направление в новой модели", () => {
+    const tokens = sanitizeTokens({ bgAnimatedInvert: true });
+    expect(tokens.bgAnimSpin).toBe("outward");
+    expect(tokens.bgAnimatedInvert).toBe(true);
+    const prefs = applyTheme(tokens, DEFAULT_PREFS);
+    expect(prefs.bgAnimSpin).toBe("outward");
+    expect(prefs.bgAnimatedInvert).toBe(true);
+  });
+
+  it("тема с новым полем достраивает зеркало для ещё не переехавшей рисовалки", () => {
+    expect(sanitizeTokens({ bgAnimSpin: "ccw" })).toEqual({ bgAnimSpin: "ccw", bgAnimatedInvert: true });
+    expect(sanitizeTokens({ bgAnimSpin: "cw" })).toEqual({ bgAnimSpin: "cw", bgAnimatedInvert: false });
+  });
+
+  it("оба ключа в теме — правда за новым полем", () => {
+    expect(sanitizeTokens({ bgAnimSpin: "inward", bgAnimatedInvert: true })).toEqual({
+      bgAnimSpin: "inward",
+      bgAnimatedInvert: false,
+    });
+  });
+
+  it("бессмыслица в направлении не проезжает", () => {
+    expect(sanitizeTokens({ bgAnimSpin: "; drop" })).toEqual({ bgAnimSpin: "inward", bgAnimatedInvert: false });
+  });
+
+  it("тема без обоих ключей не трогается вовсе", () => {
+    expect(sanitizeTokens({ uiScale: 110 })).toEqual({ uiScale: 110 });
+  });
+});
+
+describe("тема несёт фон караоке", () => {
+  it("ключи караоке классифицированы как оформление и едут с темой", () => {
+    const keys = THEME_KEYS as readonly string[];
+    for (const k of ["karaokeBgType", "karaokeBgImageUrl", "karaokeBgAnimSpin", "karaokeBgAnimDiscs"]) {
+      expect(keys, k).toContain(k);
+    }
+  });
+
+  it("тема без фона караоке возвращает вид по умолчанию — обложку трека", () => {
+    // applyTheme описывает вид ЦЕЛИКОМ: недостающий ключ = дефолт, а не «как
+    // было». Для караоке это защита того, кто настройку не трогал.
+    const prefs = applyTheme(sanitizeTokens({ uiScale: 110 }), { ...DEFAULT_PREFS, karaokeBgType: "animated" });
+    expect(prefs.karaokeBgType).toBe("cover");
+  });
+
+  it("числовые ручки караоке зажимаются, как и все остальные", () => {
+    expect(sanitizeTokens({ karaokeBgAnimScale: 1e9 }).karaokeBgAnimScale).toBe(200);
+    expect(sanitizeTokens({ karaokeBgAnimSpeedSec: -5 }).karaokeBgAnimSpeedSec).toBe(16);
+    expect("karaokeBgAnimOpacity" in sanitizeTokens({ karaokeBgAnimOpacity: NaN })).toBe(false);
+  });
+});

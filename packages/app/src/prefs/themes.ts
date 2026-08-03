@@ -9,6 +9,7 @@
 
 import { DEFAULT_LANG, translate, type Lang } from "../i18n";
 import { VIS_LIMITS } from "../lib/visualizerMath";
+import { legacyInvertFromSpin, normalizeSpin, spinFromLegacyInvert } from "./backdrop";
 import { DEFAULT_PREFS, type Prefs } from "./types";
 import { clampToRange, LEGACY_ENUM_TO_NUMBER, migrateLegacyValue, PREF_RANGES, type NumberRange } from "./legacyPrefs";
 
@@ -36,10 +37,27 @@ export const THEME_KEYS = [
   "bgDim",
   "bgTint",
   "bgAnimatedInvert",
+  "bgAnimDiscs",
+  "bgAnimSpin",
   "bgAnimSpeedSec",
   "bgAnimOpacity",
   "bgAnimScale",
   "bgAnimEdge",
+  // Фон караоке (2026-08-03) — ОФОРМЛЕНИЕ, и потому едет с темой наравне с
+  // основным фоном: автор темы задумал сцену не менее осознанно, чем подложку,
+  // и получить половину его замысла было бы хуже, чем весь. Дефолт «обложка
+  // трека» защищает того, кто ничего не ставил: тема без этих ключей вернёт
+  // именно его (applyTheme сбрасывает недостающее к дефолту).
+  "karaokeBgType",
+  "karaokeBgColor",
+  "karaokeBgColor2",
+  "karaokeBgImageUrl",
+  "karaokeBgAnimSpeedSec",
+  "karaokeBgAnimOpacity",
+  "karaokeBgAnimScale",
+  "karaokeBgAnimEdge",
+  "karaokeBgAnimDiscs",
+  "karaokeBgAnimSpin",
   "blurScenery",
   "baseBg",
   "textDim",
@@ -285,6 +303,12 @@ export const THEME_NUMBER_RANGES: Record<string, NumberRange> = {
   bgAnimOpacity: { min: 5, max: 60 },
   bgAnimScale: { min: 100, max: 200 },
   bgAnimEdge: { min: 0, max: 40 },
+  // Фон караоке — те же границы, что у одноимённых ручек основного фона: это
+  // те же ползунки, просто своим набором значений.
+  karaokeBgAnimSpeedSec: { min: 16, max: 180 },
+  karaokeBgAnimOpacity: { min: 5, max: 60 },
+  karaokeBgAnimScale: { min: 100, max: 200 },
+  karaokeBgAnimEdge: { min: 0, max: 40 },
   blurScenery: { min: 0, max: 80 },
   textDim: { min: 40, max: 80 },
   uiScale: { min: 85, max: 125 },
@@ -382,7 +406,32 @@ export function sanitizeTokens(raw: unknown): ThemeTokens {
     }
     out[k] = v;
   }
+  reconcileSpin(out);
   return out as ThemeTokens;
+}
+
+/** СВЕСТИ СТАРОЕ НАПРАВЛЕНИЕ ВРАЩЕНИЯ С НОВЫМ (2026-08-03).
+ *
+ *  В темах, опубликованных до этого дня, направление описано ТОЛЬКО тумблером
+ *  bgAnimatedInvert. Без этой сшивки applyTheme брал бы флаг из темы, а новое
+ *  поле сбрасывал к дефолту — и тема, автор которой развернул круги, вставала бы
+ *  наполовину: старая рисовалка крутит по-своему, новая по-своему.
+ *
+ *  Сшивка симметрична: чего в теме нет, то выводится из того, что есть. Тема,
+ *  где нет ни одного из двух ключей, не трогается вовсе — иначе снимок дефолтов
+ *  переставал бы возвращаться в дефолты байт-в-байт (сторож в themes.test.ts). */
+function reconcileSpin(out: Record<string, unknown>): void {
+  const hasSpin = "bgAnimSpin" in out;
+  const hasInvert = "bgAnimatedInvert" in out;
+  if (!hasSpin && !hasInvert) return;
+  // Правда — за новым полем; старый флаг всегда пересчитывается из него.
+  // Незнакомая строка в новом поле (`"; drop"`) тут же становится дефолтом:
+  // typeof-фильтр выше её пропускает, а до рисовалки она не доходит.
+  const spin = hasSpin
+    ? normalizeSpin(out.bgAnimSpin)
+    : spinFromLegacyInvert(out.bgAnimatedInvert === true);
+  out.bgAnimSpin = spin;
+  out.bgAnimatedInvert = legacyInvertFromSpin(spin);
 }
 
 export function serializeTheme(name: string, tokens: ThemeTokens): string {

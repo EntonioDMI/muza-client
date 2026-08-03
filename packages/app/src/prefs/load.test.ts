@@ -29,6 +29,41 @@ describe("mergePrefs", () => {
     expect(mergePrefs({ bgCover: true, bgType: "none" }).bgType).toBe("none");
   });
 
+  // ── Направление вращения фона: тумблер → четыре положения (03.08) ──
+  // Человек с настроенным invert=true обязан увидеть РОВНО то же, что видел.
+  it("миграция 03.08: старый bgAnimatedInvert=true → «в разные стороны»", () => {
+    const prefs = mergePrefs({ bgAnimatedInvert: true });
+    expect(prefs.bgAnimSpin).toBe("outward");
+    // Старое поле осталось зеркалом: пока фон приложения рисует App.tsx по нему,
+    // картинка у человека не должна дрогнуть.
+    expect(prefs.bgAnimatedInvert).toBe(true);
+  });
+
+  it("профиль без тумблера вообще (все, кто его не трогал) → прежний вид", () => {
+    const prefs = mergePrefs({ blur: 10 });
+    expect(prefs.bgAnimSpin).toBe("inward");
+    expect(prefs.bgAnimatedInvert).toBe(false);
+    expect(prefs.bgAnimDiscs).toBe("two");
+  });
+
+  it("выбранное направление главнее старого тумблера, зеркало пересчитывается", () => {
+    const prefs = mergePrefs({ bgAnimatedInvert: false, bgAnimSpin: "ccw" });
+    expect(prefs.bgAnimSpin).toBe("ccw");
+    expect(prefs.bgAnimatedInvert).toBe(true);
+  });
+
+  it("бессмыслица в направлении не проезжает в профиль", () => {
+    const prefs = mergePrefs({ bgAnimSpin: "; drop" } as never);
+    expect(prefs.bgAnimSpin).toBe("inward");
+    expect(prefs.bgAnimatedInvert).toBe(false);
+  });
+
+  it("фон караоке у старого профиля — обложка трека, вид караоке не меняется", () => {
+    const prefs = mergePrefs({ blur: 10 });
+    expect(prefs.karaokeBgType).toBe("cover");
+    expect(prefs.karaokeBgImageUrl).toBe("");
+  });
+
   it("миграция «пресеты → ползунки»: строки старых сохранений становятся числами", () => {
     const prefs = mergePrefs({ radiusTiles: "rounder", density: "compact", animSpeed: "fast" } as never);
     expect(prefs.radiusTiles).toBe(160);

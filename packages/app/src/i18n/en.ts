@@ -318,7 +318,20 @@ export const en = {
           image: "Image by link",
           animated: "Animated",
         },
-        invert: { title: "Invert direction", hint: "The left and right background circles swap their spin direction.", ariaLabel: "Invert rotation direction" },
+        discs: {
+          title: "How many covers",
+          hint: "One cover in the middle or two at the sides.",
+          one: "One",
+          two: "Two",
+        },
+        spin: {
+          title: "Spin direction",
+          hint: "Which way the covers turn in the background.",
+          inward: "Toward each other",
+          outward: "Away from each other",
+          cw: "Clockwise",
+          ccw: "Counter-clockwise",
+        },
         anim: {
           title: "Animated background",
           hint: "Two circles in the cover's colors slowly spin behind the interface.",
@@ -335,9 +348,20 @@ export const en = {
           hint: "The square next to it opens a color picker.",
           secondGradientColor: "Second gradient color",
         },
-        imageUrl: { title: "Image by link", hint: "Paste a link to an image — it becomes the background. Blur is set with the slider above." },
+        imageUrl: { title: "Image by link", hint: "Paste a link to an image or a GIF — it becomes the background. Blur is set with the slider above." },
         dim: { title: "Background dimming", hint: "Darkens the background so text and covers stay readable on top of it." },
         tint: { title: "React to cover", hint: "The background gets a light tint from the playing track's cover." },
+      },
+      karaokeBg: {
+        groupTitle: "Karaoke background",
+        type: {
+          title: "Karaoke background",
+          hint: "What you see behind the lyrics in listening mode. It is its own picture — the main background does not change it.",
+          same: "Same as main background",
+        },
+        imageUrl: { hint: "Paste a link to an image or a GIF — it becomes the karaoke background." },
+        discsAriaLabel: "How many covers in karaoke",
+        spinAriaLabel: "Spin direction in karaoke",
       },
       behavior: {
         groupTitle: "Behavior",

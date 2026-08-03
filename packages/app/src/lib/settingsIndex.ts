@@ -151,7 +151,12 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.layout.playerHeight", ["высота плеера", "полоса плеера", "player height"]),
   e("appearance", "customize", "settings.customize.layout.playerCover", ["обложка в плеере", "размер обложки", "cover"]),
   e("appearance", "customize", "settings.customize.background.type", ["фон", "обои", "анимированный", "background", "градиент"]),
-  e("appearance", "customize", "settings.customize.background.invert", ["направление", "вращение"]),
+  // Ряд «Инвертировать направление» разобран 03.08 на два честных выбора:
+  // сколько обложек и куда они крутятся (тумблер умел лишь две позиции из
+  // четырёх). Оба ряда живут и в основном фоне, и в фоне караоке — названия
+  // совпадают, поэтому запись в индексе одна на пару.
+  e("appearance", "customize", "settings.customize.background.discs", ["обложки", "круги", "одна", "две", "discs"]),
+  e("appearance", "customize", "settings.customize.background.spin", ["направление", "вращение", "по часовой", "против часовой", "навстречу", "spin", "rotation"]),
   e("appearance", "customize", "settings.customize.background.anim", ["анимированный фон", "круги", "пресеты фона", "animated background"]),
   e("appearance", "customize", "settings.customize.background.animSpeed", ["скорость фона", "оборот", "вращение", "spin"]),
   e("appearance", "customize", "settings.customize.background.animOpacity", ["заметность", "прозрачность фона", "visibility"]),
@@ -160,6 +165,20 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.background.imageUrl", ["картинка", "изображение", "ссылка"]),
   e("appearance", "customize", "settings.customize.background.dim", ["затемнение", "dim"]),
   e("appearance", "customize", "settings.customize.background.tint", ["оттенок", "tint"]),
+  // Фон караоке (03.08): своя группа рядом с основным фоном. Синонимов больше
+  // обычного намеренно — человек ищет «караоке», «полный экран» и «текст
+  // песни», а называется режим «Прослушивание».
+  e("appearance", "customize", "settings.customize.karaokeBg.type", [
+    "караоке",
+    "фон караоке",
+    "режим прослушивания",
+    "во весь экран",
+    "текст песни",
+    "гифка",
+    "karaoke",
+    "fullscreen",
+    "lyrics background",
+  ]),
   // Визуализатор и отклик на бас переехали из «Расширений» 19.07 (спека §7):
   // ключи остались settings.extensions.*, место рендера — Кастомизация.
   e("appearance", "customize", "settings.extensions.visualizer", ["визуализатор", "волна", "бары", "visualizer"]),

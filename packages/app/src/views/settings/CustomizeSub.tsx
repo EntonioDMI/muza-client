@@ -20,7 +20,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Button, ChipGroup, IconButton, Select, Switch, Tabs } from "@muza/ui";
 import { useT, type TranslationKey } from "../../i18n";
-import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs } from "../../prefs/types";
+import { legacyInvertFromSpin, normalizeDiscs, normalizeSpin, SPIN_PAIRS } from "../../prefs/backdrop";
+import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BgAnimDiscs, type BgAnimSpin, type Prefs } from "../../prefs/types";
 import { matchPreset, PRESETS_BG } from "../../prefs/presets";
 import { availableFonts, CUSTOM_FONT_CHOICE_KEY, fontFamily } from "../../prefs/fonts";
 import { applyCustomFont, installCustomFontFile, removeCustomFont } from "../../prefs/customFont";
@@ -35,6 +36,37 @@ import { ThemeDialogs, useThemeLibrary } from "./themeLibrary";
 /** Потолок силы качания, % от базовой амплитуды: 300% — заметная тряска,
  *  дальше начинается морская болезнь, а не музыка. */
 const BASS_STRENGTH_MAX = 300;
+
+/** Пункты «сколько обложек» — одни и те же для фона приложения и для караоке. */
+function discItems(t: (key: TranslationKey) => string) {
+  return [
+    { key: "one", label: t("settings.customize.background.discs.one") },
+    { key: "two", label: t("settings.customize.background.discs.two") },
+  ];
+}
+
+/** Пункты «куда крутятся». У ОДНОЙ обложки «навстречу друг другу» и «в разные
+ *  стороны» смысла не имеют — ей не с кем расходиться, поэтому список короче.
+ *  Так человек не выбирает пункт, который ничего не изменит. */
+function spinItems(t: (key: TranslationKey) => string, discs: BgAnimDiscs) {
+  const both = [
+    { key: "cw", label: t("settings.customize.background.spin.cw") },
+    { key: "ccw", label: t("settings.customize.background.spin.ccw") },
+  ];
+  if (discs === "one") return both;
+  return [
+    { key: "inward", label: t("settings.customize.background.spin.inward") },
+    { key: "outward", label: t("settings.customize.background.spin.outward") },
+    ...both,
+  ];
+}
+
+/** Что показать выбранным в списке направлений. Одна обложка крутится так же,
+ *  как левый круг пары (SPIN_PAIRS), — значит «навстречу» она отображает как
+ *  «по часовой», и список не врёт о том, что происходит на экране. */
+function spinValue(discs: BgAnimDiscs, spin: BgAnimSpin): string {
+  return discs === "one" ? SPIN_PAIRS[normalizeSpin(spin)][0] : normalizeSpin(spin);
+}
 
 export function CustomizeSub() {
   const { t, lang } = useT();
@@ -83,6 +115,15 @@ export function CustomizeSub() {
     const base = availableFonts();
     return customFontName ? [{ key: CUSTOM_FONT_CHOICE_KEY, label: customFontName, family: customFontFamily }, ...base] : base;
   }, [customFontName, customFontFamily]);
+
+  // ── Направление вращения основного фона ──────────────────────────
+  // Пишется ДВА поля, и это временно: фон приложения пока рисует
+  // apps/desktop/src/App.tsx по старому тумблеру bgAnimatedInvert. Без зеркала
+  // человек крутил бы новый список и не видел на экране ничего. Правда — за
+  // bgAnimSpin (см. Prefs.bgAnimatedInvert и prefs/backdrop.ts); зеркало
+  // снимается вместе с переводом App.tsx на AnimatedBackdrop.
+  const setMainSpin = (bgAnimSpin: BgAnimSpin) =>
+    set({ bgAnimSpin, bgAnimatedInvert: legacyInvertFromSpin(bgAnimSpin) });
 
   return (
     <>
@@ -567,13 +608,24 @@ export function CustomizeSub() {
           />
         </SettingRow>
         {prefs.bgType === "animated" ? (
-          <SettingRow title={t("settings.customize.background.invert.title")} hint={t("settings.customize.background.invert.hint")}>
-            <Switch
-              checked={prefs.bgAnimatedInvert}
-              onChange={(bgAnimatedInvert: boolean) => set({ bgAnimatedInvert })}
-              label={t("settings.customize.background.invert.ariaLabel")}
-            />
-          </SettingRow>
+          <>
+            <SettingRow title={t("settings.customize.background.discs.title")} hint={t("settings.customize.background.discs.hint")}>
+              <Select
+                ariaLabel={t("settings.customize.background.discs.title")}
+                items={discItems(t)}
+                value={normalizeDiscs(prefs.bgAnimDiscs)}
+                onChange={(k: string) => set({ bgAnimDiscs: k as Prefs["bgAnimDiscs"] })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.customize.background.spin.title")} hint={t("settings.customize.background.spin.hint")}>
+              <Select
+                ariaLabel={t("settings.customize.background.spin.title")}
+                items={spinItems(t, normalizeDiscs(prefs.bgAnimDiscs))}
+                value={spinValue(normalizeDiscs(prefs.bgAnimDiscs), prefs.bgAnimSpin)}
+                onChange={(k: string) => setMainSpin(k as BgAnimSpin)}
+              />
+            </SettingRow>
+          </>
         ) : null}
         {/* Ряд виден ВСЕГДА (иначе его не найти поиском), но при другом типе
             фона гаснет с честной подсказкой почему. */}
@@ -656,6 +708,113 @@ export function CustomizeSub() {
         <SettingRow title={t("settings.customize.background.tint.title")} hint={t("settings.customize.background.tint.hint")}>
           <Switch checked={prefs.bgTint} onChange={(bgTint: boolean) => set({ bgTint })} label={t("settings.customize.background.tint.title")} />
         </SettingRow>
+
+        {/* ── ФОН В КАРАОКЕ ───────────────────────────────────────────────
+            Отдельная группа, а не пара строк внутри «Фона»: у режима
+            прослушивания своя картина, и настраивают её отдельно от подложки
+            под интерфейсом (заявка владельца 03.08 — он поставил гифку фоном и
+            ждал её в караоке, а там была обложка трека без единой ручки).
+            Первый пункт списка — «Обложка трека», он же значение по умолчанию:
+            у не трогавшего настройку караоке выглядит ровно как вчера. */}
+        <GroupTitle>{t("settings.customize.karaokeBg.groupTitle")}</GroupTitle>
+        <SettingRow title={t("settings.customize.karaokeBg.type.title")} hint={t("settings.customize.karaokeBg.type.hint")}>
+          <Select
+            ariaLabel={t("settings.customize.karaokeBg.type.title")}
+            items={[
+              { key: "cover", label: t("settings.customize.background.type.cover"), icon: "image" },
+              { key: "same", label: t("settings.customize.karaokeBg.type.same"), icon: "copy" },
+              { key: "none", label: t("common.off"), icon: "circle-off" },
+              { key: "color", label: t("settings.customize.background.type.color"), icon: "paintbrush" },
+              { key: "gradient", label: t("settings.customize.background.type.gradient"), icon: "blend" },
+              { key: "image", label: t("settings.customize.background.type.image"), icon: "link" },
+              { key: "animated", label: t("settings.customize.background.type.animated"), icon: "sparkles" },
+            ]}
+            value={prefs.karaokeBgType}
+            onChange={(k: string) => set({ karaokeBgType: k as Prefs["karaokeBgType"] })}
+          />
+        </SettingRow>
+        {prefs.karaokeBgType === "color" || prefs.karaokeBgType === "gradient" ? (
+          <SettingRow
+            title={prefs.karaokeBgType === "gradient" ? t("settings.customize.background.color.gradientTitle") : t("settings.customize.background.color.title")}
+            hint={t("settings.customize.background.color.hint")}
+          >
+            <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+              <ColorDot color={prefs.karaokeBgColor} label={t("settings.customize.background.color.title")} onPick={(karaokeBgColor) => set({ karaokeBgColor })} />
+              {prefs.karaokeBgType === "gradient" ? (
+                <ColorDot
+                  color={prefs.karaokeBgColor2}
+                  label={t("settings.customize.background.color.secondGradientColor")}
+                  onPick={(karaokeBgColor2) => set({ karaokeBgColor2 })}
+                />
+              ) : null}
+            </div>
+          </SettingRow>
+        ) : null}
+        {prefs.karaokeBgType === "image" ? (
+          <SettingRow title={t("settings.customize.background.imageUrl.title")} hint={t("settings.customize.karaokeBg.imageUrl.hint")}>
+            <SettingInput value={prefs.karaokeBgImageUrl} onChange={(karaokeBgImageUrl) => set({ karaokeBgImageUrl })} placeholder="https://…" width={260} />
+          </SettingRow>
+        ) : null}
+        {prefs.karaokeBgType === "animated" ? (
+          <>
+            <SettingRow title={t("settings.customize.background.discs.title")} hint={t("settings.customize.background.discs.hint")}>
+              <Select
+                ariaLabel={t("settings.customize.karaokeBg.discsAriaLabel")}
+                items={discItems(t)}
+                value={normalizeDiscs(prefs.karaokeBgAnimDiscs)}
+                onChange={(k: string) => set({ karaokeBgAnimDiscs: k as BgAnimDiscs })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.customize.background.spin.title")} hint={t("settings.customize.background.spin.hint")}>
+              <Select
+                ariaLabel={t("settings.customize.karaokeBg.spinAriaLabel")}
+                items={spinItems(t, normalizeDiscs(prefs.karaokeBgAnimDiscs))}
+                value={spinValue(normalizeDiscs(prefs.karaokeBgAnimDiscs), prefs.karaokeBgAnimSpin)}
+                onChange={(k: string) => set({ karaokeBgAnimSpin: k as BgAnimSpin })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.customize.background.animSpeed.title")} hint={t("settings.customize.background.animSpeed.hint")}>
+              <LiveSlider
+                value={prefs.karaokeBgAnimSpeedSec - 16}
+                max={164}
+                label={t("settings.customize.background.animSpeed.title")}
+                suffix={t("settings.customize.units.seconds", { n: prefs.karaokeBgAnimSpeedSec })}
+                onChange={(v) => set({ karaokeBgAnimSpeedSec: 16 + Math.round(v) })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.customize.background.animOpacity.title")} hint={t("settings.customize.background.animOpacity.hint")}>
+              <LiveSlider
+                value={prefs.karaokeBgAnimOpacity - 5}
+                max={55}
+                label={t("settings.customize.background.animOpacity.title")}
+                suffix={`${prefs.karaokeBgAnimOpacity} %`}
+                onChange={(v) => set({ karaokeBgAnimOpacity: 5 + Math.round(v) })}
+              />
+            </SettingRow>
+            <SettingRow title={t("settings.customize.background.animScale.title")} hint={t("settings.customize.background.animScale.hint")}>
+              <LiveSlider
+                value={prefs.karaokeBgAnimScale - 100}
+                max={100}
+                label={t("settings.customize.background.animScale.title")}
+                suffix={`${prefs.karaokeBgAnimScale} %`}
+                onChange={(v) => set({ karaokeBgAnimScale: 100 + Math.round(v) })}
+              />
+            </SettingRow>
+            {/* Заход за край прячет круги за рамкой окна — одной обложке по
+                центру прятаться не за что, ряд ей просто не нужен. */}
+            {normalizeDiscs(prefs.karaokeBgAnimDiscs) === "two" ? (
+              <SettingRow title={t("settings.customize.background.animEdge.title")} hint={t("settings.customize.background.animEdge.hint")}>
+                <LiveSlider
+                  value={prefs.karaokeBgAnimEdge}
+                  max={40}
+                  label={t("settings.customize.background.animEdge.title")}
+                  suffix={`${prefs.karaokeBgAnimEdge} %`}
+                  onChange={(v) => set({ karaokeBgAnimEdge: Math.round(v) })}
+                />
+              </SettingRow>
+            ) : null}
+          </>
+        ) : null}
 
         <GroupTitle>{t("settings.customize.visualizerGroup")}</GroupTitle>
         {/* Визуализатор и отклик на бас устроены внутри как встроенные
@@ -945,6 +1104,21 @@ export function CustomizeSub() {
                 bgDim: DEFAULT_PREFS.bgDim,
                 bgTint: DEFAULT_PREFS.bgTint,
                 bgAnimatedInvert: DEFAULT_PREFS.bgAnimatedInvert,
+                bgAnimDiscs: DEFAULT_PREFS.bgAnimDiscs,
+                bgAnimSpin: DEFAULT_PREFS.bgAnimSpin,
+                // Фон караоке сбрасывается вместе с остальным оформлением —
+                // «Сбросить оформление» обязано возвращать ВЕСЬ вид, иначе
+                // кнопка врёт: сцена осталась бы чужой.
+                karaokeBgType: DEFAULT_PREFS.karaokeBgType,
+                karaokeBgColor: DEFAULT_PREFS.karaokeBgColor,
+                karaokeBgColor2: DEFAULT_PREFS.karaokeBgColor2,
+                karaokeBgImageUrl: DEFAULT_PREFS.karaokeBgImageUrl,
+                karaokeBgAnimSpeedSec: DEFAULT_PREFS.karaokeBgAnimSpeedSec,
+                karaokeBgAnimOpacity: DEFAULT_PREFS.karaokeBgAnimOpacity,
+                karaokeBgAnimScale: DEFAULT_PREFS.karaokeBgAnimScale,
+                karaokeBgAnimEdge: DEFAULT_PREFS.karaokeBgAnimEdge,
+                karaokeBgAnimDiscs: DEFAULT_PREFS.karaokeBgAnimDiscs,
+                karaokeBgAnimSpin: DEFAULT_PREFS.karaokeBgAnimSpin,
                 blurScenery: DEFAULT_PREFS.blurScenery,
                 baseBg: DEFAULT_PREFS.baseBg,
                 textDim: DEFAULT_PREFS.textDim,

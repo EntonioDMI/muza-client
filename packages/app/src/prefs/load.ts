@@ -17,6 +17,7 @@
 
 import { LANGS, resolveMigratedLanguage, type Lang } from "../i18n";
 import { withDefaults, type HotkeyAction } from "../lib/hotkeys";
+import { legacyInvertFromSpin, normalizeSpin, spinFromLegacyInvert } from "./backdrop";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./legacyPrefs";
 import { DEFAULT_PREFS, type Prefs } from "./types";
 
@@ -71,6 +72,20 @@ export function mergePrefs(stored: StoredPrefs, base: Prefs = DEFAULT_PREFS): Pr
   const prefs = typedOverlay(stored, base);
   // миграция Stage 6: старый bgCover=true → bgType="cover"
   if (stored.bgCover && stored.bgType === undefined) prefs.bgType = "cover";
+  // МИГРАЦИЯ ВРАЩЕНИЯ ФОНА (2026-08-03). До этого дня направление жило одним
+  // тумблером bgAnimatedInvert; теперь их четыре (bgAnimSpin). Человек с
+  // настроенным invert=true обязан увидеть ровно то же, что видел, — переносим
+  // его значение, а не сбрасываем к дефолту. Условие «нового поля ещё нет»
+  // важно: у профиля, где человек УЖЕ выбрал направление, старый флаг — всего
+  // лишь зеркало, и переезжать ему некуда.
+  if (stored.bgAnimSpin === undefined && typeof stored.bgAnimatedInvert === "boolean") {
+    prefs.bgAnimSpin = spinFromLegacyInvert(stored.bgAnimatedInvert);
+  } else {
+    prefs.bgAnimSpin = normalizeSpin(prefs.bgAnimSpin);
+  }
+  // Зеркало пересчитывается ВСЕГДА: пока фон приложения рисует App.tsx по
+  // старому флагу, второй правды быть не должно (см. Prefs.bgAnimatedInvert).
+  prefs.bgAnimatedInvert = legacyInvertFromSpin(prefs.bgAnimSpin);
   // вложенные объекты мерджатся глубже: новое под-поле не теряет соседей.
   // Спред здесь идёт от УЖЕ проверенного значения (typedOverlay выше отбросил
   // null и не-объекты), а не напрямую от stored.

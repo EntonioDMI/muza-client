@@ -21,11 +21,19 @@
  *  передаёт — платформенного знания в общем пакете не появляется.
  *
  *  ⚠️ Приложение не должно измениться ни на пиксель: новые умения вводятся
- *  только необязательными пропами с прежним поведением по умолчанию. */
+ *  только необязательными пропами с прежним поведением по умолчанию.
+ *
+ *  ФОН СЦЕНЫ — СВОЙ, А НЕ ОСНОВНОЙ (заявка владельца 03.08). Раньше здесь была
+ *  зашита размытая обложка трека, и поменять её было нечем; владелец поставил
+ *  гифку основным фоном и в караоке её не увидел. Теперь картину рисует
+ *  shell/AnimatedBackdrop по пропу `backdrop` (площадка собирает его из
+ *  настроек karaokeBg*), а без пропа — та же обложка, что и всегда. */
 
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Cover, IconButton, Lyrics, Slider } from "@muza/ui";
 import { fmtTime } from "../lib/format";
+import { AnimatedBackdrop } from "./AnimatedBackdrop";
+import { DEFAULT_SCENE_BACKDROP, type BackdropView } from "../prefs/backdrop";
 import { Visualizer } from "./Visualizer";
 import type { VisualizerTuning } from "../lib/visualizerMath";
 import { useT } from "../i18n";
@@ -91,6 +99,7 @@ export function ListeningMode({
   bassReach = 50,
   anims = true,
   windowVisible = true,
+  backdrop = DEFAULT_SCENE_BACKDROP,
 }: {
   open: boolean;
   track: NowPlayingTrack;
@@ -151,6 +160,10 @@ export function ListeningMode({
    *  гасит все три цикла кадров оверлея. По умолчанию true: у веба своего окна
    *  нет и такого сигнала быть не может — там ничего не меняется. */
   windowVisible?: boolean;
+  /** ФОН КАРАОКЕ (2026-08-03) — собирается площадкой из настроек:
+   *  `backdropViewFromPrefs(prefs, "scene")`. Не передан — прежняя размытая
+   *  обложка трека: ни у кого, кто настройку не трогал, вид не меняется. */
+  backdrop?: BackdropView;
 }) {
   const { t } = useT();
   // OS «уменьшить анимацию» для схлопывания колонки текста. Не state: пока
@@ -305,23 +318,21 @@ export function ListeningMode({
           : "opacity var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow)",
       }}
     >
-      {/* Декоративный размытый задник, не обложка — потому не Cover.
-          Нет обложки → задника просто нет (остаётся фон зоны). */}
-      {track.cover ? (
-        <img
-          src={track.cover}
-          alt=""
-          style={{
-            position: "absolute",
-            inset: "-10%",
-            width: "120%",
-            height: "120%",
-            objectFit: "cover",
-            filter: "blur(var(--blur-scenery))",
-            transform: "scale(1.1)",
-          }}
-        />
-      ) : null}
+      {/* Задник сцены. До 03.08 здесь была намертво зашита размытая обложка
+          трека — и это была ЕДИНСТВЕННАЯ картинка караоке, поменять её было
+          нечем (заявка владельца: «основной фон и фон в караоке — разные вещи»).
+          Теперь картину рисует общий AnimatedBackdrop, а чем именно — решает
+          настройка. Дефолт `backdrop` (DEFAULT_SCENE_BACKDROP) — та же самая
+          размытая обложка, пиксель в пиксель.
+          Вращение кругов замирает, когда оверлей закрыт или окна не видно: их
+          контейнер несёт полноэкранный blur, и каждый кадр вращения стоил бы
+          пересчёта размытия впустую (жалоба владельца 02.08 про ФПС в играх). */}
+      <AnimatedBackdrop
+        view={backdrop}
+        cover={track.cover ?? null}
+        spinning={anims && !reducedMotion}
+        paused={!open || !windowVisible}
+      />
       {/* Затемняющая плёнка поверх задника. backdrop-filter здесь БЫЛ и снят
           02.08: размывать ему нечего. Ниже по стопке — только задник, который
           уже размыт своим filter: blur(--blur-scenery) = 64px, и непрозрачный
