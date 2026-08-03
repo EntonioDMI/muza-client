@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resumeStore } from "./resumeStore";
 import type { PlayerTrack } from "../player/types";
 
@@ -110,5 +110,53 @@ describe("resumeStore: миграция записей старого клиен
     const t: PlayerTrack = { ...track("local:abc"), kind: "local", cover: null, localHash: "abc" };
     resumeStore.saveLast(t);
     expect(resumeStore.getLast()).toEqual(t);
+  });
+});
+
+/** Троттлинг записи (FLUSH_MS) нужен: onTime тикает ~4 Гц, писать в
+ *  localStorage на каждый тик нельзя. Но выхода по закрытию окна у него не
+ *  было (аудит 2026-08-03) — последний неотправленный интервал терялся, и
+ *  «продолжить с места» возвращало человека на несколько секунд назад. */
+describe("resumeStore: сброс на диск при уходе страницы", () => {
+  const KEY = "muza.resume.v1";
+  const stored = (): Record<string, number> => JSON.parse(localStorage.getItem(KEY) ?? "{}");
+
+  beforeEach(() => {
+    // Хвост предыдущих кейсов: их save() завёл РЕАЛЬНЫЙ таймер, который
+    // фейковым часам уже не подчинится — гасим его честным сбросом ДО подмены.
+    window.dispatchEvent(new Event("pagehide"));
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  it("закрытие окна (pagehide) пишет накопленное, не дожидаясь таймера", () => {
+    resumeStore.save("rs-close", 42);
+    expect(stored()["rs-close"]).toBeUndefined(); // ещё только в памяти — троттлинг
+
+    window.dispatchEvent(new Event("pagehide"));
+
+    expect(stored()["rs-close"]).toBe(42);
+  });
+
+  it("окно скрыли — тоже пишем: закрытия WebView может и не случиться", () => {
+    resumeStore.save("rs-hide", 77);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(stored()["rs-hide"]).toBe(77);
+  });
+
+  it("обычный троттленный сброс по таймеру не сломан", () => {
+    resumeStore.save("rs-timer", 13);
+    expect(stored()["rs-timer"]).toBeUndefined();
+
+    vi.advanceTimersByTime(4_000);
+
+    expect(stored()["rs-timer"]).toBe(13);
   });
 });

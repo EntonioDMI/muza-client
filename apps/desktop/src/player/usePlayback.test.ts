@@ -41,6 +41,8 @@ const h = vi.hoisted(() => ({
     setMicConfig: vi.fn(),
     analyser: vi.fn(),
   },
+  /** Живые микрофоны (enumerateDevices) — стенд фолбэка «id → имя». */
+  listInputDevices: vi.fn(),
   /** Колбэки, которые usePlayback отдал движку — ими эмулируем timeupdate. */
   cb: { current: null as EngineCallbacks | null },
 }));
@@ -65,12 +67,20 @@ vi.mock("../lib/engine", () => ({
 // доказало бы прокладку prefs.audioOutputs → engine.setOutputs). Мок —
 // детерминированный pass-through: сопоставление deviceId/label — забота
 // outputDevices.test.ts, здесь важен только маршрут prefs → движок.
-vi.mock("./outputDevices", () => ({
-  deviceAccessUnlocked: () => true,
-  listOutputDevices: vi.fn(async () => []),
-  resolveRoutes: (stored: AudioOutputRoute[]) =>
-    stored.map((r) => ({ deviceId: r.deviceId, volume: r.volume, followsMaster: r.followsMaster, mixMic: r.mixMic })),
-}));
+// resolveMicDeviceId НЕ мокается (importActual): это чистая функция, и весь
+// смысл теста микрофона — что usePlayback реально ходит за списком устройств и
+// применяет её результат, а не подсовывает сохранённый id как есть.
+vi.mock("./outputDevices", async () => {
+  const actual = await vi.importActual<typeof import("./outputDevices")>("./outputDevices");
+  return {
+    deviceAccessUnlocked: () => true,
+    listOutputDevices: vi.fn(async () => []),
+    listInputDevices: h.listInputDevices,
+    resolveMicDeviceId: actual.resolveMicDeviceId,
+    resolveRoutes: (stored: AudioOutputRoute[]) =>
+      stored.map((r) => ({ deviceId: r.deviceId, volume: r.volume, followsMaster: r.followsMaster, mixMic: r.mixMic })),
+  };
+});
 
 vi.mock("./audioEngine", () => ({
   AudioEngine: class {
@@ -158,6 +168,9 @@ beforeEach(() => {
   h.engineStreamStart.mockReset();
   h.engineStreamStart.mockResolvedValue(false);
   h.getTrackSources.mockImplementation(async () => []);
+  // По умолчанию перечисление ничего не знает — сохранённый микрофон уходит на
+  // движок как есть (см. resolveMicDeviceId: пустой список ≠ «устройство ушло»).
+  h.listInputDevices.mockImplementation(async () => []);
   h.cb.current = null;
   // sourcesCache — модульный синглтон и переживает тесты: без сброса трек
   // получал источники, закэшированные предыдущим кейсом (поймано 19.07 на
@@ -848,6 +861,155 @@ describe("стрим с первых килобайт (Фаза 2, muza-stream)"
   });
 });
 
+/** Трек БЕЗ длительности (аудит 2026-08-03). duration=0 приезжает из импорта
+ *  локального файла, у которого не разобрались метаданные. Вся арифметика
+ *  «сколько осталось» считает duration − position, то есть у такого трека она
+ *  всегда отрицательна — и три места вели себя так, будто трек вечно «в самом
+ *  конце»: точный gapless-опрос вырождался в таймер 50 Гц на всю длительность
+ *  трека, преднагрузка соседа дёргалась на каждом тике, а скробблер засчитывал
+ *  трек как ПОЛНОСТЬЮ прослушанный после первой же секунды. */
+describe("usePlayback: трек без длительности", () => {
+  const noDur = (id: string): PlayerTrack => ({ ...trk(id), duration: 0 });
+
+  it("не превращает точный опрос стыка в таймер 50 Гц", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const Z = noDur("nd-poll");
+      h.resolvePlayable.mockResolvedValueOnce({ url: "nd.webm", fromCache: true, provider: "youtube" });
+      const hook = mount({ gapless: true }); // условие входа в pollGapless
+      await act(async () => {
+        hook.result.current.playContext([Z, B], "nd-poll");
+      });
+      h.engine.position.mockClear();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+
+      // На старом коде здесь ~100 пробуждений (шаг 20мс), каждое с обращением
+      // к движку и пересчётом следующего индекса. Порог 2 — запас на тик
+      // сторожа замершего звука, он тут ни при чём.
+      expect(h.engine.position.mock.calls.length).toBeLessThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("…но у нормального трека точный опрос по-прежнему работает", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+      const hook = mount({ gapless: true });
+      // 199 из 200: до конца 1с — это ВНУТРИ окна тесного опроса (2с), но ещё
+      // не триггер стыка (0.1с). Из начала трека опрос спит одним дальним
+      // прыжком и в двухсекундном окне теста не проснулся бы вовсе.
+      h.engine.position.mockReturnValue(199);
+      await act(async () => {
+        hook.result.current.playContext([A, B], "a");
+      });
+      h.engine.position.mockClear();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+
+      // Сторож фикса: экономия не должна была убить сам механизм — у трека с
+      // длительностью опрос обязан жить (дальний прыжок + тесное окно).
+      expect(h.engine.position.mock.calls.length).toBeGreaterThan(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("не дёргает преднагрузку соседа на каждом тике", async () => {
+    const Z = noDur("nd-pre");
+    // Резолв отвечает ВСЕГДА (не Once): иначе преднагрузка на старом коде
+    // падала бы на пустом моке, и тест зеленел бы не по существу.
+    h.resolvePlayable.mockResolvedValue({ url: "nd.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([Z, B], "nd-pre");
+    });
+    h.engine.preload.mockClear();
+
+    for (const sec of [1, 2, 3]) {
+      await act(async () => {
+        h.cb.current?.onTime(sec);
+      });
+    }
+
+    expect(h.engine.preload).not.toHaveBeenCalled();
+  });
+
+  it("не засчитывается как «дослушан» после первой же секунды", async () => {
+    const onPlayEnd = vi.fn();
+    const Z = noDur("nd-scrobble");
+    h.resolvePlayable.mockResolvedValue({ url: "nd.webm", fromCache: true, provider: "youtube" });
+    const { result } = renderHook(() =>
+      usePlayback({ api, initialQueue: [Z, B], prefs: { ...DEFAULT_PREFS }, onError: h.onError, onPlayEnd }),
+    );
+    await act(async () => {
+      result.current.playContext([Z, B], "nd-scrobble");
+    });
+    // Одна реально прослушанная секунда — порог «есть что скробблить», но
+    // никак не «дослушал до конца».
+    for (const sec of [1, 2]) {
+      await act(async () => {
+        h.cb.current?.onTime(sec);
+      });
+    }
+
+    await act(async () => {
+      result.current.playContext([Z, B], "b"); // ручное переключение — flushPlayEnd
+    });
+
+    expect(onPlayEnd).toHaveBeenCalledWith(expect.objectContaining({ track: expect.objectContaining({ id: "nd-scrobble" }), completed: false }));
+  });
+});
+
+/** Спиннер добычи и перебитый старт (аудит 2026-08-03 подозревал утечку
+ *  «Добываем трек…» под уже играющей музыкой). Инвариант, который тут
+ *  охраняется: сброс признака в finally стоит под сверкой номера старта не по
+ *  недосмотру — иначе устаревший старт гасил бы спиннер СВЕЖЕГО, начавшегося
+ *  за время его добычи. Гасит спиннер всегда самый новый старт, каким бы путём
+ *  он ни пошёл, включая мгновенный преднагруженный. */
+describe("usePlayback: спиннер добычи при перебитом старте", () => {
+  it("перебили холодную добычу преднагруженным треком — спиннер гаснет", async () => {
+    const C = trk("spin-c");
+    const hook = mount();
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+    await act(async () => {
+      hook.result.current.playContext([A, B, C], "a");
+    });
+    // прогреваем преднагрузку соседа B (remaining 15с ≤ preloadAheadSec)
+    h.resolvePlayable.mockResolvedValueOnce({ url: "b.webm", fromCache: true, provider: "youtube" });
+    await act(async () => {
+      h.cb.current?.onTime(185);
+    });
+    expect(h.engine.preload).toHaveBeenCalledWith("b.webm");
+
+    // холодный клик по третьему треку: добыча висит, спиннер горит
+    const releaseC = deferResolve("spin-c.webm");
+    await act(async () => {
+      hook.result.current.playContext([A, B, C], "spin-c");
+    });
+    expect(hook.result.current.buffering).toBe(true);
+
+    // …человек передумал и кликнул преднагруженный трек — ждать больше нечего
+    await act(async () => {
+      hook.result.current.playContext([A, B, C], "b");
+    });
+    expect(hook.result.current.buffering).toBe(false);
+
+    // и устаревшая добыча, дойдя, спиннер не воскрешает
+    await act(async () => {
+      releaseC();
+    });
+    expect(hook.result.current.buffering).toBe(false);
+    expect(hook.result.current.track?.id).toBe("b");
+  });
+});
+
 /** Вывод на устройства (2026-07-22) + голос (v2): моки setOutputs/setMicConfig
  *  существовали в h.engine с самого начала файла, но были "captured, без
  *  единого expect" (аудит 22.07) — обе прокладки prefs → движок стояли без
@@ -918,10 +1080,57 @@ describe("usePlayback: вывод на устройства и голос → д
     });
     h.engine.setMicConfig.mockClear();
 
-    act(() => {
+    await act(async () => {
       rerender({ micDeviceId: "mic-1", micGain: 42 });
+      await flushEffects(); // сопоставление микрофона асинхронно (enumerateDevices)
     });
 
     expect(h.engine.setMicConfig).toHaveBeenCalledWith({ deviceId: "mic-1", gain: 42 });
+  });
+
+  it("id микрофона сменился после переподключения — захват уходит на устройство с тем же именем", async () => {
+    // Прод-сценарий: микрофон выдернули и воткнули обратно, Chromium выдал ему
+    // НОВЫЙ deviceId. Сохранённый id мёртв — без сопоставления по имени
+    // getUserMedia({deviceId:{exact}}) отказывает, и движок молча падает на
+    // системный микрофон: голос идёт не с того устройства.
+    h.listInputDevices.mockImplementation(async () => [
+      { deviceId: "mic-новый", label: "Микрофон Yeti" },
+      { deviceId: "mic-камера", label: "Веб-камера" },
+    ]);
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+    const { result } = renderHook(() =>
+      usePlayback({
+        api,
+        initialQueue: [A, B],
+        prefs: { ...DEFAULT_PREFS, micDeviceId: "mic-старый", micDeviceLabel: "Микрофон Yeti", micGain: 70 },
+        onError: h.onError,
+      }),
+    );
+    await act(async () => {
+      await flushEffects(); // сопоставление успевает до создания движка
+    });
+    await act(async () => {
+      result.current.playContext([A, B], "a"); // ленивая фабрика — движок рождается тут
+    });
+
+    // И ленивая фабрика, и эффект обязаны нести ЖИВОЙ id, а не сохранённый
+    expect(h.engine.setMicConfig).toHaveBeenCalledWith({ deviceId: "mic-новый", gain: 70 });
+    expect(h.engine.setMicConfig).not.toHaveBeenCalledWith(expect.objectContaining({ deviceId: "mic-старый" }));
+  });
+
+  it("микрофон не выбран — за списком устройств не ходим", async () => {
+    h.resolvePlayable.mockResolvedValueOnce({ url: "a.webm", fromCache: true, provider: "youtube" });
+    const { result } = renderHook(() =>
+      usePlayback({ api, initialQueue: [A, B], prefs: { ...DEFAULT_PREFS }, onError: h.onError }),
+    );
+    await act(async () => {
+      result.current.playContext([A, B], "a");
+      await flushEffects();
+    });
+
+    // Перечисление разблокирует устройства через getUserMedia — дёргать его на
+    // старте у всех, кто голос вообще не настраивал, незачем.
+    expect(h.listInputDevices).not.toHaveBeenCalled();
+    expect(h.engine.setMicConfig).toHaveBeenCalledWith({ deviceId: null, gain: DEFAULT_PREFS.micGain });
   });
 });

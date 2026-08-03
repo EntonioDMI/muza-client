@@ -348,3 +348,96 @@ describe("AudioEngine: маршрутизация на устройства (т�
     });
   });
 });
+
+/** Пауза во время кроссфейда (аудит 2026-08-03). Уходящий трек живёт в ДРУГОМ
+ *  слоте, чем активный: pause() глушил только активный, а уходящий доигрывал
+ *  свою кривую громкости целиком — на ползунке 8–12с это до двенадцати секунд
+ *  музыки после нажатия «пауза». Кривая идёт по часам AudioContext и паузу
+ *  элемента не замечает, поэтому «оно само стихнет» здесь неверно: стихнет
+ *  ровно через crossfadeSec, а не сейчас.
+ *
+ *  Стенд webaudio (MockAudioContext) обязателен: в plain-режиме ветки фейда
+ *  вообще нет (см. play(): `fade && this.ctx && ...`). jsdom не проигрывает
+ *  медиа — признак paused держим сами через шпионы play/pause, иначе условие
+ *  `!current.el.paused` не пустило бы код в ветку кроссфейда вообще. */
+describe("AudioEngine: обрыв кроссфейда (пауза/сик/новый старт)", () => {
+  const origPaused = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "paused");
+  type FakeEl = HTMLMediaElement & { _paused?: boolean };
+  const A_URL = "http://asset.localhost/a.webm";
+  const B_URL = "http://asset.localhost/b.webm";
+  const slotEls = () => [...document.querySelectorAll("audio[data-muza-slot]")] as HTMLAudioElement[];
+  const soundingEls = () => slotEls().filter((el) => !el.paused);
+
+  beforeEach(() => {
+    vi.stubGlobal("AudioContext", MockAudioContext);
+    Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+      configurable: true,
+      get(this: FakeEl) {
+        return this._paused !== false;
+      },
+    });
+    playSpy.mockImplementation(async function (this: FakeEl) {
+      this._paused = false;
+    });
+    pauseSpy.mockImplementation(function (this: FakeEl) {
+      this._paused = true;
+    });
+  });
+
+  afterEach(() => {
+    if (origPaused) Object.defineProperty(HTMLMediaElement.prototype, "paused", origPaused);
+  });
+
+  /** Завести кроссфейд длиной sec: A играет, поверх него стартует B. */
+  const startCrossfade = async (sec: number): Promise<AudioEngine> => {
+    const engine = makeEngine();
+    await engine.play(A_URL, 1, 0);
+    await engine.play(B_URL, 1, sec);
+    expect(soundingEls()).toHaveLength(2); // оба слота звучат — стык реально идёт
+    return engine;
+  };
+
+  it("pause() глушит ОБА слота, а не только активный", async () => {
+    const engine = await startCrossfade(12);
+
+    engine.pause();
+
+    expect(soundingEls()).toHaveLength(0);
+  });
+
+  it("seek() снимает уходящий трек", async () => {
+    const engine = await startCrossfade(12);
+
+    engine.seek(30);
+
+    expect(soundingEls()).toHaveLength(1); // остался только тот, по которому прыгнули
+  });
+
+  it("seek(keepCrossfade) стык НЕ рвёт — это досик «продолжить с места» на старте трека", async () => {
+    const engine = await startCrossfade(12);
+
+    engine.seek(30, true);
+
+    // Входящий трек в этот момент ещё на нуле кривой: сняли бы уходящего —
+    // получили бы дыру тишиной на всю длину кроссфейда.
+    expect(soundingEls()).toHaveLength(2);
+  });
+
+  it("новый старт БЕЗ фейда не оставляет уходящий доигрывать", async () => {
+    const engine = await startCrossfade(12);
+    // Кроссфейд выключили / трек преднагружен — старт идёт мгновенной веткой,
+    // а она меняет содержимое АКТИВНОГО слота, уходящего не касаясь.
+    await engine.play("http://asset.localhost/c.webm", 1, 0);
+
+    expect(soundingEls()).toHaveLength(1);
+  });
+
+  it("resume() после паузы не воскрешает уходящий трек", async () => {
+    const engine = await startCrossfade(12);
+    engine.pause();
+
+    await expect(engine.resume()).resolves.toBe(true);
+
+    expect(soundingEls()).toHaveLength(1);
+  });
+});

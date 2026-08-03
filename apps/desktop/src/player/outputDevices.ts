@@ -94,6 +94,33 @@ export function resolveRoutes(stored: AudioOutputRoute[], devices: OutputDeviceI
   return routes;
 }
 
+/** Сохранённый микрофон → живой deviceId. Тот же фолбэк, что у маршрутов
+ *  вывода (resolveRoutes выше), и по той же причине: Chromium меняет deviceId
+ *  при переподключении устройства, а имя обычно остаётся. Без фолбэка захват
+ *  голоса молча уходил на микрофон ПО УМОЛЧАНИЮ (getUserMedia с мёртвым
+ *  deviceId: {exact} отказывает, и движок падает на системный) — человек
+ *  выбрал один микрофон, а в «голос в устройство» шёл другой. Экран настроек
+ *  чинит сам профиль, но только когда в него зайдут; здесь — на каждом
+ *  применении, в том числе на devicechange (аудит 2026-08-03).
+ *
+ *  Пустой сохранённый id — «системный по умолчанию», это не поломка: возвращаем
+ *  null и ничего не ищем. Не нашли ни по id, ни по имени — тоже null: пусть
+ *  система выберет сама, это ближе к ожиданию, чем отказ захвата. */
+export function resolveMicDeviceId(
+  storedId: string,
+  storedLabel: string,
+  devices: OutputDeviceInfo[],
+): string | null {
+  if (!storedId) return null;
+  // Пустой список — это «мы ничего не знаем» (доступ к устройствам не дали,
+  // enumerateDevices упала), а не «устройство пропало»: отменять выбор человека
+  // по незнанию нельзя, отдаём сохранённый id как есть.
+  if (devices.length === 0) return storedId;
+  if (devices.some((d) => d.deviceId === storedId)) return storedId;
+  const byLabel = storedLabel ? devices.find((d) => d.label === storedLabel) : undefined;
+  return byLabel?.deviceId ?? null;
+}
+
 /** Микрофоны (audioinput) — для выбора «какой голос подмешивать» (v2).
  *  Виртуальные default/communications отфильтрованы так же, как у выводов:
  *  «системный по умолчанию» — это пустой deviceId в Prefs.micDeviceId. */

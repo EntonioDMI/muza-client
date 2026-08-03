@@ -41,6 +41,15 @@ import { WarmQueue, type WarmOutcome } from "./warmQueue";
  *  очереди, который пользователь может никогда не дослушать. */
 const QUEUE_WARM_AHEAD_MAX = 30;
 
+/** Потолок карты пропсов строк (rowPropsById ниже). Записи нужны только ради
+ *  СТАБИЛЬНОСТИ ссылок между рендерами — то есть живут ровно столько, сколько
+ *  строка на экране; но клались на каждый когда-либо отрендеренный id и не
+ *  убирались никогда (аудит 2026-08-03: за долгую сессию прокрутки поиска и
+ *  медиатеки это тысячи записей по три замыкания в каждой). Потолок с запасом
+ *  больше любого экрана: вытесняются только НЕвидимые сейчас строки, так что
+ *  на стабильность видимого списка это не влияет. */
+const ROW_PROPS_MAX = 512;
+
 export interface WarmRowProps {
   /** React 19 ref-cleanup: наблюдение снимается возвратом, ref(null) не ждём. */
   ref: (el: HTMLElement | null) => (() => void) | undefined;
@@ -133,6 +142,16 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
     // стабильные пропсы на id: ref не меняется между рендерами — React не
     // передёргивает наблюдение на каждый рендер списка
     const rowPropsById = new Map<string, WarmRowProps>();
+    /** Вытеснить самые старые записи сверх потолка, пропуская видимые сейчас
+     *  строки: у них пересоздание пропсов передёрнуло бы ref (unobserve →
+     *  observe) прямо под глазами. Порядок обхода Map = порядок вставки. */
+    const pruneRowProps = (): void => {
+      if (rowPropsById.size <= ROW_PROPS_MAX) return;
+      for (const key of rowPropsById.keys()) {
+        if (rowPropsById.size <= ROW_PROPS_MAX) break;
+        if (!visibleEls.has(key)) rowPropsById.delete(key);
+      }
+    };
     const warmRow = (id: string): WarmRowProps => {
       let props = rowPropsById.get(id);
       if (!props) {
@@ -160,6 +179,7 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
           },
         };
         rowPropsById.set(id, props);
+        pruneRowProps();
       }
       return props;
     };

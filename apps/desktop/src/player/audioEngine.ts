@@ -130,6 +130,16 @@ export class AudioEngine {
   private micGain: GainNode | null = null;
   private micTaps = new Set<OutputTap>();
 
+  /** Слот, в котором доигрывает УХОДЯЩИЙ трек кроссфейда, и таймер его уборки.
+   *  Почему это отдельное поле, а не «второй слот»: кривая громкости уходящего
+   *  живёт на часах AudioContext и не связана с воспроизведением элемента —
+   *  пауза активного слота уходящий не трогала вообще, и он честно доигрывал
+   *  свою кривую целиком. На ползунке кроссфейда 8–12с это до двенадцати секунд
+   *  музыки после нажатия «пауза» (аудит 2026-08-03). Все переходы, обрывающие
+   *  стык (pause/seek/stop/новый play), обязаны звать dropFading(). */
+  private fading: Slot | null = null;
+  private fadeTimer: ReturnType<typeof setTimeout> | null = null;
+
   private volume = 64;
   private speed = 1;
   private eqOn = false;
@@ -507,12 +517,40 @@ export class AudioEngine {
     }
   }
 
+  /** Снять уходящий трек предыдущего кроссфейда: пауза, освобождение слота и
+   *  обнуление его гейна (кривая могла замереть на середине — следующий трек в
+   *  этом слоте заиграл бы на её остатке). Активный слот не трогаем никогда:
+   *  если уходящий успел снова стать активным (второй стык подряд), им уже
+   *  владеет обычный путь play(). */
+  private dropFading(): void {
+    const slot = this.fading;
+    this.fading = null;
+    if (this.fadeTimer !== null) {
+      clearTimeout(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+    if (!slot || this.slots[this.active] === slot) return;
+    slot.el.pause();
+    slot.el.removeAttribute("src");
+    slot.el.load();
+    slot.url = null;
+    if (slot.gain) {
+      slot.gain.gain.cancelScheduledValues(this.ctx?.currentTime ?? 0);
+      slot.gain.gain.value = 0;
+    }
+  }
+
   /** Играть URL в активном слоте; crossfadeSec > 0 — мягкий переход из
    *  текущего трека (слоты меняются местами). norm — множитель нормализации. */
   async play(url: string, norm: number, crossfadeSec = 0): Promise<void> {
     await this.ensureGraph(url);
     if (this.ctx?.state === "suspended") await this.ctx.resume();
 
+    // Предыдущий стык мог ещё доигрывать в соседнем слоте — а именно он и
+    // станет целью нового старта. Снимаем ДО того, как тронем слоты: иначе
+    // старый уходящий либо продолжал бы звучать (новый старт без фейда), либо
+    // его уборочный таймер сработал бы уже поверх нового трека.
+    this.dropFading();
     const current = this.slots[this.active];
     const fade = crossfadeSec > 0 && current.url !== null && !current.el.paused;
     const nextIndex = fade ? 1 - this.active : this.active;
@@ -536,7 +574,10 @@ export class AudioEngine {
       slot.gain.gain.cancelScheduledValues(t);
       slot.gain.gain.setValueCurveAtTime(scaledCurve(XFADE_IN, slot.norm), t, crossfadeSec);
       const old = current;
-      setTimeout(() => {
+      this.fading = old; // пауза/сик/новый старт обязаны знать, кого ещё глушить
+      this.fadeTimer = setTimeout(() => {
+        this.fadeTimer = null;
+        if (this.fading === old) this.fading = null;
         // к этому моменту слот мог снова стать активным — не трогаем тогда
         if (this.slots[this.active] !== old) {
           old.el.pause();
@@ -576,6 +617,9 @@ export class AudioEngine {
   }
 
   pause(): void {
+    // Уходящий трек кроссфейда живёт в ДРУГОМ слоте и сам не замолкает —
+    // без этого «пауза» оставляла бы его звучать до конца кривой (dropFading).
+    this.dropFading();
     this.slots[this.active]?.el.pause();
   }
 
@@ -604,6 +648,7 @@ export class AudioEngine {
 
   /** Полная остановка: снять источник и обнулить оба слота. */
   stop(): void {
+    this.dropFading(); // и снять уборочный таймер стыка — прибирать уже нечего
     for (const slot of this.slots) {
       slot.el.pause();
       slot.el.removeAttribute("src");
@@ -612,7 +657,15 @@ export class AudioEngine {
     }
   }
 
-  seek(sec: number): void {
+  /** Перемотка активного слота. keepCrossfade — НЕ обрывать идущий стык:
+   *  единственный такой вызов — досик на сохранённую позицию сразу после
+   *  старта трека («продолжить с места», usePlayback.startAt). Там стык только
+   *  что начался, входящий трек ещё на нуле громкости — обрыв уходящего дал бы
+   *  дыру тишиной на всю длину кривой. Обычная перемотка (человек тянет
+   *  полоску) уходящий снимает: он привязан к моменту стыка, а не к новой
+   *  позиции, и звучать поверх неё ему незачем. */
+  seek(sec: number, keepCrossfade = false): void {
+    if (!keepCrossfade) this.dropFading();
     const el = this.slots[this.active]?.el;
     if (el) el.currentTime = Math.max(0, sec);
   }

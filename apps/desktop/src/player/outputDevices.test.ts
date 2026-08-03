@@ -4,7 +4,7 @@
  *  требуют navigator.mediaDevices, которого в jsdom нет — не тестируем здесь,
  *  их прикрывает try/catch → [] (см. outputDevices.ts). */
 import { describe, expect, it } from "vitest";
-import { resolveRoutes, type OutputDeviceInfo } from "./outputDevices";
+import { resolveMicDeviceId, resolveRoutes, type OutputDeviceInfo } from "./outputDevices";
 import type { AudioOutputRoute } from "../types";
 
 const route = (over: Partial<AudioOutputRoute> = {}): AudioOutputRoute => ({
@@ -85,5 +85,43 @@ describe("outputDevices.resolveRoutes", () => {
       { deviceId: "dev-1", volume: 90, followsMaster: undefined, mixMic: false },
       { deviceId: "dev-3", volume: 100, followsMaster: undefined, mixMic: true },
     ]);
+  });
+});
+
+/** resolveMicDeviceId — тот же фолбэк «id → имя» для МИКРОФОНА (2026-08-03).
+ *  До него потребитель (usePlayback) брал сохранённый id как есть, и после
+ *  переподключения микрофона Chromium выдавал устройству новый id — захват
+ *  молча уходил на микрофон по умолчанию, то есть голос шёл не с того
+ *  устройства, которое человек выбрал. */
+describe("outputDevices.resolveMicDeviceId", () => {
+  const mic = (deviceId: string, label: string): OutputDeviceInfo => ({ deviceId, label });
+
+  it("id жив — берём его", () => {
+    expect(resolveMicDeviceId("mic-1", "Микрофон Yeti", [mic("mic-1", "Микрофон Yeti")])).toBe("mic-1");
+  });
+
+  it("id сменился после переподключения — находим по имени", () => {
+    const devices = [mic("mic-новый", "Микрофон Yeti"), mic("mic-другой", "Веб-камера")];
+
+    expect(resolveMicDeviceId("mic-старый", "Микрофон Yeti", devices)).toBe("mic-новый");
+  });
+
+  it("устройства нет ни по id, ни по имени — системный по умолчанию (null)", () => {
+    expect(resolveMicDeviceId("mic-старый", "Микрофон Yeti", [mic("mic-другой", "Веб-камера")])).toBeNull();
+  });
+
+  it("имя не сохранено (старый профиль) — искать нечем, честный null", () => {
+    expect(resolveMicDeviceId("mic-старый", "", [mic("mic-новый", "Микрофон Yeti")])).toBeNull();
+  });
+
+  it("пустой сохранённый id — это «системный по умолчанию», а не поломка", () => {
+    expect(resolveMicDeviceId("", "", [mic("mic-1", "Микрофон Yeti")])).toBeNull();
+  });
+
+  it("список устройств пуст (доступ не дали) — выбор человека не отменяем", () => {
+    // Пустой список значит «мы ничего не знаем», а не «устройство пропало»:
+    // отдать null здесь = молча переехать на системный микрофон у всех, кому
+    // Windows не дала перечислить устройства.
+    expect(resolveMicDeviceId("mic-1", "Микрофон Yeti", [])).toBe("mic-1");
   });
 });

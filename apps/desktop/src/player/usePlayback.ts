@@ -19,7 +19,14 @@ import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine, type OutputRoute } from "./audioEngine";
-import { deviceAccessUnlocked, listOutputDevices, resolveRoutes, type OutputDeviceInfo } from "./outputDevices";
+import {
+  deviceAccessUnlocked,
+  listInputDevices,
+  listOutputDevices,
+  resolveMicDeviceId,
+  resolveRoutes,
+  type OutputDeviceInfo,
+} from "./outputDevices";
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
 import { ensureSources, invalidateCachedSources } from "./sourcesCache";
 import { beginStart, markError, markPlayCall, markSound, markSources, markUrl } from "./startTelemetry";
@@ -169,7 +176,11 @@ export function usePlayback({
     playedMsRef.current = 0;
     lastTimeRef.current = null;
     if (!t || played < 1000) return;
-    const completed = finished || played >= t.duration * 1000 * 0.9;
+    // duration > 0 обязателен (аудит 2026-08-03): у трека без длительности
+    // (импорт без метаданных) «сыграно ≥ 90% длительности» истинно уже на
+    // первой секунде — на сервер уходил бы признак ПОЛНОГО прослушивания за
+    // каждое случайное касание такого трека.
+    const completed = finished || (t.duration > 0 && played >= t.duration * 1000 * 0.9);
     onPlayEndRef.current?.({ track: t, playedMs: Math.round(played), completed });
   };
 
@@ -222,8 +233,10 @@ export function usePlayback({
           // «Продолжить с места»: троттленная запись позиции текущего трека
           if (prefsRef.current.resumePosition && sec > 5) resumeStore.save(s.track.id, sec);
           const remaining = s.track.duration - sec;
-          // преднагрузка следующего + ранний стык (кроссфейд ИЛИ gapless — см. gaplessPlan.ts)
-          if (remaining <= prefsRef.current.preloadAheadSec) void preloadNext();
+          // преднагрузка следующего + ранний стык (кроссфейд ИЛИ gapless — см. gaplessPlan.ts).
+          // duration > 0: у трека без длительности remaining отрицателен ВСЕГДА,
+          // и «пора греть соседа» было бы истинно с первой секунды (аудит 2026-08-03).
+          if (s.track.duration > 0 && remaining <= prefsRef.current.preloadAheadSec) void preloadNext();
           const plan = planAutoAdvance({
             remaining,
             crossfadeEnabled: prefsRef.current.crossfade,
@@ -266,7 +279,14 @@ export function usePlayback({
       // Маршруты вывода задаются prefs-эффектом при монтировании — раньше,
       // чем ленивая фабрика создаст движок. Догоняем при создании (сам граф
       // подхватит их в ensureGraph). Конфиг голоса — тем же приёмом.
-      engineRef.current.setMicConfig({ deviceId: prefsRef.current.micDeviceId || null, gain: prefsRef.current.micGain });
+      // Микрофон — уже СОПОСТАВЛЕННЫЙ с живыми устройствами (см. applyMicConfig):
+      // ref заполняется эффектом при монтировании, а движок рождается позже,
+      // первым воспроизведением. Ref пуст (эффект ещё в полёте) — берём
+      // сохранённый id как есть, эффект догонит своим setMicConfig.
+      engineRef.current.setMicConfig({
+        deviceId: resolvedMicIdRef.current ?? (prefsRef.current.micDeviceId || null),
+        gain: prefsRef.current.micGain,
+      });
       if (resolvedRoutesRef.current.length > 0) engineRef.current.setOutputs(resolvedRoutesRef.current);
       // По той же причине догоняем ВСЁ, что человек мог задать до первого трека.
       // Эквалайзер: его эффект висит на [eqOn, eqBands], а ссылка на массив
@@ -480,7 +500,9 @@ export function usePlayback({
       if (prefsRef.current.resumePosition) {
         const saved = resumeStore.get(t.id);
         if (saved > 5 && saved < t.duration - 10 && playSeqRef.current === seq) {
-          engine().seek(saved);
+          // keepCrossfade: стык, который мы только что запустили выше, обрывать
+          // нельзя — входящий трек ещё на нуле кривой (см. AudioEngine.seek).
+          engine().seek(saved, true);
           setPos(saved);
         }
       }
@@ -676,6 +698,13 @@ export function usePlayback({
     gaplessTimerRef.current = null;
     const s = stateRef.current;
     if (!s.track) return;
+    // Трек без длительности (импорт без метаданных, трек по ссылке): «осталось»
+    // считается как duration − position и всегда отрицательно — авто-переход не
+    // сработает НИКОГДА, а nextPollDelayMs вернёт минимальный шаг, и опрос
+    // выродится в таймер 50 Гц на всю длительность трека, с обращением к движку
+    // и пересчётом следующего индекса на каждое пробуждение (аудит 2026-08-03).
+    // Стык такого трека остаётся за обычным 'ended' — он длительности не требует.
+    if (s.track.duration <= 0) return;
     const remaining = s.track.duration - engine().position();
     const plan = planAutoAdvance({
       remaining,
@@ -972,9 +1001,30 @@ export function usePlayback({
 
   // Голос (v2): микрофон и громкость голоса — на движок. Захват стартует
   // внутри движка и только при живом mixMic-тапе.
+  /** Живой (сопоставленный) deviceId микрофона — как resolvedRoutesRef у
+   *  вывода: движок ленив, а сопоставление асинхронно (enumerateDevices). */
+  const resolvedMicIdRef = useRef<string | null>(null);
+
+  /** Сохранённый микрофон → живое устройство и на движок. Сопоставление по
+   *  ИМЕНИ, когда id не нашёлся: Chromium меняет deviceId при переподключении
+   *  устройства, и без фолбэка захват молча уезжал на микрофон по умолчанию —
+   *  человек выбрал один, а в «голос в устройство» шёл другой (аудит
+   *  2026-08-03, см. resolveMicDeviceId). Перечисление дёргаем ТОЛЬКО когда
+   *  микрофон реально выбран: у остальных это лишний getUserMedia на старте. */
+  const applyMicConfig = async () => {
+    const { micDeviceId, micDeviceLabel, micGain } = prefsRef.current;
+    let deviceId: string | null = micDeviceId || null;
+    if (micDeviceId) {
+      deviceId = resolveMicDeviceId(micDeviceId, micDeviceLabel, await listInputDevices());
+    }
+    resolvedMicIdRef.current = deviceId;
+    engineRef.current?.setMicConfig({ deviceId, gain: micGain });
+  };
+
   useEffect(() => {
-    engineRef.current?.setMicConfig({ deviceId: prefs.micDeviceId || null, gain: prefs.micGain });
-  }, [prefs.micDeviceId, prefs.micGain]);
+    void applyMicConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.micDeviceId, prefs.micDeviceLabel, prefs.micGain]);
 
   // Устройство воткнули/выдернули — пересопоставить маршруты на лету.
   // Без разблокировки и без маршрутов не трогаем: enumeration дёрнула бы
@@ -990,11 +1040,17 @@ export function usePlayback({
     // ReturnType резолвится в Node Timeout и ломает присваивание window.setTimeout.
     let timer: number | null = null;
     const onChange = () => {
-      if (prefsRef.current.audioOutputs.length === 0 && !deviceAccessUnlocked()) return;
+      // Микрофон здесь наравне с маршрутами вывода: переподключение — ровно
+      // тот случай, когда Chromium выдаёт устройству НОВЫЙ id, и сопоставление
+      // по имени обязано пройти заново (иначе голос до перезапуска приложения
+      // идёт с чужого микрофона).
+      const p = prefsRef.current;
+      if (p.audioOutputs.length === 0 && !p.micDeviceId && !deviceAccessUnlocked()) return;
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
         void applyOutputRoutes();
+        void applyMicConfig();
       }, DEVICECHANGE_DEBOUNCE_MS);
     };
     md.addEventListener("devicechange", onChange);

@@ -36,23 +36,55 @@ function load(): Store {
   return cache;
 }
 
+/** Записать накопленное в localStorage прямо сейчас. Вынесено из таймера,
+ *  потому что зовётся ещё и на закрытии окна (см. armUnloadFlush). */
+function flushNow(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (!dirty || !cache) return;
+  dirty = false;
+  let entries = Object.entries(cache);
+  if (entries.length > MAX_ENTRIES) {
+    // грубый LRU: держим последние MAX (порядок вставки объекта сохраняется)
+    entries = entries.slice(-MAX_ENTRIES);
+    cache = Object.fromEntries(entries);
+  }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(cache));
+  } catch {
+    /* квота — не критично */
+  }
+}
+
+/** Сброс на диск при уходе страницы. Без него закрытие окна съедало до
+ *  FLUSH_MS позиции: троттлинг записи нужен, чтобы не писать на каждый тик
+ *  (~4 Гц), но последний интервал перед закрытием так и оставался в памяти —
+ *  человек ставил паузу и закрывал приложение, а «продолжить с места»
+ *  возвращало его на несколько секунд назад (аудит 2026-08-03).
+ *  pagehide — единственное событие, которое WebView2 гарантированно доводит
+ *  до конца при закрытии окна; visibilitychange добавлен как более ранняя и
+ *  более надёжная точка (сворачивание/переключение), beforeunload — страховка
+ *  на случай, когда pagehide не пришёл. Слушатели вешаются лениво, с первой
+ *  же записи: модуль импортируется и там, где localStorage не нужен вовсе. */
+let unloadArmed = false;
+function armUnloadFlush(): void {
+  if (unloadArmed || typeof window === "undefined") return;
+  unloadArmed = true;
+  window.addEventListener("pagehide", flushNow);
+  window.addEventListener("beforeunload", flushNow);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushNow();
+  });
+}
+
 function scheduleFlush(): void {
+  armUnloadFlush();
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
     flushTimer = null;
-    if (!dirty || !cache) return;
-    dirty = false;
-    let entries = Object.entries(cache);
-    if (entries.length > MAX_ENTRIES) {
-      // грубый LRU: держим последние MAX (порядок вставки объекта сохраняется)
-      entries = entries.slice(-MAX_ENTRIES);
-      cache = Object.fromEntries(entries);
-    }
-    try {
-      localStorage.setItem(KEY, JSON.stringify(cache));
-    } catch {
-      /* квота — не критично */
-    }
+    flushNow();
   }, FLUSH_MS);
 }
 
