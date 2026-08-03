@@ -37,6 +37,7 @@ export function NowPlayingPanel({
   pos = 0,
   playing = false,
   speed = 1,
+  windowVisible = true,
   onVideoError,
   onClose,
   className,
@@ -76,6 +77,13 @@ export function NowPlayingPanel({
   pos?: number;
   playing?: boolean;
   speed?: number;
+  /** Видно ли окно приложения. false (свёрнуто / накрыто чужим окном целиком)
+   *  — видео уходит на паузу вместе с ДЕКОДЕРОМ, а цикл догона не крутится.
+   *  Спрашивать это у документа нельзя: в WebView2 `document.hidden` про
+   *  свёрнутое окно не знает (см. apps/desktop/src/lib/windowVisible.ts), а у
+   *  веба, наоборот, окна нет вовсе — там значение по умолчанию true и
+   *  штатное торможение фоновой вкладки. */
+  windowVisible?: boolean;
   /** URL протух (googlevideo ~6ч) — хозяин ре-резолвит или гасит видео. */
   onVideoError?: () => void;
   /** Крестик в шапке. У приложения панель закрывается кнопкой плеер-бара, и
@@ -89,8 +97,11 @@ export function NowPlayingPanel({
 }) {
   const { t } = useT();
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // видео — слейв к часам аудио; при videoUrl=null хук спит
-  useVideoSync(videoRef, { url: videoUrl, pos, playing, speed });
+  // видео — слейв к часам аудио; при videoUrl=null хук спит.
+  // «Окна не видно» приходит сюда тем же входом, что и пауза: для хука это
+  // одно и то же — снять кадр с видеодекодера (он стоит денег, даже когда
+  // картинку физически некому показать) и не гнаться за часами аудио.
+  useVideoSync(videoRef, { url: videoUrl, pos, playing: playing && windowVisible, speed });
   const zoneStyle: React.CSSProperties = {
     display: "flex",
     flexDirection: "column",

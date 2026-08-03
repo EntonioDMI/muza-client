@@ -158,6 +158,7 @@ export function PlayerBar({
   progressStyle,
   subtitle,
   extraButtons,
+  windowVisible = true,
 }: {
   /** null — ничего не играет: бар остаётся на месте, но с плейсхолдером
    *  вместо трека и выключенным транспортом. */
@@ -243,6 +244,11 @@ export function PlayerBar({
   /** Вставка в начало правой группы для кнопок, которых нет в компоновке
    *  (веб: боковая панель «Сейчас играет»). */
   extraButtons?: React.ReactNode;
+  /** Видно ли окно приложения: свёрнуто или полностью накрыто чужим окном —
+   *  false, и дорисовка прогресса кадрами выключается. По умолчанию true —
+   *  у вкладки браузера своего окна нет, веб этот проп не передаёт и ведёт
+   *  себя ровно как раньше. Платформенного знания в файле не появляется. */
+  windowVisible?: boolean;
 }) {
   const { t } = useT();
   const repeatLabel = repeat === "one" ? t("player.repeat.one") : repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
@@ -475,8 +481,12 @@ export function PlayerBar({
             value={pos}
             max={track?.duration ?? 0}
             onChange={onSeek}
-            // подготовка трека — звук стоит, полоске ехать не за чем
-            rate={playing && !buffering ? speed : 0}
+            // подготовка трека — звук стоит, полоске ехать не за чем.
+            // windowVisible — то же для свёрнутого/накрытого окна: Slider
+            // держит собственный rAF-цикл, и без гейта он 60 раз в секунду
+            // двигал бы заливку, которой никто не видит. Гасим здесь, у
+            // ПОТРЕБИТЕЛЯ: сам Slider про окна не знает и знать не должен.
+            rate={playing && !buffering && windowVisible ? speed : 0}
             ariaLabel={t("player.progress")}
             valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track?.duration ?? 0) })}
             style={{ flex: 1 }}

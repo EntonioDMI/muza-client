@@ -145,3 +145,36 @@ describe("полоса плеера: одна на две программы", (
     expect(screen.queryByLabelText(label.lyrics)).not.toBeNull();
   });
 });
+
+/** Полоса прогресса дорисовывает позицию между редкими timeupdate собственным
+ *  циклом кадров (Slider, rate>0). Пока окна не видно, эта работа уходит в
+ *  никуда, а стоит она дорого: в WebView2 у свёрнутого окна кадры не
+ *  тормозятся, а РАЗГОНЯЮТСЯ (замер 03.08 — 171 к/с). Спросить об этом
+ *  document.hidden нельзя (он про свёрнутое окно не знает), поэтому сигнал
+ *  приходит пропом; у веба пропа нет — там значение по умолчанию «видно». */
+describe("PlayerBar — дорисовка прогресса кадрами", () => {
+  it("окна не видно: кадров нет; вернулось — снова идут", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      const view = render(<PlayerBar {...base} playing speed={1} windowVisible={false} />);
+      expect(raf).not.toHaveBeenCalled();
+
+      view.rerender(<PlayerBar {...base} playing speed={1} windowVisible />);
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("пропа нет (веб) — поведение прежнее: музыка идёт, кадры идут", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      render(<PlayerBar {...base} playing speed={1} />);
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});

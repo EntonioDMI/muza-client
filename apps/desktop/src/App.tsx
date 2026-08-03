@@ -22,6 +22,7 @@ import { applySourcePolicy } from "./lib/sources";
 import { resumeStore } from "./lib/resumeStore";
 import { miniHide, miniListen, miniSendState, miniShow, type MiniCommand, type MiniState } from "./lib/miniBridge";
 import { useMediaQuery } from "./lib/useMediaQuery";
+import { useWindowVisible } from "./lib/windowVisible";
 import { applyRecipe, engineAvailable, enginePin, enginePins, resolvePlayable, setCacheLimit } from "./lib/engine";
 import { exportCachedTrack } from "./lib/dragOut";
 import { syncAutostart, trayConfigure } from "./lib/system";
@@ -757,6 +758,16 @@ function Player({
   const showNowPlaying = lyricsOn && wideEnoughForPanel && view !== "settings";
   // T15 (bgType=animated): OS-уровень reduced-motion — реактивно, как остальной адаптив.
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // Видно ли окно (03.08): свёрнуто или полностью накрыто чужим окном — значит
+  // нет. Спросить об этом страницу НЕЛЬЗЯ — WebView2 ей не сообщает (замер и
+  // объяснение — в шапке lib/windowVisible.ts), сигнал приходит из Rust.
+  // Отсюда флаг расходится по всем потребителям кадров: вращение фона ниже,
+  // ListeningMode (визуализатор + качание + прогресс), PlayerBar (прогресс),
+  // NowPlayingPanel (часы и ДЕКОДЕР видео).
+  // ⚠️ ГРАНИЦА, поставленная владельцем: пока окно ВИДНО, не гасим ничего,
+  // даже когда оно не в фокусе. Окно на втором мониторе человек видит, и
+  // замершая там анимация — заметный регресс, а не экономия.
+  const windowVisible = useWindowVisible();
 
   // Медиаклавиши и системный медиа-оверлей (SMTC) через Media Session API
   useMediaSession(
@@ -1660,7 +1671,11 @@ function Player({
   // ПАУЗА, а не снятие класса: снятый класс сбрасывает угол в 0, и на выходе
   // из караоке (плавное гашение, --dur-slow) прыжок был бы виден. Пауза
   // замораживает текущий угол и отпускает GPU-слой вместе с will-change.
-  const orbitPaused = expanded;
+  // Вторая причина паузы — окна не видно (свёрнуто/накрыто): те же полноэкранные
+  // размытия каждый кадр, только показывать их вообще некому. Тот же приём
+  // паузы работает и здесь — вернули окно, вращение продолжается с того угла,
+  // на котором остановилось, без прыжка.
+  const orbitPaused = expanded || !windowVisible;
 
   // Фон за интерфейсом (Stage 6): тип + затемнение поверх (читаемость).
   // Фоны из обложки требуют самой обложки — нет её (ничего не играет / у трека
@@ -2207,6 +2222,9 @@ function Player({
             // Жалоба владельца 02.08 про ФПС в играх.
             playing={playing && !expanded}
             speed={pb.speed}
+            // Окно свёрнуто/накрыто — панель гасит и цикл догона, и сам
+            // видеодекодер (см. проп в NowPlayingPanel).
+            windowVisible={windowVisible}
             onVideoError={refreshTrackVideo}
           />
         ) : null}
@@ -2270,6 +2288,8 @@ function Player({
         onNext={pb.next}
         pos={pos}
         onSeek={pb.seek}
+        // Дорисовка позиции кадрами — только пока окно на экране.
+        windowVisible={windowVisible}
         vol={vol}
         onVol={pb.setVol}
         liked={track ? likes.includes(track.id) : false}
@@ -2687,6 +2707,8 @@ function Player({
         bassSharp={prefs.bassSharp}
         bassReach={prefs.bassReach}
         anims={prefs.anims}
+        // Гасит все три цикла кадров оверлея, когда окна не видно.
+        windowVisible={windowVisible}
       />
       </ErrorBoundary>
       ) : null}

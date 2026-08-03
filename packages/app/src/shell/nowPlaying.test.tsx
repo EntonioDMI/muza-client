@@ -99,6 +99,59 @@ describe("NowPlayingPanel — общий экран не сдвигает при
   });
 });
 
+/** Дороже кадров догона здесь ДЕКОДИРОВАНИЕ: <video> декодируется, пока
+ *  элемент не на паузе, даже если картинку физически некому показать. В
+ *  приложении «некому» наступает при свёрнутом или накрытом окне, а сам
+ *  документ об этом не узнаёт (WebView2 не шлёт visibilitychange) — поэтому
+ *  сигнал приходит пропом от хозяина. */
+describe("NowPlayingPanel — видео замолкает, когда окна не видно", () => {
+  const videoProps = {
+    track,
+    lyrics: lines,
+    liked: false,
+    onLike: noop,
+    activeLine: 0,
+    onSeekLine: noop,
+    videoUrl: "https://example.invalid/a.mp4",
+    pos: 10,
+    speed: 1,
+  };
+
+  it("окна не видно: кадр снят с декодера (pause), цикл догона не заведён", () => {
+    // jsdom не реализует play/pause у HTMLMediaElement — подменяем, иначе
+    // элемент бросит «not implemented» ещё до проверок
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      const view = render(<NowPlayingPanel {...videoProps} playing windowVisible={false} />);
+      expect(pause).toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      expect(raf).not.toHaveBeenCalled();
+
+      view.rerender(<NowPlayingPanel {...videoProps} playing windowVisible />);
+      expect(play).toHaveBeenCalled();
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("по умолчанию (веб пропа не передаёт) видео играет как раньше", () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      render(<NowPlayingPanel {...videoProps} playing />);
+      expect(play).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
 describe("Визуализатор — кадры только когда он на сцене", () => {
   it("active=false: ни одного запрошенного кадра", () => {
     const restore = stubCanvas();
@@ -319,6 +372,98 @@ describe("ListeningMode — закрытый оверлей ничего не ж
     // стоял вторым — проверять надо оба написания
     expect(scrim!.style.getPropertyValue("backdrop-filter")).toBe("");
     expect(scrim!.style.getPropertyValue("-webkit-backdrop-filter")).toBe("");
+  });
+
+  /** Второй гейт тех же трёх циклов — «окна не видно» (03.08). Окно бывает
+   *  свёрнуто или накрыто чужим окном целиком, и тогда рисовать вообще некому.
+   *  Проверять это через document.hidden в приложении БЕСПОЛЕЗНО: WebView2 не
+   *  сообщает странице о свёрнутом окне (замер 03.08 — 171 кадр/с у свёрнутого
+   *  окна при visibilityState="visible"), поэтому сигнал приходит нативным
+   *  событием и заводится сюда пропом. Каждый цикл проверяем ПООТДЕЛЬНОСТИ:
+   *  один общий тест не отличил бы «погасли все три» от «погас один». */
+  const openProps = {
+    open: true,
+    track,
+    lyrics: lines,
+    pos: 12,
+    speed: 1,
+    activeLine: 0,
+    onTogglePlay: noop,
+    onPrev: noop,
+    onNext: noop,
+    onSeek: noop,
+    onSeekLine: noop,
+    onClose: noop,
+  };
+
+  it("визуализатор: окна не видно — ни одного кадра, вернулось — кадры снова идут", () => {
+    const restore = stubCanvas();
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      // качание выключено, музыка на паузе (rate у Slider = 0) — кадры может
+      // просить только визуализатор
+      const view = render(
+        <ListeningMode {...openProps} playing={false} visualizer="bars" getAnalyser={() => null} windowVisible={false} />,
+      );
+      expect(raf).not.toHaveBeenCalled();
+
+      view.rerender(
+        <ListeningMode {...openProps} playing={false} visualizer="bars" getAnalyser={() => null} windowVisible />,
+      );
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+      restore();
+    }
+  });
+
+  it("качание при басах: окна не видно — кадров нет, вернулось — есть", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      // визуализатора нет, музыка на паузе — кадры может просить только качание
+      const view = render(
+        <ListeningMode {...openProps} playing={false} bassShake anims getAnalyser={() => null} windowVisible={false} />,
+      );
+      expect(raf).not.toHaveBeenCalled();
+
+      view.rerender(
+        <ListeningMode {...openProps} playing={false} bassShake anims getAnalyser={() => null} windowVisible />,
+      );
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("прогресс-бар оверлея: окна не видно — кадров нет даже при играющей музыке", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      // ни визуализатора, ни качания — кадры может просить только Slider
+      const view = render(<ListeningMode {...openProps} playing windowVisible={false} />);
+      expect(raf).not.toHaveBeenCalled();
+
+      view.rerender(<ListeningMode {...openProps} playing windowVisible />);
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("окно ВИДНО, но не в фокусе — гейта нет: владелец запретил гасить видимое", () => {
+    // Страховка от «оптимизации», которую легко дописать следующим шагом:
+    // окно на втором мониторе человек ВИДИТ, замершая там анимация заметна.
+    // Единственный вход выключателя — windowVisible, и по умолчанию он true.
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      render(<ListeningMode {...openProps} playing />);
+      expect(raf).toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("без обработчика ПКМ (веб) оверлей рисуется и не падает", () => {

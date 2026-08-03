@@ -12,6 +12,14 @@
  *  чтобы возврат был плавным), поэтому «закрыт» здесь означает именно «циклы
  *  остановлены», а не «нет в DOM»: без гейта они молотили бы в невидимые узлы.
  *
+ *  ⚠️ ВТОРОЙ ВЫКЛЮЧАТЕЛЬ ТЕХ ЖЕ ТРЁХ ЦИКЛОВ — `windowVisible` (03.08). Окно
+ *  бывает свёрнуто или накрыто чужим окном целиком, и тогда рисовать некому
+ *  вообще. Проверять это `document.hidden`'ом БЕСПОЛЕЗНО: в WebView2 страница
+ *  про свёрнутое окно не узнаёт (замер — apps/desktop/src/lib/windowVisible.ts).
+ *  Проп необязательный и по умолчанию «видно»: у вкладки браузера своего окна
+ *  нет, там торможение фоновых вкладок работает штатно, и веб этот проп не
+ *  передаёт — платформенного знания в общем пакете не появляется.
+ *
  *  ⚠️ Приложение не должно измениться ни на пиксель: новые умения вводятся
  *  только необязательными пропами с прежним поведением по умолчанию. */
 
@@ -82,6 +90,7 @@ export function ListeningMode({
   bassSharp = 50,
   bassReach = 50,
   anims = true,
+  windowVisible = true,
 }: {
   open: boolean;
   track: NowPlayingTrack;
@@ -138,6 +147,10 @@ export function ListeningMode({
   bassReach?: number;
   /** Общий переключатель анимаций — выключен, значит качание тоже выключено. */
   anims?: boolean;
+  /** Видно ли окно приложения (свёрнуто/накрыто целиком — значит нет). false
+   *  гасит все три цикла кадров оверлея. По умолчанию true: у веба своего окна
+   *  нет и такого сигнала быть не может — там ничего не меняется. */
+  windowVisible?: boolean;
 }) {
   const { t } = useT();
   // OS «уменьшить анимацию» для схлопывания колонки текста. Не state: пока
@@ -183,7 +196,10 @@ export function ListeningMode({
 
   useEffect(() => {
     const node = shakeRef.current;
-    if (!open || !bassShake || !anims || !getAnalyser || prefersReducedMotion()) {
+    // windowVisible — такой же жёсткий выключатель, как !open: окна на экране
+    // нет, качать нечего. Сброс transform в этой же ветке обязателен — иначе
+    // оверлей замер бы в раздутом состоянии до возврата окна.
+    if (!open || !windowVisible || !bassShake || !anims || !getAnalyser || prefersReducedMotion()) {
       if (node) node.style.transform = "";
       return;
     }
@@ -232,7 +248,7 @@ export function ListeningMode({
     };
     // getAnalyser стабилизирован через ref выше — эффект от его identity не зависит.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, bassShake, anims]);
+  }, [open, windowVisible, bassShake, anims]);
 
   const wake = () => {
     setCalm(false);
@@ -332,10 +348,13 @@ export function ListeningMode({
           }}
         >
           {/* playing — второй выключатель кадров: на паузе картинке неоткуда
-              меняться, и цикл гаснет сам, дорисовав хвост (см. Visualizer). */}
+              меняться, и цикл гаснет сам, дорисовав хвост (см. Visualizer).
+              windowVisible — третий: окна на экране нет, канвас показывать
+              некому. Через active, а не через playing: гасить надо совсем, а
+              не «досчитав хвост инерции». */}
           <Visualizer
             mode={visualizer}
-            active={open}
+            active={open && windowVisible}
             playing={playing}
             getAnalyser={getAnalyser}
             tuning={visualizerTuning}
@@ -481,7 +500,9 @@ export function ListeningMode({
           // остаётся в DOM. Без гейта 60 раз в секунду переписывались
           // transform'ы узлов под visibility:hidden — работа, которой никто
           // никогда не увидит (жалоба владельца 02.08 про ФПС в играх).
-          rate={open && playing ? speed : 0}
+          // `windowVisible &&` — то же самое для свёрнутого/накрытого окна:
+          // гасим у ПОТРЕБИТЕЛЯ, сам Slider про окно знать не должен.
+          rate={open && playing && windowVisible ? speed : 0}
           ariaLabel={t("player.progress")}
           style={{ width: 220 }}
         />

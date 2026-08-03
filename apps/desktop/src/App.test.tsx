@@ -157,11 +157,21 @@ describe("App — окно на экране входа", () => {
     await waitFor(() => expect(screen.getAllByRole("button", { name: /Продолжить/i }).length).toBe(2));
     fireEvent.click(screen.getAllByRole("button", { name: /Продолжить/i }).at(-1)!);
 
-    await waitFor(() => expect(h.expand).toHaveBeenCalledTimes(1));
+    // ⚠️ ЯВНЫЙ ЗАПАС, а не дефолтные 1000мс waitFor (флак 03.08, замер: 4
+    // падения из 6 прогонов `turbo run test --force`, где все пакеты молотят
+    // параллельно). Между кликом и вызовом expand стоит цепочка обещаний
+    // (loginAnonymous → setSession → эффект сцены окна) плюс монтирование
+    // ВСЕГО каркаса App; на загруженной машине секунды не хватает, и тест
+    // падал с «expand: got 0 times» при уже отрисованном каркасе в дампе DOM.
+    await waitFor(() => expect(h.expand).toHaveBeenCalledTimes(1), { timeout: 10_000 });
     // Перерисовка каркаса (клик по вкладке) не обязана заводить анимацию заново.
-    fireEvent.click(screen.getByRole("button", { name: "Любимое" }));
+    // find, а не get: каркас с сайдбаром приезжает следующими кадрами после
+    // expand, и get падал бы по той же причине.
+    fireEvent.click(await screen.findByRole("button", { name: "Любимое" }));
     await waitFor(() => expect(h.expand).toHaveBeenCalledTimes(1));
-  });
+    // Бюджет теста — как у тестов режима прослушивания ниже: здесь ДВА полных
+    // рендера App подряд (экран входа → каркас).
+  }, 20_000);
 
   it("вошедший при старте — окно не трогаем вовсе, оно уже нужного размера", async () => {
     // restoreSession отдаёт сессию сразу: сжать окно на долю секунды ради
