@@ -55,6 +55,9 @@ pub fn run() {
             engine::init(app.handle());
             // Реестр локальных файлов + asset-scope для живых путей
             local::init(app.handle());
+            // Уборка брошенного стейджинга плагинов (закрыли окно согласия,
+            // крэш) — живых стейджингов на старте не бывает, см. plugins::init
+            plugins::init(app.handle());
             // Иконка трея; видимость и «закрыть = свернуть» задаёт фронт из prefs
             tray::init(app.handle())?;
             Ok(())

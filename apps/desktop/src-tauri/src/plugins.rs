@@ -14,8 +14,8 @@ use std::fs;
 use std::io::Read as _;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 
 /// Вшитый guest-рантайм (window.Muza SDK) — плейн JS, не через npm/бандлер
@@ -26,6 +26,11 @@ const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024; // 2 МБ — лимит рас
 const MAX_ENTRY_COUNT: usize = 64;
 const STORAGE_QUOTA_BYTES: usize = 1024 * 1024; // 1 МБ KV на плагин
 const NET_BODY_LIMIT: usize = 5 * 1024 * 1024; // 5 МБ тело ответа net.fetch
+/// Потолок на ВЕСЬ запрос net.fetch вместе с чтением тела: без него плагин,
+/// сходивший на медленный/залипший хост, держал бы await вечно (пользователь
+/// видит «плагин не отвечает» без единой причины в логе).
+const NET_TIMEOUT: Duration = Duration::from_secs(30);
+const NET_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledPlugin {
@@ -427,21 +432,55 @@ fn safe_rel_path(p: &str) -> bool {
         && !is_drive_absolute
 }
 
-/// Путь обязан лежать внутри `.staging/` — защита от того, чтобы фронт
-/// (по ошибке или иначе) не подсунул произвольный путь на удаление/перенос.
-fn require_staging_path(p: &PathBuf) -> Result<(), String> {
-    if p.components().any(|c| c.as_os_str() == ".staging") {
-        Ok(())
-    } else {
-        Err("bad_args: недопустимый путь стейджинга".into())
+/// Путь обязан лежать СТРОГО внутри `<plugins>/.staging/` — защита от того,
+/// чтобы фронт не подсунул произвольный каталог на рекурсивное удаление
+/// (`plugin_discard_staged`) или на перенос поверх (`plugin_finalize_install`).
+///
+/// ⚠️ Аудит 2026-08: проверка «в пути есть КОМПОНЕНТ `.staging`» (как было
+/// раньше) не защищает ни от чего — `…\plugins\.staging\..\..\..\Documents`
+/// её проходит: компонент на месте, а каталог совсем другой. Поэтому сравниваем
+/// КАНОНИЗИРОВАННЫЕ пути (`ensure_within` — тот же приём, что для entry
+/// плагина): canonicalize раскрывает `..`, симлинки и 8.3-имена, а на Windows
+/// добавляет префикс `\\?\` — поэтому канонизируются ОБЕ стороны, иначе
+/// `starts_with` не совпал бы никогда.
+fn check_staging_path(staging_root: &Path, p: &Path) -> Result<PathBuf, String> {
+    ensure_within(staging_root, p).map_err(|_| "bad_args: недопустимый путь стейджинга".to_string())
+}
+
+fn require_staging_path(app: &AppHandle, p: &Path) -> Result<PathBuf, String> {
+    let staging_root = plugins_dir(app)?.join(".staging");
+    // Корень мог не появиться за эту сессию — без него canonicalize базы
+    // упадёт, и легитимный путь получил бы ту же ошибку, что и обход.
+    fs::create_dir_all(&staging_root).map_err(|e| format!("internal: {e}"))?;
+    check_staging_path(&staging_root, p)
+}
+
+/// Уборка стейджинга на старте (`lib.rs::setup`). Каталог `.staging/<токен>`
+/// живёт между `plugin_stage_from_*` и финализацией/отказом, а между ними
+/// стоит модалка согласия: окно закрыли, приложение упало — ни одна из двух
+/// команд не придёт никогда, и распакованный пакет остаётся в AppData навсегда.
+/// На старте живых стейджингов не бывает по определению (они не переживают
+/// процесс), поэтому корень сносится целиком, без разбора возраста.
+pub fn init(app: &AppHandle) {
+    if let Ok(dir) = plugins_dir(app) {
+        clear_staging_root(&dir.join(".staging"));
     }
 }
 
+fn clear_staging_root(staging_root: &Path) {
+    let _ = fs::remove_dir_all(staging_root);
+}
+
 #[tauri::command]
-pub fn plugin_discard_staged(staged_dir: String) -> Result<(), String> {
+pub fn plugin_discard_staged(app: AppHandle, staged_dir: String) -> Result<(), String> {
     let p = PathBuf::from(&staged_dir);
-    require_staging_path(&p)?;
-    let _ = fs::remove_dir_all(p);
+    // Каталога уже нет (повторный отказ, уборка на старте) — удалять нечего,
+    // это не ошибка. Важно только не звать remove_dir_all по НЕпроверенному пути.
+    if !p.exists() {
+        return Ok(());
+    }
+    let canon = require_staging_path(&app, &p)?;
+    let _ = fs::remove_dir_all(canon);
     Ok(())
 }
 
@@ -462,8 +501,7 @@ pub fn plugin_finalize_install(
     css: Option<String>,
 ) -> Result<(), String> {
     let id = sanitize_id(&id)?;
-    let src = PathBuf::from(&staged_dir);
-    require_staging_path(&src)?;
+    let src = require_staging_path(&app, Path::new(&staged_dir))?;
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_json).map_err(|e| format!("bad_args: {e}"))?;
     // T44b: уровень 2 (app:full-access) больше не блокируется здесь — T44
@@ -554,8 +592,11 @@ fn build_bootstrap_response(
          <script nonce=\"{nonce}\">\n{GUEST_RUNTIME_JS}\n;(function(){{\n{entry_code}\n}})();\n</script>\n\
          </body></html>"
     );
+    // base-uri/form-action НЕ наследуются от default-src (у них нет фолбэка) —
+    // без них плагин мог бы поменять базовый URL документа или отправить форму
+    // наружу, несмотря на `default-src 'none'`.
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'"
     );
     Ok(tauri::http::Response::builder()
         .header(
@@ -795,6 +836,47 @@ fn is_blocked_ip(ip: &IpAddr) -> bool {
     }
 }
 
+/// Общий клиент net.fetch — ОДИН на процесс (пул соединений и TLS-конфиг
+/// переиспользуются между вызовами плагина).
+///
+/// Главное здесь не экономия: `reqwest::Client::new()`, который стоял тут
+/// раньше, не знал про системный прокси Windows — у пользователя с
+/// прокси/DPI-обходчиком добыча работала (engine::warm_http_client берёт
+/// `sysproxy::proxy_for`), а `net.fetch` плагина молча падал «сеть
+/// недоступна». Политика прокси — та же и единственная: sysproxy.rs.
+///
+/// Таймауты живут здесь же, а не на каждом запросе: у команды нет своего
+/// способа отмениться, а `send()` без потолка ждёт бесконечно.
+fn net_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(NET_CONNECT_TIMEOUT)
+            .timeout(NET_TIMEOUT)
+            .proxy(reqwest::Proxy::custom(|url| {
+                crate::sysproxy::proxy_for(url.as_str())
+            }))
+            .build()
+            .expect("reqwest client строится")
+    })
+}
+
+/// Заявленный размер ответа больше лимита — отказ ДО чтения тела.
+/// `None` (chunked/без заголовка) — не приговор: дальше считаем фактические байты.
+fn content_length_exceeds(len: Option<u64>) -> bool {
+    len.is_some_and(|l| l > NET_BODY_LIMIT as u64)
+}
+
+/// Накопление тела с потолком: обрываемся на первом куске, который переваливает
+/// лимит, — Content-Length врёт бесплатно, а память кончается по-настоящему.
+fn push_capped(buf: &mut Vec<u8>, chunk: &[u8]) -> Result<(), String> {
+    if buf.len() + chunk.len() > NET_BODY_LIMIT {
+        return Err("quota: ответ больше 5 МБ".into());
+    }
+    buf.extend_from_slice(chunk);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn plugin_net_fetch(
     app: AppHandle,
@@ -840,7 +922,7 @@ pub async fn plugin_net_fetch(
 
     let init = init.unwrap_or_default();
     let method = init.method.as_deref().unwrap_or("GET").to_uppercase();
-    let client = reqwest::Client::new();
+    let client = net_client();
     let mut builder = match method.as_str() {
         "GET" => client.get(parsed),
         "POST" => client.post(parsed),
@@ -857,7 +939,7 @@ pub async fn plugin_net_fetch(
         builder = builder.body(body);
     }
 
-    let resp = builder
+    let mut resp = builder
         .send()
         .await
         .map_err(|e| format!("internal: сеть недоступна: {e}"))?;
@@ -868,12 +950,20 @@ pub async fn plugin_net_fetch(
             headers.insert(k.to_string(), v.to_string());
         }
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("internal: тело ответа: {e}"))?;
-    if bytes.len() > NET_BODY_LIMIT {
+    // Аудит 2026-08: лимит 5 МБ проверялся ПОСЛЕ `resp.bytes()`, т.е. ответ
+    // сначала целиком приезжал в память — гигабайтный ответ убивал процесс
+    // ровно перед тем, как его собирались отклонить. Теперь два рубежа:
+    // заявленный размер (дёшево, до чтения) и фактические байты по кускам.
+    if content_length_exceeds(resp.content_length()) {
         return Err("quota: ответ больше 5 МБ".into());
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("internal: тело ответа: {e}"))?
+    {
+        push_capped(&mut bytes, &chunk)?;
     }
     let body = String::from_utf8_lossy(&bytes).to_string();
     Ok(NetFetchResult {
@@ -1092,6 +1182,102 @@ mod tests {
         for good in ["index.js", "dist/index.js", "theme.css", "a/b/c.json"] {
             assert!(safe_rel_path(good), "{good} обязан быть принят");
         }
+    }
+
+    /// Аудит 2026-08 (крит): старая проверка искала КОМПОНЕНТ `.staging` в
+    /// строке пути — путь `<plugins>\.staging\..\..\..\Documents` её проходил,
+    /// и дальше по нему шли `remove_dir_all` (отказ от установки) и `rename`
+    /// (финализация). Проверяем и то, что подстава отклоняется, и то, что
+    /// старая форма проверки её пропускала (иначе тест был бы не о том).
+    #[test]
+    fn staging_path_rejects_traversal_out_of_staging_root() {
+        let plugins = std::env::temp_dir().join("muza-staging-test-plugins");
+        let victim = std::env::temp_dir().join("muza-staging-test-victim");
+        let _ = fs::remove_dir_all(&plugins);
+        let _ = fs::remove_dir_all(&victim);
+        let root = plugins.join(".staging");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&victim).unwrap();
+        fs::write(victim.join("важное.txt"), "данные пользователя").unwrap();
+
+        let escaped = root
+            .join("..")
+            .join("..")
+            .join(victim.file_name().unwrap());
+        assert!(
+            escaped.components().any(|c| c.as_os_str() == ".staging"),
+            "старая проверка (компонент .staging в пути) обязана была это пропустить"
+        );
+        assert!(
+            check_staging_path(&root, &escaped).is_err(),
+            "путь с .. обязан быть отклонён"
+        );
+
+        let _ = fs::remove_dir_all(&plugins);
+        let _ = fs::remove_dir_all(&victim);
+    }
+
+    #[test]
+    fn staging_path_accepts_real_token_dir() {
+        let root = std::env::temp_dir().join("muza-staging-test-ok").join(".staging");
+        let _ = fs::remove_dir_all(root.parent().unwrap());
+        let token_dir = root.join("Tok3n-Abc");
+        fs::create_dir_all(&token_dir).unwrap();
+
+        let ok = check_staging_path(&root, &token_dir).expect("свой стейджинг обязан проходить");
+        assert!(ok.ends_with("Tok3n-Abc"));
+
+        let _ = fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    /// Брошенная установка (закрыли окно/крэш) оставляла `.staging/<токен>`
+    /// навсегда — на старте корень сносится целиком, папка плагинов цела.
+    #[test]
+    fn clear_staging_root_removes_only_staging() {
+        let plugins = std::env::temp_dir().join("muza-staging-test-cleanup");
+        let _ = fs::remove_dir_all(&plugins);
+        let root = plugins.join(".staging");
+        fs::create_dir_all(root.join("токен-1")).unwrap();
+        fs::create_dir_all(root.join("токен-2")).unwrap();
+        fs::write(plugins.join("installed.json"), "[]").unwrap();
+
+        clear_staging_root(&root);
+
+        assert!(!root.exists(), ".staging обязан исчезнуть целиком");
+        assert!(
+            plugins.join("installed.json").exists(),
+            "установленное трогать нельзя"
+        );
+        // Повторный вызов на несуществующем корне не должен паниковать
+        clear_staging_root(&root);
+
+        let _ = fs::remove_dir_all(&plugins);
+    }
+
+    /// Гейт по заявленному размеру — ДО чтения тела.
+    #[test]
+    fn content_length_gate_rejects_only_oversized() {
+        assert!(content_length_exceeds(Some(NET_BODY_LIMIT as u64 + 1)));
+        assert!(content_length_exceeds(Some(1024 * 1024 * 1024)));
+        assert!(!content_length_exceeds(Some(NET_BODY_LIMIT as u64)));
+        assert!(!content_length_exceeds(Some(0)));
+        // chunked/без заголовка — решает уже счётчик фактических байт
+        assert!(!content_length_exceeds(None));
+    }
+
+    #[test]
+    fn push_capped_stops_at_limit() {
+        let mut buf = Vec::new();
+        let chunk = vec![0u8; 1024 * 1024];
+        for _ in 0..5 {
+            push_capped(&mut buf, &chunk).expect("5 МБ ровно — в пределах лимита");
+        }
+        assert_eq!(buf.len(), NET_BODY_LIMIT);
+        assert!(
+            push_capped(&mut buf, b"x").is_err(),
+            "байт сверх лимита обязан обрывать чтение"
+        );
+        assert_eq!(buf.len(), NET_BODY_LIMIT, "перебор не должен копироваться");
     }
 
     #[test]

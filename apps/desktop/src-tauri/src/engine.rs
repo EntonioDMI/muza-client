@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs;
-use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -61,6 +60,21 @@ const DEFAULT_RECIPE_JSON: &str = r#"{
 
 /// Сколько ждать yt-dlp на одну попытку (резолв + скачивание одного трека).
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(180);
+/// Суммарный бюджет ВСЕЙ лестницы клика (все источники × все клиенты).
+///
+/// До аудита 2026-08-02 потолок был только у ОДНОЙ попытки: четыре клиента ×
+/// 180с = до 12 минут «клик висит», причём молча. Общий бюджет делает худший
+/// случай клика равным худшему случаю одной попытки — дальше честный отказ и
+/// сообщение об ошибке, которое пользователь хотя бы видит.
+const RESOLVE_LADDER_BUDGET: Duration = Duration::from_secs(180);
+/// Потолок ОДНОЙ попытки `--simulate`: метаданные без единого байта аудио.
+/// 180с здесь бессмысленны — дольше 40с simulate не бывает даже с n-sig
+/// challenge в deno (замер 2026-07-15: худший клиент 12.5с).
+const SIMULATE_TIMEOUT: Duration = Duration::from_secs(40);
+/// Суммарный бюджет лестницы ПРОГРЕВА. Прогрев фоновый и держит тот же
+/// single-flight-гейт, что клик: затянувшийся прогрев = клик по той же строке
+/// стоит в очереди (аудит 2026-08-02, п.2). Поэтому бюджет короткий.
+const WARM_LADDER_BUDGET: Duration = Duration::from_secs(60);
 const MAX_YTDLP_OUTPUT_BYTES: u64 = 512 * 1024 * 1024;
 
 const DEFAULT_CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 ГБ, как в Prefs
@@ -870,6 +884,67 @@ fn wait_with_timeout(
     }
 }
 
+/// Сколько выхлопа процесса храним (ХВОСТ, не голова): и `run_ytdlp_once`, и
+/// `run_ytdlp_simulate` берут ПОСЛЕДНЮЮ непустую строку — путь к файлу или
+/// сообщение об ошибке. Всё сверх лимита вычитывается и выбрасывается, но
+/// вычитывается обязательно (см. `wait_capturing`).
+const CHILD_CAPTURE_TAIL_BYTES: usize = 256 * 1024;
+
+/// Поток-водоотвод одного канала процесса: читает до EOF, хранит последние
+/// `CHILD_CAPTURE_TAIL_BYTES`.
+fn spawn_pipe_reader(
+    mut pipe: impl std::io::Read + Send + 'static,
+) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut tail: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 8 * 1024];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    // Канал вычитывается ДО КОНЦА при любом объёме — иначе
+                    // процесс заблокируется на записи. Лишнее просто не храним.
+                    let over = (tail.len() + n).saturating_sub(CHILD_CAPTURE_TAIL_BYTES);
+                    if over > 0 {
+                        tail.drain(..over.min(tail.len()));
+                    }
+                    tail.extend_from_slice(&chunk[..n]);
+                }
+            }
+        }
+        String::from_utf8_lossy(&tail).into_owned()
+    })
+}
+
+/// Ожидание процесса С ОДНОВРЕМЕННЫМ вычитыванием stdout/stderr.
+///
+/// Гоча (аудит 2026-08-02, критическая). Анонимный канал Windows держит ~4 КиБ.
+/// Прежний порядок был «сначала `wait_with_timeout`, потом `read_to_string`»:
+/// стоило yt-dlp напечатать в stderr больше буфера (traceback питона, серия
+/// ошибок фрагментов при `--retries 2`, ошибка запуска deno), как он
+/// блокировался на записи НАВСЕГДА — `try_wait()` вечно отдавал `Ok(None)`, и
+/// попытка стоила полного таймаута вместо мгновенного отказа. Дальше бралась
+/// следующая ступень лестницы, и «клик висит минуты» складывался именно так.
+/// Каналы обязаны читаться ПАРАЛЛЕЛЬНО ожиданию — отсюда два потока.
+fn wait_capturing(
+    child: &mut Child,
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, String, String), String> {
+    let out = child.stdout.take().map(spawn_pipe_reader);
+    let err = child.stderr.take().map(spawn_pipe_reader);
+    let status = wait_with_timeout(child, timeout);
+    // join после kill/выхода: каналы закрыты, потоки уже завершаются
+    let stdout = out.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stderr = err.and_then(|h| h.join().ok()).unwrap_or_default();
+    status.map(|status| (status, stdout, stderr))
+}
+
+/// Остаток общего бюджета лестницы. `None` — бюджет исчерпан, следующую
+/// попытку начинать уже нельзя.
+fn ladder_remaining(started: Instant, budget: Duration) -> Option<Duration> {
+    budget.checked_sub(started.elapsed()).filter(|left| !left.is_zero())
+}
+
 /// Классификация провала попытки по stderr — для KPI аналитики (SABR/403/бот).
 fn classify_failure(stats: &mut EngineStats, stderr: &str) {
     let low = stderr.to_lowercase();
@@ -1089,6 +1164,7 @@ fn run_ytdlp_once(
     track_id: &str,
     attempt: &Attempt,
     format_str: &str,
+    timeout: Duration,
 ) -> Result<PathBuf, String> {
     let mut cmd = command(ytdlp);
     cmd.args(build_ytdlp_args(dir, track_id, attempt, format_str, deno));
@@ -1099,16 +1175,7 @@ fn run_ytdlp_once(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("yt-dlp не запустился ({}): {e}", ytdlp.display()))?;
-    let status = wait_with_timeout(&mut child, RESOLVE_TIMEOUT)?;
-
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    if let Some(mut out) = child.stdout.take() {
-        let _ = out.read_to_string(&mut stdout);
-    }
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut stderr);
-    }
+    let (status, stdout, stderr) = wait_capturing(&mut child, timeout)?;
 
     if !ytdlp_exit_ok(status.code()) {
         // Последняя строка stderr — обычно самое осмысленное сообщение yt-dlp
@@ -1384,14 +1451,25 @@ fn parse_simulate_output(stdout: &str) -> Result<SimulatedFormat, String> {
 /// Срок жизни warm-записи: `expire` из query URL (unix-секунды у googlevideo)
 /// минус запас — не начинаем скачивание впритык к протуханию. Нет/битый
 /// expire (SoundCloud/Bandcamp) — консервативный короткий TTL.
+///
+/// Только checked-арифметика (аудит 2026-08-02): `secs` — ЧУЖОЕ число из
+/// добытой ссылки, а `SystemTime: Add<Duration>` внутри делает
+/// `.expect("overflow…")`. Ответ с `expire=18446744073709551615` ронял
+/// async-команду паникой, и промис `invoke` на фронте не резолвился НИКОГДА —
+/// не ошибка, а именно вечное зависание кнопки. Переполнение = «expire
+/// бессмысленный», ведём себя как при его отсутствии.
 fn warm_expires_at(url: &Url, now: SystemTime) -> SystemTime {
+    let fallback = now.checked_add(WARM_FALLBACK_TTL).unwrap_or(now);
     let expire = url
         .query_pairs()
         .find(|(k, _)| k == "expire")
         .and_then(|(_, v)| v.parse::<u64>().ok());
     match expire {
-        Some(secs) => SystemTime::UNIX_EPOCH + Duration::from_secs(secs) - WARM_EXPIRY_MARGIN,
-        None => now + WARM_FALLBACK_TTL,
+        Some(secs) => SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(secs))
+            .and_then(|at| at.checked_sub(WARM_EXPIRY_MARGIN))
+            .unwrap_or(fallback),
+        None => fallback,
     }
 }
 
@@ -1550,6 +1628,7 @@ fn run_ytdlp_simulate(
     deno: &Path,
     attempt: &Attempt,
     format_str: &str,
+    timeout: Duration,
 ) -> Result<SimulatedFormat, String> {
     let mut cmd = command(ytdlp);
     cmd.args(build_ytdlp_simulate_args(attempt, format_str, deno));
@@ -1560,16 +1639,7 @@ fn run_ytdlp_simulate(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("yt-dlp не запустился ({}): {e}", ytdlp.display()))?;
-    let status = wait_with_timeout(&mut child, RESOLVE_TIMEOUT)?;
-
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    if let Some(mut out) = child.stdout.take() {
-        let _ = out.read_to_string(&mut stdout);
-    }
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut stderr);
-    }
+    let (status, stdout, stderr) = wait_capturing(&mut child, timeout)?;
 
     if !simulate_exit_ok(status.code()) {
         let last = stderr
@@ -3629,13 +3699,24 @@ pub async fn engine_warm(
 
     let sidecars = sidecar_paths()?;
     let mut last_error = String::new();
+    // Бюджет всей лестницы прогрева: он держит single-flight-гейт трека, и
+    // клик по той же строке стоит за ним в очереди (аудит 2026-08-02).
+    let ladder_started = Instant::now();
     for attempt in attempts {
+        let Some(left) = ladder_remaining(ladder_started, WARM_LADDER_BUDGET) else {
+            last_error = format!(
+                "бюджет прогрева ({}с) исчерпан; последняя ошибка: {last_error}",
+                WARM_LADDER_BUDGET.as_secs()
+            );
+            break;
+        };
+        let attempt_timeout = left.min(SIMULATE_TIMEOUT);
         let fmt = format_str.clone();
         let ytdlp_clone = sidecars.ytdlp.clone();
         let deno_clone = sidecars.deno.clone();
         let attempt_provider = attempt.provider.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
-            run_ytdlp_simulate(&ytdlp_clone, &deno_clone, &attempt, &fmt)
+            run_ytdlp_simulate(&ytdlp_clone, &deno_clone, &attempt, &fmt, attempt_timeout)
         })
         .await
         .map_err(|e| format!("spawn_blocking: {e}"))?;
@@ -4389,7 +4470,18 @@ pub async fn engine_resolve(
 
     let sidecars = sidecar_paths()?;
     let mut last_error = String::new();
+    // Общий дедлайн лестницы (аудит 2026-08-02): потолок был только у одной
+    // попытки, поэтому четыре ступени складывались в минуты молчания.
+    let ladder_started = Instant::now();
     for attempt in attempts {
+        let Some(left) = ladder_remaining(ladder_started, RESOLVE_LADDER_BUDGET) else {
+            last_error = format!(
+                "бюджет добычи ({}с) исчерпан; последняя ошибка: {last_error}",
+                RESOLVE_LADDER_BUDGET.as_secs()
+            );
+            break;
+        };
+        let attempt_timeout = left.min(RESOLVE_TIMEOUT);
         state.stats.lock().unwrap().attempts += 1;
         let dir_clone = dir.clone();
         let id_clone = track_id.clone();
@@ -4406,6 +4498,7 @@ pub async fn engine_resolve(
                 &id_clone,
                 &attempt,
                 &fmt,
+                attempt_timeout,
             )
         })
         .await
@@ -4705,12 +4798,12 @@ pub async fn engine_doctor() -> Doctor {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let mut child = cmd.spawn().ok()?;
-        let status = wait_with_timeout(&mut child, Duration::from_secs(20)).ok()?;
+        // тот же порядок, что у боевых прогонов: канал вычитывается
+        // параллельно ожиданию, иначе полный буфер вешает процесс
+        let (status, out, _) = wait_capturing(&mut child, Duration::from_secs(20)).ok()?;
         if !status.success() {
             return None;
         }
-        let mut out = String::new();
-        child.stdout.take()?.read_to_string(&mut out).ok()?;
         out.lines().next().map(|l| l.trim().to_string())
     }
     tauri::async_runtime::spawn_blocking(|| {
@@ -4875,6 +4968,7 @@ mod tests {
                 "test1",
                 &attempt,
                 "251/140/bestaudio",
+                RESOLVE_TIMEOUT,
             ) {
                 Ok(path) => {
                     println!("клиент {client}: OK");
@@ -6430,7 +6524,15 @@ mod warm_tests {
             let t0 = Instant::now();
             for attempt in attempts {
                 if let Ok(path) =
-                    run_ytdlp_once(&sidecars.ytdlp, &sidecars.deno, &dir, tag, &attempt, fmt)
+                    run_ytdlp_once(
+                        &sidecars.ytdlp,
+                        &sidecars.deno,
+                        &dir,
+                        tag,
+                        &attempt,
+                        fmt,
+                        RESOLVE_TIMEOUT,
+                    )
                 {
                     let secs = t0.elapsed().as_secs_f64();
                     let _ = fs::remove_file(path);
@@ -6446,7 +6548,13 @@ mod warm_tests {
             let attempts = build_attempts(&[source], &clients).attempts;
             let t0 = Instant::now();
             for attempt in attempts {
-                let Ok(sim) = run_ytdlp_simulate(&sidecars.ytdlp, &sidecars.deno, &attempt, fmt)
+                let Ok(sim) = run_ytdlp_simulate(
+                    &sidecars.ytdlp,
+                    &sidecars.deno,
+                    &attempt,
+                    fmt,
+                    SIMULATE_TIMEOUT,
+                )
                 else {
                     continue;
                 };
