@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../core/Icon.jsx";
+import { portal } from "../../lib/layerRoot.js";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 
@@ -141,7 +142,12 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   };
 
   if (!mounted) return null;
-  return (
+
+  // ПОРТАЛ (03.08). Слой — position: fixed, а стеклянный предок (backdrop-filter)
+  // делается для него содержащим блоком и уводит его от края окна. Цель портала
+  // — theme-div приложения, а НЕ document.body: на нём живут все токены темы и
+  // zoom масштаба интерфейса. Разбор с замером — packages/ui/src/lib/layerRoot.js.
+  const layer = (
     <div
       onClick={closing ? undefined : onClose}
       onContextMenu={(e) => { e.preventDefault(); if (!closing && onClose) onClose(); }}
@@ -242,4 +248,5 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
       </div>
     </div>
   );
+  return portal(layer);
 }

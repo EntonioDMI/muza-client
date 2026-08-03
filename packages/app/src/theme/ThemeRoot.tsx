@@ -26,7 +26,16 @@ export function ThemeRoot({ theme, children }: { theme: ThemeInput; children: Re
   }, [attrs["data-theme"]]);
 
   return (
-    <div {...attrs} style={{ ...buildThemeVars(theme), minHeight: "100dvh", background: "var(--bg-0)" }}>
+    // data-muza-layer-root — цель портала плавающих слоёв (меню, диалоги,
+    // выпадашки, палитра), тот же уговор, что у theme-div десктопа. Порталить
+    // их в body нельзя: переменные темы лежат ИНЛАЙНОМ здесь, а не на :root —
+    // в body слой взял бы дефолты дизайн-системы. Зачем портал вообще —
+    // packages/ui/src/lib/layerRoot.js (стеклянный предок ломает position: fixed).
+    <div
+      {...attrs}
+      data-muza-layer-root=""
+      style={{ ...buildThemeVars(theme), minHeight: "100dvh", background: "var(--bg-0)" }}
+    >
       {children}
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
+import { portal } from "../../lib/layerRoot.js";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 
@@ -125,7 +126,12 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
         />
       </button>
 
+      {/* ПОРТАЛ (03.08): выпадашка — position: fixed, и стеклянный предок
+          (backdrop-filter у рельса настроек, сайдбара, полосы плеера) стал бы
+          для неё содержащим блоком — список уехал бы за край окна. Цель —
+          theme-div, а не body: там токены темы и zoom. См. lib/layerRoot.js. */}
       {open && panelPos ? (
+        portal(
         <div
           onClick={() => setOpen(false)}
           onContextMenu={(e) => {
@@ -219,7 +225,8 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
               );
             })}
           </div>
-        </div>
+        </div>,
+        )
       ) : null}
     </>
   );

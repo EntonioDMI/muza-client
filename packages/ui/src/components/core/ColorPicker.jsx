@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
+import { portal } from "../../lib/layerRoot.js";
 import { Tooltip } from "../feedback/Tooltip.jsx";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
@@ -182,7 +183,10 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
 
   const revertToInitial = () => applyHsv(hexToHsv(initialHex));
 
-  return (
+  // ПОРТАЛ (03.08): палитра — position: fixed, а открывают её из «Кастомизации»,
+  // то есть внутри стеклянной панели настроек. Стеклянный предок стал бы для неё
+  // содержащим блоком и увёл бы поповер за край окна. См. lib/layerRoot.js.
+  return portal(
     <div
       onClick={onClose}
       onContextMenu={(e) => { e.preventDefault(); onClose && onClose(); }}
@@ -372,7 +376,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
           />
         </div>
       </div>
-    </div>
+    </div>,
   );
 }
 

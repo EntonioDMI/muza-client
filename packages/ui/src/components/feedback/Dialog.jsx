@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
+import { portal } from "../../lib/layerRoot.js";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 // Фолбэк-таймаут delayed-unmount: страхует на случай, если onAnimationEnd не
@@ -137,7 +138,12 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
   };
 
   if (!mounted) return null;
-  return (
+
+  // ПОРТАЛ (03.08). Слой — position: fixed, а стеклянный предок (backdrop-filter)
+  // делается для него содержащим блоком и уводит его от края окна. Цель портала
+  // — theme-div приложения, а НЕ document.body: на нём живут все токены темы и
+  // zoom масштаба интерфейса. Разбор с замером — packages/ui/src/lib/layerRoot.js.
+  const layer = (
     <div
       onMouseDown={onScrimMouseDown}
       onClick={onScrimClick}
@@ -199,4 +205,5 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
       </div>
     </div>
   );
+  return portal(layer);
 }
