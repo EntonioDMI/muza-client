@@ -28,8 +28,19 @@ export function OutputsSub() {
   const [inDevices, setInDevices] = useState<AudioDeviceInfo[]>([]);
   const refresh = () => {
     if (!devicesPort) return;
-    void devicesPort.listOutputs().then(setOutDevices);
-    void devicesPort.listInputs().then(setInDevices);
+    // Отказ перечисления — тоже ответ, и он обязан дойти до экрана: раньше у
+    // .then не было .catch, и запрет доступа к устройствам оставлял «Вывод
+    // звука» в вечном «Загружаем…» (плюс необработанное отклонение промиса), а
+    // честная ветка «доступ запрещён» была недостижима — она рисуется по
+    // ПУСТОМУ списку, которого при отказе никто не выставлял.
+    devicesPort
+      .listOutputs()
+      .then(setOutDevices)
+      .catch(() => setOutDevices([]));
+    devicesPort
+      .listInputs()
+      .then(setInDevices)
+      .catch(() => setInDevices([]));
   };
   useEffect(() => {
     refresh();
@@ -65,6 +76,24 @@ export function OutputsSub() {
    *  «недоступно»: и понятно, куда делся звук, и можно убрать. */
   const orphanRoutes =
     outDevices === null ? [] : outRoutes.filter((r) => !outDevices.some((d) => d.deviceId === r.deviceId || d.label === r.label));
+
+  /** МИКРОФОН: по идентификатору, затем по имени — тот же фолбэк, что у
+   *  маршрутов вывода выше (routeForDevice). deviceId в Chromium меняется при
+   *  переподключении устройства, а prefs.micDeviceLabel до этой правки только
+   *  ПИСАЛСЯ и не читался никем: выпадашка после переподключения показывала
+   *  пустоту, а захват шёл с чужого микрофона.
+   *  Найдя устройство по имени, чиним сам профиль — тогда починка доезжает и до
+   *  захвата (потребитель micDeviceId — apps/desktop/src/player/usePlayback.ts),
+   *  а не только до этого списка. */
+  const micById = inDevices.find((d) => d.deviceId === prefs.micDeviceId);
+  const micByLabel = micById || !prefs.micDeviceLabel ? undefined : inDevices.find((d) => d.label === prefs.micDeviceLabel);
+  const micHealedId = micByLabel?.deviceId;
+  useEffect(() => {
+    if (micHealedId) set({ micDeviceId: micHealedId });
+    // set пересоздаётся на каждую правку настроек — гонять эффект по нему
+    // значило бы перезаписывать профиль на каждый чужой чих
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micHealedId]);
 
   const [profileNameDraft, setProfileNameDraft] = useState<string | null>(null);
   const saveOutputProfile = (name: string) => {
@@ -171,7 +200,7 @@ export function OutputsSub() {
               { key: "default", label: t("settings.outputs.micDevice.systemDefault") },
               ...inDevices.map((d) => ({ key: d.deviceId, label: d.label })),
             ]}
-            value={prefs.micDeviceId || "default"}
+            value={(micById ?? micByLabel)?.deviceId || prefs.micDeviceId || "default"}
             onChange={(key: string) => {
               const dev = inDevices.find((d) => d.deviceId === key);
               set(key === "default" ? { micDeviceId: "", micDeviceLabel: "" } : { micDeviceId: key, micDeviceLabel: dev?.label ?? "" });

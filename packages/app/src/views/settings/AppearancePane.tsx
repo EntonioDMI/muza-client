@@ -8,6 +8,7 @@
  *  «настройки», 2026-08-02): разметка, стили и порядок рядов не тронуты —
  *  приложение после переезда обязано выглядеть ровно как до него. */
 
+import { useEffect, useRef } from "react";
 import { Switch, Tabs } from "@muza/ui";
 import { useT } from "../../i18n";
 import type { Prefs } from "../../prefs/types";
@@ -19,6 +20,18 @@ export function AppearancePane() {
   const { t } = useT();
   const { prefs, set, paneClass, openSub } = useSettingsScreen();
   const presets = appearancePresets(t);
+  // ТУМБЛЕР ФОНА = «фон включён», а не «фон из обложки». Раньше он стоял
+  // checked={bgType === "cover"} и писал "cover"/"none": человек собирал в
+  // «Кастомизации» градиент или анимированный фон, возвращался сюда — тумблер
+  // выключен, а ряд рядом честно пишет «Свой», — один клик, и настройка фона
+  // молча заменялась обложкой; обратный клик давал "none", а не прежний тип.
+  // Прошлый тип помним здесь, чтобы возврат вернул ЕГО, а не обложку. Поле
+  // настроек ради этого не заводим: память нужна только на время, пока человек
+  // щёлкает тумблером, — после перезахода вернётся "cover", как и раньше.
+  const lastBgType = useRef<Exclude<Prefs["bgType"], "none">>("cover");
+  useEffect(() => {
+    if (prefs.bgType !== "none") lastBgType.current = prefs.bgType;
+  }, [prefs.bgType]);
   return (
     <div className={paneClass} style={paneStyle}>
       {/* Переключатель языка — первый элемент вкладки по требованию владельца.
@@ -99,8 +112,8 @@ export function AppearancePane() {
                 : t("settings.appearance.background.custom")}
           </RowValue>
           <Switch
-            checked={prefs.bgType === "cover"}
-            onChange={(on: boolean) => set({ bgType: on ? "cover" : "none" })}
+            checked={prefs.bgType !== "none"}
+            onChange={(on: boolean) => set({ bgType: on ? lastBgType.current : "none" })}
             label={t("settings.appearance.background.ariaLabel")}
           />
         </div>

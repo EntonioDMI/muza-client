@@ -37,6 +37,13 @@ import { useT } from "../../i18n";
 import { paneStyle, RowValue, SettingInput, SettingRow } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
 
+/** Повторы запроса статуса при лежачем сервере: сколько раз и с какой паузой.
+ *  Пять попыток за ~2 минуты покрывают самый частый случай — приложение
+ *  запустилось раньше своего сервера. */
+const SCROB_RETRIES = 5;
+const SCROB_RETRY_BASE_MS = 5000;
+const SCROB_RETRY_MAX_MS = 60000;
+
 export function IntegrationsPane() {
   const { t } = useT();
   const { prefs, set, api, serverSession, caps, platform, onNotify, openSub, paneClass } = useSettingsScreen();
@@ -54,24 +61,34 @@ export function IntegrationsPane() {
   useEffect(() => {
     if (!serverSession) return;
     let dead = false;
-    let iv: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let tries = 0;
+    // ПОВТОР С ОТСТУПАНИЕМ, а не ровный интервал (правка 2026-08-03). Раньше
+    // опрос стоял на setInterval и снимался ТОЛЬКО при успехе: сервер лежит,
+    // раздел открыт — запрос каждые 5 секунд бесконечно, без пауз и потолка
+    // попыток. Теперь пауза растёт (5, 10, 20, 40, 60 с), а после RETRIES
+    // попыток опрос прекращается: ряды уже пишут «сервер недоступен», и молотить
+    // лежачий сервер из открытой вкладки настроек незачем. Вернуться к проверке
+    // можно перезаходом в раздел — эффект пересоздаётся.
     const load = async () => {
       try {
         const s = await api.getScrobbling();
         if (dead) return;
         setScrob(s);
         setScrobErr(false);
-        if (iv) clearInterval(iv);
-        iv = null;
+        // успех: сервер жив, дальше статус меняют кнопки этого же раздела
       } catch {
-        if (!dead) setScrobErr(true);
+        if (dead) return;
+        setScrobErr(true);
+        tries += 1;
+        if (tries >= SCROB_RETRIES) return;
+        timer = setTimeout(() => void load(), Math.min(SCROB_RETRY_MAX_MS, SCROB_RETRY_BASE_MS * 2 ** (tries - 1)));
       }
     };
     void load();
-    iv = setInterval(() => void load(), 5000);
     return () => {
       dead = true;
-      if (iv) clearInterval(iv);
+      if (timer) clearTimeout(timer);
     };
   }, [serverSession, api]);
 

@@ -48,7 +48,10 @@ export interface ThemeLibrary {
 }
 
 export function useThemeLibrary(): ThemeLibrary {
-  const { t } = useT();
+  // lang — ради дефолтного имени темы: у saveTheme он со значением по
+  // умолчанию (EN), и без явной передачи русский интерфейс получал в списке
+  // «My theme», хотя перевод лежит рядом.
+  const { t, lang } = useT();
   const { prefs, setPrefs, onNotify } = useSettingsScreen();
 
   // Список читается из хранилища устройства при входе на страницу: его мог
@@ -68,7 +71,7 @@ export function useThemeLibrary(): ThemeLibrary {
     setNameOpen(true);
   };
   const submitSave = () => {
-    saveTheme(name, prefs);
+    saveTheme(name, prefs, lang);
     setThemes(listThemes());
     setNameOpen(false);
     onNotify(t("settings.customize.themes.saved"), "save");
@@ -101,7 +104,7 @@ export function useThemeLibrary(): ThemeLibrary {
     const next = applyTheme(parsed.tokens, prefs);
     setPrefs(next);
     setCssDraft(next.customCss);
-    saveTheme(parsed.name, next);
+    saveTheme(parsed.name, next, lang);
     setThemes(listThemes());
     setImportOpen(false);
     setImportText("");

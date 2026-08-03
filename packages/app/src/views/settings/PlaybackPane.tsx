@@ -43,6 +43,11 @@ export function RecsTuning() {
   const { api, serverSession, onNotify } = useSettingsScreen();
   const [s, setS] = useState<RecsSettings | null>(null);
   const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Что ещё не уехало на сервер. Таймер отложенной записи ОДИН на оба
+   *  ползунка, и без накопления вторая правка отменяла таймер первой: подвинул
+   *  «Новизну», сразу «Повторы» — на сервер уходили только «Повторы», а
+   *  «Новизна» возвращалась прежней с ближайшим ответом. */
+  const pending = useRef<{ epsilon?: number; tauScale?: number }>({});
 
   useEffect(() => {
     if (!serverSession) return;
@@ -58,11 +63,23 @@ export function RecsTuning() {
     };
   }, [api, serverSession]);
 
+  // Уход с экрана снимает отложенную запись: панель размонтирована, а таймер
+  // иначе доживал и слал запрос уже в никуда (тост про закрытый экран).
+  useEffect(
+    () => () => {
+      if (pushTimer.current) clearTimeout(pushTimer.current);
+    },
+    [],
+  );
+
   const push = (next: { epsilon?: number; tauScale?: number }) => {
+    pending.current = { ...pending.current, ...next };
     if (pushTimer.current) clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(() => {
+      const patch = pending.current;
+      pending.current = {};
       api
-        .updateRecsSettings(next)
+        .updateRecsSettings(patch)
         .then(setS)
         .catch(() => onNotify(t("settings.playback.recs.saveFailed"), "x"));
     }, 600);

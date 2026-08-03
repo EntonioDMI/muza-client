@@ -174,7 +174,9 @@ function MarketPluginCard({
 }
 
 export function MarketSub() {
-  const { t } = useT();
+  // lang — для дефолтного имени темы в addTheme (у витрины имя обычно своё,
+  // но безымянная тема не должна становиться английской в русском интерфейсе).
+  const { t, lang } = useT();
   const { prefs, setPrefs, api, serverSession, isAdmin, caps, plugins, onNotify, marketFilter, setMarketFilter, closeSub, paneClass } =
     useSettingsScreen();
   const canPlugins = caps.has("plugins");
@@ -225,7 +227,7 @@ export function MarketSub() {
     // Счётчик установок — по возможности: сервер лёг, а значения уже у нас
     const installed = await api.installMarketTheme(theme.id).catch(() => null);
     const tokens = sanitizeTokens(installed?.payload ?? theme.payload);
-    addTheme(theme.name, tokens);
+    addTheme(theme.name, tokens, lang);
     setPrefs(applyTheme(tokens, prefs));
     setMarketThemes((list) => list?.map((x) => (x.id === theme.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
     onNotify(t("settings.market.themeInstalled", { name: theme.name }), "download");

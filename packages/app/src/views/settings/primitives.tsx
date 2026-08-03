@@ -20,7 +20,13 @@ import { Button, ChipGroup, ColorPicker, Icon, IconButton, Slider, Tooltip } fro
 import { useT } from "../../i18n";
 import { comboFromEvent, formatCombo } from "../../lib/hotkeys";
 
-/** Диапазон плотности стекла: ниже 30% интерфейс нечитаем. */
+/** Пол ОБЩЕЙ плотности стекла («Прозрачность» во «Внешнем виде»): ниже 30%
+ *  панели и меню с текстом перестают читаться.
+ *
+ *  На зональные ползунки стекла («Кастомизация» → стекло плеера/меню/диалогов/
+ *  сайдбара/панели) он НЕ распространяется намеренно: там 0% — законный вид,
+ *  и дефолты это подтверждают (glassSidebar и glassNowPlaying = 4). Зона с
+ *  прозрачным фоном не прячет текст — свой текст рисует не фон зоны. */
 export const GLASS_MIN = 30;
 
 /** ПОЛЕ РАЗДЕЛА — вертикальная раскладка его содержимого. Отступы живут ВНУТРИ
@@ -389,12 +395,17 @@ export function SettingInput({
   placeholder,
   width = 220,
   type = "text",
+  onKeyDown,
+  onBlur,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   width?: number;
   type?: "text" | "password";
+  /** Поле, которое применяет введённое само (StepsEditor). */
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+  onBlur?: React.FocusEventHandler<HTMLInputElement>;
 }) {
   return (
     <input
@@ -404,6 +415,8 @@ export function SettingInput({
       // placeholder — не имя поля: screen reader получает label явно
       aria-label={placeholder}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
+      onBlur={onBlur}
       style={{
         height: 36,
         width,
@@ -458,7 +471,24 @@ export function StepsEditor({
   };
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-      <SettingInput value={raw} onChange={setRaw} width={200} />
+      {/* Enter и уход фокуса применяют — ровно то, что обещает шапка функции и
+          чего человек ждёт от поля ввода. До правки существовала ОДНА дорога,
+          кнопка «Применить»: набрал шаги скорости, нажал Enter, ушёл — и
+          значение пропадало молча, без единого признака, что его не взяли.
+          Повторное применение (blur после клика по кнопке) безвредно:
+          apply идемпотентен, он же и нормализует черновик. */}
+      <SettingInput
+        value={raw}
+        onChange={setRaw}
+        width={200}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            apply();
+          }
+        }}
+        onBlur={apply}
+      />
       {suffix ? (
         <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", flex: "none" }}>{suffix}</span>
       ) : null}
