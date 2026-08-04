@@ -178,6 +178,16 @@ export function useLocalReorder({
    *  умножает на zoom — выдаваемые сдвиги делим, иначе плашка обгоняет мышку. */
   const zoom = useRef(1);
   const pending = useRef<{ id: string; x0: number; y0: number; timer: number } | null>(null);
+  /** Проглотить click, который браузер шлёт ПОСЛЕ завершённого жеста.
+   *
+   *  Плашка едет за курсором, поэтому pointerdown и pointerup попадают в один
+   *  и тот же элемент — Chromium честно генерит click, какой бы длинной ни
+   *  была протяжка. С хватом «за весь блок» (04.08) этот click стал попадать в
+   *  кнопку строки/плитки: каждая перестановка плейлиста ЗАОДНО ОТКРЫВАЛА его
+   *  (ревизия 04.08). Поднятый жест — не клик по смыслу; флаг ставится на
+   *  подъёме и гасит ровно один ближайший click на захвате. Обычный клик без
+   *  подъёма (ни удержания, ни сдвига) флага не видит и работает как раньше. */
+  const swallowClick = useRef(false);
   /** Синхронный признак живого переноса: setState не успевает между
    *  pointermove и pointerup в одном кадре (та же гоча, что в DragLayer).
    *  grabX/grabY — где внутри плашки её держат, чтобы она не прыгала к курсору
@@ -417,6 +427,7 @@ export function useLocalReorder({
       pointer.current = { x, y };
       lastReorder.current = 0; // первый ход жеста пауза не задерживает
       lastSwap.current = null; // сторож пары — на каждый жест свой
+      swallowClick.current = true; // click после жеста — не клик (см. объявление)
       // Поверх соседей. zIndex работает и без position: элементы групп лежат в
       // flex/grid-контейнерах, а их дети образуют контекст наложения сами.
       el.style.zIndex = "3";
@@ -605,17 +616,28 @@ export function useLocalReorder({
       }
       step();
     };
+    /** Гаситель click после жеста — на захвате, раньше всех кнопок. Один раз:
+     *  проглотил — снял флаг. Новый pointerdown тоже снимает (см. grip) —
+     *  жест, оборванный pointercancel, не оставляет мину под чужой клик. */
+    const clickCap = (e: MouseEvent) => {
+      if (!swallowClick.current) return;
+      swallowClick.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+    };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     window.addEventListener("keydown", key);
     window.addEventListener("scroll", scrolled, true);
+    window.addEventListener("click", clickCap, true);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       window.removeEventListener("keydown", key);
       window.removeEventListener("scroll", scrolled, true);
+      window.removeEventListener("click", clickCap, true);
     };
   }, [cancelPending, finish, lift, measure, step]);
 
@@ -652,6 +674,7 @@ export function useLocalReorder({
       onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
         if (!shouldStart(e)) return; // Alt/Ctrl/правая — не наш жест
         if (drag.current) return;
+        swallowClick.current = false; // новое нажатие — чистый лист для click
         cancelPending();
         pointer.current = { x: e.clientX, y: e.clientY };
         const timer = window.setTimeout(() => {

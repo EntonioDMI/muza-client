@@ -64,7 +64,11 @@ export const WINDOW_LAYOUTS: Record<WindowLayout, Partial<Prefs>> = {
     wSidebar: 280,
     hPlayerBar: 92,
     coverBarSize: 60,
-    density: 50,
+    // 83, а не «прежние» 50: формула плотности сменилась редизайном
+    // (densityPad 14+12d/100 → 10+12d/100), и старые 50 теперь дают поле зоны
+    // 16px вместо исторических 20. Обещание «число в число» — про РЕЗУЛЬТАТ:
+    // 10 + round(12·83/100) = 20 (ревизия 04.08).
+    density: 83,
     radius: "round",
   },
 };

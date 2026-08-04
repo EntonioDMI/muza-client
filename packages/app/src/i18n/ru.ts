@@ -1285,11 +1285,14 @@ export const ru: typeof en = {
     admin: "Админка",
     hotkeysTooltip: "Горячие клавиши (?)",
     playlistMeta: {
-      collabFrom: "{count} тр. · от {owner}",
-      shared: "{count} тр. · совместный",
+      // Число треков с 04.08 живёт ЦИФРОЙ у правого края строки (count) —
+      // словами его больше не дублируем; meta говорит только то, чего цифра
+      // не скажет. {count} остаётся допустимым параметром для совместимости.
+      collabFrom: "от {owner}",
+      shared: "совместный",
       trackCount: "{count} тр.",
       // Публичные плейлисты (2026-07-17): живая подписка / скрыт владельцем
-      followedFrom: "{count} тр. · от {owner}",
+      followedFrom: "от {owner}",
       hiddenByOwner: "владелец скрыл",
     },
   },

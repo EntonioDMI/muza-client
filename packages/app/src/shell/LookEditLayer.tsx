@@ -98,18 +98,25 @@ export function LookEditLayer({
    *  раньше. */
   const { pushUndo, popUndo } = useLookEdit();
   const drag = useRef<{ grip: Grip; start: number; from: number } | null>(null);
+  /** Корень слоя — источник зума. ⚠️ НЕ documentElement: масштаб интерфейса
+   *  (zoom) висит на theme-div НИЖЕ корня документа, у documentElement свой
+   *  currentCSSZoom всегда 1 — и на 85/125 % все ручки промахивались мимо
+   *  краёв, а тяга врала на коэффициент зума (ревизия 04.08). Слой рендерится
+   *  ВНУТРИ зумленного поддерева — зум и надо спрашивать у себя. */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const zoomOf = useCallback(() => cssZoom(rootRef.current) || 1, []);
 
   /** Измеряем края зон. Пересчитываем на каждый кадр перетаскивания и на
    *  ресайз: зоны едут, ручки обязаны ехать вместе с ними. */
   const measure = useCallback(() => {
-    const zoom = cssZoom(document.documentElement) || 1;
+    const zoom = zoomOf();
     const next: Box[] = [];
     for (const grip of GRIPS) {
       const el = document.querySelector(grip.selector);
       if (!el) continue;
       const r = el.getBoundingClientRect();
-      // Экранные пиксели → CSS-пиксели: слой рисуется вне зумированного
-      // поддерева, поэтому обязан говорить в его единицах.
+      // Экранные пиксели → CSS-пиксели зумленного поддерева: слой рендерится
+      // ВНУТРИ theme-div, и его left/top движок умножает на zoom.
       const x = r.x / zoom;
       const y = r.y / zoom;
       const w = r.width / zoom;
@@ -123,12 +130,18 @@ export function LookEditLayer({
       }
     }
     setBoxes(next);
-  }, []);
+  }, [zoomOf]);
 
   useLayoutEffect(() => {
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(document.documentElement);
+    // Сами зоны — тоже: Ctrl+Z и правки из «Кастомизации» двигают края БЕЗ
+    // ресайза окна, и ручки оставались на старых местах (ревизия 04.08).
+    for (const grip of GRIPS) {
+      const el = document.querySelector(grip.selector);
+      if (el) ro.observe(el);
+    }
     window.addEventListener("resize", measure);
     return () => {
       ro.disconnect();
@@ -181,7 +194,7 @@ export function LookEditLayer({
 
   const onPointerDown = (grip: Grip) => (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    const zoom = cssZoom(document.documentElement) || 1;
+    const zoom = zoomOf();
     drag.current = {
       grip,
       start: (grip.axis === "x" ? e.clientX : e.clientY) / zoom,
@@ -194,7 +207,7 @@ export function LookEditLayer({
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
-    const zoom = cssZoom(document.documentElement) || 1;
+    const zoom = zoomOf();
     const now = (d.grip.axis === "x" ? e.clientX : e.clientY) / zoom;
     const raw = d.from + (now - d.start) * d.grip.sign;
     const value = Math.round(Math.max(d.grip.min, Math.min(d.grip.max, raw)));
@@ -210,6 +223,7 @@ export function LookEditLayer({
 
   return (
     <div
+      ref={rootRef}
       // Слой поверх всего, но НЕ ловящий события сам: клики проходят к живому
       // приложению, и музыка в режиме правки продолжает слушаться. Ловят
       // только сами ручки.
@@ -284,8 +298,10 @@ export function LookEditLayer({
         <span
           style={{
             position: "fixed",
-            left: active.x + 14,
-            top: active.y - 10,
+            // clientX/Y — экранные; fixed внутри зумленного поддерева
+            // умножается на zoom — делим, иначе бейдж уезжает от курсора.
+            left: (active.x + 14) / zoomOf(),
+            top: (active.y - 10) / zoomOf(),
             padding: "3px 8px",
             borderRadius: "var(--r-xs)",
             background: "var(--glass-dialog)",

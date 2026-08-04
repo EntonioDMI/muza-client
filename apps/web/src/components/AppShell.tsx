@@ -137,6 +137,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarPlaylists: SidebarPlaylist[] = playlists.map((p) => ({
     id: p.id,
     name: p.name,
+    // Число треков — тихой цифрой справа (count), meta осталась только там,
+    // где есть что сказать СВЕРХ числа — ровно как в App.tsx (04.08).
     meta:
       p.role === "follower"
         ? p.available === false
@@ -146,7 +148,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername })
           : p.collaboratorsCount > 0
             ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
-            : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
+            : "",
+    count: p.trackCount,
     shared: p.role === "collaborator" || p.collaboratorsCount > 0,
     fixed: p.role === "follower" || p.pinned,
     pinned: p.pinned,

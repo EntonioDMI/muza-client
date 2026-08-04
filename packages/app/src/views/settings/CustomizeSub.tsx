@@ -337,12 +337,14 @@ export function CustomizeSub() {
           />
         </SettingRow>
         <SettingRow title={t("settings.customize.shape.gapZone.title")} hint={t("settings.customize.shape.gapZone.hint")}>
+          {/* Пол 0, а не 4: плоская раскладка легитимно ставит зазор в ноль
+              (зоны встык), и ползунок обязан уметь и показать его, и вернуть. */}
           <LiveSlider
-            value={prefs.gapZone - 4}
-            max={16}
+            value={prefs.gapZone}
+            max={20}
             label={t("settings.customize.shape.gapZone.title")}
             suffix={`${prefs.gapZone} px`}
-            onChange={(v) => set({ gapZone: 4 + Math.round(v) })}
+            onChange={(v) => set({ gapZone: Math.round(v) })}
           />
         </SettingRow>
         <SettingRow title={t("settings.customize.shape.sidebarWidth.title")} hint={t("settings.customize.shape.sidebarWidth.hint")}>

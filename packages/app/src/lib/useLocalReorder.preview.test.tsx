@@ -109,6 +109,39 @@ describe("useLocalReorder — предпросмотр порядка", () => {
     expect(shown(view)).toEqual(["b", "a", "c"]);
   });
 
+  it("click ПОСЛЕ жеста гасится, обычный клик — нет (хват за весь блок)", () => {
+    // Плашка едет за курсором, поэтому pointerdown и pointerup попадают в один
+    // элемент — браузер шлёт click, и с хватом «за весь блок» каждая
+    // перестановка плейлиста заодно ОТКРЫВАЛА его (ревизия 04.08).
+    vi.useFakeTimers();
+    const view = render(<List />);
+
+    // обычный клик без подъёма — не гасится
+    const plain = new MouseEvent("click", { bubbles: true, cancelable: true });
+    window.dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+
+    // жест: подъём удержанием → движение → отпускание → click гасится
+    fireEvent.pointerDown(view.getByTestId("a"), { button: 0, clientX: 0, clientY: 10 });
+    act(() => {
+      vi.advanceTimersByTime(HOLD_MS);
+    });
+    act(() => {
+      fireEvent.pointerMove(window, { clientX: 0, clientY: 60 });
+    });
+    act(() => {
+      fireEvent.pointerUp(window);
+    });
+    const after = new MouseEvent("click", { bubbles: true, cancelable: true });
+    window.dispatchEvent(after);
+    expect(after.defaultPrevented).toBe(true);
+
+    // ровно один: следующий клик снова живой
+    const next = new MouseEvent("click", { bubbles: true, cancelable: true });
+    window.dispatchEvent(next);
+    expect(next.defaultPrevented).toBe(false);
+  });
+
   it("СТОРОЖ ПАРЫ: тот же сосед не пилит обмен туда-сюда под микродвижениями", () => {
     // Сценарий владельца (третья приёмка): «Лайки» на широкий «Топ треков» в
     // ленте с переносом строк — после обмена широкий блок снова накрывает

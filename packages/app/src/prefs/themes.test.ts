@@ -56,7 +56,10 @@ describe("sanitizeTokens: числа в границах своего ряда �
   it("ширины зон и стекло зажимаются, а не уезжают на весь экран", () => {
     expect(sanitizeTokens({ wSidebar: 999999 }).wSidebar).toBe(340);
     expect(sanitizeTokens({ wNowPlaying: -50 }).wNowPlaying).toBe(300);
-    expect(sanitizeTokens({ glassOpacity: 1 }).glassOpacity).toBe(30);
+    // Пол стекла снят вместе с GLASS_MIN (0 — осознанный выбор человека);
+    // отрицательное по-прежнему зажимается в ноль.
+    expect(sanitizeTokens({ glassOpacity: 1 }).glassOpacity).toBe(1);
+    expect(sanitizeTokens({ glassOpacity: -5 }).glassOpacity).toBe(0);
     expect(sanitizeTokens({ glassPlayer: 500 }).glassPlayer).toBe(100);
   });
 

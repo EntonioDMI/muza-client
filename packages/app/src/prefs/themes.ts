@@ -336,7 +336,9 @@ export const THEME_NUMBER_RANGES: Record<string, NumberRange> = {
   // Общее стекло панелей: пол — GLASS_MIN ряда «Прозрачность» (ниже панели с
   // текстом не читаются). Зональное стекло идёт от нуля намеренно — см.
   // комментарий у GLASS_MIN в views/settings/primitives.tsx.
-  glassOpacity: { min: 30, max: 100 },
+  // Пол снят вместе с GLASS_MIN (primitives.tsx): ниже 30 — осознанный выбор
+  // человека; тема обязана уметь его сохранить и вернуть.
+  glassOpacity: { min: 0, max: 100 },
   glassPlayer: { min: 0, max: 100 },
   glassMenu: { min: 0, max: 100 },
   glassDialog: { min: 0, max: 100 },

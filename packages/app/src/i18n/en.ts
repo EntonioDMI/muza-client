@@ -1317,11 +1317,12 @@ export const en = {
     admin: "Admin",
     hotkeysTooltip: "Hotkeys (?)",
     playlistMeta: {
-      collabFrom: "{count} tr. · from {owner}",
-      shared: "{count} tr. · shared",
+      // Число треков с 04.08 — цифрой у правого края (count); словами не дублируем.
+      collabFrom: "from {owner}",
+      shared: "shared",
       trackCount: "{count} tr.",
       // Публичные плейлисты (2026-07-17): живая подписка / скрыт владельцем
-      followedFrom: "{count} tr. · by {owner}",
+      followedFrom: "by {owner}",
       hiddenByOwner: "hidden by the owner",
     },
   },

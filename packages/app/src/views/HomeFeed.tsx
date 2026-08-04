@@ -67,10 +67,13 @@ const sectionH2: React.CSSProperties = {
   color: "var(--text-3)",
 };
 
-/** «2 ч 14 мин» / «14 мин» — время прослушивания для меты шапки. */
+/** «2 ч 14 мин» / «14 мин» — время прослушивания для меты шапки.
+ *  Сначала округляем ДО минут, потом делим на часы: раздельное округление
+ *  остатка давало «60 мин» и «1 ч 60 мин» у значений под самый час. */
 function fmtListenTime(ms: number, t: (key: TranslationKey, params?: TParams) => string): string {
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.round((ms % 3_600_000) / 60_000);
+  const totalMin = Math.round(ms / 60_000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
   return h > 0 ? t("views.home.meta.hoursMinutes", { h, m }) : t("views.home.meta.minutes", { m });
 }
 
