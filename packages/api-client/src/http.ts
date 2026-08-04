@@ -1430,6 +1430,15 @@ export class HttpMuzaApi implements MuzaApi {
     await this.authedRequest(`/market/themes/${encodeURIComponent(id)}/report`, { method: "POST" });
   }
 
+  async setMarketThemeHidden(id: string, hidden: boolean): Promise<void> {
+    // Модерация витрины (только админ): hidden=false возвращает скрытую тему.
+    // До 04.08 у скрытой темы был единственный путь — удаление навсегда.
+    await this.authedRequest(`/market/themes/${encodeURIComponent(id)}/hidden`, {
+      method: "POST",
+      body: JSON.stringify({ hidden }),
+    });
+  }
+
   // ---------- Маркетплейс плагинов (эпик W8, T45a) ----------
 
   async getMarketPlugins(): Promise<MarketPlugin[]> {
@@ -1598,10 +1607,11 @@ export class HttpMuzaApi implements MuzaApi {
     });
   }
 
-  async getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers> {
+  async getAdminUsers(opts?: { limit?: number; offset?: number; q?: string }): Promise<AdminUsers> {
     const params = new URLSearchParams();
     if (opts?.limit) params.set("limit", String(opts.limit));
     if (opts?.offset) params.set("offset", String(opts.offset));
+    if (opts?.q) params.set("q", opts.q);
     const qs = params.size > 0 ? `?${params}` : "";
     const u = await this.authedRequest<{
       total: number;

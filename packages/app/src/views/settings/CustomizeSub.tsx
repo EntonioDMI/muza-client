@@ -574,20 +574,29 @@ export function CustomizeSub() {
         </SettingRow>
         <SettingRow title={t("settings.customize.layout.playerHeight.title")} hint={t("settings.customize.layout.playerHeight.hint")}>
           <LiveSlider
-            value={prefs.hPlayerBar - 72}
-            max={48}
+            value={prefs.hPlayerBar - 56}
+            max={64}
             label={t("settings.customize.layout.playerHeight.title")}
             suffix={`${prefs.hPlayerBar} px`}
-            onChange={(v) => set({ hPlayerBar: 72 + Math.round(v) })}
+            onChange={(v) => set({ hPlayerBar: 56 + Math.round(v) })}
           />
         </SettingRow>
         <SettingRow title={t("settings.customize.layout.playerCover.title")} hint={t("settings.customize.layout.playerCover.hint")}>
           <LiveSlider
-            value={prefs.coverBarSize - 44}
-            max={36}
+            value={prefs.coverBarSize - 40}
+            max={40}
             label={t("settings.customize.layout.playerCover.title")}
             suffix={`${prefs.coverBarSize} px`}
-            onChange={(v) => set({ coverBarSize: 44 + Math.round(v) })}
+            onChange={(v) => set({ coverBarSize: 40 + Math.round(v) })}
+          />
+        </SettingRow>
+        <SettingRow title={t("settings.customize.layout.progressThickness.title")} hint={t("settings.customize.layout.progressThickness.hint")}>
+          <LiveSlider
+            value={prefs.hProgress - 2}
+            max={14}
+            label={t("settings.customize.layout.progressThickness.title")}
+            suffix={`${prefs.hProgress} px`}
+            onChange={(v) => set({ hProgress: 2 + Math.round(v) })}
           />
         </SettingRow>
 

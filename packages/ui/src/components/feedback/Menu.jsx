@@ -34,7 +34,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   const closeTimerRef = useRef(null);
   const [mounted, setMounted] = useState(open);
   const [closing, setClosing] = useState(false);
-  const [pos, setPos] = useState({ left: x, top: y });
+  const [pos, setPos] = useState({ left: x, top: y, maxH: undefined });
 
   // x/y приходят в ЭКРАННЫХ пикселях (clientX ПКМ), а панель внутри
   // зумленного корня (prefs.uiScale) позиционируется в зум-единицах — делим
@@ -48,9 +48,32 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     const z = cssZoom(el);
     const w = el.offsetWidth * z; // offset* — зум-единицы; на экране их x z
     const h = el.offsetHeight * z;
-    const sx = Math.max(8, Math.min(x, window.innerWidth - w - 8));
-    const sy = Math.max(8, Math.min(y, window.innerHeight - h - 8));
-    setPos({ left: sx / z, top: sy / z });
+    const M = 8; // поле от кромки окна
+    // ПЕРЕВОРОТ, А НЕ ПРИЖИМ (жалоба владельца 04.08: «список открывается не
+    // там, где кликнул, а будто приклеен к дну экрана; он не идёт ни выше, ни
+    // ниже»).
+    //
+    // Было: sy = max(8, min(y, innerHeight - h - 8)). У min верхняя граница НЕ
+    // зависит от y, поэтому все клики ниже порога давали РОВНО одну точку.
+    // Цифры: ряд меню 58px (minHeight 42 + по 8 полей, border-box в дереве не
+    // объявлен), меню плейлиста — 10 пунктов и 2 разделителя = 636px. В окне
+    // 900px граница = 900 − 636 − 8 = 256px: любой правый клик ниже четверти
+    // окна открывал панель в одном и том же месте.
+    //
+    // Теперь как у соседей по пакету (Select.jsx:36, ColorPicker.jsx:413): не
+    // влезает вниз — открываем ВВЕРХ от точки, и только если не влезает ни
+    // туда, ни туда, прижимаем. Финальный Math.max обязателен на обеих осях:
+    // без него клик в двух пикселях от кромки ставит панель вплотную к ней.
+    let sy = y;
+    if (y + h > window.innerHeight - M) sy = y - h >= M ? y - h : window.innerHeight - h - M;
+    sy = Math.max(M, sy);
+    let sx = x;
+    if (x + w > window.innerWidth - M) sx = x - w >= M ? x - w : window.innerWidth - w - M;
+    sx = Math.max(M, sx);
+    // ПОТОЛОК ВЫСОТЫ. Меню выше окна не помещалось НИКАК: прижим ставил верх в
+    // 8px, а хвост списка (включая «Удалить») висел ниже кромки и мышью был
+    // недостижим. Клавиатура не спасала — фокус ставится с preventScroll.
+    setPos({ left: sx / z, top: sy / z, maxH: (window.innerHeight - 2 * M) / z });
     // items в deps (аудит 22.07): пункты могут долиться АСИНХРОННО после
     // открытия («Куда играть» ждёт listOutputDevices) — панель расширяется, и
     // посчитанный по узкой панели кламп оставлял её обрезанной краем экрана.
@@ -95,7 +118,11 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e) => { if (e.key === "Escape" && onClose) onClose(); };
+    // preventDefault — не ради браузера (у Escape тут нет действия по
+    // умолчанию), а как ПОМЕТКА «событие взято». По ней режим правки вида
+    // понимает, что Escape уже кому-то понадобился, и не выходит из режима
+    // заодно с закрытием меню (см. shell/LookEditLayer.tsx).
+    const onKey = (e) => { if (e.key === "Escape" && onClose) { e.preventDefault(); onClose(); } };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
@@ -171,6 +198,13 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
              Потолок держит меню читаемым, перенос ловит min-height ряда. */
           width: "max-content",
           maxWidth: "min(92vw, 360px)",
+          /* Потолок высоты + прокрутка: список длиннее окна иначе уходил
+             хвостом за кромку и был недостижим ни мышью, ни стрелками
+             (фокус ставится с preventScroll). Считается тем же эффектом, что
+             и позиция, — в зум-единицах. */
+          maxHeight: pos.maxH,
+          overflowY: "auto",
+          overscrollBehavior: "contain",
           padding: "var(--sp-2)",
           borderRadius: "var(--r-md)",
           /* зональная прозрачность: своё стекло меню, фолбэк — общее */

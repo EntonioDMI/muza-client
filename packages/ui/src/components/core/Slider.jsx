@@ -1,4 +1,6 @@
 import React, { useRef, useState, useCallback, useLayoutEffect } from "react";
+import { portal } from "../../lib/layerRoot.js";
+import { cssZoom } from "../../lib/cssZoom.js";
 
 /** Потолок экстраполяции: сколько времени заливке разрешено ехать без свежего
  *  value. Нормальный timeupdate приходит куда чаще, так что в живом
@@ -25,7 +27,17 @@ const EXTRAPOLATE_CAP_MS = 1500;
  *  (иначе 60 ре-рендеров плеера в секунду тянули бы за собой скробблинг,
  *  resumeStore и триггеры gapless). Свежий value сбрасывает якорь: ошибка не
  *  копится и гасится субпиксельно — обе шкалы идут по реальному времени. */
-export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, hoverLabel, rate = 0, style }) {
+/** align — куда прижата дорожка внутри своего бокса: "start" — к верхней
+ *  кромке, "end" — к нижней, дефолт по середине. Нужно ровно одному
+ *  потребителю: полноширинной полосе прогресса по КРАЮ плеера (набросок
+ *  владельца 2026-08-04: линия по верхней кромке полосы). Там зона попадания
+ *  обязана быть высокой (в неё целятся мышью), а сама дорожка — лежать на
+ *  кромке, иначе линия висит в воздухе посреди бара. */
+export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, hoverLabel, rate = 0, align = "center", thickness = 4, style }) {
+  /* Толщина дорожки — числом (px) или готовой CSS-длиной, чтобы потребитель мог
+     отдать переменную темы: у полосы прогресса она настраиваемая (prefs.hProgress
+     → --h-progress), у всех остальных ползунков остаются прежние 4px. */
+  const track = typeof thickness === "number" ? `${thickness}px` : thickness;
   const ref = useRef(null);
   const fillRef = useRef(null);
   const thumbRef = useRef(null);
@@ -79,8 +91,29 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
     if (!hoverLabel || !ref.current) return;
     const r = ref.current.getBoundingClientRect();
     const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    setScrub({ pct: p * 100, v: p * max });
+    // Экранные координаты для пузырька-портала. Вертикаль зависит от кромки:
+    // у прогресса по ВЕРХУ плеера (align="start") пузырёк живёт ПОД линией,
+    // внутри самого плеера — над линией он вылезал за пределы полосы (жалоба
+    // владельца 04.08); у остальных — над дорожкой, как раньше.
+    setScrub({ v: p * max, x: r.left + p * r.width, y: align === "start" ? r.bottom + 6 : r.top - 6 });
   };
+
+  // Зажим пузырька по горизонтали — ПОСЛЕ отрисовки, когда известна его
+  // настоящая ширина: у кромки слайдера центрированный по курсору пузырёк
+  // наполовину уходил за окно («закрыт рамкой» — жалоба владельца 04.08).
+  // Прямой записью в style, без state: пересчёт идёт на каждый pointermove.
+  const bubbleRef = useRef(null);
+  useLayoutEffect(() => {
+    const el = bubbleRef.current;
+    const root = ref.current;
+    if (!el || !root || !scrub) return;
+    const z = cssZoom(el) || 1;
+    const half = el.getBoundingClientRect().width / 2;
+    const r = root.getBoundingClientRect();
+    const M = 4;
+    const x = Math.max(r.left + half + M, Math.min(r.right - half - M, scrub.x));
+    el.style.left = `${x / z}px`;
+  }, [scrub]);
 
   const setFromEvent = useCallback(
     (e) => {
@@ -126,6 +159,10 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
         setScrub(null);
       }}
       onPointerDown={(e) => {
+        // Только левая кнопка: pointerdown приходит и от правой/средней, и без
+        // сторожа ПКМ по полосе прогресса ПЕРЕМАТЫВАЛ трек, а потом ещё и
+        // открывал контекст-меню бара (ревизия 04.08).
+        if (e.pointerType === "mouse" && e.button !== 0) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         setDrag(true);
         setFromEvent(e);
@@ -148,7 +185,7 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
         position: "relative",
         height: 20,
         display: "flex",
-        alignItems: "center",
+        alignItems: align === "end" ? "flex-end" : align === "start" ? "flex-start" : "center",
         cursor: "pointer",
         touchAction: "none",
         ...style,
@@ -157,7 +194,9 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
       <div
         style={{
           width: "100%",
-          height: hover || drag ? 6 : 4,
+          /* Наведение утолщает дорожку на те же +2px при любой толщине: это
+             отклик «я на неё попал», а не вторая настройка. */
+          height: hover || drag ? `calc(${track} + 2px)` : track,
           borderRadius: "var(--r-pill)",
           background: "var(--surface-3)",
           overflow: "hidden",
@@ -192,46 +231,64 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
           pointerEvents: "none",
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: -6,
-            marginTop: -6,
-            width: 12,
-            height: 12,
-            borderRadius: "var(--r-pill)",
-            background: "var(--text-1)",
-            opacity: hover || drag ? 1 : 0,
-            transition: "opacity var(--dur-fast) var(--ease-out)",
-          }}
-        ></div>
+        {/* У КРАЕВОЙ ПОЛОСЫ (align start/end) ПОЛЗУНКА НЕТ — И ЭТО НЕ УПУЩЕНИЕ.
+            Дорожка лежит вплотную к кромке, поэтому круг, честно отцентрованный
+            по ней, наполовину уходит за край и обрезается (проверено пикселями
+            04.08). Двигать его — значит отрывать от линии. Отказ безопасен:
+            обратную связь дают утолщение дорожки и пузырёк времени. */}
+        {align !== "center" ? null : (
+          <div
+            style={{
+              position: "absolute",
+              top: "50%",
+              marginTop: -6,
+              left: -6,
+              width: 12,
+              height: 12,
+              borderRadius: "var(--r-pill)",
+              background: "var(--text-1)",
+              opacity: hover || drag ? 1 : 0,
+              transition: "opacity var(--dur-fast) var(--ease-out)",
+            }}
+          ></div>
+        )}
       </div>
-      {hoverLabel && scrub && (hover || drag) ? (
-        <span
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            left: scrub.pct + "%",
-            bottom: "calc(100% + 6px)",
-            transform: "translateX(-50%)",
-            padding: "3px 8px",
-            borderRadius: "var(--r-xs)",
-            background: "var(--glass-panel)",
-            backdropFilter: "blur(var(--blur-glass))",
-            WebkitBackdropFilter: "blur(var(--blur-glass))",
-            color: "var(--text-1)",
-            fontFamily: "var(--font-ui)",
-            fontSize: "var(--fs-caption)",
-            fontWeight: 600,
-            fontVariantNumeric: "tabular-nums",
-            whiteSpace: "nowrap",
-            pointerEvents: "none",
-          }}
-        >
-          {hoverLabel(scrub.v)}
-        </span>
-      ) : null}
+      {/* ПУЗЫРЁК ПЕРЕМОТКИ — ПОРТАЛОМ, как подсказки (lib/layerRoot.js).
+          Абсолютный пузырёк над слайдером резался ЛЮБЫМ overflow по дороге —
+          у полосы прогресса плеера обёртка клипует концы линии под скруглённые
+          углы, и пузырёк молча исчезал вместе с ними. Координаты экранные,
+          делённые на cssZoom — тот же контракт, что у меню и подсказок. */}
+      {hoverLabel && scrub && (hover || drag)
+        ? portal(
+            <span
+              aria-hidden="true"
+              ref={bubbleRef}
+              style={{
+                position: "fixed",
+                left: scrub.x / (cssZoom(ref.current) || 1),
+                top: scrub.y / (cssZoom(ref.current) || 1),
+                // у верхнекромочного прогресса пузырёк раскрывается ВНИЗ от
+                // линии (внутрь плеера), у остальных — вверх от дорожки
+                transform: align === "start" ? "translate(-50%, 0)" : "translate(-50%, -100%)",
+                padding: "3px 8px",
+                borderRadius: "var(--r-xs)",
+                background: "var(--glass-panel)",
+                backdropFilter: "blur(var(--blur-glass))",
+                WebkitBackdropFilter: "blur(var(--blur-glass))",
+                color: "var(--text-1)",
+                fontFamily: "var(--font-ui)",
+                fontSize: "var(--fs-caption)",
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+                zIndex: 300,
+              }}
+            >
+              {hoverLabel(scrub.v)}
+            </span>,
+          )
+        : null}
     </div>
   );
 }

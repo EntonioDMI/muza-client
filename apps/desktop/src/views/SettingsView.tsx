@@ -25,11 +25,12 @@
  *  сразу в обе программы. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SearchInput } from "@muza/ui";
+import { IconButton, SearchInput } from "@muza/ui";
 import type { MuzaApi } from "@muza/api-client";
 import { usePlatform } from "@muza/app/platform";
 import { paneStyle, SettingRow } from "@muza/app/views/settings/primitives";
-import { navItemId, SETTINGS_PANE_ID, SettingsNav, type SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
+import { SETTINGS_PANE_ID, SETTINGS_TAB_KEYS, type SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
+import { SettingsHub } from "@muza/app/views/settings/SettingsHub";
 import {
   settingsCaps,
   SettingsProvider,
@@ -145,7 +146,10 @@ export function SettingsView({
 }) {
   const { t } = useT();
   const platform = usePlatform();
-  const [tab, setTab] = useState<SettingsTabKey>("appearance");
+  // null — ВХОД в настройки: сетка карточек разделов (SettingsHub.tsx), а не
+  // сразу раздел. Второй навигационный рельс убран 04.08 по жалобе владельца
+  // «два одинаковых сайдбара стоят рядом».
+  const [tab, setTab] = useState<SettingsTabKey | null>(null);
   const [sub, setSub] = useState<SettingsSubKey | null>(null);
 
   // Умения выводятся из портов розетки — один список и рядам, и поиску.
@@ -209,7 +213,11 @@ export function SettingsView({
   };
   const searchHits = searchQ.trim() ? searchSettings(searchQ, (key) => t(key as TranslationKey), caps) : [];
 
-  const Pane = sub ? SUBS[sub] : PANES[tab];
+  // null на обоих — человек на входе, показываем сетку карточек.
+  const Pane = sub ? SUBS[sub] : tab ? PANES[tab] : null;
+  // Назад: из под-экрана — в его раздел, из раздела — на вход. У под-экранов
+  // своя шапка с возвратом (SubHeader), поэтому вторую кнопку им не рисуем.
+  const showBack = !!tab && !sub;
 
   return (
     // Вся геометрия (высота во всю зону, текучие колонки, потолки ширины) —
@@ -244,26 +252,33 @@ export function SettingsView({
             длины подписей, поэтому раскладка не перестраивается при смене
             языка. Заголовок «Настройки» — внутри SettingsNav, шапкой плашки. */}
         <div className="muza-settings__cols">
-          <SettingsNav
-            value={tab}
-            onChange={(nextTab) => {
-              setSub(null); // под-экран живёт внутри раздела — смена раздела закрывает его
-              setTab(nextTab);
-            }}
-          />
-          {/* Под-экран рисуется сюда же вместо содержимого раздела: навигация
-              остаётся на месте с подсвеченным разделом, назад — кнопкой в
-              шапке под-экрана. */}
-          <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="tabpanel" aria-labelledby={navItemId(tab)}>
-            {/* Поиск — первый элемент панели: живёт над содержимым любого
-                раздела. Непустой запрос подменяет содержимое списком найденных
-                рядов; клик по результату ведёт в раздел с подсветкой ряда. */}
-            <SearchInput
-              value={searchQ}
-              onChange={setSearchQ}
-              placeholder={t("settings.search.placeholder")}
-              style={{ marginTop: "var(--sp-6)" }}
-            />
+          {/* Одна колонка: рельс разделов убран, его роль исполняет сетка
+              карточек на входе. Под-экран рисуется сюда же вместо содержимого
+              раздела, назад — кнопкой в его шапке. */}
+          <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="region" aria-label={t("settings.title")}>
+            {/* Шапка экрана — та же анатомия, что у Медиатеки: заголовок и
+                первичное действие на одной линии. Поиск живёт здесь на всех
+                уровнях: непустой запрос подменяет содержимое списком найденных
+                рядов и уводит прямо в ряд, минуя и сетку, и раздел. */}
+            <div className="muza-settings__head">
+              {showBack ? (
+                <IconButton
+                  icon="arrow-left"
+                  size="sm"
+                  label={t("settings.hub.back")}
+                  onClick={() => setTab(null)}
+                />
+              ) : null}
+              <h1 className="muza-settings__title">
+                {tab && !sub ? t(`settings.tabs.${tab}` as TranslationKey) : t("settings.title")}
+              </h1>
+              <SearchInput
+                value={searchQ}
+                onChange={setSearchQ}
+                placeholder={t("settings.search.placeholder")}
+                style={{ maxWidth: 340, flex: 1 }}
+              />
+            </div>
             {searchQ.trim() ? (
               <div key="search-results" style={paneStyle}>
                 {searchHits.length === 0 ? (
@@ -280,8 +295,16 @@ export function SettingsView({
                   ))
                 )}
               </div>
-            ) : (
+            ) : Pane ? (
               <Pane key={paneKey} />
+            ) : (
+              <SettingsHub
+                tabs={SETTINGS_TAB_KEYS}
+                onOpen={(next) => {
+                  setSub(null);
+                  setTab(next);
+                }}
+              />
             )}
           </div>
         </div>

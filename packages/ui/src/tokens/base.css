@@ -48,6 +48,14 @@ a:hover { color: var(--accent-hover); }
   outline-offset: var(--focus-offset);
 }
 
+/* Картинка — не самостоятельный drag-объект (2026-08-04). У <img> есть свой
+   браузерный drag: он стартует раньше pointer-жестов, шлёт pointercancel и
+   убивает перетаскивание — владелец видел это как «плейлист тянется за любой
+   элемент, кроме картинки». Перенос строк и вынос файла (Alt) живут на
+   draggable-КОНТЕЙНЕРАХ и от правила только выигрывают: drag контейнера
+   больше не перебивается drag'ом обложки внутри него. */
+img { -webkit-user-drag: none; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     transition-duration: 1ms !important;

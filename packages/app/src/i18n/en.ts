@@ -67,6 +67,23 @@ export const en = {
       system: "System",
     },
 
+    // Одна строка о том, что внутри раздела — для карточек на входе в
+    // настройки (SettingsHub.tsx). Отвечают на «что произойдёт», а не «как
+    // устроено»: это подпись для человека, а не оглавление для разработчика.
+    hub: {
+      account: "Sign-in, password, sessions and your data",
+      appearance: "Theme, accent, corners, glass and everything about the look",
+      playback: "Crossfade, equalizer, speed, sleep timer, output",
+      sources: "Where tracks come from and how search behaves",
+      lyrics: "Synced lyrics, karaoke and line meaning",
+      library: "Local files, downloads and offline",
+      integrations: "Discord, Last.fm, ListenBrainz, media keys",
+      hotkeys: "Which keys do what",
+      extensions: "Plugins, themes and the market",
+      system: "Autostart, tray, updates and mini player",
+      back: "All settings",
+    },
+
     // ── Аккаунт ──────────────────────────────────────────────────────
     account: {
       profile: {
@@ -159,6 +176,17 @@ export const en = {
         muza: { name: "Muza", hint: "Blue · soft corners" },
         flame: { name: "Flame", hint: "Red · rounder" },
         graphite: { name: "Graphite", hint: "Bolt · sharper" },
+      },
+      lookEdit: {
+        title: "Edit the look by hand",
+        hint: "Grab the edges of the sidebar, the player and the side panel and drag them right in the app — the size changes under your cursor. Sidebar tabs, settings cards, home shelves and stats blocks can be dragged into any order there too, arrow keys included. Ctrl+Z undoes, Esc finishes.",
+      },
+      layout: {
+        title: "Window layout",
+        hint: "Air — margins and gaps around zones. Flat — everything flush with the edges. Classic — the way Muza looked before.",
+        air: "Air",
+        flat: "Flat",
+        classic: "Classic",
       },
       theme: {
         title: "Theme",
@@ -306,6 +334,7 @@ export const en = {
         rowSource: { title: "Track row: source", hint: "A small label shows where the track plays from — like SoundCloud. In search it is always visible." },
         playerHeight: { title: "Player bar height", hint: "How tall the player bar at the bottom is." },
         playerCover: { title: "Player cover", hint: "The size of the track cover in the player bar." },
+        progressThickness: { title: "Progress thickness", hint: "How visible the line under the player is. You can still hit it with the mouse at its thinnest." },
       },
       background: {
         groupTitle: "Background",
@@ -1210,6 +1239,26 @@ export const en = {
     },
   },
 
+  // Режим правки вида (Ctrl+E) — прямое манипулирование границами зон.
+  lookEdit: {
+    ribbon: "Editing the look — drag zone edges and rearrange items · Ctrl+Z undo · Esc done",
+    /** Обёртки групп, которые переставляются в режиме правки: у <div>-полки и
+     *  <div>-блока нет своего текста, и скринридеру нечего было бы назвать. */
+    group: {
+      navItem: "\"{name}\" tab — up and down arrows swap it with its neighbour",
+      settingsCard: "\"{name}\" section — arrows swap it with its neighbour, arrows with Shift resize it",
+      homeSection: "\"{name}\" shelf — up and down arrows swap it with its neighbour",
+      // Лента статистики переносится по строкам, поэтому и стрелки боковые.
+      statsBlock: "\"{name}\" block — left and right arrows swap it with its neighbour",
+    },
+    grip: {
+      wSidebar: "Sidebar width",
+      wNowPlaying: "Now Playing width",
+      hPlayerBar: "Player bar height",
+      hProgress: "Progress line thickness",
+    },
+  },
+
   // ── Плеер-бар/транспорт (T31): PlayerBar.tsx + ListeningMode.tsx +
   //    NowPlayingPanel.tsx + вычисления App.tsx, использующие тот же текст ─
   player: {
@@ -1256,6 +1305,7 @@ export const en = {
       configure: "Set up…",
     },
     fullscreen: "Fullscreen",
+    more: "More",
     lyricsSearching: "Looking for lyrics…",
     lyricsNotFound: "Lyrics not found",
   },
@@ -1283,6 +1333,9 @@ export const en = {
       title: "Nothing playing",
       hint: "Pick a track — the cover, lyrics and meaning will show up here.",
     },
+    // Label of the sliver at the window's right edge — the only trace a closed
+    // panel leaves behind.
+    reopen: "Bring back Now Playing",
   },
 
   // ── ListeningMode.tsx (T31, строки помимо переиспользованных player.*) ─

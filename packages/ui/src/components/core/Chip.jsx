@@ -7,6 +7,9 @@ export function Chip({ children, icon, selected = false, onClick, style }) {
   return (
     <button
       type="button"
+      // зона попадания до --hit-min по вертикали (чип 36px); ширины у чипа
+      // и так хватает — min() в правиле не даст ей сжаться
+      className="muza-hit"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}

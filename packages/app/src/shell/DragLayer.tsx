@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, cssZoom } from "@muza/ui";
 import { useCoverArt } from "../lib/coverArt";
+import { useLookEdit } from "./lookReorder";
 import {
   DRAG_THRESHOLD,
   DROP_ATTR,
@@ -49,10 +50,22 @@ interface DragCtx {
 
 const Ctx = createContext<DragCtx | null>(null);
 
+/** В режиме правки вида источники переноса молчат. */
+const INERT_SOURCE = { onPointerDown: () => undefined };
+
 export function useDrag(): DragCtx {
   const c = useContext(Ctx);
+  // ⚠️ В РЕЖИМЕ ПРАВКИ ВИДА (Ctrl+E) ИСТОЧНИКИ ПЕРЕНОСА ВЫКЛЮЧЕНЫ ЦЕЛИКОМ.
+  // Иначе один нажим запускает ДВА жеста разом: обёртка полки Главной несёт
+  // перестановку (useLookReorder), а строки и плитки внутри неё — этот перенос.
+  // Оба слушают pointerdown, оба ставят свои таймеры, и через HOLD_MS под
+  // курсором оказываются и поднятая полка, и превью-карточка трека. Владелец
+  // нашёл это на Главной, но причина общая — поэтому и выключается в одном
+  // месте, а не в пяти вью. Переносить треки в плейлисты, стоя в режиме правки
+  // вида, всё равно незачем: режим ровно про раскладку.
+  const look = useLookEdit();
   if (!c) throw new Error("useDrag вне <DragLayer>");
-  return c;
+  return look.active ? { ...c, dragSource: () => INERT_SOURCE } : c;
 }
 
 export function DragLayer({ children }: { children: ReactNode }) {
@@ -161,7 +174,12 @@ export function DragLayer({ children }: { children: ReactNode }) {
       const payload = dragging.current;
       if (!payload) return;
       dragging.current = null;
-      const hit = dropTargetAt(e.clientX, e.clientY);
+      // pointercancel — это НЕ отпускание: жест оборвала система (потеря
+      // capture, свернувшееся окно, начавшийся системный жест). Бросать трек в
+      // зону по координатам обрыва — значит класть его туда, куда человек не
+      // целился (ревизия 04.08). Отмена — как по Escape.
+      const cancelled = e.type === "pointercancel";
+      const hit = cancelled ? null : dropTargetAt(e.clientX, e.clientY);
       const cb = hit ? drops.current.get(hit.id) : undefined;
       setDrag(null);
       // после setDrag(null): обработчик может открыть диалог/тост, и делать это
@@ -174,6 +192,9 @@ export function DragLayer({ children }: { children: ReactNode }) {
       cancelPending();
       if (!dragging.current) return;
       dragging.current = null;
+      // Пометка «Escape взят»: пока идёт перенос, клавиша принадлежит ему, а не
+      // выходу из режима правки вида (см. shell/LookEditLayer.tsx).
+      e.preventDefault();
       setDrag(null); // Esc отменяет перенос — как в любом менеджере файлов
     };
 

@@ -292,12 +292,17 @@ export function SettingsScreen({
           {/* Поиск — первый элемент панели: живёт над содержимым любого
               раздела. Непустой запрос подменяет содержимое списком найденных
               рядов; клик по результату ведёт в раздел с подсветкой ряда. */}
-          <SearchInput
-            value={searchQ}
-            onChange={setSearchQ}
-            placeholder={t("settings.search.placeholder")}
-            style={{ marginTop: "var(--sp-6)" }}
-          />
+          {/* Шапка экрана — та же анатомия, что у Медиатеки: заголовок и
+              первичное действие на одной линии (редизайн 04.08). */}
+          <div className="muza-settings__head">
+            <h1 className="muza-settings__title">{t("settings.title")}</h1>
+            <SearchInput
+              value={searchQ}
+              onChange={setSearchQ}
+              placeholder={t("settings.search.placeholder")}
+              style={{ maxWidth: 340, flex: 1 }}
+            />
+          </div>
           {searchQ.trim() ? (
             /* Результаты поиска — такой же «раздел», как остальные: своё поле,
                заведённое той же обёрткой (контракт в шапке файла). */

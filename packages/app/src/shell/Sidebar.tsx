@@ -28,9 +28,10 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Icon, IconButton } from "@muza/ui";
 import { useCoverArt } from "../lib/coverArt";
-import { insertionIndex } from "../lib/dragEngine";
+import { applyVisibleOrder, insertionIndex, pickByOrder } from "../lib/dragEngine";
 import { useLocalReorder } from "../lib/useLocalReorder";
 import { useDropZone } from "./DragLayer";
+import { useLookReorder, type LookItemProps } from "./lookReorder";
 import { useT } from "../i18n";
 
 /** Вкладка панели: только то, что нужно нарисовать. Откуда взялся состав
@@ -58,6 +59,10 @@ export interface SidebarPlaylist {
   id: string;
   name: string;
   meta: string;
+  /** Число треков — тихой цифрой у правого края строки (набросок владельца
+   *  04.08). У обычного плейлиста meta при этом пустая: количество больше не
+   *  дублируется словами. */
+  count?: number;
   cover?: string;
   /** Stage 7: совместный плейлист — иконка «люди» вместо нот. */
   shared?: boolean;
@@ -102,18 +107,24 @@ function NavItem({
   active,
   quiet,
   onClick,
+  look,
 }: {
   icon: string;
   label: string;
   active?: boolean;
   quiet?: boolean;
   onClick?: () => void;
+  /** Режим правки вида: пункт становится хватаемым (shell/lookReorder.tsx).
+   *  Спред идёт ПЕРЕД style — свой стиль пункта остаётся главным, а сдвиг
+   *  перестановки подмешивается в него ниже. */
+  look?: LookItemProps;
 }) {
   const [hover, setHover] = useState(false);
   return (
     <button
       type="button"
       onClick={onClick}
+      {...look}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -144,6 +155,9 @@ function NavItem({
         cursor: "pointer",
         textAlign: "left",
         transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
+        // Сдвиг перестановки — последним: он подмешивает transform и свой
+        // transition поверх собственных стилей пункта, а не вместо них.
+        ...look?.style,
       }}
     >
       {/* Активная вкладка — ЗАЛИТАЯ иконка (как в Spotify/Apple Music): цвета
@@ -198,6 +212,7 @@ function PlaylistRow({
   cover,
   name,
   meta,
+  count,
   shared,
   onClick,
   onMenu,
@@ -205,9 +220,7 @@ function PlaylistRow({
   externalDrop,
   grip,
   rowRef,
-  shift,
   dragged = false,
-  settling = false,
   reordering = false,
   dimmed = false,
   pinned = false,
@@ -216,6 +229,8 @@ function PlaylistRow({
   cover?: string;
   name: string;
   meta: string;
+  /** Число треков тихой цифрой у правого края (см. SidebarPlaylist.count). */
+  count?: number;
   shared?: boolean;
   onClick?: () => void;
   /** ПКМ по строке — контекст-меню плейлиста (Открыть/Переименовать/Удалить). */
@@ -224,16 +239,13 @@ function PlaylistRow({
   onDropTrack?: (trackId: string) => void;
   /** Мост к HTML5-перетаскиванию; нет — в разметке нет и обработчиков. */
   externalDrop?: SidebarExternalDrop;
-  /** Реордер (useLocalReorder, живёт в Sidebar): пропсы ручки-⠿; нет — ручки нет. */
+  /** Реордер (useLocalReorder, живёт в Sidebar): обработчик жеста — вешается на
+   *  ВСЮ строку; нет — строка не переставляется и точек у неё нет. */
   grip?: { onPointerDown: (e: React.PointerEvent<HTMLElement>) => void };
   rowRef?: (el: HTMLElement | null) => void;
-  /** Transform строки во время реордера (сама или сосед); null — покой. */
-  shift?: { x: number; y: number } | null;
-  /** Тащат ИМЕННО эту строку: едет за курсором, без transition, поверх соседей. */
+  /** Тащат ИМЕННО эту строку — курсор «grabbing», точки в полную яркость. */
   dragged?: boolean;
-  /** Строку отпустили — она доезжает до слота, transition нужен и ей. */
-  settling?: boolean;
-  /** Идёт реордер списка — ручки видны на всех строках (читаются цели). */
+  /** Идёт реордер списка — точки видны на всех строках (читаются цели). */
   reordering?: boolean;
   /** 2026-07-17: скрытая владельцем подписка — строка гаснет. */
   dimmed?: boolean;
@@ -259,18 +271,25 @@ function PlaylistRow({
     <div
       {...dropProps}
       {...ext.props}
+      // ХВАТАЕТСЯ ВЕСЬ БЛОК, а не шесть точек (владелец 04.08: «было бы удобнее
+      // хвататься за весь блок»). Точки остаются подсказкой «это переставляется»,
+      // но своего обработчика больше не несут.
+      //
+      // touchAction здесь НЕ снимаем сознательно: список плейлистов
+      // прокручивается, и запрет на всю строку отобрал бы у пальца прокрутку.
+      // Граница получается честная: мышь тянет за что угодно, палец — за точки
+      // (только у них touchAction: none).
+      {...(grip ?? {})}
       ref={rowRef}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
         position: "relative",
         opacity: dimmed ? 0.45 : undefined,
-        transform: shift ? `translate(${shift.x}px, ${shift.y}px)` : undefined,
-        // тащимая строка липнет к курсору без сглаживания; соседи разъезжаются
-        // мягко; при посадке transition получает и она — доезжает до слота.
-        // Вне реордера transition не держим — не мешать layout'у списка.
-        transition: shift && (!dragged || settling) ? "transform 160ms var(--ease-out)" : undefined,
-        zIndex: dragged ? 2 : undefined,
+        // ⚠️ transform/transition/zIndex здесь НЕТ намеренно: движение
+        // перестановки пишет в DOM сам движок (lib/useLocalReorder.ts), и любая
+        // запись отсюда стирала бы его через кадр.
+        cursor: grip && dragged ? "grabbing" : undefined,
       }}
     >
     <button
@@ -329,7 +348,7 @@ function PlaylistRow({
           <Icon name={shared ? "users" : "list-music"} size={18} color="var(--accent-text)" />
         </span>
       )}
-      <span style={{ minWidth: 0 }}>
+      <span style={{ minWidth: 0, flex: 1 }}>
         <span
           style={{
             display: "block",
@@ -344,18 +363,35 @@ function PlaylistRow({
         >
           {name}
         </span>
-        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-          {meta}
-        </span>
+        {/* Пустая meta не рисуется вовсе: у обычного плейлиста число уехало
+            цифрой вправо (набросок 04.08), и держать под ним пустую строку —
+            значит ровнять все строки по самой многословной. */}
+        {meta ? (
+          <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+            {meta}
+          </span>
+        ) : null}
       </span>
+      {count !== undefined ? (
+        <span
+          style={{
+            flex: "none",
+            fontFamily: "var(--font-ui)",
+            fontSize: "var(--fs-caption)",
+            color: "var(--text-3)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {count}
+        </span>
+      ) : null}
     </button>
     {grip ? (
       // Появляется на hover строки (в узком сайдбаре постоянные точки на каждой
       // строке — шум); пока список реордерится — видна везде (читается механика).
       <span
-        {...grip}
-        role="button"
-        aria-label={t("views.library.reorderHandle")}
+        aria-hidden="true"
+        data-testid="reorder-grip"
         onClick={(e) => e.stopPropagation()}
         style={{
           position: "absolute",
@@ -512,6 +548,7 @@ export function Sidebar({
   onDropTrack,
   onDropTrackOnFavorites,
   onReorderPlaylists,
+  onReorderNav,
   externalDrop,
   emptyHint,
   onOpenAdmin,
@@ -554,6 +591,11 @@ export function Sidebar({
    *  значит промах гарантирован. Образец правильного применения —
    *  apps/desktop/src/App.tsx, reorderPlaylists (чинилось 2026-08-02). */
   onReorderPlaylists?: (draggedId: string, toIndex: number) => void;
+  /** Перестановка ВКЛАДОК в режиме правки вида (Ctrl+E): новый порядок ключей
+   *  целиком. Порядок хранится не здесь, а в компоновке сайдбара
+   *  (prefs.navItems), и панель о ней не знает — поэтому колбэк, а не запись.
+   *  Нет обработчика (веб) — вкладки не хватаются вовсе. */
+  onReorderNav?: (keys: string[]) => void;
   /** Мост к HTML5-перетаскиванию треков (веб); приложению не нужен. */
   externalDrop?: SidebarExternalDrop;
   /** Подсказка вместо пустого списка плейлистов (в приложении её нет). */
@@ -578,15 +620,28 @@ export function Sidebar({
     resolveTo: (rects, from, _x, y) => insertionIndex(rects, from, y),
     onCommit: (id, to) => onReorderPlaylists?.(id, to),
   });
+  // Вкладки переставляются ТОЛЬКО в режиме правки вида (Ctrl+E): вне его
+  // pointerdown на пункте никем не перехватывается и клик, как и прежде,
+  // просто уводит на экран.
+  const navReorder = useLookReorder({
+    ids: nav.map((n) => n.key),
+    axis: "column",
+    onReorder: onReorderNav,
+    labelOf: (key) => t("lookEdit.group.navItem", { name: nav.find((n) => n.key === key)?.label ?? key }),
+  });
   const idx = nav.findIndex((n) => n.key === activeNavKey);
   return (
     <aside
+      // Маркер зоны для режима правки вида (shell/LookEditLayer.tsx).
+      data-zone="sidebar"
       style={{
         display: "flex",
         flexDirection: "column",
         gap: "var(--sp-2)",
         padding: "var(--pad-zone)",
-        borderRadius: "var(--r-lg)",
+        // Скругление зоны решает тема (--r-zone): у флет-вида зона прижата к
+        // краям окна и скруглять ей нечего, у «воздушного» — var(--r-lg).
+        borderRadius: "var(--r-zone, var(--r-lg))",
         // Материал зоны: общая плотность из ползунка «Плотность стекла»
         // (--glass-zone), поверх неё — точная подстройка --glass-sidebar, если
         // включено «стекло по зонам». Размытие у зоны есть: под сайдбаром лежит
@@ -634,11 +689,14 @@ export function Sidebar({
             borderRadius: "var(--r-sm)",
             background: "var(--surface-4)",
             transform: `translateY(${Math.max(idx, 0) * (NAV_H + NAV_GAP)}px)`,
-            opacity: idx >= 0 ? 1 : 0,
+            // Пилюля гаснет на время перестановки: она отмечает СЛОТ активной
+            // вкладки, а вкладка в этот момент едет за пальцем — оставшись на
+            // месте, пилюля читалась бы как «подсветка съехала».
+            opacity: idx >= 0 && !navReorder.draggingId ? 1 : 0,
             transition: "transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out)",
           }}
         ></div>
-        {nav.map((n) => (
+        {pickByOrder(nav, (n) => n.key, navReorder.order).map((n) => (
           <NavItem
             key={n.key}
             icon={n.icon}
@@ -646,6 +704,7 @@ export function Sidebar({
             quiet
             active={activeNavKey === n.key}
             onClick={() => onSelectNav(n.key)}
+            look={navReorder.active ? navReorder.itemProps(n.key) : undefined}
           />
         ))}
       </nav>
@@ -689,13 +748,17 @@ export function Sidebar({
           externalDrop={externalDrop}
         />
         {playlists.length === 0 ? emptyHint : null}
-        {playlists.map((p) => (
+        {/* Живой порядок жеста накладывается на СЛОТЫ подвижных строк:
+            закреплённые и «Любимое» в перестановку не входят и остаются на
+            своих местах (applyVisibleOrder — ровно про это). */}
+        {applyVisibleOrder(playlists, (p) => p.id, reorder.order).map((p) => (
           <PlaylistRow
             key={p.id}
             playlistId={p.id}
             cover={p.cover}
             name={p.name}
             meta={p.meta}
+            count={p.count}
             shared={p.shared}
             dimmed={p.dimmed}
             pinned={p.pinned}
@@ -705,9 +768,7 @@ export function Sidebar({
             externalDrop={externalDrop}
             grip={onReorderPlaylists && !p.fixed ? reorder.grip(p.id) : undefined}
             rowRef={p.fixed ? undefined : reorder.itemRef(p.id)}
-            shift={p.fixed ? null : reorder.shiftFor(p.id)}
             dragged={!p.fixed && reorder.draggingId === p.id}
-            settling={reorder.settling}
             reordering={reorder.draggingId !== null}
           />
         ))}

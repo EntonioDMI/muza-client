@@ -231,8 +231,10 @@ describe("App — тик позиции", () => {
     // Каркас не тронут: до правки каждый из этих тиков перерисовывал его —
     // вместе с текущим экраном, очередью и обеими копиями текста песни.
     expect(h.sidebarRenders.count).toBe(framesBefore);
-    // …и при этом часы в полосе плеера показывают новое время.
-    expect(screen.getByText("0:13")).toBeTruthy();
+    // …и при этом часы в полосе плеера показывают новое время. С редизайна
+    // 04.08 время — одна табличная метка «позиция / длительность» в правой
+    // группе бара, поэтому смотрим её содержимое, а не отдельное число.
+    expect(screen.getByTestId("player-timecode").textContent).toContain("0:13");
   }, 20_000);
 
   it("время в баре продолжает идти дальше, а не замирает после первого тика", async () => {
@@ -240,9 +242,9 @@ describe("App — тик позиции", () => {
     await startPlayback();
 
     await tick(30);
-    expect(screen.getByText("0:30")).toBeTruthy();
+    expect(screen.getByTestId("player-timecode").textContent).toContain("0:30");
     await tick(95);
-    expect(screen.getByText("1:35")).toBeTruthy();
+    expect(screen.getByTestId("player-timecode").textContent).toContain("1:35");
   }, 20_000);
 
   it("движок темы не пересобирает переменные корня на каждый рендер", async () => {

@@ -1,12 +1,32 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useLayoutEffect, useRef, useState, useEffect } from "react";
+import { portal } from "../../lib/layerRoot.js";
+import { cssZoom } from "../../lib/cssZoom.js";
 
-/** Tooltip — small frosted label under (or over) its child, 450 ms hover delay.
+/** Tooltip — small frosted label near its child, 450 ms hover delay.
  *  Клавиатура равноправна мыши: подсказка всплывает и по ФОКУСУ. Это не
  *  украшение — IconButton заворачивает в Tooltip каждую кнопку с label, и для
  *  того, кто ходит табуляцией, это единственная видимая подпись у кнопок
- *  плеера (аудит 02.08: без неё вся транспортная панель — безымянные кружки). */
+ *  плеера (аудит 02.08: без неё вся транспортная панель — безымянные кружки).
+ *
+ *  ПОРТАЛИТСЯ И ПЕРЕВОРАЧИВАЕТСЯ (04.08). Раньше подсказка была
+ *  position:absolute от своей обёртки — и любой overflow по дороге её резал:
+ *  «подсказка уходит за плеер», «вылезает за пределы окна» (жалобы владельца).
+ *  Направление приходилось задавать руками у каждой кнопки. Теперь пузырёк
+ *  уходит порталом в theme-div (lib/layerRoot.js — там же почему НЕ body),
+ *  координаты делятся на cssZoom, а при нехватке места сверху/снизу подсказка
+ *  сама переворачивается; `placement` остался ПРЕДПОЧТЕНИЕМ, не приказом.
+ *  z=300 — выше диалога (200) и палитры (150): подсказки живут и внутри них.
+ *
+ *  Узел существует ТОЛЬКО пока подсказка видна. Прежде он жил в разметке
+ *  всегда (110 узлов на Главной) и ради скорости даже blur включался условно;
+ *  теперь скрытая подсказка не стоит ничего. Исчезновение мгновенное, без
+ *  анимации ухода — как у системных подсказок: провожать взглядом нечего. */
 export function Tooltip({ label, placement = "top", children, style }) {
   const [show, setShow] = useState(false);
+  /** Позиция в единицах theme-div (экранные px / zoom); null — ещё меряем. */
+  const [pos, setPos] = useState(null);
+  const wrap = useRef(null);
+  const tip = useRef(null);
   const timer = useRef(null);
 
   const clear = () => {
@@ -32,9 +52,49 @@ export function Tooltip({ label, placement = "top", children, style }) {
   // подсказка ещё «думала»).
   useEffect(() => clear, []);
 
-  const top = placement === "top";
+  // Позиция считается ПОСЛЕ монтирования пузырька: сначала рендерим его
+  // невидимым, меряем настоящий размер, затем ставим на место — до первой
+  // отрисовки, глаз черновой кадр не видит (useLayoutEffect синхронен).
+  useLayoutEffect(() => {
+    if (!show) {
+      setPos(null);
+      return;
+    }
+    const anchor = wrap.current;
+    const el = tip.current;
+    if (!anchor || !el) return;
+    const M = 8; // поле до кромок окна
+    const GAP = 8; // зазор до кнопки
+    const a = anchor.getBoundingClientRect();
+    const t = el.getBoundingClientRect();
+    const z = cssZoom(el) || 1;
+    let x = a.left + a.width / 2 - t.width / 2;
+    x = Math.min(Math.max(x, M), window.innerWidth - t.width - M);
+    const above = a.top - t.height - GAP;
+    const below = a.bottom + GAP;
+    let y;
+    if (placement === "top") {
+      y = above >= M ? above : below; // сверху не влезла — вниз
+    } else {
+      y = below + t.height <= window.innerHeight - M ? below : above; // снизу не влезла — вверх
+    }
+    y = Math.min(Math.max(y, M), window.innerHeight - t.height - M);
+    setPos({ left: x / z, top: y / z });
+  }, [show, placement, label]);
+
+  // Прокрутка под открытой подсказкой — прячем: кнопка уехала, пузырёк без
+  // якоря повисает в воздухе. Так ведут себя и системные подсказки.
+  useEffect(() => {
+    if (!show) return;
+    const hide = () => leave();
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show]);
+
   return (
     <span
+      ref={wrap}
       onMouseEnter={enter}
       onMouseLeave={leave}
       onFocus={focus}
@@ -42,40 +102,36 @@ export function Tooltip({ label, placement = "top", children, style }) {
       style={{ position: "relative", display: "inline-flex", ...style }}
     >
       {children}
-      <span
-        aria-hidden={!show}
-        style={{
-          position: "absolute",
-          left: "50%",
-          [top ? "bottom" : "top"]: "calc(100% + 8px)",
-          transform: show ? "translate(-50%, 0)" : "translate(-50%, " + (top ? "4px" : "-4px") + ")",
-          padding: "7px 12px",
-          borderRadius: "var(--r-xs)",
-          background: "var(--glass-panel)",
-          // ⚠️ РАЗМЫТИЕ ТОЛЬКО ПОКА ПОДСКАЗКА ВИДНА, и это не микрооптимизация.
-          // Подсказка ЖИВЁТ В РАЗМЕТКЕ ВСЕГДА (её нельзя размонтировать: анимация
-          // появления и aria-hidden держатся на одном узле), а IconButton
-          // заворачивает в Tooltip каждую кнопку с подписью. Замер на Главной —
-          // 110 таких узлов одновременно. backdrop-filter на каждом заставляет
-          // композитор держать 110 отдельных слоёв и размывать под ними задник,
-          // хотя ни один из них не виден (opacity: 0). Условие снимает всю эту
-          // работу, не меняя ни пикселя у показанной подсказки.
-          backdropFilter: show ? "blur(var(--blur-glass))" : undefined,
-          WebkitBackdropFilter: show ? "blur(var(--blur-glass))" : undefined,
-          color: "var(--text-1)",
-          fontFamily: "var(--font-ui)",
-          fontSize: "var(--fs-caption)",
-          fontWeight: "var(--fw-medium)",
-          lineHeight: 1,
-          whiteSpace: "nowrap",
-          opacity: show ? 1 : 0,
-          pointerEvents: "none",
-          zIndex: 60,
-          transition: "opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
-        }}
-      >
-        {label}
-      </span>
+      {show
+        ? portal(
+            <span
+              ref={tip}
+              aria-hidden="true"
+              className="muza-view"
+              style={{
+                position: "fixed",
+                left: pos ? pos.left : 0,
+                top: pos ? pos.top : 0,
+                visibility: pos ? "visible" : "hidden",
+                padding: "7px 12px",
+                borderRadius: "var(--r-xs)",
+                background: "var(--glass-panel)",
+                backdropFilter: "blur(var(--blur-glass))",
+                WebkitBackdropFilter: "blur(var(--blur-glass))",
+                color: "var(--text-1)",
+                fontFamily: "var(--font-ui)",
+                fontSize: "var(--fs-caption)",
+                fontWeight: "var(--fw-medium)",
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+                zIndex: 300,
+              }}
+            >
+              {label}
+            </span>,
+          )
+        : null}
     </span>
   );
 }

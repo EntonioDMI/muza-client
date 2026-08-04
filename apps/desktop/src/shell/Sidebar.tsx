@@ -15,6 +15,8 @@
 
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 import { Sidebar as SharedSidebar, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
+import { useLookEdit } from "@muza/app/shell/lookReorder";
+import { applyVisibleOrder } from "@muza/app/lib/dragEngine";
 import { NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
 import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
@@ -54,6 +56,7 @@ export function Sidebar({
   pluginKeys = [],
   activePluginKey = null,
   onSelectPluginTab,
+  onSetNavItems,
   onOpenHotkeys,
 }: {
   view: View;
@@ -85,14 +88,19 @@ export function Sidebar({
   activePluginKey?: string | null;
   /** T44: клик по плагинной вкладке — открыть её фрейм (App). */
   onSelectPluginTab?: (pluginId: string, tabId: string) => void;
+  /** Записать компоновку вкладок (режим правки вида, Ctrl+E). Нет колбэка —
+   *  вкладки не переставляются. */
+  onSetNavItems?: (items: NavItemPref[]) => void;
   /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
   onOpenHotkeys: () => void;
 }) {
   const { t, lang } = useT();
+  const { pushUndo } = useLookEdit();
   // Компоновка: скрытая вкладка не рендерится (активный view на скрытой —
   // индикатор гаснет, контент остаётся доступен), label — своё имя.
   // T44: плагинные вкладки живут в том же списке под ключами plugin:<id>:<tab>.
-  const mainNav = normalizeNavItems(navItems ?? [], pluginKeys)
+  const allNav = normalizeNavItems(navItems ?? [], pluginKeys);
+  const mainNav = allNav
     .filter((n) => n.on)
     .map((n) => {
       if (isPluginKey(n.key)) {
@@ -122,6 +130,17 @@ export function Sidebar({
       onDropTrack={onDropTrack}
       onDropTrackOnFavorites={onDropTrackOnFavorites}
       onReorderPlaylists={onReorderPlaylists}
+      // Панель переставляет ВИДИМЫЕ вкладки и отдаёт их новый порядок; в
+      // компоновку он ложится через applyVisibleOrder — выключенная вкладка
+      // остаётся на своём месте в списке настроек, а не уезжает в конец.
+      onReorderNav={
+        onSetNavItems
+          ? (keys) => {
+              pushUndo({ navItems: navItems ?? [] });
+              onSetNavItems(applyVisibleOrder(allNav, (n) => n.key, keys));
+            }
+          : undefined
+      }
       onOpenAdmin={isAdmin ? () => setView("admin") : undefined}
       adminActive={view === "admin"}
       onOpenSettings={() => setView("settings")}

@@ -1,17 +1,16 @@
-/** Таймеры жеста переставания не переживают экран (правка 2026-08-03).
+/** Судьба порядка и таймеров, когда экран закрывают посреди жеста.
  *
- *  Оба таймера висели на window.setTimeout и никем не снимались при
- *  размонтировании:
- *  — таймер УДЕРЖАНИЯ (HOLD_MS): ушёл со страницы, не отпустив кнопку, — и
- *    через 280 мс плашка «поднималась» в дереве, которого уже нет;
- *  — таймер ПОСАДКИ (SETTLE_MS): отпустил плашку и в те же 180 мс ушёл на
- *    другой экран — отправка на сервер уходила уже после ухода.
+ *  ИСТОРИЯ. Оба таймера висели на window.setTimeout и никем не снимались при
+ *  размонтировании: таймер УДЕРЖАНИЯ (HOLD_MS) поднимал плашку в дереве,
+ *  которого уже нет, а таймер ПОСАДКИ отправлял порядок на сервер после ухода.
+ *  Посадку чинили, снимая таймер и коммитя сразу (2026-08-03).
  *
- *  Что решено (см. комментарий в useLocalReorder.ts): задержка посадки —
- *  зрительная, а порядок пользователь задал по-настоящему. Поэтому при
- *  размонтировании таймер снимается, а коммит делается СРАЗУ — порядок не
- *  теряется и хвост в никуда не остаётся. Незавершённое удержание не значит
- *  ничего и гасится молча. */
+ *  ЧТО ИЗМЕНИЛОСЬ 2026-08-04. Посадки как ФАЗЫ КОММИТА больше нет вовсе:
+ *  порядок меняется живьём, и к моменту отпускания на экране уже стоит
+ *  конечный результат — ждать нечего, коммит уходит прямо в pointerup. Полёт
+ *  плашки к слоту остался, но он чисто зрительный и ничего не задерживает.
+ *  Поэтому тест ниже проверяет ровно это: коммит УЖЕ случился к моменту ухода,
+ *  а размонтирование не добавляет и не повторяет ничего. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
@@ -27,11 +26,11 @@ const IDS = ["a", "b", "c"];
 
 function List({ onCommit }: { onCommit: (id: string, to: number) => void }) {
   // resolveTo зафиксирован: геометрии в jsdom нет, а проверяем мы не её, а
-  // судьбу таймеров — «куда встанет» задаём прямо.
+  // судьбу порядка и таймеров — «куда встанет» задаём прямо.
   const r = useLocalReorder({ ids: IDS, resolveTo: () => 2, onCommit });
   return (
     <div>
-      {IDS.map((id) => (
+      {r.order.map((id) => (
         <div key={id} data-testid={id} ref={r.itemRef(id)} {...r.grip(id)} />
       ))}
     </div>
@@ -41,7 +40,7 @@ function List({ onCommit }: { onCommit: (id: string, to: number) => void }) {
 const press = (el: Element) => fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
 
 describe("useLocalReorder — уход с экрана посреди жеста", () => {
-  it("отпустил плашку и сразу ушёл — порядок доезжает до сервера, а не теряется", () => {
+  it("порядок уходит на сервер в момент отпускания, а не по таймеру посадки", () => {
     vi.useFakeTimers();
     const onCommit = vi.fn();
     const view = render(<List onCommit={onCommit} />);
@@ -49,14 +48,13 @@ describe("useLocalReorder — уход с экрана посреди жеста
     press(view.getByTestId("a"));
     vi.advanceTimersByTime(HOLD_MS); // держал — плашка поднялась
     fireEvent.pointerMove(window, { clientX: 0, clientY: 40 }); // потащил — цель определилась
-    fireEvent.pointerUp(window); // отпустил — пошла посадка
-    expect(onCommit).not.toHaveBeenCalled();
-
-    view.unmount(); // ушёл раньше, чем посадка досчитала
+    fireEvent.pointerUp(window);
 
     expect(onCommit).toHaveBeenCalledWith("a", 2);
-    // и никакого хвоста: досчёт снятого таймера ничего не повторяет
+
+    view.unmount(); // ушёл, пока плашка ещё долетала до слота
     vi.runAllTimers();
+    // хвоста нет: полёт — косметика, повторять коммит ему нечем
     expect(onCommit).toHaveBeenCalledTimes(1);
   });
 
@@ -85,5 +83,25 @@ describe("useLocalReorder — уход с экрана посреди жеста
     view.unmount();
 
     expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("Escape помечает событие взятым — режим правки вида по нему не выходит", () => {
+    vi.useFakeTimers();
+    const view = render(<List onCommit={() => undefined} />);
+
+    press(view.getByTestId("a"));
+    vi.advanceTimersByTime(HOLD_MS);
+    fireEvent.pointerMove(window, { clientX: 0, clientY: 40 });
+
+    const esc = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    window.dispatchEvent(esc);
+    expect(esc.defaultPrevented).toBe(true);
+  });
+
+  it("без живого жеста Escape НЕ трогаем — он принадлежит тому, кто его ждёт", () => {
+    render(<List onCommit={() => undefined} />);
+    const esc = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    window.dispatchEvent(esc);
+    expect(esc.defaultPrevented).toBe(false);
   });
 });

@@ -30,9 +30,12 @@ import { Button, EmptyState, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { WRAPPED_BANNER_PREVIEW, WRAPPED_ENABLED, wrappedSeason } from "../lib/wrappedSeason";
 import { fmtTime } from "../lib/format";
+import { orderHomeSections } from "../lib/homeSections";
+import { pickByOrder } from "../lib/dragEngine";
 import { shelfL10n, tileL10n, trackRowL10n } from "../lib/dsLabels";
 import type { RowWarmProps, WarmRow } from "../lib/rowWarm";
 import { useDrag } from "../shell/DragLayer";
+import { useLookReorder } from "../shell/lookReorder";
 import { useAltFileDrag } from "../platform";
 import { useT } from "../i18n";
 import type { TParams, TranslationKey } from "../i18n";
@@ -50,17 +53,26 @@ function greeting(t: T) {
   return t("views.home.greeting.evening");
 }
 
-/** Порядок секций главной (решение владельца): витрины сверху, «Для тебя»
- *  списком ниже, «Потому что…» после него. Неизвестные ключи — в конец. */
-const SECTION_RANK: Record<string, number> = { trending: 0, new: 1, for_you: 2 };
-const sectionRank = (key: string): number => SECTION_RANK[key] ?? (key.startsWith("because") ? 3 : 4);
-
+/** Заголовок секции — ТИХИЙ КАПС (набросок владельца 04.08 вечером:
+ *  «ПРОДОЛЖИТЬ», «В ТРЕНДЕ У СООБЩЕСТВА»). Секция — это подпись к полке, а не
+ *  соперник h1: пока полки стояли под 20px-заголовками, у экрана было пять
+ *  голосов одной громкости. Тот же голос, что у «ПЛЕЙЛИСТЫ» в сайдбаре и
+ *  «СЕЙЧАС ИГРАЕТ» в панели — подписи зон говорят одинаково во всём окне. */
 const sectionH2: React.CSSProperties = {
   margin: "0 0 var(--sp-3)",
-  fontSize: "var(--fs-title)",
-  fontWeight: 700,
-  color: "var(--text-1)",
+  fontSize: "var(--fs-caption)",
+  fontWeight: 600,
+  letterSpacing: "var(--ls-caps)",
+  textTransform: "uppercase",
+  color: "var(--text-3)",
 };
+
+/** «2 ч 14 мин» / «14 мин» — время прослушивания для меты шапки. */
+function fmtListenTime(ms: number, t: (key: TranslationKey, params?: TParams) => string): string {
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.round((ms % 3_600_000) / 60_000);
+  return h > 0 ? t("views.home.meta.hoursMinutes", { h, m }) : t("views.home.meta.minutes", { m });
+}
 
 /** Форма пропсов подготовки строки — общая для всех экранов (lib/rowWarm.ts).
  *  Своё объявление тут было одним из пяти разъезжавшихся дублей. */
@@ -98,6 +110,8 @@ export function HomeFeed({
   onOpen,
   onOpenWrapped,
   onSections,
+  sectionOrder,
+  onReorderSections,
   withSnapshot = noSnapshot,
   warmRow = noWarmRow,
   padding = "var(--sp-6) var(--sp-6) 0",
@@ -134,6 +148,14 @@ export function HomeFeed({
    *  знали, о каком треке речь). Приложение проп не передаёт — его меню берёт
    *  трек прямо из onCatalogMenu. */
   onSections?: (sections: HomeSection[]) => void;
+  /** Порядок полок, собранный человеком (prefs.homeSections у приложения).
+   *  Пусто/нет — канонический порядок, тот же, что был до появления настройки.
+   *  Это ПОРЯДОК, а не состав: полки сервера, которых в списке нет, никуда не
+   *  деваются (lib/homeSections.ts). */
+  sectionOrder?: readonly string[];
+  /** Полки переставили в режиме правки вида (Ctrl+E) — новый порядок ключей
+   *  целиком. Нет обработчика — полки не хватаются. */
+  onReorderSections?: (keys: string[]) => void;
   /** Оффлайн-копия ленты (приложение); нет — ходим прямо на сервер. */
   withSnapshot?: <T2>(key: string, request: () => Promise<T2>) => Promise<{ data: T2; offline: boolean }>;
   /** Готовит трек заранее (приложение); нет — пустые пропсы на обёртке строки. */
@@ -143,7 +165,7 @@ export function HomeFeed({
    *  иначе поля сложились бы вдвое. */
   padding?: string;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { dragSource } = useDrag();
   const altFileDrag = useAltFileDrag();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
@@ -179,9 +201,40 @@ export function HomeFeed({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [api, canSearch]);
 
+  // МЕТА В ШАПКЕ (набросок владельца 04.08 вечером): дата и «N ч M мин за
+  // сегодня». Время берём из недельной сводки статистики — её последнее
+  // ведро и есть сегодняшний день; отдельной ручки на сервере не нужно.
+  // Провал тих по определению: мета — украшение шапки, не контент.
+  const [todayMs, setTodayMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!canSearch) return;
+    let dead = false;
+    // Через Promise.resolve(): мета — украшение, и ЛЮБОЙ её провал обязан
+    // быть тихим, включая точечные моки api в тестах, где метода нет вовсе
+    // (синхронный TypeError без обёртки уронил бы всю Главную).
+    Promise.resolve()
+      .then(() => api.getStatsOverview("week"))
+      .then((d) => {
+        if (!dead) setTodayMs(d.series.length > 0 ? d.series[d.series.length - 1].ms : 0);
+      })
+      .catch(() => undefined);
+    return () => {
+      dead = true;
+    };
+  }, [api, canSearch]);
+
   const live = feed.status === "live" && feed.sections.length > 0;
-  // сортировка стабильная: внутри группы порядок сервера сохраняется
-  const sections = [...feed.sections].sort((a, b) => sectionRank(a.key) - sectionRank(b.key));
+  // Порядок человека, а поверх него канон для полок, которых он не трогал.
+  // Сортировка стабильная: внутри одной ступени порядок сервера сохраняется.
+  const sections = orderHomeSections(feed.sections, sectionOrder ?? []);
+  // Перестановка полок — только в режиме правки вида. Вне его на полке нет ни
+  // одного лишнего обработчика, и карусель листается как обычно.
+  const shelfReorder = useLookReorder({
+    ids: sections.map((s) => s.key),
+    axis: "column",
+    onReorder: onReorderSections,
+    labelOf: (key) => t("lookEdit.group.homeSection", { name: sections.find((s) => s.key === key)?.title ?? key }),
+  });
   const season = wrappedSeason();
   // WRAPPED_ENABLED — мастер-выключатель: фича спрятана до релиза (2026-07-17)
   const wrappedBanner =
@@ -189,19 +242,37 @@ export function HomeFeed({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding }}>
-      <h1
-        style={{
-          margin: 0,
-          fontFamily: "var(--font-display)",
-          fontWeight: 600,
-          fontSize: "var(--fs-greet)",
-          letterSpacing: "var(--ls-display)",
-          color: "var(--text-1)",
-          lineHeight: "var(--lh-tight)",
-        }}
-      >
-        {greetName ? `${greeting(t)}, ${greetName}!` : greeting(t)}
-      </h1>
+      {/* ПРАВИЛО ОДНОГО DISPLAY-МОМЕНТА (редизайн 04.08, решение владельца
+          «всё на Golos, без исключений»). Unbounded оставлен вордмарку,
+          караоке и названию играющего трека — тому, что и есть музыка. Пока он
+          звучал ещё и здесь, и в заголовке Статистики, и в админке, ни одно из
+          этих мест не читалось как акцент, а заголовки экранов не складывались
+          в одну ступень иерархии. Заголовок экрана теперь один на всё
+          приложение: Golos 700, --fs-h1. Шрифт не задаём вовсе — наследуется
+          --font-ui, и пользовательский выбор шрифта работает без исключений. */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-4)" }}>
+        <h1
+          style={{
+            margin: 0,
+            flex: 1,
+            minWidth: 0,
+            fontWeight: 700,
+            fontSize: "var(--fs-h1)",
+            letterSpacing: "var(--ls-h1)",
+            color: "var(--text-1)",
+            lineHeight: "var(--lh-tight)",
+          }}
+        >
+          {greetName ? `${greeting(t)}, ${greetName}!` : greeting(t)}
+        </h1>
+        {/* Дата и время за сегодня — тихой строкой напротив приветствия
+            (набросок 04.08). Времени нет (аноним, ноль, сервер молчит) —
+            остаётся одна дата: пустой хвост « · » не рисуем. */}
+        <span style={{ flex: "none", fontSize: "var(--fs-caption)", color: "var(--text-3)", whiteSpace: "nowrap" }}>
+          {new Date().toLocaleDateString(lang, { weekday: "long", day: "numeric", month: "long" })}
+          {todayMs !== null && todayMs > 0 ? ` · ${t("views.home.meta.today", { time: fmtListenTime(todayMs, t) })}` : ""}
+        </span>
+      </div>
 
       {feed.offline ? (
         <Notice icon="cloud-off" text={t("views.home.notice.offlineText")} action={t("views.home.notice.refresh")} onAction={load} />
@@ -221,8 +292,14 @@ export function HomeFeed({
             padding: "var(--sp-4) var(--sp-5)",
             border: "none",
             borderRadius: "var(--r-md)",
-            background:
-              "linear-gradient(120deg, color-mix(in srgb, var(--accent) 26%, var(--surface-1)), var(--surface-1) 70%)",
+            // ГРАДИЕНТ УБРАН (редизайн 04.08). Он был ЕДИНСТВЕННЫМ в
+            // приложении и прямо нарушал собственный запрет системы («никаких
+            // теней, свечений, градиентов и рамок-разделителей; зоны разделяет
+            // только прозрачность фона» — PRODUCT.md, правило владельца).
+            // Сам баннер жив: это вход в «итоги года», а не украшение. Акцент
+            // теперь несут краска года и мягкая акцентная заливка — тем же
+            // токеном, что подсветка выбранного во всём приложении.
+            background: "var(--accent-soft)",
             cursor: "pointer",
             textAlign: "left",
           }}
@@ -230,10 +307,13 @@ export function HomeFeed({
           <span
             aria-hidden="true"
             style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 34,
+              // Год — цифра, а не заголовок: своя ступень шкалы (--fs-num),
+              // а не сырые 34px и не display-шрифт (правило одного
+              // display-момента, редизайн 04.08).
+              fontSize: "var(--fs-num)",
               fontWeight: 700,
-              letterSpacing: "var(--ls-display)",
+              letterSpacing: "var(--ls-num)",
+              fontVariantNumeric: "tabular-nums",
               lineHeight: 1,
               color: "var(--accent-text)",
               flex: "none",
@@ -277,10 +357,19 @@ export function HomeFeed({
 
       {live ? (
         <>
-          {sections.map((s) =>
-            s.key === "for_you" ? (
+          {/* ОБЁРТКА У КАЖДОЙ ПОЛКИ — БЕЗУСЛОВНАЯ. Она нужна режиму правки
+              (это то, что едет за пальцем при перестановке), но появляться
+              только в нём не может: полка меняла бы родителя на входе в режим,
+              а с ним теряла бы прокрутку карусели и позицию. Вне режима на
+              обёртке нет ни обработчиков, ни стилей — раскладка та же, что
+              была (лента и так рисовала по одному узлу на полку). */}
+          {pickByOrder(sections, (s) => s.key, shelfReorder.order).map((s) => {
+            const look = shelfReorder.itemProps(s.key);
+            return (
+            <div key={s.key} {...look} style={look.style}>
+            {s.key === "for_you" ? (
               // «Для тебя» — главный контент: список с лайками и меню
-              <div key={s.key}>
+              <div>
                 <h2 style={sectionH2}>{s.title}</h2>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {s.tracks.map((tr, i) => (
@@ -323,7 +412,7 @@ export function HomeFeed({
             ) : (
               // остальные секции — карусели (T17: ПКМ по плитке = меню «⋯»;
               // T18: плитка тоже draggable — у свежей ленты бывают только карусели)
-              <Shelf key={s.key} title={s.title} {...shelfL10n(t)}>
+              <Shelf title={s.title} {...shelfL10n(t)}>
                 {s.tracks.map((tr) => (
                   <div
                     key={tr.id}
@@ -353,8 +442,10 @@ export function HomeFeed({
                   </div>
                 ))}
               </Shelf>
-            ),
-          )}
+            )}
+            </div>
+            );
+          })}
           <div style={{ paddingBottom: "var(--sp-6)" }} />
         </>
       ) : feed.status === "anon" ? (

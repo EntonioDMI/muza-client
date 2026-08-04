@@ -13,6 +13,11 @@ export const viewsRu: typeof viewsEn = {
       day: "Добрый день",
       evening: "Добрый вечер",
     },
+    meta: {
+      today: "{time} за сегодня",
+      hoursMinutes: "{h} ч {m} мин",
+      minutes: "{m} мин",
+    },
     wrappedBanner: {
       title: "Твои итоги {year}",
       hint: "Минуты, треки и артисты года — и карточка, которой не стыдно делиться",
@@ -34,6 +39,7 @@ export const viewsRu: typeof viewsEn = {
   },
 
   search: {
+    title: "Поиск",
     placeholder: "Трек, артист, альбом",
     searching: "Ищем…",
     searchSources: "Искать в источниках",
@@ -191,6 +197,19 @@ export const viewsRu: typeof viewsEn = {
       playsLabel: "прослушиваний",
       tracksLabel: "треков",
       artistsLabel: "артистов",
+      // Производные строки под числами. Считаются из самого ответа сервера
+      // (минуты/прослушивания на день с музыкой, повторы на трек и артиста):
+      // сравнения с прошлым периодом сервер не отдаёт, а придумывать нельзя.
+      // Формулировки без существительных после числа — иначе «1 треков».
+      perDayMinutes: "{value} мин в день",
+      perDayPlays: "{value} в день",
+      perTrack: "{value}× на трек",
+      perArtist: "{value}× на артиста",
+    },
+    empty: {
+      title: "Здесь появится твоя статистика",
+      listTitle: "Что тут будет",
+      allTimeAction: "Показать за всё время",
     },
     activity: {
       ariaByDay: "Прослушивания по дням",
@@ -399,6 +418,19 @@ export const viewsRu: typeof viewsEn = {
       grantAdmin: "Сделать админом",
       revokeAdmin: "Снять админку",
       adminToggleFailed: "Не получилось изменить права",
+      searchPlaceholder: "Найти по нику",
+      searchEmpty: "Никого с таким ником нет",
+      prevPage: "Предыдущая страница",
+      nextPage: "Следующая страница",
+      pageOf: "Страница {page} из {pages}",
+    },
+    themes: {
+      title: "Темы в витрине",
+      empty: "В витрине пока нет тем.",
+      hiddenBadge: "скрыта",
+      installs: "установок: {count}",
+      restore: "Вернуть в витрину",
+      hide: "Скрыть",
     },
     growth: {
       d7: "7 дней",

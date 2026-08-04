@@ -188,7 +188,7 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
           gap: "var(--sp-5)",
           animation: closing
             ? "muzaRiseOut var(--dur-base) var(--ease-out) forwards"
-            : "muzaRiseIn var(--dur-base) var(--ease-out)",
+            : "muzaRiseIn var(--dur-base) var(--spring-snap, var(--ease-out))",
         }}
       >
         <style>{"@keyframes muzaFadeIn{from{opacity:0}}@keyframes muzaFadeOut{to{opacity:0}}@keyframes muzaRiseIn{from{opacity:0;transform:translateY(14px) scale(.98)}}@keyframes muzaRiseOut{to{opacity:0;transform:translateY(14px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=dialog]{animation:none!important}}"}</style>

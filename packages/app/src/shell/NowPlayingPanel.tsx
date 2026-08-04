@@ -8,17 +8,83 @@
  *  пропами: не передал — соответствующего поведения просто нет, заглушек
  *  внутри панель не держит.
  *
- *  ⚠️ ПРАВИЛО ПРИ ЛЮБОЙ ПРАВКЕ: приложение не должно измениться ни на пиксель.
- *  Новое поведение вводится только пропом со значением по умолчанию, при
- *  котором DOM ровно тот же, что был у десктопа (пример — onClose: без него
- *  шапка остаётся голым <span>, а не строкой с крестиком). */
+ *  ⚠️ ПРАВИЛО ПРИ ЛЮБОЙ ПРАВКЕ: ни одна из двух программ не должна измениться
+ *  ни на пиксель от чужой надобности. Новое поведение вводится только пропом
+ *  со значением по умолчанию, при котором DOM ровно тот же, что был (пример —
+ *  onAnimationEnd: пропа нет, React не вешает обработчик, разметка прежняя).
+ *
+ *  Про onClose: раньше десктоп его НЕ передавал, и «голый заголовок» был
+ *  именно его видом. С 04.08 приложение передаёт крестик всегда (панель там
+ *  теперь всегда плавающая, и закрывать её надо с неё же), а голая шапка
+ *  осталась видом веба. */
 
 import type React from "react";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Cover, EmptyState, IconButton, Lyrics } from "@muza/ui";
 import { useT } from "../i18n";
 import { useVideoSync } from "../lib/videoSync";
 import type { NowPlayingTrack, SharedLyricLine } from "./mediaTypes";
+
+/** Растворение кромок окошка текста: вверху — в кадр или обложку над ним,
+ *  внизу — в край панели. Восемь ступеней, а не две, по той же причине, что и
+ *  у маски видео: линейная интерполяция на контрастном тексте даёт видимые
+ *  полосы (Мах-банды), частые ступени по косинусоиде — ровный спад. */
+const LYRICS_FADE =
+  "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 4%, rgba(0,0,0,0.8) 9%, black 15%, black 85%, rgba(0,0,0,0.8) 91%, rgba(0,0,0,0.35) 96%, transparent 100%)";
+
+/** «Строк не помещается ни одной» — текст не рисуется вовсе. */
+export const HIDE_LYRICS = -1;
+
+/** ЛЕСТНИЦА «ВЫСОТА ОКОШКА → СКОЛЬКО СТРОК ПОКАЗЫВАТЬ» для режима «Авто».
+ *
+ *  Дословная заявка владельца 04.08: «маленький — текст скрыт, больше — одна
+ *  строка, ещё больше — три или пять». Панель тянут за край (Ctrl+E) и
+ *  сворачивают вместе с окном, поэтому фиксированное число строк в ней всегда
+ *  либо не влезает, либо оставляет пустоту.
+ *
+ *  Число строк — это не обрезка, а ПОДГОНКА КЕГЛЯ: Lyrics подбирает размер
+ *  строки так, чтобы ровно столько строк заполнили окошко (см. panelLines
+ *  там же). Отсюда и порядок ступеней: чем ниже окно, тем МЕНЬШЕ строк и тем
+ *  они крупнее — иначе текст в узкой щели становится нечитаемым бисером.
+ *  Ноль на верхней ступени — «не подгонять вовсе»: места достаточно, и обычный
+ *  прокручиваемый список своим кеглем читается лучше любой подгонки.
+ *
+ *  Порог сверяется по УБЫВАНИЮ — берётся первая подошедшая ступень. */
+const LYRIC_LINE_LADDER: ReadonlyArray<readonly [minHeight: number, lines: number]> = [
+  [260, 0],
+  [170, 5],
+  [96, 3],
+  [40, 1],
+  [0, HIDE_LYRICS],
+];
+
+export function lyricLinesForHeight(h: number): number {
+  for (const [min, lines] of LYRIC_LINE_LADDER) if (h >= min) return lines;
+  return HIDE_LYRICS;
+}
+
+/** Число строк по живой высоте окошка. Меряем сам DOM, а не считаем из ширины
+ *  панели: высота окошка — это остаток после кадра, названия и полей, и
+ *  повторять эту арифметику здесь значило бы завести вторую формулу раскладки,
+ *  которая разойдётся с первой на ближайшей правке. */
+function useAutoLyricLines(ref: React.RefObject<HTMLElement | null>, enabled: boolean): number {
+  const [lines, setLines] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    // Выключено настройкой или нет ResizeObserver (jsdom тестов) — «Авто»
+    // вырождается в прежнее поведение: обычный список без подгонки.
+    if (!enabled || !el || typeof ResizeObserver === "undefined") {
+      setLines(0);
+      return;
+    }
+    const measure = () => setLines(lyricLinesForHeight(el.clientHeight));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, enabled]);
+  return lines;
+}
 
 export function NowPlayingPanel({
   track,
@@ -40,6 +106,7 @@ export function NowPlayingPanel({
   windowVisible = true,
   onVideoError,
   onClose,
+  onAnimationEnd,
   className,
   style,
 }: {
@@ -86,9 +153,14 @@ export function NowPlayingPanel({
   windowVisible?: boolean;
   /** URL протух (googlevideo ~6ч) — хозяин ре-резолвит или гасит видео. */
   onVideoError?: () => void;
-  /** Крестик в шапке. У приложения панель закрывается кнопкой плеер-бара, и
-   *  пропа нет — шапка остаётся ровно тем же голым заголовком, что была. */
+  /** Крестик в шапке. Без пропа шапка остаётся голым заголовком — так панель
+   *  выглядит у веба; приложение крестик передаёт всегда. */
   onClose?: () => void;
+  /** Конец CSS-анимации на корне панели. Нужен хозяину для отложенного
+   *  размонтирования: приложение держит уезжающую панель в дереве, пока идёт
+   *  анимация ухода, и снимает её здесь (App.tsx, блок npClosing). Пропа нет —
+   *  React не вешает обработчик, DOM тот же. */
+  onAnimationEnd?: React.AnimationEventHandler<HTMLElement>;
   /** Крючки раскладки для веба: там панель — колонка CSS-сетки шелла
    *  (класс .np-panel, им же её прячут брейкпоинты). Приложение ничего не
    *  передаёт — атрибута в DOM не появляется. */
@@ -97,6 +169,15 @@ export function NowPlayingPanel({
 }) {
   const { t } = useT();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const lyricsBoxRef = useRef<HTMLDivElement | null>(null);
+  // `!!track` в enabled ОБЯЗАТЕЛЕН: без трека окошка текста нет в разметке
+  // вовсе (ранний return), и эффект замера, отработавший по пустому ref, без
+  // смены enabled не перезапустился бы никогда — «Авто» молча не включалось у
+  // панели, смонтированной до первого трека (ревизия 04.08).
+  const autoLines = useAutoLyricLines(lyricsBoxRef, lyricsPanelLines === 0 && track !== null);
+  // «Авто» отдаёт число строк по РЕАЛЬНОЙ высоте окошка, заданное вручную —
+  // ровно то, что попросили. HIDE_LYRICS означает «места нет вовсе».
+  const shownLines = lyricsPanelLines > 0 ? lyricsPanelLines : autoLines;
   // видео — слейв к часам аудио; при videoUrl=null хук спит.
   // «Окна не видно» приходит сюда тем же входом, что и пауза: для хука это
   // одно и то же — снять кадр с видеодекодера (он стоит денег, даже когда
@@ -107,7 +188,11 @@ export function NowPlayingPanel({
     flexDirection: "column",
     gap: "var(--sp-4)",
     padding: "var(--pad-zone)",
-    borderRadius: "var(--r-lg)",
+    // Скругление зоны решает тема (--r-zone): у флет-вида панель прижата к
+    // краю окна, у «воздушного» вида — var(--r-lg). Кнопки окна у флета
+    // ложатся ПОВЕРХ первых 22px панели — шапка ниже остаётся читаемой,
+    // потому что заголовок прижат влево, а кнопки — вправо.
+    borderRadius: "var(--r-zone, var(--r-lg))",
     // Материал зоны — как у сайдбара: общая плотность из ползунка стекла,
     // поверх неё точная подстройка --glass-nowplaying (см. themeVars.ts).
     background: "var(--glass-nowplaying, var(--glass-zone))",
@@ -139,6 +224,13 @@ export function NowPlayingPanel({
         size="sm"
         label={t("plugins.closePanel")}
         iconSize={16}
+        // Подсказка ВНИЗ, а не вверх (жалоба владельца 04.08: «при наведении
+        // на крестик подсказка вылезает за пределы окна»). Кнопка стоит в
+        // 44px от верха окна, пузырёк высотой 27px рисуется над ней и на 19px
+        // уходил выше кромки панели, где его срезал её overflow: hidden.
+        // Tooltip намеренно не порталится (position:absolute от обёртки), сам
+        // переворачиваться пока не умеет — направление задаём здесь.
+        tooltipPlacement="bottom"
         style={{ width: 30, height: 30 }}
         onClick={onClose}
       />
@@ -149,7 +241,7 @@ export function NowPlayingPanel({
 
   if (!track) {
     return (
-      <aside className={className} style={zoneStyle}>
+      <aside data-zone="nowplaying" className={className} style={zoneStyle} onAnimationEnd={onAnimationEnd}>
         {heading}
         <EmptyState
           icon="music-2"
@@ -162,7 +254,7 @@ export function NowPlayingPanel({
   }
 
   return (
-    <aside className={className} style={zoneStyle}>
+    <aside data-zone="nowplaying" className={className} style={zoneStyle} onAnimationEnd={onAnimationEnd}>
       {heading}
       {videoUrl ? (
         // Видео вместо обложки (спека владельца 2026-07-21, «как в Spotify»):
@@ -196,7 +288,14 @@ export function NowPlayingPanel({
             onError={onVideoError}
             style={{
               width: "100%",
-              aspectRatio: "16 / 10",
+              // КВАДРАТ, КАК У ОБЛОЖКИ (заявка владельца 04.08: «сделать
+              // „Сейчас играет“ квадратом»). Было 16/10 — и панель меняла
+              // форму на каждом треке: у одного видео нашлось, у другого нет,
+              // и блок сверху то приземистый, то квадратный, а вместе с ним
+              // прыгал и текст под ним. Кадр кадрируется по центру ровно так
+              // же, как кадрируется неквадратная обложка, — в панели остаётся
+              // ОДНА форма независимо от того, что нашлось для трека.
+              aspectRatio: "1 / 1",
               objectFit: "cover",
               display: "block",
               // S-кривая из 8 ступеней: CSS интерполирует линейно, и на ярком
@@ -252,6 +351,7 @@ export function NowPlayingPanel({
         <IconButton icon="heart" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
       </div>
       <div
+        ref={lyricsBoxRef}
         style={{
           position: "relative",
           flex: 1,
@@ -263,15 +363,23 @@ export function NowPlayingPanel({
           background: videoUrl ? "transparent" : "var(--surface-2)",
           padding: "0 var(--sp-4)",
           overflow: "hidden",
+          // КРОМКИ ТЕКСТА РАСТВОРЯЮТСЯ, А НЕ ОБРЕЗАЮТСЯ (жалоба владельца
+          // 04.08: «хотелось бы, чтобы текст песни плавно переходил в видео, а
+          // не резко обрывался»). Строка, уезжающая под кадр, обрубалась ровно
+          // по границе коробки — сплошное полотно, ради которого убирали фон и
+          // скругление, ломалось об эту линию. Маска доводит замысел до конца:
+          // тем же приёмом растворяется низ самого кадра (выше по файлу).
+          maskImage: LYRICS_FADE,
+          WebkitMaskImage: LYRICS_FADE,
         }}
       >
-        {lyrics.length > 0 ? (
+        {shownLines === HIDE_LYRICS ? null : lyrics.length > 0 ? (
           <Lyrics
             lines={lyrics}
             activeIndex={activeLine}
             autoScroll={lyricsAutoScroll}
             endNote={lyricsEndNote}
-            panelLines={lyricsPanelLines}
+            panelLines={shownLines}
             onSeek={onSeekLine}
             onExplain={onExplain}
             onLineContextMenu={onLineContextMenu}

@@ -1,5 +1,17 @@
 /* ── Muza spacing & layout metrics ────────────────────────────────
-   Spacious by default: tiles breathe, few small elements. */
+   Зоны собраны, содержимому отдана ширина.
+
+   РЕДИЗАЙН 2026-08-04. Прежние значения (--gap-zone: 12, --pad-zone: 20,
+   --w-sidebar: 280) давали на 1440px под содержимое 724px, а на пороге 1200px,
+   где открывается «Сейчас играет», — 484px. Жалоба владельца «интерфейс
+   суженный» была буквальной: пересечение 1200px не расширяло контентную
+   колонку, а обрушивало её вдвое. Числа ниже возвращают содержимому ~1152px
+   на том же окне (см. docs/subsystems/оформление.md).
+
+   ⚠️ Эти значения — ТОЛЬКО первая покраска (экран входа, до применения темы).
+   Настоящие дефолты живут в DEFAULT_PREFS (packages/app/src/prefs/types.ts) и
+   приезжают инлайном из themeVars.ts, который бьёт любой стилевой лист.
+   Расходиться им нельзя: на экране входа человек видит именно эти. */
 
 :root {
   --sp-1: 4px;
@@ -14,14 +26,21 @@
   --sp-10: 80px;
 
   /* Fixed window regions (desktop app, 1440×900 reference frame) */
-  --w-sidebar: 280px;        /* left rail */
+  /* Высота своей полосы заголовка (кнопки свернуть/развернуть/закрыть).
+     Токеном — потому что от неё считается не только верхнее поле окна, но и
+     зазор НАД полосой плеера: владелец потребовал 04.08, чтобы расстояние от
+     содержимого до плеера было соразмерно верхней панели. Число дублирует
+     TITLEBAR_H в packages/app/src/shell/TitleBar.tsx (там оно нужно числом для
+     раскладки в JS) — правятся ПАРОЙ. */
+  --h-titlebar: 22px;
+  --w-sidebar: 240px;        /* left rail */
   --w-nowplaying: 340px;     /* right "Сейчас играет" panel */
-  --h-playerbar: 92px;       /* persistent bottom player */
-  --gap-zone: 12px;          /* gutter between window zones */
-  --pad-zone: 20px;          /* inner padding of a zone */
+  --h-playerbar: 72px;       /* persistent bottom player */
+  --gap-zone: 8px;           /* «воздушный» дефолт; тумблер «Плоский вид» уводит в 0 */
+  --pad-zone: 16px;          /* inner padding of a zone (= --r-lg, концентричность) */
   --pad-tile: 16px;          /* inner padding of a tile */
 
-  --size-cover-bar: 60px;    /* player-bar cover */
+  --size-cover-bar: 48px;    /* player-bar cover */
   --size-tile-cover: 100%;   /* tile covers are square, fill width */
   --hit-min: 44px;           /* minimum interactive hit target */
 }

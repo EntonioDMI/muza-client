@@ -16,6 +16,9 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
   const lit = hover || focused;
   return (
     <div
+      // Отклик на нажатие — плитка жмётся под пальцем (animations.css).
+      // Только кликабельная: у декоративной плитки жать нечего.
+      className={onClick ? "muza-press" : undefined}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? title : undefined}
@@ -49,7 +52,10 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
         borderRadius: "var(--r-md)",
         background: selected ? "var(--surface-4)" : lit ? "var(--surface-3)" : "var(--surface-2)",
         cursor: "pointer",
-        transition: "background var(--dur-base) var(--ease-out)",
+        /* transform в списке обязателен — инлайн-transition перекрывает
+           классовый у .muza-press; без него нажатие плитки было мгновенным
+           («резко, меньше кадра» — владелец 04.08). */
+        transition: "background var(--dur-base) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
       }}
     >
       <div style={{ position: "relative", marginBottom: "var(--sp-3)" }}>

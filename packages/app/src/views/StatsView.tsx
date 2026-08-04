@@ -3,10 +3,13 @@
  *  (prefs.statsBlocks, под-экран «Статистика»); период по умолчанию —
  *  prefs.statsPeriod. Графики — div-бары на токенах ДС, без библиотек.
  *
- *  Композиция (T11): центрированная колонка, каждый блок — тихая панель
- *  (surface-1, r-md) с заголовком, чтобы страница читалась собранной сеткой,
- *  а не текстом от левого края. Блока «Итоги года» здесь больше нет — вход
- *  во Wrapped остаётся только с главной (решение владельца, 2026-07-16).
+ *  Композиция (редизайн 04.08, жалоба «страница не заполнена, тёмная и
+ *  скучная»): блоки лежат в ЛЕНТЕ flex-wrap, а не в CSS-сетке — почему
+ *  именно так, разобрано у контейнера блоков в самом низу файла. Каждый блок
+ *  — карточка на surface-2, как карточки разделов настроек: на surface-1
+ *  (2.5 % белого) панель не читалась как карточка вовсе, отсюда и «тёмная».
+ *  Блока «Итоги года» здесь больше нет — вход во Wrapped остаётся только с
+ *  главной (решение владельца, 2026-07-16).
  *
  *  ОБЩИЙ ЭКРАН (волна «экраны», 2026-08-02): один и тот же файл рисует
  *  статистику и в приложении, и в вебе — раньше у веба была своя урезанная
@@ -32,7 +35,9 @@ import { Button, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muz
 import type { MuzaApi, StatsOverview, StatsPeriod, Track } from "@muza/api-client";
 import { BAR_MAX_WIDTH, barSpecs } from "../lib/statsBars";
 import { hourLabel } from "../lib/hourLabel";
+import { pickByOrder } from "../lib/dragEngine";
 import type { WarmRow } from "../lib/rowWarm";
+import { useLookReorder } from "../shell/lookReorder";
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
 
@@ -87,7 +92,21 @@ function fmtMinutes(ms: number, lang: Lang): string {
 }
 
 /** Панель блока: единый «карточный» корпус секции. flush — списки TrackRow
- *  идут во всю ширину (у строки свой внутренний отступ и ховер). */
+ *  идут во всю ширину (у строки свой внутренний отступ и ховер).
+ *
+ *  МАТЕРИАЛ — surface-2 (было surface-1, редизайн 04.08). Плёнка surface-1 —
+ *  2.5 % белого поверх стекла зоны: разница с фоном меньше одной ступени
+ *  тона, и карточки на странице просто не было видно — жалоба владельца
+ *  «выглядит тёмной» была буквальной. surface-2 (4 %) — та же плёнка, на
+ *  которой стоят карточки разделов настроек, то есть страница не изобретает
+ *  свой материал, а встаёт в общий ряд. Контраст текста при этом гарантирован
+ *  сторожем стеклянной лестницы (themeVars.test.ts): он меряет ВСЕ текстовые
+ *  ступени на КАЖДОЙ плёнке, включая surface-2, на всём ходу «Плотности
+ *  стекла» — 4.5:1 берут все.
+ *
+ *  flex/minWidth в стиле — для ленты блоков внизу файла: карточка сама и есть
+ *  растягивающийся элемент строки. Вне flex-контейнера оба свойства ничего не
+ *  делают, поэтому стоят безусловно. */
 function Panel({
   title,
   flush,
@@ -100,7 +119,9 @@ function Panel({
   return (
     <section
       style={{
-        background: "var(--surface-1)",
+        flex: 1,
+        minWidth: 0,
+        background: "var(--surface-2)",
         borderRadius: "var(--r-md)",
         padding: flush ? "var(--sp-5) var(--sp-3) var(--sp-3)" : "var(--sp-5)",
       }}
@@ -111,13 +132,39 @@ function Panel({
   );
 }
 
-/** Крупное число с подписью снизу — типографикой, без плиток и иконок. */
-function BigStat({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
+/** Блоки, которым нужна ВСЯ ширина строки: их содержимое читается по
+ *  горизонтали (столбики по дням, по часам, ранжированные списки). Остальные
+ *  — компактные, встают по два-три в ряд и растягиваются на остаток.
+ *
+ *  «Сводка» переехала сюда 04.08: четыре крупных числа в узкой колонке
+ *  ломались на 3+1 и читались как обрубок таблицы, а во всю ширину это
+ *  естественный «пояс итогов» в шапке страницы. */
+const WIDE_STATS_BLOCKS = new Set<StatsBlockKey>([
+  "summary",
+  "activity",
+  "rhythm",
+  "top_tracks",
+  "top_artists",
+]);
+
+/** Минимальная ширина компактного блока. Ниже неё лента переносит его на свою
+ *  строку — и он растягивается на всю (flex-grow), а не оставляет пустоту. */
+const NARROW_BLOCK_MIN = 320;
+
+/** Крупное число с подписью снизу — типографикой, без плиток и иконок.
+ *  `meta` — производная строка под подписью (см. блок «Сводка»). */
+function BigStat({ value, label, meta, accent }: { value: string; label: string; meta?: string | null; accent?: boolean }) {
   return (
-    <div style={{ minWidth: 120 }}>
+    <div style={{ flex: "1 1 0", minWidth: 0 }}>
+      {/* --fs-num вместо сырых 36px (редизайн 04.08): числа статистики и
+          админки — своя ступень типографической шкалы, и она масштабируется
+          вместе с настройкой «Размер заголовков». Раньше число было зашито и
+          не отзывалось ни на одну ручку. --ls-num поджимает трекинг: цифры
+          шире букв, и на этом кегле без него они рассыпаются. */}
       <div
         style={{
-          fontSize: 36,
+          fontSize: "var(--fs-num)",
+          letterSpacing: "var(--ls-num)",
           fontWeight: 800,
           lineHeight: 1.1,
           color: accent ? "var(--accent-text)" : "var(--text-1)",
@@ -127,6 +174,9 @@ function BigStat({ value, label, accent }: { value: string; label: string; accen
         {value}
       </div>
       <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>{label}</div>
+      {meta ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: "var(--sp-1)" }}>{meta}</div>
+      ) : null}
     </div>
   );
 }
@@ -198,7 +248,10 @@ function Hero({ value, suffix, label, accent }: { value: string; suffix?: string
       <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-2)" }}>
         <span
           style={{
-            fontSize: 56,
+            // Геройское число — ступень --fs-num с полуторным множителем:
+            // одна шкала с остальными цифрами, но заметно крупнее (04.08).
+            fontSize: "calc(var(--fs-num) * 1.5)",
+            letterSpacing: "var(--ls-num)",
             fontWeight: 800,
             lineHeight: 1,
             color: accent ? "var(--accent-text)" : "var(--text-1)",
@@ -254,10 +307,13 @@ function StatsSkeleton() {
       role="status"
       style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}
     >
+      {/* Плёнки на ступень выше прежних: корпус переехал на surface-2 вслед за
+          Panel, иначе скелетон рисовал бы карточки светлее настоящих, и на
+          подмене одного другим страница дёргалась бы тоном. */}
       {[0, 1, 2].map((s) => (
-        <div key={s} style={{ background: "var(--surface-1)", borderRadius: "var(--r-md)", padding: "var(--sp-5)" }}>
-          <div style={{ height: 16, width: 140, borderRadius: 8, background: "var(--surface-2)", marginBottom: "var(--sp-4)" }} />
-          <div style={{ height: s === 1 ? 120 : 64, borderRadius: "var(--r-sm)", background: "var(--surface-2)" }} />
+        <div key={s} style={{ background: "var(--surface-2)", borderRadius: "var(--r-md)", padding: "var(--sp-5)" }}>
+          <div style={{ height: 16, width: 140, borderRadius: 8, background: "var(--surface-3)", marginBottom: "var(--sp-4)" }} />
+          <div style={{ height: s === 1 ? 120 : 64, borderRadius: "var(--r-sm)", background: "var(--surface-3)" }} />
         </div>
       ))}
     </div>
@@ -288,6 +344,94 @@ function Notice({ icon, text, action, onAction }: { icon: string; text: string; 
   );
 }
 
+/** Пусто за период — экран, который УЧИТ, а не сообщает о пустоте (редизайн
+ *  04.08). Прежде здесь стояла одна тихая плашка Notice в две строки: она
+ *  честно говорила «прослушиваний не было» и на этом заканчивалась — человек
+ *  оставался один на один с пустым экраном и без единой подсказки, что делать.
+ *
+ *  Теперь плашка отвечает на три вопроса сразу: что случилось, что здесь
+ *  появится (перечень ВКЛЮЧЁННЫХ блоков с их же подсказками из словаря — тот
+ *  самый список, что человек видит в настройках статистики) и что можно
+ *  нажать прямо сейчас. Кнопка «за всё время» есть только когда период уже не
+ *  «Всё»: на пустом «Всё» она вела бы в ту же пустоту.
+ *
+ *  Перечень берёт строки из media.statsBlocks.* — не копия, а тот же словарь,
+ *  что у переключателей блоков: переименуют блок — переименуется и здесь. */
+function StatsEmpty({
+  blocks,
+  period,
+  onShowAllTime,
+}: {
+  blocks: readonly StatsBlockKey[];
+  period: StatsPeriod;
+  onShowAllTime: () => void;
+}) {
+  const { t } = useT();
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--sp-5)",
+        padding: "var(--sp-6)",
+        borderRadius: "var(--r-md)",
+        background: "var(--surface-2)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-3)" }}>
+        {/* Единственный акцент на этом экране — иконка: чисел, за которые
+            акценту можно было бы зацепиться, здесь ещё нет. */}
+        <Icon name="sparkles" size={20} color="var(--accent-text)" />
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+          <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
+            {t("views.stats.empty.title")}
+          </h2>
+          <p style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
+            {t("views.stats.notice.emptyText")}
+          </p>
+        </div>
+      </div>
+
+      {blocks.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("views.stats.empty.listTitle")}</div>
+          {/* Та же лента, что у блоков страницы: карточки-подсказки делят
+              ширину поровну и не оставляют дыры справа при любом их числе. */}
+          <ul
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "var(--sp-4)",
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+            }}
+          >
+            {blocks.map((key) => (
+              <li key={key} style={{ flex: `1 1 ${NARROW_BLOCK_MIN - 60}px`, minWidth: 0 }}>
+                <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>
+                  {t(`media.statsBlocks.${key}.label`)}
+                </div>
+                <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.4, marginTop: 2 }}>
+                  {t(`media.statsBlocks.${key}.hint`)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {period !== "all" ? (
+        <div>
+          <Button variant="secondary" onClick={onShowAllTime}>
+            {t("views.stats.empty.allTimeAction")}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function StatsView({
   api,
   canSearch,
@@ -300,6 +444,7 @@ export function StatsView({
   onLike,
   onCatalogMenu,
   onCustomize,
+  onReorderBlocks,
   loadOverview,
   rowProps,
 }: {
@@ -319,6 +464,11 @@ export function StatsView({
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Открыть под-экран настроек «Статистика». Нет обработчика — нет кнопки. */
   onCustomize?: () => void;
+  /** Блоки переставили в режиме правки вида (Ctrl+E) — новый порядок ключей
+   *  ВИДИМЫХ блоков. Кто хранит порядок (у приложения — prefs.statsBlocks
+   *  вместе с выключенными), решает вызывающий; нет обработчика — блоки не
+   *  хватаются вовсе. */
+  onReorderBlocks?: (keys: StatsBlockKey[]) => void;
   /** Чем тянуть агрегаты. По умолчанию — прямой запрос к серверу; приложение
    *  подставляет сюда чтение через свой запас последних удачных ответов. */
   loadOverview?: (period: StatsPeriod) => Promise<{ data: StatsOverview; offline: boolean }>;
@@ -379,17 +529,41 @@ export function StatsView({
   const renderBlock = (key: StatsBlockKey) => {
     if (!d) return null;
     switch (key) {
-      case "summary":
+      case "summary": {
+        // ПРОИЗВОДНЫЕ ПОД ЧИСЛАМИ (04.08). Голые четыре числа не отвечали на
+        // «много это или мало» — а сравнить с прошлым периодом нечем: ответ
+        // /me/stats/overview отдаёт ТОЛЬКО текущий период (StatsOverview в
+        // api-client/schemas.ts), поля вроде previousTotalMs там нет, и
+        // выдумывать его нельзя. Что честно считается из самого ответа —
+        // соотношения: минуты и прослушивания на день с музыкой, повторы на
+        // трек и на артиста. Каждое делится на своё, поэтому строки не
+        // повторяют друг друга.
+        const perDay = (v: number) => v / d.activeDays;
+        const num = (v: number) => v.toLocaleString(lang, { maximumFractionDigits: 1 });
+        const minutesMeta = d.activeDays > 0 ? t("views.stats.summary.perDayMinutes", { value: num(perDay(d.totalMs) / 60_000) }) : null;
+        const playsMeta = d.activeDays > 0 ? t("views.stats.summary.perDayPlays", { value: num(perDay(d.totalPlays)) }) : null;
+        const trackMeta = d.uniqueTracks > 0 ? t("views.stats.summary.perTrack", { value: num(d.totalPlays / d.uniqueTracks) }) : null;
+        const artistMeta = d.uniqueArtists > 0 ? t("views.stats.summary.perArtist", { value: num(d.totalPlays / d.uniqueArtists) }) : null;
+        // ПАРАМИ, А НЕ ПРОСТЫМ ПЕРЕНОСОМ. Четыре одинаковых ячейки во flex-wrap
+        // на средней ширине ломались 3+1: три числа в ряд и одно сиротой под
+        // ними. Пара — неделимая единица переноса, поэтому раскладка бывает
+        // только 4 в ряд или 2×2, промежуточного уродства нет.
+        const pair: React.CSSProperties = { display: "flex", gap: "var(--sp-6)", flex: "1 1 300px", minWidth: 0 };
         return (
           <Panel key={key} title={t("media.statsBlocks.summary.label")}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-4)" }}>
-              <BigStat value={fmtMinutes(d.totalMs, lang)} label={t("views.stats.summary.minutesLabel")} accent />
-              <BigStat value={d.totalPlays.toLocaleString(lang)} label={t("views.stats.summary.playsLabel")} />
-              <BigStat value={d.uniqueTracks.toLocaleString(lang)} label={t("views.stats.summary.tracksLabel")} />
-              <BigStat value={d.uniqueArtists.toLocaleString(lang)} label={t("views.stats.summary.artistsLabel")} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-5)" }}>
+              <div style={pair}>
+                <BigStat value={fmtMinutes(d.totalMs, lang)} label={t("views.stats.summary.minutesLabel")} meta={minutesMeta} accent />
+                <BigStat value={d.totalPlays.toLocaleString(lang)} label={t("views.stats.summary.playsLabel")} meta={playsMeta} />
+              </div>
+              <div style={pair}>
+                <BigStat value={d.uniqueTracks.toLocaleString(lang)} label={t("views.stats.summary.tracksLabel")} meta={trackMeta} />
+                <BigStat value={d.uniqueArtists.toLocaleString(lang)} label={t("views.stats.summary.artistsLabel")} meta={artistMeta} />
+              </div>
             </div>
           </Panel>
         );
+      }
       case "activity": {
         const daily = d.series.length > 0 && d.series[0].bucket.length === 10;
         return (
@@ -497,7 +671,10 @@ export function StatsView({
                   >
                     {a.artist}
                   </span>
-                  <div style={{ flex: 1, height: 8, borderRadius: 4, background: "var(--surface-2)", overflow: "hidden" }}>
+                  {/* Дорожка на ступень выше корпуса: панель сама переехала на
+                      surface-2, и прежняя дорожка того же тона исчезла бы — на
+                      равных плёнках разницы нет вовсе. */}
+                  <div style={{ flex: 1, height: 8, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
                     <div
                       style={{
                         width: `${(a.playedMs / maxMs) * 100}%`,
@@ -539,7 +716,9 @@ export function StatsView({
                 <Hero value={String(cur)} suffix={days} label={t("views.stats.streaks.current")} accent={cur > 0} />
                 {rec > 0 && cur < rec ? (
                   <div style={{ marginTop: "var(--sp-4)" }}>
-                    <div aria-hidden="true" style={{ height: 8, borderRadius: 4, background: "var(--surface-2)", overflow: "hidden" }}>
+                    {/* см. дорожку топ-артистов: на surface-2-корпусе дорожка
+                        обязана быть surface-3, иначе её не видно */}
+                    <div aria-hidden="true" style={{ height: 8, borderRadius: 4, background: "var(--surface-3)", overflow: "hidden" }}>
                       <div
                         style={{
                           width: `${Math.min((cur / rec) * 100, 100)}%`,
@@ -620,15 +799,41 @@ export function StatsView({
     }
   };
 
+  // Блок без данных (пустой топ треков у молодой истории) не рисуется вовсе и
+  // места в ленте не занимает — поэтому и в перестановке его быть не должно:
+  // иначе соседи разъезжались бы под пустоту, а курсор искал бы прямоугольник
+  // элемента, которого в DOM нет. Считаем содержимое ОДИН раз и им же рисуем.
+  const rendered = blocks
+    .map((key) => ({ key, body: renderBlock(key) }))
+    .filter((b): b is { key: StatsBlockKey; body: React.JSX.Element } => b.body !== null);
+  const blocksReorder = useLookReorder({
+    ids: rendered.map((b) => b.key),
+    // ⚠️ БЫЛО "column" — И ЭТО БЫЛА ОШИБКА. Лента статистики это flex-wrap:
+    // узкие блоки стоят по два-три в ряд и переносятся на следующую строку.
+    // Индекс вставки по одной оси Y означал, что два соседа в ОДНОЙ строке
+    // неразличимы, — отсюда жалоба владельца «Strike с Top Artists соединить
+    // нельзя». Сетка считает по обеим осям (ближайший центр) и переносу строк
+    // не удивляется; стрелки клавиатуры при этом становятся ←/→, что для ленты
+    // тоже вернее вертикальных.
+    axis: "grid",
+    onReorder: onReorderBlocks ? (keys) => onReorderBlocks(keys as StatsBlockKey[]) : undefined,
+    labelOf: (key) => t("lookEdit.group.statsBlock", { name: t(`media.statsBlocks.${key as StatsBlockKey}.label`) }),
+  });
+
   return (
+    // ПОТОЛОК 900px СНЯТ (редизайн 04.08). Он был единственным на всё
+    // приложение и работал против экрана: на окне 1440 центральная зона отдаёт
+    // больше тысячи пикселей, а статистика упиралась в 900 и оставляла по ~90px
+    // мёртвого поля с каждой стороны. При этом жалоба владельца была ровно
+    // обратная — «статистика выглядит скудно»: панели стояли в одну колонку и
+    // не пользовались шириной, которая у них уже была.
+    // Теперь ширину впитывает сетка (как в Медиатеке), а не поле по бокам.
     <div
       style={{
         display: "flex",
         flexDirection: "column",
         gap: "var(--sp-5)",
-        padding: "var(--sp-6)",
-        maxWidth: 900,
-        margin: "0 auto",
+        padding: "var(--sp-6) var(--sp-5) 0",
       }}
     >
       <div
@@ -641,14 +846,15 @@ export function StatsView({
           borderBottom: "1px solid var(--hairline)",
         }}
       >
+        {/* Заголовок экрана — Golos 700 --fs-h1, как на всех остальных экранах
+            (правило одного display-момента, редизайн 04.08 — см. HomeFeed). */}
         <h1
           style={{
             margin: 0,
             flex: 1,
-            fontFamily: "var(--font-display)",
-            fontWeight: 600,
-            fontSize: "var(--fs-greet)",
-            letterSpacing: "var(--ls-display)",
+            fontWeight: 700,
+            fontSize: "var(--fs-h1)",
+            letterSpacing: "var(--ls-h1)",
             color: "var(--text-1)",
             lineHeight: "var(--lh-tight)",
           }}
@@ -700,7 +906,7 @@ export function StatsView({
               onAction={load}
             />
           ) : null}
-          <Notice icon="sparkles" text={t("views.stats.notice.emptyText")} />
+          <StatsEmpty blocks={blocks} period={period} onShowAllTime={() => setPeriod("all")} />
         </>
       ) : (
         <>
@@ -715,7 +921,61 @@ export function StatsView({
               onAction={load}
             />
           ) : null}
-          {blocks.map((key) => renderBlock(key))}
+          {/* ЛЕНТА FLEX-WRAP ВМЕСТО CSS-СЕТКИ (редизайн 04.08, вторая попытка).
+              Жалоба владельца: «страница не заполнена, справа пустует около
+              двух блоков». Считаем, откуда бралась дыра. На окне 1440 у
+              центральной зоны 1440 − 2×8 (поля окна) − 240 (сайдбар) − 8
+              (зазор зон) = 1176px, минус свои поля экрана 2×20 = 1136px под
+              содержимое. Прежняя сетка repeat(auto-fit, minmax(340px, 1fr))
+              при зазоре 20 нарезала floor((1136+20)/(340+20)) = 3 дорожки по
+              365px. Дальше решала РАССТАНОВКА: «Сводка» — компактный блок, она
+              занимала ОДНУ дорожку и оставляла две пустыми, а «Серии» и
+              «Лайки» в хвосте занимали две из трёх и оставляли одну. Ровно те
+              «примерно два блока» пустоты, о которых речь.
+
+              auto-fit против auto-fill тут ни при чём: схлопывать auto-fit
+              умеет только дорожки, в которых НЕТ ни одного элемента, а
+              широкие блоки со span 1/-1 занимают все три — схлопывать нечего.
+              Дыру даёт сама модель сетки: дорожки фиксированы заранее и не
+              знают, сколько элементов встанет в конкретный ряд.
+
+              Лента этого недостатка лишена: во flex-wrap элементы последней
+              (да и любой) строки РАСТЯГИВАЮТСЯ на весь остаток (flex-grow).
+              Широкий блок — базис 100 %: он всегда один в строке. Компактный —
+              базис NARROW_BLOCK_MIN: сколько влезло, столько и встало, и они
+              поделили ширину поровну; влез один — он занял всю строку. Ширина
+              расходуется вся при ЛЮБОМ наборе включённых блоков, включая
+              набор из одного компактного.
+
+              align-items по умолчанию (stretch) — соседи по строке равной
+              высоты, поэтому карточки «Серии» и «Лайки» не ступенькой. */}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "var(--sp-5)",
+              paddingBottom: "var(--sp-6)",
+            }}
+          >
+            {pickByOrder(rendered, (b) => b.key, blocksReorder.order).map(({ key, body }) => {
+              const look = blocksReorder.itemProps(key);
+              return (
+                <div
+                  key={key}
+                  {...look}
+                  style={{
+                    display: "flex",
+                    flex: WIDE_STATS_BLOCKS.has(key) ? "1 1 100%" : `1 1 ${NARROW_BLOCK_MIN}px`,
+                    minWidth: 0,
+                    // Сдвиг перестановки — последним, поверх раскладки ленты.
+                    ...look.style,
+                  }}
+                >
+                  {body}
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
     </div>

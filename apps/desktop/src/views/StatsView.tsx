@@ -13,6 +13,8 @@
  *  Новый код импортирует экран напрямую из "@muza/app/views/StatsView". */
 
 import { StatsView as SharedStatsView } from "@muza/app/views/StatsView";
+import { useLookEdit } from "@muza/app/shell/lookReorder";
+import { applyVisibleOrder } from "@muza/app/lib/dragEngine";
 import type { MuzaApi, StatsPeriod, Track } from "@muza/api-client";
 import { normalizeStatsBlocks } from "../lib/statsBlocks";
 import { withSnapshot } from "../lib/offlineSnapshot";
@@ -32,6 +34,7 @@ export function StatsView({
   onLike,
   onCatalogMenu,
   onCustomize,
+  onSetStatsBlocks,
 }: {
   api: MuzaApi;
   /** false у анонима: истории на сервере нет — честная заглушка. */
@@ -46,13 +49,18 @@ export function StatsView({
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Открыть под-экран настроек «Статистика» (кнопка «Настроить»). */
   onCustomize: () => void;
+  /** Записать список блоков (режим правки вида, Ctrl+E). Нет колбэка — блоки
+   *  не переставляются. */
+  onSetStatsBlocks?: (blocks: Prefs["statsBlocks"]) => void;
 }) {
   const warmRow = useWarmRow();
+  const { pushUndo } = useLookEdit();
+  const allBlocks = normalizeStatsBlocks(prefs.statsBlocks);
   return (
     <SharedStatsView
       api={api}
       canSearch={canSearch}
-      blocks={normalizeStatsBlocks(prefs.statsBlocks).filter((b) => b.on).map((b) => b.key)}
+      blocks={allBlocks.filter((b) => b.on).map((b) => b.key)}
       initialPeriod={prefs.statsPeriod}
       currentId={currentId}
       playing={playing}
@@ -61,6 +69,16 @@ export function StatsView({
       onLike={onLike}
       onCatalogMenu={onCatalogMenu}
       onCustomize={onCustomize}
+      // Экран переставляет ВИДИМЫЕ блоки; выключенные обязаны остаться на
+      // своих местах в списке настроек — applyVisibleOrder ровно про это.
+      onReorderBlocks={
+        onSetStatsBlocks
+          ? (keys) => {
+              pushUndo({ statsBlocks: prefs.statsBlocks });
+              onSetStatsBlocks(applyVisibleOrder(allBlocks, (b) => b.key, keys));
+            }
+          : undefined
+      }
       loadOverview={(period: StatsPeriod) => withSnapshot(`stats:${period}`, () => api.getStatsOverview(period))}
       rowProps={warmRow}
     />

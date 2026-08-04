@@ -56,7 +56,11 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
   const [fittedFs, setFittedFs] = useState(null);
   useEffect(() => {
     const wrap = wrapRef.current;
-    if (karaoke || !panelLines || panelLines < 2 || !wrap || typeof ResizeObserver === "undefined") {
+    // panelLines === 1 ТОЖЕ подгоняется: «Сейчас играет» на низкой панели
+    // показывает ровно одну строку во всю её высоту (адаптивная лестница в
+    // shell/NowPlayingPanel.tsx). Раньше единица отсекалась вместе с нулём, и
+    // самая тесная ступень лестницы молча вырождалась в обычный список.
+    if (karaoke || !panelLines || panelLines < 1 || !wrap || typeof ResizeObserver === "undefined") {
       setFittedFs(null);
       return;
     }

@@ -3,7 +3,7 @@ import { Button, ChipGroup, Dialog, EmptyState, Icon, Tile, TrackRow } from "@mu
 import type { HistoryItem, MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
 import { fmtTime } from "../lib/format";
 import { tileL10n, trackRowL10n } from "../lib/dsLabels";
-import { gridInsertionIndex } from "../lib/dragEngine";
+import { applyVisibleOrder, gridInsertionIndex } from "../lib/dragEngine";
 import { useLocalReorder } from "../lib/useLocalReorder";
 import { useDrag, useDropZone } from "../shell/DragLayer";
 import { useContextMenu } from "../shell/ContextMenu";
@@ -121,9 +121,7 @@ function PlaylistDropTile({
   onDropTrack,
   grip,
   tileRef,
-  shift,
   dragged = false,
-  settling = false,
   dimmed = false,
   selected = false,
   onClickCapture,
@@ -137,15 +135,12 @@ function PlaylistDropTile({
   selected?: boolean;
   /** Capture-перехват клика для выделения (Ctrl/Shift/режим). */
   onClickCapture?: (e: React.MouseEvent) => void;
-  /** Реордер (useLocalReorder): пропсы ручки-⠿; нет — плитка без ручки. */
+  /** Реордер (useLocalReorder): обработчик жеста — вешается на ВСЮ плитку;
+   *  нет — плитка не переставляется и точек у неё нет. */
   grip?: { onPointerDown: (e: React.PointerEvent<HTMLElement>) => void };
   tileRef?: (el: HTMLElement | null) => void;
-  /** Transform плитки во время реордера (сама или сосед); null — покой. */
-  shift?: { x: number; y: number } | null;
-  /** Тащат ИМЕННО эту плитку: едет за курсором, без transition, поверх соседей. */
+  /** Тащат ИМЕННО эту плитку — курсор «grabbing», точки в полную яркость. */
   dragged?: boolean;
-  /** Плитку отпустили — она доезжает до слота, transition нужен и ей. */
-  settling?: boolean;
   /** 2026-07-17: подписка, скрытая владельцем, — гаснет (open перехвачен выше). */
   dimmed?: boolean;
 }) {
@@ -161,6 +156,13 @@ function PlaylistDropTile({
   return (
     <div
       {...props}
+      // ХВАТАЕТСЯ ВСЯ ПЛИТКА (владелец 04.08: «было бы удобнее хвататься за
+      // весь блок»). ⚠️ Это отмена решения 16.07 «реордер только за ручку-⠿,
+      // по плитке — обычный клик»: жест поднимается лишь после удержания
+      // HOLD_MS или сдвига на DRAG_THRESHOLD, поэтому обычный клик «открыть»
+      // остаётся кликом. Точки — подсказка «это переставляется» и единственная
+      // зона с touchAction: none, чтобы палец не потерял прокрутку сетки.
+      {...(grip ?? {})}
       ref={tileRef}
       aria-disabled={dimmed || undefined}
       onMouseEnter={() => setHover(true)}
@@ -172,12 +174,11 @@ function PlaylistDropTile({
         opacity: dimmed ? 0.45 : undefined,
         outline: litTarget ? "var(--focus-ring)" : undefined,
         outlineOffset: 2,
-        // во время реордера сосед мягко съезжает на новое место; тащимая
-        // плитка липнет к курсору без сглаживания, но при ПОСАДКЕ transition
-        // получает и она — доезжает до слота, а не телепортируется
-        transition: shift && (!dragged || settling) ? "transform 160ms var(--ease-out)" : "outline-color var(--dur-fast) var(--ease-out)",
-        transform: shift ? `translate(${shift.x}px, ${shift.y}px)` : undefined,
-        zIndex: dragged ? 2 : undefined,
+        transition: "outline-color var(--dur-fast) var(--ease-out)",
+        // ⚠️ transform/zIndex здесь НЕТ намеренно: движение перестановки пишет
+        // в DOM сам движок (lib/useLocalReorder.ts), запись отсюда стирала бы
+        // его через кадр.
+        cursor: grip && dragged ? "grabbing" : undefined,
       }}
     >
       <Tile
@@ -199,9 +200,8 @@ function PlaylistDropTile({
         // ВСЕГДА (жалоба 2026-07-16: сверху с шариком — неудобно и прячется).
         // Правый низ ОБЛОЖКИ занят play-пилюлей Tile — сюда она не достаёт.
         <span
-          {...grip}
-          role="button"
-          aria-label={t("views.library.reorderHandle")}
+          aria-hidden="true"
+          data-testid="reorder-grip"
           onClick={(e) => e.stopPropagation()}
           style={{
             position: "absolute",
@@ -323,7 +323,7 @@ export function LibraryView({
     // закреплённые (2026-07-20) тоже вне реордера: смысл закрепа —
     // «случайно не сдвинуть»; серверная сортировка держит их сверху
     ids: srvPlaylists.filter((p) => p.role !== "follower" && !p.pinned).map((p) => p.id),
-    resolveTo: (rects, _from, x, y) => gridInsertionIndex(rects, x, y),
+    resolveTo: (rects, from, x, y) => gridInsertionIndex(rects, from, x, y),
     onCommit: (id, to) => onReorderPlaylists?.(id, to),
   });
   // Набор вкладок собирается из умений, а не из площадки: «Локальные» держит
@@ -681,7 +681,9 @@ export function LibraryView({
         <div style={grid}>
           {/* «Любимое» закреплено первым — Spotify-паттерн (2026-07-16) */}
           <FavoritesTile count={favoritesCount} onOpen={onOpenFavorites} />
-          {srvPlaylists.map((p) => {
+          {/* Живой порядок жеста ложится на СЛОТЫ подвижных плиток: подписки и
+              закреплённые в перестановку не входят и остаются на местах. */}
+          {applyVisibleOrder(srvPlaylists, (p) => p.id, reorder.order).map((p) => {
             // Подписка (2026-07-17): чужой read-only плейлист. Скрытый
             // владельцем — гаснет; открыть нельзя, только убрать через меню.
             const followed = p.role === "follower";
@@ -723,9 +725,7 @@ export function LibraryView({
                 onDropTrack={locked ? undefined : onDropTrack}
                 grip={onReorderPlaylists && !locked ? reorder.grip(p.id) : undefined}
                 tileRef={locked ? undefined : reorder.itemRef(p.id)}
-                shift={locked ? null : reorder.shiftFor(p.id)}
                 dragged={!locked && reorder.draggingId === p.id}
-                settling={reorder.settling}
               />
             );
           })}

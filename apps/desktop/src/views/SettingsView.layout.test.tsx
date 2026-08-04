@@ -46,54 +46,51 @@ describe("SettingsView — скелет раскладки (контракт с 
     const cols = root!.querySelector(":scope > .muza-settings__cols");
     expect(cols).not.toBeNull();
 
-    const nav = cols!.querySelector(":scope > nav.muza-settings-nav[role='tablist']");
-    expect(nav).not.toBeNull();
-    // Имя экрана у tablist не зависит от геометрии (заголовок в узком рельсе
-    // и на низком окне прячется стилем) — aria-label обязан быть всегда.
-    expect(nav!.getAttribute("aria-label")).toBeTruthy();
-    expect(nav!.querySelector(":scope > h1.muza-settings-nav__title")).not.toBeNull();
+    // РЕЛЬСА РАЗДЕЛОВ БОЛЬШЕ НЕТ (редизайн 04.08). Жалоба владельца: «два
+    // одинаковых сайдбара стоят рядом — это совсем не выглядит». Его роль
+    // исполняет сетка карточек на входе, колонка осталась одна.
+    expect(cols!.querySelector("nav.muza-settings-nav")).toBeNull();
+    expect(cols!.children).toHaveLength(1);
 
     const pane = cols!.querySelector(":scope > .muza-settings__pane#muza-settings-pane");
     expect(pane).not.toBeNull();
-    expect(pane!.getAttribute("role")).toBe("tabpanel");
+    expect(pane!.getAttribute("aria-label")).toBeTruthy();
+    const head = pane!.querySelector(":scope > .muza-settings__head > h1.muza-settings__title");
+    expect(head, "заголовок экрана обязан стоять в шапке панели").not.toBeNull();
   });
 
-  it("у каждого из 10 пунктов есть aria-label и CSS-тултип __tip (подписи прячутся стилем)", () => {
+  it("вход в настройки — сетка из 10 карточек разделов, а не сразу раздел", () => {
     const { container } = renderSettings();
-    // Скоуп — рельс: сегментные Tabs из @muza/ui внутри панели («Тема»,
-    // «Язык интерфейса»...) тоже носят role="tab" и в счёт не входят.
-    const nav = container.querySelector(".muza-settings-nav")!;
-    const tabs = [...nav.querySelectorAll("[role='tab']")];
-    expect(tabs).toHaveLength(10);
-    for (const tab of tabs) {
-      expect(tab.getAttribute("aria-label")).toBeTruthy();
-      // Подсказку узкого рельса несёт __tip (язык ДС, app.css); нативный title
-      // убран — он рисовал стоковую плашку WebView2 (жалоба 2026-07-16).
-      expect(tab.getAttribute("title")).toBeNull();
-      const tip = tab.querySelector(":scope > .muza-settings-nav__tip");
-      expect(tip).not.toBeNull();
-      expect(tip!.textContent).toBeTruthy();
-      expect(tab.getAttribute("aria-controls")).toBe("muza-settings-pane");
+    const pane = container.querySelector(".muza-settings__pane")!;
+    const cards = [...pane.querySelectorAll("button")].filter((b) => b.className.includes("muza-press"));
+    expect(cards).toHaveLength(10);
+    for (const card of cards) {
+      // Две строки: название и «что внутри». Пустое описание превращает
+      // карточку в просто крупную кнопку, ради которой всё и не затевалось.
+      expect(card.textContent!.trim().length).toBeGreaterThan(10);
     }
   });
 });
 
-describe("SettingsView — прокрутка панели", () => {
-  it("смена раздела сбрасывает скролл панели к началу и перевешивает aria-labelledby", () => {
-    renderSettings();
+describe("SettingsView — переходы между уровнями", () => {
+  it("клик по карточке открывает раздел, кнопка возврата возвращает к сетке", () => {
+    const { container } = renderSettings();
     const pane = document.getElementById("muza-settings-pane")!;
-    // Дефолтная вкладка — «Внешний вид».
-    expect(pane.getAttribute("aria-labelledby")).toBe("muza-settings-nav-appearance");
+    const card = [...pane.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Playback"))!;
+    expect(card, "карточка «Playback» обязана быть на входе").toBeTruthy();
 
-    // Проверяем предпосылку: jsdom хранит присвоенный scrollTop (лэйаута нет,
-    // клампа к 0 не будет) — иначе ассерт ниже был бы пустым.
+    // Предпосылка: jsdom хранит присвоенный scrollTop (лэйаута нет, клампа к 0
+    // не будет) — иначе ассерт про сброс прокрутки был бы пустым.
     pane.scrollTop = 400;
     expect(pane.scrollTop).toBe(400);
+    fireEvent.click(card);
 
-    fireEvent.click(document.getElementById("muza-settings-nav-playback")!);
-
+    expect(container.querySelector(".muza-settings__title")!.textContent).toBe("Playback");
+    expect([...pane.querySelectorAll("button")].filter((b) => b.className.includes("muza-press"))).toHaveLength(0);
     expect(pane.scrollTop).toBe(0);
-    expect(pane.getAttribute("aria-labelledby")).toBe("muza-settings-nav-playback");
+
+    fireEvent.click(container.querySelector(".muza-settings__head button")!);
+    expect(container.querySelector(".muza-settings__title")!.textContent).toBe("Settings");
   });
 });
 
@@ -102,20 +99,17 @@ describe("SettingsView — прокрутка панели", () => {
    инварианта проверяема и в jsdom: EN и RU обязаны давать один и тот же
    набор узлов навигации — меняются только тексты. */
 describe("SettingsView — EN и RU дают одинаковую структуру", () => {
-  it("id пунктов и форма DOM навигации совпадают, подписи — различаются", () => {
+  it("форма DOM входа совпадает, подписи — различаются", () => {
     const en = renderSettings();
-    const enIds = [...en.container.querySelectorAll(".muza-settings-nav [role='tab']")].map((el) => el.id);
-    const enTitle = en.container.querySelector(".muza-settings-nav__title")!.textContent;
-    const enNavChildren = en.container.querySelector(".muza-settings-nav")!.children.length;
+    const enCards = en.container.querySelectorAll(".muza-settings__pane button").length;
+    const enTitle = en.container.querySelector(".muza-settings__title")!.textContent;
     cleanup();
 
     const ru = renderSettings("ru");
-    const ruIds = [...ru.container.querySelectorAll(".muza-settings-nav [role='tab']")].map((el) => el.id);
-    const ruTitle = ru.container.querySelector(".muza-settings-nav__title")!.textContent;
-    const ruNavChildren = ru.container.querySelector(".muza-settings-nav")!.children.length;
+    const ruCards = ru.container.querySelectorAll(".muza-settings__pane button").length;
+    const ruTitle = ru.container.querySelector(".muza-settings__title")!.textContent;
 
-    expect(ruIds).toEqual(enIds);
-    expect(ruNavChildren).toBe(enNavChildren);
+    expect(ruCards).toBe(enCards);
     // Контроль, что сравнили не два одинаковых рендера: тексты реально разные.
     expect(ruTitle).not.toBe(enTitle);
   });

@@ -60,6 +60,9 @@ export function useMultiSelect(order: string[]): MultiSelect {
       const el = e.target instanceof HTMLElement ? e.target : null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
       if (e.key === "Escape") {
+        // Пометка «событие взято» — по ней режим правки вида не выходит заодно
+        // со снятием выделения (см. shell/LookEditLayer.tsx).
+        e.preventDefault();
         setState(EMPTY);
       } else if ((e.ctrlKey || e.metaKey) && e.code === "KeyA") {
         e.preventDefault();

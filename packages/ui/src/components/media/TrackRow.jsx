@@ -47,6 +47,10 @@ export function TrackRow({
   const lit = hover || focused;
   return (
     <div
+      // Отклик на нажатие — строка жмётся под пальцем (animations.css).
+      // Строка трека кликается чаще всего в приложении, а путь от клика до
+      // звука самый длинный: без мгновенной реакции палец успевает усомниться.
+      className="muza-press"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setFocused(true)}
@@ -75,7 +79,11 @@ export function TrackRow({
         // выделение сильнее «играет сейчас»: иначе выделенный играющий трек
         // визуально выпадает из выделения (мультивыбор, 2026-07-20)
         background: selected ? "var(--surface-4)" : active ? "var(--surface-3)" : lit ? "var(--surface-2)" : "transparent",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        /* transform ОБЯЗАН быть в этом списке: инлайн-transition ЦЕЛИКОМ
+           перекрывает классовый у .muza-press, и без transform нажатие
+           строки схлопывалось мгновенно — «резко, меньше кадра» (владелец
+           04.08). Список, а не shorthand-замена. */
+        transition: "background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
       }}
     >
       <div style={{ width: 28, flex: "none", display: "flex", justifyContent: "center" }}>

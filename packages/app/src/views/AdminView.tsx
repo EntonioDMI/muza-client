@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Icon, Spinner, Tabs } from "@muza/ui";
+import { Button, Icon, IconButton, SearchInput, Spinner, Tabs } from "@muza/ui";
 import type {
   AdminContent,
   AdminDayPoint,
@@ -9,6 +9,7 @@ import type {
   AdminOverview,
   AdminPublicPlaylist,
   AdminUsers,
+  MarketTheme,
   MuzaApi,
 } from "@muza/api-client";
 import { useT } from "../i18n";
@@ -41,7 +42,19 @@ function StatCard({ label, value, hint }: { label: string; value: string | numbe
       }}
     >
       <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{label}</span>
-      <span style={{ fontSize: 26, fontWeight: 700, color: "var(--text-1)", fontVariantNumeric: "tabular-nums" }}>
+      {/* Числа — тем же голосом, что в Статистике: --fs-num + табличные цифры
+          (редизайн 04.08). Сырые 26px были единственным местом, где сводное
+          число говорило не в общий типографический ряд. */}
+      <span
+        style={{
+          fontSize: "var(--fs-num)",
+          fontWeight: 700,
+          letterSpacing: "var(--ls-num)",
+          color: "var(--text-1)",
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: "var(--lh-tight)",
+        }}
+      >
         {value}
       </span>
       {hint ? <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{hint}</span> : null}
@@ -52,7 +65,12 @@ function StatCard({ label, value, hint }: { label: string; value: string | numbe
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
-      <h2 style={{ margin: 0, fontSize: "var(--fs-strong)", fontWeight: 700, color: "var(--text-1)" }}>{title}</h2>
+      {/* Секционный h2 — --fs-title, как на всех экранах (анатомия шапки,
+          редизайн 04.08): пока админка держала свой размер, она и читалась
+          как «другой продукт». */}
+      <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 700, letterSpacing: "var(--ls-title)", color: "var(--text-1)" }}>
+        {title}
+      </h2>
       {children}
     </div>
   );
@@ -228,7 +246,105 @@ function ContentTab({ api }: { api: MuzaApi }) {
         </div>
       </Section>
       <AdminPublicPlaylistsSection api={api} />
+      <AdminMarketThemesSection api={api} />
     </div>
+  );
+}
+
+/** Модерация витрины тем (04.08, upgrade-list): скрытую жалобами тему раньше
+ *  можно было только УДАЛИТЬ НАВСЕГДА — пять жалоб были смертным приговором,
+ *  хотя жалобы бывают и злонамеренными. Серверная ручка POST themes/:id/hidden
+ *  существовала с самого начала, клиентского метода не было. Админ видит все
+ *  темы (сервер не фильтрует ему hidden), скрытые помечены и возвращаются
+ *  одной кнопкой; видимые можно скрыть, не удаляя. */
+export function AdminMarketThemesSection({ api }: { api: MuzaApi }) {
+  const { t } = useT();
+  const [rows, setRows] = useState<MarketTheme[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = () =>
+    api
+      .getMarketThemes()
+      .then(setRows)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  const setHidden = async (id: string, hidden: boolean) => {
+    setBusyId(id);
+    try {
+      await api.setMarketThemeHidden(id, hidden);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Section title={t("views.admin.themes.title")}>
+      {/* Ошибка ДЕЙСТВИЯ видима и при загруженном списке: раньше setError из
+          setHidden уходил в ветку, которая рендерится только при rows === null,
+          и отказ сервера был молчаливым (ревизия 04.08). */}
+      {error && rows !== null ? (
+        <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{error}</div>
+      ) : null}
+      {rows === null ? (
+        <Loading error={error} />
+      ) : rows.length === 0 ? (
+        <div style={{ color: "var(--text-3)", fontSize: "var(--fs-body)" }}>{t("views.admin.themes.empty")}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {rows.map((theme) => (
+            <div key={theme.id} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minHeight: 36 }}>
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  color: theme.hidden ? "var(--text-3)" : "var(--text-1)",
+                  fontSize: "var(--fs-body)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {theme.name}
+                <span style={{ color: "var(--text-3)" }}> · {theme.author}</span>
+                {theme.hidden ? (
+                  <span
+                    style={{
+                      marginLeft: "var(--sp-2)",
+                      padding: "2px 8px",
+                      borderRadius: "var(--r-pill)",
+                      background: "color-mix(in srgb, var(--danger) 12%, transparent)",
+                      color: "var(--danger)",
+                      fontSize: "var(--fs-caption)",
+                      fontWeight: "var(--fw-medium)",
+                    }}
+                  >
+                    {t("views.admin.themes.hiddenBadge")}
+                  </span>
+                ) : null}
+              </span>
+              <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", flex: "none" }}>
+                {t("views.admin.themes.installs", { count: theme.installs })}
+              </span>
+              <Button
+                variant="secondary"
+                disabled={busyId === theme.id}
+                onClick={() => void setHidden(theme.id, !theme.hidden)}
+              >
+                {t(theme.hidden ? "views.admin.themes.restore" : "views.admin.themes.hide")}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -383,6 +499,10 @@ function HealthTab({ api }: { api: MuzaApi }) {
   );
 }
 
+/** Размер страницы таблицы пользователей. 50 строк — экран с запасом; листать
+ *  дальше быстрее, чем прокручивать простыню из сотен. */
+const USERS_PAGE = 50;
+
 function UsersTab({ api }: { api: MuzaApi }) {
   const { t, lang } = useT();
   // Выдача/снятие админки (2026-07-21, разворот решения 11.07): реальный рубеж —
@@ -390,8 +510,25 @@ function UsersTab({ api }: { api: MuzaApi }) {
   const [rev, setRev] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const { data, error } = useAdminData<AdminUsers>(() => api.getAdminUsers({ limit: 100 }), [api, rev]);
-  if (!data) return <Loading error={error} />;
+  // Поиск и страницы (04.08 — upgrade-list: «100 строк без того и другого»).
+  // Поиск СЕРВЕРНЫЙ (ILIKE по нику): клиентский фильтр текущей страницы врал
+  // бы — человек не нашёл бы того, кто на другой странице. Ввод дебаунсится,
+  // смена запроса возвращает на первую страницу.
+  const [query, setQuery] = useState("");
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setQ(query.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  const { data, error, loading } = useAdminData<AdminUsers>(
+    () => api.getAdminUsers({ limit: USERS_PAGE, offset: page * USERS_PAGE, q: q || undefined }),
+    [api, rev, q, page],
+  );
+  const pages = data ? Math.max(1, Math.ceil(data.total / USERS_PAGE)) : 1;
   const toggleAdmin = async (u: AdminUsers["users"][number]) => {
     setBusyId(u.id);
     setActionError(null);
@@ -407,12 +544,25 @@ function UsersTab({ api }: { api: MuzaApi }) {
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
-      <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-        {t("views.admin.users.piiNote", { count: data.total })}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 240px", maxWidth: 360 }}>
+          <SearchInput value={query} onChange={setQuery} placeholder={t("views.admin.users.searchPlaceholder")} />
+        </div>
+        <BusyDot busy={loading && data !== null} />
+        <span style={{ marginLeft: "auto", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+          {data ? t("views.admin.users.piiNote", { count: data.total }) : null}
+        </span>
       </div>
       {actionError ? (
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{actionError}</div>
       ) : null}
+      {!data ? (
+        <Loading error={error} />
+      ) : data.users.length === 0 ? (
+        <div style={{ padding: "var(--sp-5) 0", color: "var(--text-3)", fontSize: "var(--fs-body)" }}>
+          {t("views.admin.users.searchEmpty")}
+        </div>
+      ) : (
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <Row header cells={[t("views.admin.users.userCol"), t("views.admin.users.createdCol"), t("views.admin.users.plays30dCol"), t("views.admin.users.lastCol"), t("views.admin.users.adminCol")]} />
         {data.users.map((u) => (
@@ -451,6 +601,28 @@ function UsersTab({ api }: { api: MuzaApi }) {
           />
         ))}
       </div>
+      )}
+      {pages > 1 ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+          <IconButton
+            icon="chevron-left"
+            size="sm"
+            label={t("views.admin.users.prevPage")}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            style={{ opacity: page === 0 ? 0.4 : 1, pointerEvents: page === 0 ? "none" : undefined }}
+          />
+          <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
+            {t("views.admin.users.pageOf", { page: page + 1, pages })}
+          </span>
+          <IconButton
+            icon="chevron-right"
+            size="sm"
+            label={t("views.admin.users.nextPage")}
+            onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
+            style={{ opacity: page >= pages - 1 ? 0.4 : 1, pointerEvents: page >= pages - 1 ? "none" : undefined }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -856,13 +1028,14 @@ export function AdminView({ api }: { api: MuzaApi }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6)", width: "100%", boxSizing: "border-box" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
         <Icon name="shield" size={22} color="var(--accent-text)" />
+        {/* Заголовок экрана — Golos 700, как везде (правило одного
+            display-момента, редизайн 04.08 — см. HomeFeed). */}
         <h1
           style={{
             margin: 0,
-            fontFamily: "var(--font-display)",
-            fontWeight: 600,
+            fontWeight: 700,
             fontSize: "var(--fs-h1)",
-            letterSpacing: "var(--ls-display)",
+            letterSpacing: "var(--ls-h1)",
             color: "var(--text-1)",
           }}
         >

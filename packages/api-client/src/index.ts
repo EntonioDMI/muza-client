@@ -222,6 +222,8 @@ export interface MuzaApi {
   deleteMarketTheme(id: string): Promise<void>;
   /** Пожаловаться на чужую тему (порог жалоб авто-скрывает её). */
   reportMarketTheme(id: string): Promise<void>;
+  /** Модерация витрины (админ): hidden=false возвращает скрытую тему. */
+  setMarketThemeHidden(id: string, hidden: boolean): Promise<void>;
 
   // Маркетплейс плагинов (эпик W8, T45a). payload = { manifest, code, css?,
   // strings? }; install ставится через рантайм T44/T44b (клиент сам валидирует
@@ -324,7 +326,7 @@ export interface MuzaApi {
   getAdminOverview(): Promise<AdminOverview>;
   getAdminContent(): Promise<AdminContent>;
   getAdminHealth(hours?: number): Promise<AdminHealth>;
-  getAdminUsers(opts?: { limit?: number; offset?: number }): Promise<AdminUsers>;
+  getAdminUsers(opts?: { limit?: number; offset?: number; q?: string }): Promise<AdminUsers>;
   /** Выдать/снять админку (2026-07-21, разворот решения 11.07): рубеж — сервер. */
   setAdminUser(id: string, isAdmin: boolean): Promise<void>;
   /** Кусок C: метрики роста (регистрации/посещения/скачивания по дням). */

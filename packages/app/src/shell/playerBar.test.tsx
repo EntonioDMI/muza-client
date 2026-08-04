@@ -90,16 +90,21 @@ describe("полоса плеера: одна на две программы", (
     }
   });
 
+  // Время с редизайна 04.08 — ОДНА табличная метка «позиция / длительность»
+  // в правой группе (макет владельца), а не два числа по краям полосы
+  // прогресса: те держали середину бара шириной 480px и мешали её центровке.
+  const timecode = () => screen.getByTestId("player-timecode").textContent;
+
   it("тайм-код округляет (правило приложения), а не отбрасывает дробь", () => {
     render(<PlayerBar {...base} pos={3.6} />);
-    expect(screen.queryByText("0:04")).not.toBeNull();
-    expect(screen.queryByText("0:03")).toBeNull();
+    expect(timecode()).toContain("0:04");
+    expect(timecode()).not.toContain("0:03");
   });
 
   it("длительность-«не число» (метаданные ещё не пришли) не превращается в NaN", () => {
     render(<PlayerBar {...base} track={{ ...track, duration: Number.NaN }} />);
-    // два нуля: слева позиция, справа длительность
-    expect(screen.queryAllByText("0:00").length).toBe(2);
+    // оба числа — нули: слева позиция, справа длительность
+    expect(timecode()).toBe("0:00 / 0:00");
   });
 
   it("умение есть: перетаскивание обложки отдаёт готовый файл системе", async () => {

@@ -20,6 +20,11 @@ export const viewsEn = {
       day: "Good afternoon",
       evening: "Good evening",
     },
+    meta: {
+      today: "{time} today",
+      hoursMinutes: "{h} h {m} min",
+      minutes: "{m} min",
+    },
     wrappedBanner: {
       title: "Your {year} Wrapped",
       hint: "Minutes, tracks, and artists of the year — plus a card worth sharing",
@@ -43,6 +48,7 @@ export const viewsEn = {
   },
 
   search: {
+    title: "Search",
     placeholder: "Track, artist, album",
     searching: "Searching…",
     searchSources: "Search in sources",
@@ -205,6 +211,18 @@ export const viewsEn = {
       playsLabel: "plays",
       tracksLabel: "tracks",
       artistsLabel: "artists",
+      // Производные строки под числами. Считаются из самого ответа сервера
+      // (минуты/прослушивания на день с музыкой, повторы на трек и артиста):
+      // сравнения с прошлым периодом сервер не отдаёт, а придумывать нельзя.
+      perDayMinutes: "{value} min per day",
+      perDayPlays: "{value} per day",
+      perTrack: "{value}× per track",
+      perArtist: "{value}× per artist",
+    },
+    empty: {
+      title: "Your statistics will show up here",
+      listTitle: "What you'll see",
+      allTimeAction: "Show all time",
     },
     activity: {
       ariaByDay: "Plays by day",
@@ -414,6 +432,19 @@ export const viewsEn = {
       grantAdmin: "Make admin",
       revokeAdmin: "Revoke admin",
       adminToggleFailed: "Couldn't change rights",
+      searchPlaceholder: "Find by username",
+      searchEmpty: "No one with that username",
+      prevPage: "Previous page",
+      nextPage: "Next page",
+      pageOf: "Page {page} of {pages}",
+    },
+    themes: {
+      title: "Themes on the market",
+      empty: "No themes on the market yet.",
+      hiddenBadge: "hidden",
+      installs: "installs: {count}",
+      restore: "Return to the market",
+      hide: "Hide",
     },
     growth: {
       d7: "7 days",

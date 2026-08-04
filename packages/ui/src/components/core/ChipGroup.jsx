@@ -82,6 +82,8 @@ export function ChipGroup({ items, value, onChange, style }) {
           <button
             key={key}
             type="button"
+            // зона попадания до --hit-min по вертикали (чип 36px)
+            className="muza-hit"
             role="tab"
             aria-selected={selected}
             data-chipkey={key}

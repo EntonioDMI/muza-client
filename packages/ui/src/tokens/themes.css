@@ -28,8 +28,8 @@
    учётом темы (зависят от prefs textDim/glassOpacity/baseBg) — здесь дефолты. */
 
 [data-theme="light"] {
-  --bg-0: #f3f1ed;           /* warm off-white, low chroma — light inverse of graphite */
-  --bg-1: #faf9f6;           /* raised zone — toward white */
+  --bg-0: #eeebe5;           /* warm off-white, low chroma — light inverse of graphite */
+  --bg-1: #fdfcfa;           /* raised zone — toward white */
 
   /* ⚠️ Поверхности светлой темы уехали в tokens/glass.css (переезд 2026-08-03):
      --surface-1..4, --glass-* и --hairline объявлены там обеими ветками сразу.

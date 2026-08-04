@@ -4,8 +4,11 @@
 
 :root {
   /* Base backgrounds (warm near-black, anchored to the logo tile #171614) */
-  --bg-0: #121110;            /* app window background */
-  --bg-1: #171614;            /* raised base zone (logo tile color) */
+  /* Фон окна и поднятая плита. Разведены навстречу 04.08: раньше #121110 и
+     #171614 давали композит зоны на три единицы светлее фона — при выключенной
+     сценографии зоны не читались вовсе. Обоснование — themeVars.ts::glassBase. */
+  --bg-0: #0a0908;            /* app window background */
+  --bg-1: #1c1a17;            /* raised base zone */
 
   /* ⚠️ ПОВЕРХНОСТИ ЗДЕСЬ БОЛЬШЕ НЕ ЖИВУТ (переезд 2026-08-03).
      --surface-1..4, --glass-* и --hairline уехали в tokens/glass.css целиком:

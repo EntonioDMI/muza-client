@@ -19,7 +19,8 @@
  *     стилями, что были (position/размер/стекло). Веб передаёт свой класс
  *     (.playerbar в globals.css) и получает безопасные зоны телефона и свои
  *     брейкпоинты — приложение продолжает жить на инлайне.
- *  2) `progressStyle` — по умолчанию ровно прежние `width: 480`.
+ *  2) `progressStyle` — довесок к стилю НОЖНИЦ-силуэта полосы прогресса
+ *     (контейнер inset: 0 с обрезкой по радиусу бара); по умолчанию пуст.
  *  3) `extraButtons` — вставка в правую группу; приложение её не передаёт,
  *     и ни одного лишнего узла в DOM не появляется.
  *
@@ -307,28 +308,111 @@ export function PlayerBar({
     "-" as const,
     { icon: "settings-2", label: t("player.output.configure"), onClick: () => onOutputSettings?.() },
   ];
+  // «⋯» — ОДНА ДВЕРЬ ДЛЯ ВСЕГО, ЧЕГО НЕТ В БАРЕ (редизайн 04.08).
+  //
+  // Решение владельца: в баре остаётся то, что меняется ПОКА ТЫ СЛУШАЕШЬ
+  // (перемешивание, переходы, повтор, текст, очередь, громкость), а то, что
+  // настраивают раз в сеанс (эквалайзер, скорость, таймер сна, джем, полный
+  // экран), уезжает сюда. Дефолты кнопок бара поменялись, но САМ СПИСОК
+  // возможностей не сократился ни на одну позицию — иначе у людей, которые уже
+  // настроили бар под себя, пропали бы кнопки.
+  //
+  // Правило одно: пункт появляется в меню ровно тогда, когда его кнопка в баре
+  // ВЫКЛЮЧЕНА, а обработчик есть. Значит любое действие всегда достижимо, и
+  // включённая кнопка не дублируется пунктом меню. Включил всё обратно в
+  // настройках — меню становится пустым и кнопка «⋯» исчезает сама.
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  const moreBtnRef = useRef<HTMLSpanElement | null>(null);
+  const moreItems = [
+    !barOn("lyrics") && onLyrics ? { icon: "mic-vocal", label: t("player.lyrics"), onClick: () => onLyrics() } : null,
+    !barOn("queue") && onQueue ? { icon: "list-music", label: t("player.queue"), onClick: () => onQueue() } : null,
+    !barOn("equalizer") && onEqualizer
+      ? { icon: "sliders-vertical", label: t("settings.equalizer.title"), onClick: () => onEqualizer() }
+      : null,
+    !barOn("speed") && onSpeed
+      ? { icon: "gauge", label: t("media.barButtons.speed.label"), onClick: () => onSpeed() }
+      : null,
+    !barOn("sleep") && onSleep ? { icon: "moon", label: sleepLabel, onClick: () => onSleep() } : null,
+    !barOn("jam") && onJam
+      ? { icon: "radio-tower", label: jamActive ? t("player.jamActiveTooltip") : t("player.jamTooltip"), onClick: () => onJam() }
+      : null,
+    !barOn("fullscreen") && onExpand && track
+      ? { icon: "maximize-2", label: t("player.fullscreen"), onClick: () => onExpand() }
+      : null,
+  ].filter(Boolean) as { icon: string; label: string; onClick: () => void }[];
+
   return (
     <div
       className={className}
+      // Маркер зоны для режима правки вида (shell/LookEditLayer.tsx): он
+      // измеряет реальные края зон, а не пересчитывает их из токенов.
+      data-zone="player"
+      // Правый клик по ЛЮБОМУ месту полосы открывает то же меню — привычный
+      // жест для панели инструментов и второй путь к спрятанному, если человек
+      // не заметил «⋯». Клик по строке трека остаётся за её собственным меню
+      // (там действия над треком, а не над плеером), поэтому его не трогаем.
+      onContextMenu={
+        moreItems.length
+          ? (e) => {
+              if ((e.target as HTMLElement).closest("[data-track-menu]")) return;
+              e.preventDefault();
+              setMoreMenu({ x: e.clientX, y: e.clientY });
+            }
+          : undefined
+      }
       style={
         className
           ? undefined
           : {
               position: "absolute",
-              left: "var(--gap-zone)",
-              right: "var(--gap-zone)",
-              bottom: "var(--gap-zone)",
+              // Геометрия силуэта — из переменных темы (themeVars.ts), а не
+              // числами здесь: прижатая полоса и плавающая пилюля отличаются
+              // только этими двумя значениями, и обе площадки читают одни и
+              // те же. Прижатая — inset 0 и радиус 0.
+              left: "var(--player-inset, var(--gap-zone))",
+              right: "var(--player-inset, var(--gap-zone))",
+              bottom: "var(--player-inset, var(--gap-zone))",
               height: "var(--h-playerbar)",
-              borderRadius: "var(--r-lg)",
+              // ⚠️ ОБЯЗАТЕЛЬНО. Глобального box-sizing: border-box в дереве
+              // НЕТ (проверено grep'ом: правило есть только в двух локальных
+              // файлах). Полоса получила padding-bottom под прогресс — и без
+              // этой строки её высота стала 72+8=80, то есть на 8px больше,
+              // чем говорит --h-playerbar. Врало всё, что от него считается:
+              // зазор над баром съедался (28 → 20), --pad-under-bar
+              // недосчитывал, очередь и «Сейчас играет» вставали ниже, чем
+              // надо. Замер 04.08: bar.top 820 вместо 828.
+              boxSizing: "border-box",
+              borderRadius: "var(--r-deck, var(--r-lg))",
+              // ⚠️ ЗДЕСЬ НЕ ДОЛЖНО БЫТЬ overflow: hidden.
+              // Он тут был полдня 04.08 — ради обрезки полосы прогресса по
+              // скруглению — и обрезал ПОДСКАЗКИ: Tooltip намеренно не
+              // порталится (он position:absolute от своей обёртки, портал
+              // сломал бы ему позиционирование — см. коммит 493fe36), рисуется
+              // НАД кнопкой, а бар высотой 72px, и всё, что выше его кромки,
+              // исчезало. Жалоба владельца: «наводишь на кнопку — подсказка
+              // уходит за плеер». Обрезка переехала на саму полосу прогресса,
+              // где она и нужна.
               // зональная прозрачность: своё стекло плеера, фолбэк — общее
               background: "var(--glass-player, var(--glass-panel))",
               backdropFilter: "blur(var(--blur-glass))",
               WebkitBackdropFilter: "blur(var(--blur-glass))",
               display: "grid",
-              gridTemplateColumns: "1fr auto 1fr",
+              // ⚠️ minmax(0, 1fr), НЕ 1fr. У 1fr минимальный размер — это
+              // min-content, поэтому боковые колонки могли требовать больше
+              // своей доли и толкать середину: правая группа при полном наборе
+              // кнопок (до десяти) и ползунке громкости 110px не влезала.
+              // Замер до правки — колонки 434 / 480 / 514: транспорт и прогресс
+              // стояли на 40px левее настоящего центра окна, и это тем
+              // заметнее, чем крупнее масштаб интерфейса. Жалоба владельца
+              // «плеер и прогресс-бар не центрированы» — ровно про это.
+              gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
               alignItems: "center",
               gap: "var(--sp-5)",
-              padding: "0 var(--sp-5)",
+              // ВЕРХНЕЕ поле идёт за толщиной полосы прогресса (линия теперь
+              // по верхней кромке — набросок 04.08): человек настраивает
+              // толщину сам, и на 16px содержимое иначе легло бы прямо на неё.
+              // На дефолтных 4px это ровно 8px.
+              padding: "calc(var(--h-progress, 4px) + 4px) var(--sp-5) 0",
               zIndex: 40,
             }
       }
@@ -366,7 +450,13 @@ export function PlayerBar({
           </div>
         </div>
       ) : (
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }} onContextMenu={onTrackMenu}>
+      // data-track-menu — маркер для правого клика по бару: у строки трека своё
+      // меню (действия НАД ТРЕКОМ), и меню плеера не должно его перебивать.
+      <div
+        data-track-menu
+        style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}
+        onContextMenu={onTrackMenu}
+      >
         <Tooltip label={onCoverDragOut ? t("player.listeningModeTooltipDrag") : t("player.listeningModeTooltip")}>
           {/* настоящая кнопка: клавиатура открывает режим прослушивания;
               с зажатой ЛКМ обложка утаскивается файлом наружу */}
@@ -444,22 +534,46 @@ export function PlayerBar({
             {subtitle ?? track.artist}
           </div>
         </div>
-        <IconButton icon="heart" size="sm" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
+        {/* Пульс сердца при лайке. Класс muza-like-pop был описан в
+            animations.css с самого начала и не подключён ни к чему — то есть
+            обратной связи у самого эмоционального действия в приложении не
+            было вовсе. key переигрывает анимацию на каждом включении: без него
+            CSS проиграл бы её один раз за жизнь узла. */}
+        <span
+          key={liked ? "liked" : "unliked"}
+          className={liked ? "muza-like-pop" : undefined}
+          style={{ display: "inline-flex" }}
+        >
+          <IconButton icon="heart" size="sm" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />
+        </span>
       </div>
       )}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      {/* ЦЕНТР — ТОЛЬКО ТРАНСПОРТ (редизайн 04.08, макет владельца).
+          Прогресс уехал отсюда вниз, во всю ширину бара: пока он сидел в этой
+          же колонке, её ширину задавал он (480px), и центральная ячейка
+          переставала быть «сколько нужно кнопкам». Теперь колонка меряется по
+          пяти кнопкам, а линия прогресса не зависит от неё вовсе. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           {barOn("shuffle") ? (
             <IconButton icon="shuffle" size="sm" active={shuffle} label={t("player.shuffle")} onClick={onShuffle} />
           ) : null}
           <IconButton icon="skip-back" label={t("player.previous")} disabled={!track} onClick={onPrev} />
-          <IconButton
-            icon={buffering ? "loader-circle" : playing ? "pause" : "play"}
-            variant="accent"
-            label={buffering ? t("player.buffering") : playing ? t("player.pause") : t("player.play")}
-            disabled={!track}
-            onClick={onTogglePlay}
-          />
+          {/* Кольцо буферизации ВРАЩАЕТСЯ. До 04.08 иконка loader-circle просто
+              подменяла собой «play» и стояла неподвижно: «готовлю трек»
+              выглядело как «завис» — а именно в эти секунды человек и решает,
+              работает приложение или нет. Обёртка, а не проп: IconButton не
+              пробрасывает класс на глиф, а display:contents не создаёт бокса и
+              ничего в раскладке не меняет. */}
+          <span className={buffering ? "muza-spin-icon" : undefined} style={{ display: "contents" }}>
+            <IconButton
+              icon={buffering ? "loader-circle" : playing ? "pause" : "play"}
+              variant="accent"
+              label={buffering ? t("player.buffering") : playing ? t("player.pause") : t("player.play")}
+              disabled={!track}
+              onClick={onTogglePlay}
+            />
+          </span>
           <IconButton icon="skip-forward" label={t("player.next")} disabled={!track} onClick={onNext} />
           {barOn("repeat") ? (
             <IconButton
@@ -471,32 +585,25 @@ export function PlayerBar({
             />
           ) : null}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", ...(progressStyle ?? { width: 480 }) }}>
-          <span
-            style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums", width: 36, textAlign: "right" }}
-          >
-            {fmtTime(pos)}
-          </span>
-          <Slider
-            value={pos}
-            max={track?.duration ?? 0}
-            onChange={onSeek}
-            // подготовка трека — звук стоит, полоске ехать не за чем.
-            // windowVisible — то же для свёрнутого/накрытого окна: Slider
-            // держит собственный rAF-цикл, и без гейта он 60 раз в секунду
-            // двигал бы заливку, которой никто не видит. Гасим здесь, у
-            // ПОТРЕБИТЕЛЯ: сам Slider про окна не знает и знать не должен.
-            rate={playing && !buffering && windowVisible ? speed : 0}
-            ariaLabel={t("player.progress")}
-            valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track?.duration ?? 0) })}
-            style={{ flex: 1 }}
-          />
-          <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums", width: 36 }}>
-            {fmtTime(track?.duration ?? 0)}
-          </span>
-        </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}>
+        {/* Время одной табличной меткой «1:12 / 3:28» (макет владельца). Раньше
+            это были два отдельных числа по краям полосы прогресса в 36px
+            колонках — они держали середину бара шириной 480px и мешали её
+            центровке. tabular-nums обязателен: без него метка дёргается по
+            ширине на каждой смене секунды и тянет за собой всю правую группу. */}
+        <span
+          data-testid="player-timecode"
+          style={{
+            fontSize: "var(--fs-caption)",
+            color: "var(--text-3)",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+            paddingRight: "var(--sp-1)",
+          }}
+        >
+          {`${fmtTime(pos)} / ${fmtTime(track?.duration ?? 0)}`}
+        </span>
         {extraButtons}
         {rightOrder.map(({ key }) => {
           switch (key) {
@@ -593,9 +700,98 @@ export function PlayerBar({
             }
           }
         })}
+        {moreItems.length ? (
+          // Обёртка со ссылкой — тем же приёмом, что у кнопки вывода звука:
+          // IconButton не отдаёт событие в onClick, а меню нужно поставить у
+          // самой кнопки, а не в случайной точке экрана.
+          <span ref={moreBtnRef} style={{ display: "inline-flex" }}>
+            <IconButton
+              icon="ellipsis"
+              size="sm"
+              active={!!moreMenu}
+              label={t("player.more")}
+              onClick={() => {
+                const r = moreBtnRef.current?.getBoundingClientRect();
+                if (r) setMoreMenu({ x: r.right, y: r.top });
+              }}
+            />
+          </span>
+        ) : null}
+      </div>
+      {/* ПОЛОСА ПРОГРЕССА — ПО ВЕРХНЕЙ КРОМКЕ, ВО ВСЮ ШИРИНУ (набросок
+          владельца 04.08 вечером: «полоса над плеером, а не под ним»; до этого
+          лежала по нижней). Верхняя кромка честнее и механикой: линия смотрит
+          на содержимое, а не в край экрана, и пузырёк перемотки всплывает над
+          ней в свободное место, а не поверх кнопок бара.
+          Почему не в центральной колонке, как было изначально: там она
+          задавала колонке ширину 480px, и центр бара считался не по кнопкам, а
+          по ней. Здесь линия не участвует в сетке вовсе — она просто край
+          полосы плеера, и её длина всегда равна ширине окна.
+          Зона попадания шире видимой дорожки (--h-progress-hit, минимум 12px):
+          целиться мышью в линию толщиной в четыре пикселя нельзя, а сама линия
+          обязана лежать на кромке — отсюда align="start" у слайдера. Толщину
+          задаёт человек (Ctrl+E или «Кастомизация»), запас на промах считает
+          тема — см. themeVars.ts. */}
+      {/* НОЖНИЦЫ ЛИНИИ — ВЕСЬ СИЛУЭТ ПЛЕЕРА, не полоска её высоты.
+          ⚠️ Здесь была коробка высотой в зону попадания (12px) со скруглением
+          r-deck: радиус 28 в коробку 12 не помещается, и CSS УЖИМАЕТ его до
+          высоты коробки — линия выживала в клине между маленькой дугой ножниц
+          и большой дугой самого плеера и «вылазила за плеер» на скруглённых
+          углах (скрин владельца 04.08 ночью). Обрезка обязана держать ПОЛНУЮ
+          дугу — поэтому она размером с бар; кликов не ворует: pointerEvents
+          сняты, ловит только сам слайдер внутри. Бару overflow по-прежнему
+          ставить нельзя — он съедает подсказки; пузырёк перемотки обрезки не
+          боится — он уходит порталом. */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "var(--r-deck, var(--r-lg))",
+          overflow: "hidden",
+          pointerEvents: "none",
+          ...progressStyle,
+        }}
+      >
+      <div
+        // Маркер зоны для режима правки вида: за НИЖНИЙ край этой полосы
+        // тянут толщину прогресса (shell/LookEditLayer.tsx) — верхний занят
+        // ручкой высоты самого плеера, два жеста на одной кромке подрались бы.
+        data-zone="progress"
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: 0,
+          height: "var(--h-progress-hit, 12px)",
+          display: "flex",
+          alignItems: "flex-start",
+          pointerEvents: "auto",
+        }}
+      >
+        <Slider
+          value={pos}
+          max={track?.duration ?? 0}
+          onChange={onSeek}
+          // подготовка трека — звук стоит, полоске ехать не за чем.
+          // windowVisible — то же для свёрнутого/накрытого окна: Slider
+          // держит собственный rAF-цикл, и без гейта он 60 раз в секунду
+          // двигал бы заливку, которой никто не видит. Гасим здесь, у
+          // ПОТРЕБИТЕЛЯ: сам Slider про окна не знает и знать не должен.
+          rate={playing && !buffering && windowVisible ? speed : 0}
+          ariaLabel={t("player.progress")}
+          valueText={t("player.progressValueText", { pos: fmtTime(pos), duration: fmtTime(track?.duration ?? 0) })}
+          hoverLabel={fmtTime}
+          align="start"
+          thickness="var(--h-progress, 4px)"
+          style={{ flex: 1, height: "var(--h-progress-hit, 12px)" }}
+        />
+      </div>
       </div>
       {outMenu ? (
         <Menu open x={outMenu.x} y={outMenu.y} items={outMenuItems} onClose={() => setOutMenu(null)} />
+      ) : null}
+      {moreMenu ? (
+        <Menu open x={moreMenu.x} y={moreMenu.y} items={moreItems} onClose={() => setMoreMenu(null)} />
       ) : null}
     </div>
   );

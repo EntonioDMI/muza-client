@@ -3,7 +3,7 @@ import { Button, Dialog, Icon, IconButton, SearchInput, TrackRow, cssZoom } from
 import { humanError } from "@muza/api-client";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
-import { insertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
+import { cursorInsertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
 import { useCoverArt } from "../lib/coverArt";
 import { useDrag, useDropZone } from "../shell/DragLayer";
 import { useContextMenu } from "../shell/ContextMenu";
@@ -340,7 +340,7 @@ export function PlaylistView({
   // чистая функция, лишнего состояния и лишнего ререндера на кадр не нужно.
   const to =
     selfReorder && from >= 0 && rectsRef.current.length === tracks.length
-      ? insertionIndex(rectsRef.current, from, drag.y)
+      ? cursorInsertionIndex(rectsRef.current, from, drag.y)
       : -1;
   // onDrop зовётся из DragLayer уже ПОСЛЕ setDrag(null), поэтому финальный
   // индекс берём из рефа последнего рендера, а не из drag внутри колбэка.

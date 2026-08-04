@@ -9,11 +9,11 @@
  *  приложение после переезда обязано выглядеть ровно как до него. */
 
 import { useEffect, useRef } from "react";
-import { Switch, Tabs } from "@muza/ui";
+import { Kbd, Switch, Tabs } from "@muza/ui";
 import { useT } from "../../i18n";
 import type { Prefs } from "../../prefs/types";
 import { AccentSwatch, CustomAccentSwatch, GLASS_MIN, LiveSlider, paneStyle, PresetTile, RowValue, ScaleSlider, SettingRow } from "./primitives";
-import { appearancePresets } from "./appearancePresets";
+import { appearancePresets, currentWindowLayout, WINDOW_LAYOUTS, type WindowLayout } from "./appearancePresets";
 import { useSettingsScreen } from "./settingsContext";
 
 export function AppearancePane() {
@@ -55,11 +55,36 @@ export function AppearancePane() {
             hint={p.hint}
             accentColor={p.accentColor}
             radius={p.radius}
-            selected={prefs.accent === p.accent && prefs.radius === p.radius}
-            onClick={() => set({ accent: p.accent, radius: p.radius })}
+            // «Классика» отличается от «Музы» не цветом и не углами, а
+            // геометрией, поэтому по паре accent+radius её не отличить —
+            // сверяем и остальные ключи облика, если пресет их несёт.
+            selected={
+              prefs.accent === p.accent &&
+              prefs.radius === p.radius &&
+              (!p.extra || (Object.keys(p.extra) as (keyof Prefs)[]).every((k) => prefs[k] === p.extra?.[k]))
+            }
+            onClick={() => set({ accent: p.accent, radius: p.radius, ...p.extra })}
           />
         ))}
       </div>
+      {/* РАСКЛАДКА ОКНА — отдельная ось от обликов (решение владельца 04.08
+          ночью: «не стоило добавлять воздух и классику в тему, это совсем не
+          подходит»). Облик — цвет и углы; раскладка — геометрия. Каждый пункт
+          задаёт ось ЦЕЛИКОМ (WINDOW_LAYOUTS): полумеры вроде «Классика +
+          плоский тумблер» давали кентавра — плавающий плеер при прижатых
+          зонах. Воздушная — дефолт (выбор сооснователя), плоскую включает,
+          кому нравится (владелец), классика — вид до редизайна 04.08. */}
+      <SettingRow title={t("settings.appearance.layout.title")} hint={t("settings.appearance.layout.hint")}>
+        <Tabs
+          items={[
+            { key: "air", label: t("settings.appearance.layout.air") },
+            { key: "flat", label: t("settings.appearance.layout.flat") },
+            { key: "classic", label: t("settings.appearance.layout.classic") },
+          ]}
+          value={currentWindowLayout(prefs)}
+          onChange={(k: string) => set(WINDOW_LAYOUTS[k as WindowLayout])}
+        />
+      </SettingRow>
       <SettingRow title={t("settings.appearance.theme.title")} hint={t("settings.appearance.theme.hint")}>
         <Tabs
           items={[
@@ -127,6 +152,17 @@ export function AppearancePane() {
         onClick={() => openSub("customize")}
         chevron
       ></SettingRow>
+      {/* РЕЖИМ ПРАВКИ ВИДА — тут его и ищут. Владелец 04.08: «Как менять
+          пропорции? Мы же закладывали фундамент, но я так и не понял, как это
+          делать». Сочетание клавиш без единого упоминания в интерфейсе — это
+          возможность, которой нет: узнать о ней неоткуда. Ряд ничего не
+          переключает, он объясняет и показывает клавиши. */}
+      <SettingRow title={t("settings.appearance.lookEdit.title")} hint={t("settings.appearance.lookEdit.hint")}>
+        <span style={{ display: "flex", gap: 4 }}>
+          <Kbd>Ctrl</Kbd>
+          <Kbd>E</Kbd>
+        </span>
+      </SettingRow>
     </div>
   );
 }

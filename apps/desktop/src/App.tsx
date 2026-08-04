@@ -69,6 +69,9 @@ import { LoginScreen } from "./auth/LoginScreen";
 import { Sidebar } from "./shell/Sidebar";
 import { favoritesDropAction } from "./shell/favoritesDrop";
 import { NowPlayingPanel } from "./shell/NowPlayingPanel";
+import { LookEditLayer } from "@muza/app/shell/LookEditLayer";
+import { LookEditProvider, type LookEditApi } from "@muza/app/shell/lookReorder";
+import { normalizeHomeSections } from "@muza/app/lib/homeSections";
 import { PlayerBar } from "./shell/PlayerBar";
 import { QueuePanel } from "./shell/QueuePanel";
 import { ListeningMode } from "./shell/ListeningMode";
@@ -80,7 +83,7 @@ import { DragLayer } from "./shell/DragLayer";
 // общий и про Tauri не знает — действия окна ему передаём отсюда, из
 // lib/windowControls.ts. Почему у окна ОБЯЗАН стоять shadow:true — в шапке
 // packages/app/src/shell/TitleBar.tsx (углы + зоны изменения размера).
-import { TitleBar, TITLEBAR_H } from "@muza/app/shell/TitleBar";
+import { TitleBar } from "@muza/app/shell/TitleBar";
 import { closeWindow, minimizeWindow, toggleMaximizeWindow, useMaximized } from "./lib/windowControls";
 import { ErrorBoundary, ViewCrash } from "./shell/ErrorBoundary";
 import { ContextMenuProvider, type ContextMenuApi } from "./shell/ContextMenu";
@@ -107,6 +110,24 @@ import { usePlugins } from "./plugins/usePlugins";
 import { PluginFrames } from "./plugins/PluginFrames";
 import { pluginHost } from "./plugins/host";
 import { createPluginBridge, type PluginBridgeLive } from "./plugins/appBridge";
+
+/** ПРИХОД И УХОД «СЕЙЧАС ИГРАЕТ». Держим кадры здесь, а не в animations.css:
+ *  панель приходит и уходит только в оболочке приложения, дизайн-системе это
+ *  движение не нужно. Двигаем ТОЛЬКО transform и opacity — оба свойства
+ *  композитор считает без пересчёта раскладки, и панель не дёргает соседей.
+ *
+ *  ⚠️ Своё имя кадров, а не общий muzaMenuIn: тот объявлен ВНУТРИ смонтированного
+ *  <Menu> (packages/ui/src/components/feedback/Menu.jsx) и, пока меню закрыто, в
+ *  документе его нет вовсе — анимация по нему молча не играет.
+ *
+ *  Уменьшенное движение гасит переход полностью: base.css сводит длительность к
+ *  1мс, но `forwards` у ухода оставил бы панель уехавшей — поэтому правило ниже
+ *  снимает анимацию совсем, а само закрытие в этом режиме идёт без ожидания
+ *  (см. reducedMotion в блоке npClosing). */
+const NOWPLAYING_ANIM_CSS =
+  "@keyframes muzaNowPlayingIn{from{opacity:0;transform:translateX(24px)}}" +
+  "@keyframes muzaNowPlayingOut{to{opacity:0;transform:translateX(110%)}}" +
+  '@media (prefers-reduced-motion: reduce){[data-zone="nowplaying"]{animation:none!important}}';
 
 /** Э2 веб-паритета (2026-08-02): вилка площадки вставляется в самом корне —
  *  ВЫШЕ экрана входа (умения площадки от входа не зависят) и выше языка.
@@ -180,11 +201,45 @@ function AppRoot() {
       .finally(() => setRestoring(false));
   }, [api]);
 
+  // ПОЛОСА ЗАГОЛОВКА ДО ВХОДА (жалоба владельца 04.08: «на странице логина нет
+  // кнопок закрыть и свернуть, и перетаскивать окно там нельзя»).
+  //
+  // Причина была в ранних возвратах ниже: до появления сессии AppRoot отдавал
+  // LoginScreen (или пустую заливку на время восстановления) МИМО всей
+  // оболочки, а полоса заголовка живёт внутри Player. Окно у нас без системной
+  // рамки (tauri.conf.json: decorations false) — значит без неё у человека нет
+  // ни кнопок, ни области перетаскивания вообще. Закрыть приложение с экрана
+  // входа было можно только с панели задач.
+  //
+  // Отдельная полоса, а не вынос Player: до входа нет ни настроек темы, ни
+  // сессии, и тащить сюда оболочку целиком значит тащить и всё, что она грузит.
+  // Язык берём из сохранённого профиля — подписи кнопок окна переводятся.
+  // Живой признак «развёрнуто», как у полосы внутри Player: захардкоженный
+  // false показывал на развёрнутом окне глиф «развернуть» вместо
+  // «восстановить» (ревизия 04.08).
+  const authMaximized = useMaximized();
+  const authTitleBar = (
+    <LanguageProvider lang={loadPrefs().language}>
+      <TitleBar
+        maximized={authMaximized}
+        onMinimize={minimizeWindow}
+        onToggleMaximize={toggleMaximizeWindow}
+        onClose={closeWindow}
+      />
+    </LanguageProvider>
+  );
+
   if (restoring) {
-    return <div style={{ position: "absolute", inset: 0, background: "var(--bg-0)" }} />;
+    // Провал в первые миллисекунды запуска — тот же самый: окно уже нарисовано,
+    // а управлять им нечем.
+    return (
+      <div style={{ position: "absolute", inset: 0, background: "var(--bg-0)" }}>{authTitleBar}</div>
+    );
   }
   if (!session) {
     return (
+      <>
+      {authTitleBar}
       <LoginScreen
         api={api}
         onSession={setSession}
@@ -195,6 +250,7 @@ function AppRoot() {
           localStorage.setItem(PREFS_KEY, JSON.stringify({ ...loadPrefs(), telemetry: enabled }));
         }}
       />
+      </>
     );
   }
   return (
@@ -296,6 +352,34 @@ function Player({
   // SettingsView перезапускался бы каждым рендером App.
   const clearSettingsIntent = useCallback(() => setSettingsIntent(null), []);
   const [lyricsOn, setLyricsOn] = useState(true);
+  /** Режим правки вида (Ctrl+E) — см. shell/LookEditLayer.tsx. Живёт здесь, а
+   *  не в prefs: это не настройка, а состояние сеанса; после перезапуска
+   *  человек должен получить обычное приложение, а не чертёж. */
+  const [lookEdit, setLookEdit] = useState(false);
+  /** Доступ к общему стеку отмены режима правки СНИЗУ ВВЕРХ: провайдер стоит
+   *  внутри этого же компонента, хуком до него не дотянуться (та же причина и
+   *  тот же приём, что у menuApiRef). Нужен там, где порядок пишет сам App —
+   *  полки Главной. */
+  const lookEditRef = useRef<LookEditApi | null>(null);
+  // Ctrl+E открывает и закрывает правку вида. Ловим на захвате и только с
+  // модификатором: одиночная «E» обязана печататься в полях ввода.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyE") {
+        // ⚠️ СТОРОЖ ПОЛЯ ВВОДА. Ctrl+E был единственным глобальным сочетанием в
+        // приложении без него: набирая текст в поиске, названии плейлиста или
+        // в редакторе своего CSS, человек ловил переход в режим правки вида —
+        // и терял то, что печатал. Остальные сочетания такую проверку делают
+        // (см. isTypingTarget), это упущение новой функции, а не правило.
+        const el = e.target as HTMLElement | null;
+        if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+        e.preventDefault();
+        setLookEdit((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   const [queueOn, setQueueOn] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // Для mouseup-слушателя боковых кнопок мыши (висит с маунта, deps []):
@@ -782,6 +866,28 @@ function Player({
   // нормальном окне. Слушать музыку и крутить настройки одновременно —
   // не сценарий: что играет, видно в плеер-баре снизу, он никуда не делся.
   const showNowPlaying = lyricsOn && wideEnoughForPanel && view !== "settings";
+  // МЕСТО ПОД ПАНЕЛЬ — ТОЛЬКО ТАМ, ГДЕ СЛУШАЮТ (редизайн 2026-08-04, решение
+  // владельца «только где слушают, не где ищут»).
+  //
+  // Что было не так. Панель была колонкой ВЕЗДЕ, и на пороге 1200px она
+  // отнимала 340px + зазор у содержимого: контентная колонка падала с 1076px
+  // до 532px ровно в тот момент, когда окно СТАНОВИЛОСЬ шире. Это и есть
+  // жалоба владельца «интерфейс суженный» — она была буквальной, а не
+  // ощущением. Хуже всего доставалось спискам: Поиск и Медиатека — экраны, где
+  // ширина и есть содержимое.
+  //
+  // Теперь МЕСТО под панель резервируется только на экранах, с которых слушают
+  // (Главная, плейлист, «Любимое»), а на рабочих — Поиск, Медиатека,
+  // Статистика, админка — содержимое занимает всю ширину, и панель лежит
+  // ПОВЕРХ него, как это давно делает очередь. Содержимое не сжимается
+  // никогда, а кнопка текста нигде не теряет смысл.
+  //
+  // ⚠️ САМА ПАНЕЛЬ КОЛОНКОЙ БОЛЬШЕ НЕ БЫВАЕТ (жалоба владельца 04.08: «при
+  // переходе на другую страницу модалка увеличивается»). Она ВСЕГДА рисуется
+  // наложением с одной и той же геометрией, а этот флаг решает лишь, оставить
+  // ли под неё пустую третью колонку сетки. Разбор — у nowPlayingStyle ниже.
+  // Сам флаг объявлен НИЖЕ блока закрытия: пока панель уезжает, колонка обязана
+  // стоять (см. комментарий у объявления).
   // T15 (bgType=animated): OS-уровень reduced-motion — реактивно, как остальной адаптив.
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   // Видно ли окно (03.08): свёрнуто или полностью накрыто чужим окном — значит
@@ -794,6 +900,129 @@ function Player({
   // даже когда оно не в фокусе. Окно на втором мониторе человек видит, и
   // замершая там анимация — заметный регресс, а не экономия.
   const windowVisible = useWindowVisible();
+
+  // ── «Сейчас играет»: уход с анимацией и язычок возврата ────────────
+  // Панель исчезала мгновенно — узел просто переставал рендериться. Теперь
+  // между «её больше не хотят» и «узла нет» лежит один такт анимации ухода:
+  // держим панель в дереве, пока она уезжает (образец отложенного
+  // размонтирования — packages/ui/src/components/feedback/Menu.jsx).
+  const [npMounted, setNpMounted] = useState(showNowPlaying);
+  const [npClosing, setNpClosing] = useState(false);
+  const npCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishNpClose = () => {
+    if (npCloseTimer.current) {
+      clearTimeout(npCloseTimer.current);
+      npCloseTimer.current = null;
+    }
+    setNpClosing(false);
+    setNpMounted(false);
+  };
+  useEffect(() => {
+    if (showNowPlaying) {
+      // Передумали на полпути — гасим уход и оставляем панель на месте.
+      if (npCloseTimer.current) {
+        clearTimeout(npCloseTimer.current);
+        npCloseTimer.current = null;
+      }
+      setNpClosing(false);
+      setNpMounted(true);
+      return;
+    }
+    if (!npMounted) return;
+    if (reducedMotion) {
+      setNpClosing(false);
+      setNpMounted(false);
+      return;
+    }
+    setNpClosing(true);
+    // Ремень безопасности на случай, если animationend не придёт вовсе (узел
+    // скрыли системой, вкладку усыпили). Порог с запасом перекрывает --dur-base
+    // на самых медленных настройках: 220мс × 1.7 (общая скорость) × 1.7
+    // (множитель группы диалогов) ≈ 636мс.
+    npCloseTimer.current = setTimeout(finishNpClose, 900);
+    // npMounted нарочно не в зависимостях: эффект реагирует на ЖЕЛАНИЕ показать
+    // панель, а не на собственный результат (иначе снятие npMounted тут же
+    // перезапустило бы эффект).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showNowPlaying, reducedMotion]);
+  useEffect(() => () => {
+    if (npCloseTimer.current) clearTimeout(npCloseTimer.current);
+  }, []);
+  // КОЛОНКА ДЕРЖИТСЯ, ПОКА ПАНЕЛЬ УЕЗЖАЕТ (`|| npClosing` — призрак,
+  // найденный владельцем 04.08 ночью). Без этого закрытие на слушательском
+  // экране рушило колонку МГНОВЕННО: main расползался на всю ширину и тут же
+  // резервировал место paddingRight'ом — а фон main красит и свои поля, так
+  // что за уезжающей панелью вставал пустой прямоугольник её же формы («точно
+  // такая же панель, но без содержимого»), который затем схлопывался. Пока
+  // идёт уход, под панелью стоит пустая колонка сетки (сквозь неё виден фон
+  // окна — это честный задник), и только после размонтирования содержимое
+  // забирает ширину.
+  const nowPlayingDocked =
+    (showNowPlaying || npClosing) &&
+    (view === "home" || view === "playlist" || view === "scPlaylist" || view === "favorites");
+
+  // ГЕОМЕТРИЯ ПАНЕЛИ — ОДНА НА ВСЕ ЭКРАНЫ (жалоба владельца 04.08: «при
+  // переключении с поиска на главную модалка увеличивается»).
+  //
+  // Что было. На «слушательских» экранах панель была настоящей колонкой сетки
+  // (ширина трека = --w-nowplaying, это ВНЕШНИЙ размер), а на остальных —
+  // наложением с `width: var(--w-nowplaying)`. Глобального
+  // `box-sizing: border-box` в проекте нет, поэтому у наложения та же цифра
+  // означала ширину СОДЕРЖИМОГО, и к ней сверху добавлялись два --pad-zone:
+  // 340 → 372px при стандартной плотности. Панель буквально прибавляла 32px
+  // на каждом переходе, и это была не иллюзия.
+  //
+  // Как теперь. Панель ВСЕГДА наложение с этим стилем; на слушательских
+  // экранах сетка лишь резервирует под неё пустую третью колонку
+  // (nowPlayingDocked). Узел при смене экрана не пересоздаётся и не меняет ни
+  // одного размера — «увеличиваться» физически нечему. Отсчёт идёт от краёв
+  // окна: контейнер сетки — position:absolute inset:0, а его поля равны
+  // --win-pad сверху и --pad-under-bar снизу, то есть ровно тем координатам,
+  // что стоят здесь.
+  const nowPlayingStyle: React.CSSProperties = {
+    position: "absolute",
+    // Поля плавающей панели — те же, что у окна (--win-pad): у флета она
+    // стоит впритык к кромке, у «воздушного» вида отступает на высоту полосы
+    // заголовка с обеих сторон — симметрия с сайдбаром (жалоба 04.08 утром).
+    top: "var(--win-pad, 0px)",
+    right: "var(--win-pad, 0px)",
+    bottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
+    width: "var(--w-nowplaying)",
+    // Без этого ширина считается по содержимому — см. разбор выше.
+    boxSizing: "border-box",
+    // Выше содержимого, ниже очереди (50), выделения (85) и подсказок (60).
+    zIndex: 45,
+    // МАТЕРИАЛ ПАНЕЛИ, А НЕ ЗОНЫ. Проверено живьём 04.08: с зональным стеклом
+    // (--glass-zone) наложение над содержимым читается не как панель, а как
+    // текст, повисший в воздухе, — под ним просвечивают чужие строки. Лестница
+    // материалов themeVars.ts это уже описывает: «зона < панель < диалог», и
+    // всё плавающее над содержимым (плеер, очередь, меню) берёт панельную
+    // плотность. Панель теперь плавает ВСЕГДА — значит и материал у неё один
+    // на всех экранах, иначе переход между ними менял бы тон подложки.
+    // Ползунок «Стекло по зонам → Сейчас играет» при этом главнее: он остаётся
+    // первым в цепочке, --glass-panel только заменил прежний фолбэк.
+    background: "var(--glass-nowplaying, var(--glass-panel))",
+    // Уход: панель уезжает вправо за кромку и гаснет. `forwards` держит её там
+    // до размонтирования, pointerEvents снимают клики с уезжающего узла.
+    animation: npClosing
+      ? "muzaNowPlayingOut var(--dur-base) var(--spring-snap, var(--ease-out)) forwards"
+      : "muzaNowPlayingIn var(--dur-base) var(--spring-snap, var(--ease-out))",
+    ...(npClosing ? { pointerEvents: "none" as const } : {}),
+  };
+  /** Виден ли язычок возврата: панель закрыта, но открыть её есть чем и есть
+   *  зачем. Условия — те же, что у самой панели (ширина окна, не «Настройки»),
+   *  плюс живой трек: язычок, открывающий пустую панель, был бы обманом. */
+  // ⚠️ БЕЗ УСЛОВИЯ «ЕСТЬ ТРЕК». Оно тут было и делало ровно то, на что владелец
+  // пожаловался 04.08: «я не вижу никакого язычка». Закрыл панель, пока ничего
+  // не играет, — и вернуть её нечем до первого запуска трека. Сама панель без
+  // трека показывает осмысленное пустое состояние («выбери трек — здесь будут
+  // обложка, текст и смысл»), то есть открывать её пустой законно. Правило
+  // общее: путь НАЗАД не имеет права зависеть от состояния, которого у
+  // человека сейчас нет.
+  const npHandleVisible = !lyricsOn && wideEnoughForPanel && view !== "settings";
+  // Наведение И клавиатурный фокус — один флаг: язычок обязан отзываться на
+  // табуляцию так же, как на мышь (иначе с клавиатуры он невидим совсем).
+  const [npHandleHover, setNpHandleHover] = useState(false);
 
   // Развёрнуто ли окно — нужно ровно для глифа кнопки в своей полосе заголовка
   // («развернуть» ↔ «восстановить»), см. lib/windowControls.ts.
@@ -1287,6 +1516,9 @@ function Player({
       return;
     }
     if (e.code === "Escape" && queueOn) {
+      // Пометка «Escape взят» — режим правки вида (Ctrl+E) выходит только
+      // тогда, когда клавиша не понадобилась никому (shell/LookEditLayer.tsx).
+      e.preventDefault();
       closeQueue();
       return;
     }
@@ -1544,6 +1776,9 @@ function Player({
     ? srvPlaylists.map((p) => ({
         id: p.id,
         name: p.name,
+        // Число треков уехало тихой цифрой к правому краю строки (набросок
+        // владельца 04.08) — meta осталась только там, где есть что сказать
+        // СВЕРХ числа: чей плейлист, совместность, скрытость.
         meta:
           p.role === "follower"
             ? p.available === false
@@ -1553,7 +1788,8 @@ function Player({
               ? t("sidebar.playlistMeta.collabFrom", { count: p.trackCount, owner: p.ownerUsername })
               : p.collaboratorsCount > 0
                 ? t("sidebar.playlistMeta.shared", { count: p.trackCount })
-                : t("sidebar.playlistMeta.trackCount", { count: p.trackCount }),
+                : "",
+        count: p.trackCount,
         shared: p.role === "collaborator" || p.collaboratorsCount > 0,
         // 2026-07-17: подписки в реордер не входят (их позиции сервер не
         // хранит), скрытые владельцем — гаснут. 2026-07-20: закреплённые тоже
@@ -2010,6 +2246,12 @@ function Player({
 
   return (
     <LanguageProvider lang={prefs.language}>
+    {/* РЕЖИМ ПРАВКИ ВИДА — вокруг всего дерева: в нём хватаются не только края
+        зон (LookEditLayer), но и сами элементы — вкладки сайдбара, карточки
+        разделов настроек, полки главной, блоки статистики. Признак «режим
+        включён» и ОБЩИЙ стек отмены живут здесь, потому что нужны сразу в
+        четырёх разных углах дерева; обоснование — shell/lookReorder.tsx. */}
+    <LookEditProvider active={lookEdit} apiRef={lookEditRef}>
     {/* data-muza-layer-root — ЦЕЛЬ ПОРТАЛА плавающих слоёв (меню, диалоги,
         выпадашки, палитра). Именно ЭТОТ div, а не body: на нём инлайном лежат
         все токены темы и zoom масштаба интерфейса, а свойств, создающих
@@ -2030,6 +2272,8 @@ function Player({
         useContextMenu(), App открывает меню через menuApiRef. */}
     <ContextMenuProvider ctx={menuCtx} apiRef={menuApiRef}>
     <DragLayer>
+      {/* Кадры прихода и ухода «Сейчас играет» — см. NOWPLAYING_ANIM_CSS. */}
+      <style>{NOWPLAYING_ANIM_CSS}</style>
       {/* CSS-тир (Stage 6): свой CSS поверх всех токенов — «опасная зона» */}
       {prefs.customCssOn && prefs.customCss ? <style>{prefs.customCss}</style> : null}
       {/* CSS плагинов (T44): статический contributes.css + динамический
@@ -2062,14 +2306,25 @@ function Player({
           position: "absolute",
           inset: 0,
           display: "grid",
-          gridTemplateColumns: showNowPlaying ? "var(--w-sidebar) 1fr var(--w-nowplaying)" : "var(--w-sidebar) 1fr",
+          // minmax(0,1fr) вместо 1fr: у 1fr минимум — min-content, поэтому
+          // длинное название трека или широкая плитка РАСПИРАЛИ центральную
+          // колонку и выдавливали соседей. Ноль минимума отдаёт решение сетке.
+          gridTemplateColumns: nowPlayingDocked
+            ? "var(--w-sidebar) minmax(0, 1fr) var(--w-nowplaying)"
+            : "var(--w-sidebar) minmax(0, 1fr)",
           gap: "var(--gap-zone)",
-          padding: "var(--gap-zone)",
-          // Полоса ЗАМЕНЯЕТ верхнее поле, а не добавляется к нему: иначе зоны
-          // уехали бы вниз на её высоту и содержимого стало бы видно меньше.
-          // Отдельным свойством после padding — оно перебивает верх шортхенда.
-          paddingTop: TITLEBAR_H,
-          paddingBottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
+          // ПОЛЕ ОКНА СЧИТАЕТ ДВИЖОК ТЕМЫ (--win-pad, themeVars.ts). Флет
+          // (набросок владельца 04.08 вечером): поле 0, зоны впритык к краям,
+          // полоса заголовка ложится ПОВЕРХ контента — она position:absolute
+          // и в раскладке не участвует. «Воздушный» вид (пресет «Воздух»):
+          // поле равно высоте полосы со всех четырёх сторон — симметрия, о
+          // которой владелец просил утром 04.08. Знание о том, какой вид
+          // включён, живёт в одном месте — здесь его больше нет.
+          padding: "var(--win-pad, var(--h-titlebar))",
+          // Сколько места занимает полоса плеера снизу, считает движок темы
+          // (--pad-under-bar): у прижатой полосы это высота + один зазор, у
+          // плавающей — высота + два. Здесь этого знания больше нет.
+          paddingBottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
         }}
       >
         <Sidebar
@@ -2087,6 +2342,9 @@ function Player({
               : null
           }
           onSelectPluginTab={(pid, tab) => plugins.openTab(pid, tab)}
+          // Перестановка вкладок в режиме правки вида (Ctrl+E): панель отдаёт
+          // готовую компоновку, App только кладёт её в профиль.
+          onSetNavItems={(items) => setPrefs({ ...prefs, navItems: items })}
           playlists={sidebarPlaylists}
           favoritesCount={likes.length}
           onOpenFavorites={() => navigate("favorites")}
@@ -2123,6 +2381,21 @@ function Player({
             overflowY: "auto",
             scrollbarWidth: "none",
             borderRadius: "var(--r-lg)",
+            // ОТКРЫТАЯ ПАНЕЛЬ ОСВОБОЖДАЕТ СЕБЕ МЕСТО, А НЕ НАКРЫВАЕТ СОДЕРЖИМОЕ.
+            //
+            // Регрессия редизайна 04.08, найденная проверкой: на экранах, где
+            // панель не колонка (Поиск, Медиатека, Статистика, админка), она
+            // оставалась плавающей с zIndex 45 и ЖИВЫМИ кликами поверх списка.
+            // А lyricsOn стартует true — значит сразу после запуска правый край
+            // строки трека (сердечко, длительность, «ещё») лежал ПОД панелью и
+            // не нажимался вовсе.
+            //
+            // Поле, а не сжатие колонки сетки: содержимое остаётся во всю
+            // ширину, когда панель закрыта, и никакого обрыва на пороге окна,
+            // из-за которого всё и затевалось. Плавно — чтобы открытие панели
+            // не дёргало список.
+            paddingRight: npMounted && !nowPlayingDocked ? "calc(var(--w-nowplaying) + var(--gap-zone))" : 0,
+            transition: "padding-right var(--dur-base) var(--ease-out)",
           }}
         >
           {/* Своя граница на экран (02.08). Раньше единственная жила на корне
@@ -2151,6 +2424,19 @@ function Player({
                 onNotify={showToast}
                 onOpen={navigate}
                 onOpenWrapped={canSearch ? () => setWrappedOpen(true) : undefined}
+                sectionOrder={normalizeHomeSections(prefs.homeSections)}
+                // Порядок полок в режиме правки вида (Ctrl+E). Сохраняем ВЕСЬ
+                // видимый порядок, а не одну переставленную полку: состав ленты
+                // считает сервер и меняет его от захода к заходу, и «сдвиг
+                // относительно канона» разъехался бы с ним на первой же новой
+                // полке. Прежние ключи дописываются ХВОСТОМ: полка «Потому что
+                // ты любишь X» пропадает вместе с сигналом и возвращается через
+                // неделю — её место человек задавал один раз и ждёт его на
+                // месте (лишнее отрезает потолок в normalizeHomeSections).
+                onReorderSections={(keys) => {
+                  lookEditRef.current?.pushUndo({ homeSections: prefs.homeSections });
+                  setPrefs({ ...prefs, homeSections: normalizeHomeSections([...keys, ...prefs.homeSections]) });
+                }}
               />
             ) : view === "search" ? (
               <SearchView
@@ -2275,6 +2561,9 @@ function Player({
                   navigate("settings");
                   setSettingsIntent({ sub: "stats", nonce: Date.now() });
                 }}
+                // Порядок блоков в режиме правки вида (Ctrl+E) — тот же
+                // список, что переставляют стрелками в настройках.
+                onSetStatsBlocks={(statsBlocks) => setPrefs({ ...prefs, statsBlocks })}
               />
             ) : view === "admin" ? (
               <AdminView api={api} />
@@ -2304,7 +2593,7 @@ function Player({
           </div>
           </ErrorBoundary>
         </main>
-        {showNowPlaying ? (
+        {npMounted ? (
           // Два гейта позиции (03.08, см. positionStore.ts):
           // • номер активной строки — ЖИВОЙ всегда: текст обязан следить за
           //   песней, иначе на выходе из караоке он поедет прокруткой;
@@ -2342,9 +2631,84 @@ function Player({
             // видеодекодер (см. проп в NowPlayingPanel).
             windowVisible={windowVisible}
             onVideoError={refreshTrackVideo}
+            style={nowPlayingStyle}
+            // Крестик теперь ЕСТЬ ВСЕГДА. Раньше на слушательских экранах его
+            // не было, и шапка панели там была голым заголовком, а на
+            // остальных — строкой с кнопкой 30px: при переходе содержимое
+            // панели прыгало по вертикали. Плюс закрыть панель стало можно
+            // прямо на ней, а не только кнопкой в полосе плеера.
+            onClose={() => setLyricsOn(false)}
+            // Уход закончился раньше страховочного таймера — снимаем узел
+            // сразу (образец — Menu.jsx). Проверка target === currentTarget
+            // обязательна: внутри панели свои анимации (обложка, строки).
+            onAnimationEnd={(e) => {
+              if (npClosing && e.target === e.currentTarget) finishNpClose();
+            }}
           />
           )}</PositionScope>
           )}</DerivedPositionScope>
+        ) : null}
+
+        {/* ЯЗЫЧОК ВОЗВРАТА (жалоба владельца 04.08: «я не вижу никакого
+            язычка, чтобы открыть это окно; если я его закрыл, то не понимаю,
+            где его снова открыть»). Узкая полоска у правой кромки окна —
+            единственный след закрытой панели. Ширина 12px почти целиком
+            ложится в зазор между содержимым и кромкой (--gap-zone, 8px при
+            стандартных настройках), поэтому строк и плиток она не режет:
+            у самих списков внутри есть свои поля. Высота 72px делает её
+            заметной, не превращая в стену.
+            Обёртка нужна только чтобы посадить язычок ровно по центру ЗОНЫ
+            СОДЕРЖИМОГО (между полосой заголовка и полосой плеера), а не окна;
+            кликов она не ловит — pointerEvents снят. */}
+        {npHandleVisible ? (
+          <div
+            style={{
+              position: "absolute",
+              top: "var(--win-pad, 0px)",
+              bottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
+              right: 0,
+              display: "flex",
+              alignItems: "center",
+              pointerEvents: "none",
+              zIndex: 44,
+            }}
+          >
+            <button
+              type="button"
+              aria-label={t("nowPlaying.reopen")}
+              // Подсказка — родная, а не <Tooltip> ДС: тот центрируется по
+              // ребёнку (left: 50%) и над язычком шириной 12px у самой кромки
+              // окна пузырёк наполовину ушёл бы за экран, переворачиваться он
+              // пока не умеет. Здесь это единственное место с native title.
+              title={t("nowPlaying.reopen")}
+              onClick={() => setLyricsOn(true)}
+              onMouseEnter={() => setNpHandleHover(true)}
+              onMouseLeave={() => setNpHandleHover(false)}
+              onFocus={() => setNpHandleHover(true)}
+              onBlur={() => setNpHandleHover(false)}
+              style={{
+                pointerEvents: "auto",
+                width: 12,
+                height: 72,
+                padding: 0,
+                border: "none",
+                cursor: "pointer",
+                // Тот же материал, что у панели, но БЕЗ размытия: правило
+                // tokens/glass.css — размывают только зоны и панели, мелочь
+                // красится заливкой. На полоске 12px разницы не видно, а
+                // отдельный слой композитора она бы держала постоянно.
+                background: "var(--glass-nowplaying, var(--glass-panel))",
+                borderRadius: "var(--r-sm) 0 0 var(--r-sm)",
+                // Выезжает НАВСТРЕЧУ курсору, а не в сторону: язычок прижат к
+                // кромке окна, и «наружу» ему некуда. Только transform —
+                // ширину не трогаем, иначе на каждый кадр пришёлся бы пересчёт
+                // раскладки. Уменьшенное движение гасит переход глобально
+                // (packages/ui/src/tokens/base.css сводит длительность к 1мс).
+                transform: npHandleHover ? "translateX(-4px)" : "translateX(0)",
+                transition: "transform var(--dur-base) var(--spring-snap, var(--ease-out))",
+              }}
+            />
+          </div>
         ) : null}
       </div>
 
@@ -2392,6 +2756,13 @@ function Player({
         }
       />
       </ErrorBoundary>
+
+      {/* РЕЖИМ ПРАВКИ ВИДА (Ctrl+E). Слой поверх живого приложения: музыка
+          играет, экраны кликаются, но края зон становятся хватаемыми.
+          Обоснование механики целиком — в шапке LookEditLayer.tsx. */}
+      {lookEdit ? (
+        <LookEditLayer prefs={prefs} set={(patch) => setPrefs({ ...prefs, ...patch })} onExit={() => setLookEdit(false)} />
+      ) : null}
 
       {/* Единственный узел, который перерисовывается на КАЖДЫЙ тик позиции:
           полоса плеера её рисует — и часами, и бегунком. Всё остальное дерево
@@ -2864,6 +3235,7 @@ function Player({
     </ContextMenuProvider>
     </WarmerProvider>
     </div>
+    </LookEditProvider>
     </LanguageProvider>
   );
 }

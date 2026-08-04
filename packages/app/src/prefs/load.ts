@@ -16,10 +16,11 @@
  *  причине (иначе новое под-поле теряло бы соседей). */
 
 import { LANGS, resolveMigratedLanguage, type Lang } from "../i18n";
+import { BAR_BUTTON_KEYS } from "../lib/barButtons";
 import { withDefaults, type HotkeyAction } from "../lib/hotkeys";
 import { legacyInvertFromSpin, normalizeSpin, spinFromLegacyInvert } from "./backdrop";
 import { MIGRATED_PREF_KEYS, migrateLegacyValue } from "./legacyPrefs";
-import { DEFAULT_PREFS, type Prefs } from "./types";
+import { DEFAULT_PREFS, LOOK_VERSION, type Prefs } from "./types";
 
 /** Единственный ключ профиля настроек. Читают его ещё и в обход этого модуля
  *  (мини-плеер, экран ошибки — им нужен только язык до загрузки приложения),
@@ -60,6 +61,45 @@ function typedOverlay(stored: StoredPrefs, base: Prefs): Prefs {
     out[key] = v;
   }
   return out as unknown as Prefs;
+}
+
+/** ПЕРЕЕЗД НА ВНЕШНИЙ ВИД 2 (редизайн 2026-08-04): [ключ, старый дефолт, новый].
+ *
+ *  Поле переезжает, ТОЛЬКО если в сохранении лежит ровно старый дефолт — то
+ *  есть человек его никогда не трогал. Настроенное руками неприкосновенно:
+ *  редизайн меняет умолчания, а не чужие решения (правило владельца —
+ *  «редизайн задаёт значения по умолчанию, а не отменяет настройку»).
+ *
+ *  Ключа `radius` здесь нет НАМЕРЕННО: пресеты mild/soft/round поменяли числа
+ *  в tokens/radius.css, а не имена, поэтому новая шкала приезжает ко всем сама,
+ *  а выбор «Меньше/Обычные/Больше» остаётся тем, который человек сделал.
+ *  Плотность (--pad-zone) тоже не здесь: её считает формула densityPad в
+ *  themeVars.ts, и она уже отдаёт 16 вместо 20 при том же ползунке. */
+const LOOK_V2_MOVES: ReadonlyArray<readonly [key: keyof Prefs, was: number, now: number]> = [
+  ["gapZone", 12, 8],
+  ["wSidebar", 280, 240],
+  ["hPlayerBar", 92, 72],
+  ["coverBarSize", 60, 48],
+  // Поштучная плотность зон обязана совпадать с лестницей материалов, иначе
+  // тумблер «стекло по зонам» перекрашивает окно в момент включения.
+  ["glassSidebar", 59, 62],
+  ["glassNowPlaying", 59, 62],
+];
+
+/** Ступень v3 существовала ОДИН вечер (флет-вид дефолтом, gapZone 8 → 0) и
+ *  была развёрнута тем же вечером: владелец решил, что основной вид —
+ *  «воздушный», а плоский — личный тумблер. Ходов у ступени больше нет, но
+ *  номер версии НЕ переиспользовать: профили, успевшие проехать v3, уже
+ *  помечены тройкой, и новый смысл той же цифры их бы не догнал. Профилям с
+ *  gapZone 0 от того вечера возвращает 8 сам тумблер «Плоский вид» (выкл). */
+const LOOK_V3_MOVES: ReadonlyArray<readonly [key: keyof Prefs, was: number, now: number]> = [];
+
+/** Прежний дефолт раскладки бара — все кнопки включены в каноническом порядке.
+ *  Совпало буква в букву — человек раскладку не трогал, и она переезжает на
+ *  новую (часть кнопок уехала в «⋯»). Любое отличие означает его выбор. */
+function isUntouchedBarLayout(saved: unknown): boolean {
+  if (!Array.isArray(saved) || saved.length !== BAR_BUTTON_KEYS.length) return false;
+  return saved.every((b, i) => b && typeof b === "object" && b.key === BAR_BUTTON_KEYS[i] && b.on === true);
 }
 
 /** Слить сохранённое с дефолтами и прогнать миграции.
@@ -129,6 +169,29 @@ export function mergePrefs(stored: StoredPrefs, base: Prefs = DEFAULT_PREFS): Pr
     if (v === undefined) continue;
     bag[key] = migrateLegacyValue(key, v) ?? base[key as keyof Prefs];
   }
+  // ПЕРЕЕЗД ВНЕШНЕГО ВИДА. Отсутствие метки И ЕСТЬ версия 1: поля lookVersion
+  // до редизайна 2026-08-04 не существовало (см. Prefs.lookVersion). Ступени
+  // складываются, а не заменяют друг друга, — профиль версии 2 при появлении
+  // версии 3 проедет только третий шаг.
+  const lookFrom = typeof stored.lookVersion === "number" ? stored.lookVersion : 1;
+  if (lookFrom < 2) {
+    const src = stored as unknown as Record<string, unknown>;
+    for (const [key, was, now] of LOOK_V2_MOVES) {
+      if (src[key] === was) bag[key] = now;
+    }
+    // Кнопки бара — тот же принцип, но значение списочное: «не тронуто» —
+    // это ровно прежний дефолт, все десять включены в каноническом порядке.
+    // Выключил хоть одну или переставил — это его раскладка, не трогаем.
+    if (isUntouchedBarLayout(stored.barButtons)) prefs.barButtons = [...base.barButtons];
+  }
+  if (lookFrom < 3) {
+    for (const [key, was, now] of LOOK_V3_MOVES) {
+      // Сверяем ТЕКУЩЕЕ значение, а не сохранённое: профиль версии 1 к этому
+      // шагу уже проехал v2, и его дефолтные 12 стали 8 — ступени складываются.
+      if (bag[key] === was) bag[key] = now;
+    }
+  }
+  prefs.lookVersion = LOOK_VERSION;
   return prefs;
 }
 

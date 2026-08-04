@@ -23,6 +23,57 @@ describe("mergePrefs", () => {
     expect(src.sourcesEnabled).toEqual({ ...DEFAULT_PREFS.sourcesEnabled, youtube: false });
   });
 
+  // ПЕРЕЕЗД ВНЕШНЕГО ВИДА НА ВЕРСИЮ 2 (редизайн 2026-08-04). Профиль хранится
+  // целиком, поэтому у каждого живого пользователя геометрия лежит явными
+  // числами и смена DEFAULT_PREFS его бы не коснулась. Граница миграции: трогаем
+  // ТОЛЬКО поля, равные старым дефолтам, — то есть те, которых человек не
+  // касался. Сломается эта граница — редизайн молча сотрёт чужие настройки.
+  describe("переезд внешнего вида на версию 2", () => {
+    it("нетронутые поля переезжают на новые дефолты", () => {
+      const prefs = mergePrefs({ gapZone: 12, wSidebar: 280, hPlayerBar: 92, coverBarSize: 60 });
+      expect(prefs.gapZone).toBe(8);
+      expect(prefs.wSidebar).toBe(240);
+      expect(prefs.hPlayerBar).toBe(72);
+      expect(prefs.coverBarSize).toBe(48);
+    });
+
+    it("настроенное руками остаётся как было", () => {
+      const prefs = mergePrefs({ gapZone: 20, wSidebar: 320, hPlayerBar: 110, coverBarSize: 80 });
+      expect(prefs.gapZone).toBe(20);
+      expect(prefs.wSidebar).toBe(320);
+      expect(prefs.hPlayerBar).toBe(110);
+      expect(prefs.coverBarSize).toBe(80);
+    });
+
+    it("профиль, уже проехавший переезд, второй раз не трогается", () => {
+      // Человек ПОСЛЕ редизайна вернул себе прежнюю ширину сайдбара. Повторный
+      // запуск обязан её сохранить, иначе настройка не удержится никогда.
+      const prefs = mergePrefs({ lookVersion: 2, wSidebar: 280, hPlayerBar: 92 });
+      expect(prefs.wSidebar).toBe(280);
+      expect(prefs.hPlayerBar).toBe(92);
+    });
+
+    it("ступень v3 пуста (развёрнутый за вечер флет-дефолт) — ничего не двигает", () => {
+      // Плоский вид стал ЛИЧНЫМ тумблером, а не дефолтом: профили не трогаются,
+      // с какой бы версии ни приехали. Номер 3 сожжён — не переиспользовать.
+      expect(mergePrefs({ lookVersion: 2, gapZone: 8 }).gapZone).toBe(8);
+      expect(mergePrefs({ lookVersion: 2, gapZone: 20 }).gapZone).toBe(20);
+      expect(mergePrefs({ lookVersion: 3, gapZone: 0 }).gapZone).toBe(0);
+    });
+
+    it("после слияния профиль помечен текущей версией вида", () => {
+      expect(mergePrefs({}).lookVersion).toBe(DEFAULT_PREFS.lookVersion);
+      expect(mergePrefs({ gapZone: 12 }).lookVersion).toBe(DEFAULT_PREFS.lookVersion);
+    });
+
+    it("выбор «Меньше/Обычные/Больше» переездом не трогается", () => {
+      // Скругления поменяли ЧИСЛА в tokens/radius.css, а не имена пресетов:
+      // новая шкала приезжает ко всем сама, а выбор человека — его выбор.
+      expect(mergePrefs({ radius: "round" }).radius).toBe("round");
+      expect(mergePrefs({ radius: "mild" }).radius).toBe("mild");
+    });
+  });
+
   it("миграция Stage 6: старый bgCover=true → bgType «из обложки»", () => {
     expect(mergePrefs({ bgCover: true }).bgType).toBe("cover");
     // явный bgType главнее предка

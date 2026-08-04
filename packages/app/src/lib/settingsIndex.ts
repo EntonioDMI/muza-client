@@ -93,6 +93,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("account", "privacy", "settings.privacy.privacyDoc", ["приватность", "privacy"]),
   // ── Внешний вид ───────────────────────────────────────────────────────
   e("appearance", null, "settings.appearance.language", ["язык", "language", "русский", "english"]),
+  e("appearance", null, "settings.appearance.layout", ["раскладка", "плоский", "воздушная", "классика", "впритык", "layout", "flat", "classic"]),
   e("appearance", null, "settings.appearance.theme", ["тема", "светлая", "тёмная", "dark", "light"]),
   e("appearance", null, "settings.appearance.accent", ["акцент", "цвет", "color", "accent"]),
   e("appearance", null, "settings.appearance.radius", ["углы", "скругление", "радиус", "corners"]),
@@ -100,6 +101,26 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", null, "settings.appearance.background", ["фон", "обои", "background", "wallpaper"]),
   e("appearance", null, "settings.appearance.scale", ["масштаб", "зум", "scale", "zoom"]),
   e("appearance", null, "settings.appearance.customize", ["кастомизация", "тонкая настройка", "customize"]),
+  // Режим правки вида: ищут его словами про размеры и пропорции, а не по
+  // названию — синонимов больше обычного намеренно.
+  e("appearance", null, "settings.appearance.lookEdit", [
+    "правка вида",
+    "пропорции",
+    "размеры",
+    "ширина сайдбара",
+    "высота плеера",
+    "перетащить",
+    "resize",
+    "proportions",
+    // Перестановка элементов (04.08) ищется другими словами, чем размеры:
+    // человек описывает не «пропорции», а «поменять местами».
+    "порядок",
+    "поменять местами",
+    "перетаскивание",
+    "расположение",
+    "drag",
+    "reorder",
+  ]),
   e("appearance", "customize", "settings.customize.glass.panelBlur", ["блюр", "размытие", "blur"]),
   e("appearance", "customize", "settings.customize.glass.bgBlur", ["размытие фона", "blur"]),
   e("appearance", "customize", "settings.customize.glass.zones", ["зоны", "стекло"]),
@@ -150,6 +171,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.customize.layout.rowSource", ["источник", "строка трека", "source", "soundcloud", "youtube"]),
   e("appearance", "customize", "settings.customize.layout.playerHeight", ["высота плеера", "полоса плеера", "player height"]),
   e("appearance", "customize", "settings.customize.layout.playerCover", ["обложка в плеере", "размер обложки", "cover"]),
+  e("appearance", "customize", "settings.customize.layout.progressThickness", ["прогресс", "полоса прогресса", "толщина", "progress", "thickness"]),
   e("appearance", "customize", "settings.customize.background.type", ["фон", "обои", "анимированный", "background", "градиент"]),
   // Ряд «Инвертировать направление» разобран 03.08 на два честных выбора:
   // сколько обложек и куда они крутятся (тумблер умел лишь две позиции из

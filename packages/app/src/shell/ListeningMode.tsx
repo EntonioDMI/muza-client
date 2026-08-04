@@ -279,7 +279,12 @@ export function ListeningMode({
     const onKey = (e: KeyboardEvent) => {
       // Модалка смысла живёт поверх режима прослушивания и сама обрабатывает
       // Escape. Пока dialog открыт, нижний оверлей не должен закрываться следом.
-      if (e.key === "Escape" && !document.querySelector('[role="dialog"]')) onClose();
+      // preventDefault — пометка «Escape взят»: режим правки вида выходит
+      // только тогда, когда клавиша не понадобилась никому (LookEditLayer.tsx).
+      if (e.key === "Escape" && !document.querySelector('[role="dialog"]')) {
+        e.preventDefault();
+        onClose();
+      }
       // T (физическая клавиша, layout-независимо, как lib/hotkeys) — скрыть/
       // показать текст. Только «голая»: с модификаторами это чужие комбо; в
       // lib/hotkeys KeyT не занят. Поверх диалога — не срабатывает (там могут

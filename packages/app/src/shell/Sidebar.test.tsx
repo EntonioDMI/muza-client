@@ -83,14 +83,14 @@ function pointer(type: string, y: number): PointerEvent {
   return new PointerEvent(type, { bubbles: true, cancelable: true, clientX: 10, clientY: y, button: 0, pointerId: 1 });
 }
 
-/** Взять строку за ручку-⠿ и отпустить на высоте y. Подъём — рывком через
- *  DRAG_THRESHOLD; коммит порядка происходит после посадки (SETTLE_MS=180мс),
- *  поэтому вызывающий ждёт таймер. */
+/** Взять строку и отпустить на высоте y. Жест ловится ВСЕЙ строкой (владелец
+ *  04.08: «было бы удобнее хвататься за весь блок»), точки-⠿ остались только
+ *  подсказкой. Подъём — рывком через DRAG_THRESHOLD; порядок коммитится прямо
+ *  в pointerup: предпросмотр живой, и ждать посадки больше нечего. */
 function dragByGrip(row: HTMLElement, fromY: number, toY: number): void {
-  const grip = row.querySelector<HTMLElement>('[role="button"]');
-  if (!grip) throw new Error("у строки нет ручки реордера");
+  if (!row.querySelector('[data-testid="reorder-grip"]')) throw new Error("строка не переставляется");
   act(() => {
-    grip.dispatchEvent(pointer("pointerdown", fromY));
+    row.dispatchEvent(pointer("pointerdown", fromY));
   });
   // Двух движений мало не по прихоти: ПЕРВОЕ только поднимает плашку (курсор
   // проехал DRAG_THRESHOLD) и на этом выходит, будущую позицию не считая.
@@ -111,13 +111,13 @@ function dragByGrip(row: HTMLElement, fromY: number, toY: number): void {
 describe("Боковая панель: реордер плейлистов", () => {
   it("ручка есть только у подвижных строк: ни у закреплённой, ни у подписки", () => {
     const { container } = renderSidebar();
-    const withGrip = rows(container).map((r) => Boolean(r.querySelector('[role="button"]')));
+    const withGrip = rows(container).map((r) => Boolean(r.querySelector('[data-testid="reorder-grip"]')));
     expect(withGrip).toEqual([false, true, true, true, false]);
   });
 
   it("нет onReorderPlaylists — нет и ручек (веб без права на порядок)", () => {
     const { container } = renderSidebar({ onReorderPlaylists: undefined });
-    expect(rows(container).every((r) => !r.querySelector('[role="button"]'))).toBe(true);
+    expect(rows(container).every((r) => !r.querySelector('[data-testid="reorder-grip"]'))).toBe(true);
   });
 
   it("индекс — в координатах ПОДВИЖНЫХ строк, а не полного списка", async () => {

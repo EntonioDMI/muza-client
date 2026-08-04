@@ -42,6 +42,9 @@ export function IconButton({
   const button = (
     <button
       type="button"
+      // невидимое расширение зоны попадания до --hit-min: sm-кнопка 36px (и
+      // любое ужатие через style) остаётся маленькой глазу, но не мыши
+      className="muza-hit"
       aria-label={label || icon}
       disabled={disabled}
       onClick={onClick}

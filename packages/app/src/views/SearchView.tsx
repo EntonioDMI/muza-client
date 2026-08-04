@@ -505,17 +505,37 @@ export function SearchView({
         display: "flex",
         flexDirection: "column",
         gap: "var(--sp-5)",
-        padding: "var(--sp-6) var(--sp-6) 0",
+        padding: "var(--sp-6) var(--sp-5) 0",
         ...style,
       }}
     >
+      {/* ШАПКА ЭКРАНА (редизайн 04.08). Поиск был единственным экраном вообще
+          БЕЗ заголовка: поле висело в пустоте, и человек, попавший сюда с
+          другого экрана, не получал ни одного якоря — отсюда ощущение
+          «поиск посредственный». Анатомия та же, что у Медиатеки и Настроек:
+          заголовок слева, действие справа, на одной линии.
+          Потолок поля поднят с 520 до 720: на возвращённой редизайном ширине
+          (1176px на окне 1440) поле в 520px выглядело обрезком. */}
       <div
-        style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center" }}
+        style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}
         onKeyDown={(e) => {
           if (e.key === "Enter") void fullSearch();
         }}
       >
-        <SearchInput value={q} onChange={onQueryChange} placeholder={t("views.search.placeholder")} autoFocus style={{ maxWidth: 520, flex: 1 }} />
+        <h1
+          style={{
+            margin: 0,
+            flex: "none",
+            fontSize: "var(--fs-h1)",
+            fontWeight: 700,
+            letterSpacing: "var(--ls-h1)",
+            lineHeight: "var(--lh-tight)",
+            color: "var(--text-1)",
+          }}
+        >
+          {t("views.search.title")}
+        </h1>
+        <SearchInput value={q} onChange={onQueryChange} placeholder={t("views.search.placeholder")} autoFocus style={{ maxWidth: 720, flex: 1 }} />
         {showServerResults && searchScope !== "catalog" ? (
           <Button variant="secondary" icon="search" disabled={busy} onClick={() => void fullSearch()}>
             {busy ? t("views.search.searching") : t("views.search.searchSources")}

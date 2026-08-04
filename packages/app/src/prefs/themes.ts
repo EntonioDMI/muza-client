@@ -102,8 +102,11 @@ export const THEME_KEYS = [
   "bassShakeStrength",
   "bassSharp",
   "bassReach",
+  "playerDocked",
+  "zonesDocked",
   "hPlayerBar",
   "coverBarSize",
+  "hProgress",
   "durMenuMult",
   "durDialogMult",
   "durPageMult",
@@ -124,6 +127,9 @@ export const THEME_KEYS = [
  *  сторожит themes.coverage.test.ts: новое поле Prefs без места в одном из
  *  двух списков валит тест. */
 export const THEME_EXCLUDED = [
+  // Метка схемы профиля, а не оформление: чужая тема не должна отматывать
+  // версию внешнего вида назад и заново запускать миграцию (prefs/load.ts).
+  "lookVersion",
   "startView",
   "meaningMode",
   "autostart",
@@ -162,6 +168,11 @@ export const THEME_EXCLUDED = [
   "navItems",
   "statsBlocks",
   "statsPeriod",
+  // Раскладки, собранные руками в режиме правки вида: чужая тема не должна
+  // перетасовывать ни полки Главной, ни сетку разделов настроек — это личный
+  // порядок работы, а не оформление (по тем же основаниям, что navItems).
+  "homeSections",
+  "settingsCards",
   "language",
   "resumePosition",
   "doubleClickAction",
@@ -334,11 +345,15 @@ export const THEME_NUMBER_RANGES: Record<string, NumberRange> = {
   fontScale: { min: 85, max: 125 },
   headingScale: { min: 85, max: 120 },
   spaceScale: { min: 85, max: 125 },
-  hPlayerBar: { min: 72, max: 120 },
-  coverBarSize: { min: 44, max: 80 },
+  // Нижние границы опущены редизайном 2026-08-04: дефолты стали 72 и 48, а
+  // ползунок, у которого дефолт совпадает с минимумом, крутится только вверх.
+  hPlayerBar: { min: 56, max: 120 },
+  coverBarSize: { min: 40, max: 80 },
+  hProgress: { min: 2, max: 16 },
   tileSize: { min: 140, max: 240 },
   padTile: { min: 8, max: 24 },
-  gapZone: { min: 4, max: 20 },
+  // Ноль легален: флет-вид (дефолт с 04.08 вечера) — зоны встык.
+  gapZone: { min: 0, max: 20 },
   bassShakeStrength: { min: 0, max: 300 },
   bassSharp: { min: 0, max: 100 },
   bassReach: { min: 0, max: 100 },

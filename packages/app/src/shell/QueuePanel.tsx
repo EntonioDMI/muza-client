@@ -351,7 +351,7 @@ export function QueuePanel<T extends QueueTrack>({
       style={{
         position: "absolute",
         right: "var(--gap-zone)",
-        bottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
+        bottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
         width: 380,
         maxHeight: 460,
         borderRadius: "var(--r-lg)",
@@ -365,7 +365,9 @@ export function QueuePanel<T extends QueueTrack>({
         gap: "var(--sp-2)",
         zIndex: 50,
         outline: "none",
-        animation: "muzaMenuIn var(--dur-base) var(--ease-out)",
+        // Пружина вместо кривой: панель приезжает с массой и мягко
+        // доводится, а не тормозит по расписанию (animations.css).
+        animation: "muzaMenuIn var(--dur-base) var(--spring-snap, var(--ease-out))",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", padding: "0 var(--sp-2)" }}>

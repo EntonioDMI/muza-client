@@ -31,24 +31,28 @@ function frameStyle(surface: Surface): React.CSSProperties {
   switch (surface) {
     case "overlay":
       return { ...base, inset: 0, width: "100%", height: "100%", zIndex: 95 };
+    // Поля — из движка темы (--win-pad/--pad-under-bar/--r-zone, вечер 04.08):
+    // прежние формулы на --gap-zone описывали ИЮЛЬСКУЮ оболочку и в новых
+    // раскладках сажали фреймы мимо зон (ревизия 04.08). Фолбэки — на случай
+    // первой отрисовки до движка темы.
     case "tab":
       return {
         ...base,
-        top: "var(--gap-zone)",
-        left: "calc(var(--w-sidebar) + 2 * var(--gap-zone))",
-        right: "var(--gap-zone)",
-        bottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
-        borderRadius: "var(--r-lg)",
+        top: "var(--win-pad, 0px)",
+        left: "calc(var(--win-pad, 0px) + var(--w-sidebar) + var(--gap-zone))",
+        right: "var(--win-pad, 0px)",
+        bottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
+        borderRadius: "var(--r-zone, var(--r-lg))",
         zIndex: 30,
       };
     case "panel":
       return {
         ...base,
-        top: "var(--gap-zone)",
-        right: "var(--gap-zone)",
+        top: "var(--win-pad, 0px)",
+        right: "var(--win-pad, 0px)",
         width: "var(--w-nowplaying)",
-        bottom: "calc(var(--h-playerbar) + 2 * var(--gap-zone))",
-        borderRadius: "var(--r-lg)",
+        bottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
+        borderRadius: "var(--r-zone, var(--r-lg))",
         // Панель плагина — зона наравне с «Сейчас играет» (то же место, та же
         // ширина), поэтому и материал тот же, а не плёнка элевации.
         background: "var(--glass-zone)",
@@ -119,7 +123,9 @@ export function PluginFrames({ plugins }: { plugins: UsePlugins }) {
           icon="x"
           label={t("plugins.closeOverlay")}
           onClick={closeOverlay}
-          style={{ position: "fixed", top: "var(--gap-zone)", right: "var(--gap-zone)", zIndex: 96 }}
+          // Отступ от кромки — минимум sp-2 и в флете, где --win-pad = 0:
+          // кнопка вплотную к углу окна дралась бы с его кнопками.
+          style={{ position: "fixed", top: "max(var(--win-pad, 0px), var(--sp-2))", right: "max(var(--win-pad, 0px), var(--sp-2))", zIndex: 96 }}
         />
       ) : null}
       {activePanel ? (

@@ -3,11 +3,12 @@ import {
   DRAG_THRESHOLD,
   HOLD_MS,
   clampShift,
+  cursorInsertionIndex,
   dist,
   gridInsertionIndex,
   insertionIndex,
   moveItem,
-  reorderOffset,
+  pickByOrder,
   reorderShift,
   shouldStart,
   unionBox,
@@ -56,29 +57,81 @@ describe("пороги", () => {
   });
 });
 
-describe("insertionIndex: куда встанет строка", () => {
-  it("курсор над серединой первой — в начало", () => {
+describe("cursorInsertionIndex: прицел курсором (механика DragLayer)", () => {
+  // Точка отсчёта — КУРСОР с плавающей карточкой, снимок статичен весь жест.
+  it("курсор ниже середины строки — встаём после неё (с поправкой на изъятие)", () => {
+    expect(cursorInsertionIndex(rows(5), 0, 105)).toBe(2);
+  });
+  it("курсор над серединой первой — в начало; под серединой последней — в конец", () => {
+    expect(cursorInsertionIndex(rows(5), 2, 5)).toBe(0);
+    expect(cursorInsertionIndex(rows(5), 0, 195)).toBe(4);
+  });
+  it("в своей полосе — на месте (бросок в свой слот не ходит на сервер)", () => {
+    expect(cursorInsertionIndex(rows(3), 1, 25)).toBe(1);
+  });
+  it("пустой список и вылет за границы не роняют", () => {
+    expect(cursorInsertionIndex([], 0, 50)).toBe(0);
+    expect(cursorInsertionIndex(rows(3), 0, 99999)).toBe(2);
+  });
+});
+
+describe("insertionIndex: куда встанет строка (ТОЧКА ЗАХВАТА + гистерезис)", () => {
+  // y — точка захвата (курсор): «только когда захваченное место пересекает
+  // границу, объект должен туда переходить» (владелец 04.08). Порог — середина
+  // СОСЕДА ± гистерезис 8. Ряды по 40: середины 20/60/100/140/180.
+  it("утащили точку захвата в самый верх — в начало", () => {
     expect(insertionIndex(rows(5), 2, 5)).toBe(0);
   });
-  it("курсор под серединой последней — в конец", () => {
+  it("в самый низ — в конец", () => {
     expect(insertionIndex(rows(5), 0, 195)).toBe(4);
   });
-  it("тащим вниз: индекс сдвигается на изъятие элемента", () => {
-    // строка 0 тащится, курсор ниже середины строки 2 (mid=100) → to=3, минус изъятие = 2
-    expect(insertionIndex(rows(5), 0, 105)).toBe(2);
+  it("вниз: точка прошла середину соседа с запасом — встали за ним", () => {
+    // строка 0, точка 105 > mid(1)+8=68, но < mid(2)+8=108 → 1
+    expect(insertionIndex(rows(5), 0, 105)).toBe(1);
   });
-  it("тащим вверх: изъятие не влияет (to <= from)", () => {
-    // строка 4 тащится, курсор ниже середины строки 1 (mid=60) → to=2
+  it("вверх: то же правило серединами верхних соседей", () => {
+    // строка 4, точка 65 < mid(3)−8=132 и < mid(2)−8=92, но НЕ < mid(1)−8=52 → 2
     expect(insertionIndex(rows(5), 4, 65)).toBe(2);
   });
   it("на своём месте — индекс не меняется (нет дёрганья)", () => {
     expect(insertionIndex(rows(5), 2, 105)).toBe(2);
   });
-  it("считает по СЕРЕДИНАМ, а не по границам: чуть выше середины — остаёмся выше", () => {
-    expect(insertionIndex(rows(5), 0, 99)).toBe(1); // to=1 (прошли mid строки 0), минус изъятие = 0? нет: 99>20,99>60 → to=2, -1 = 1
+  it("ГИСТЕРЕЗИС: коснулись середины соседа, но не прошли на запас — стоим", () => {
+    // строка 1, сосед снизу mid(2)=100: порог 108. 107 — стоим, 109 — обмен.
+    expect(insertionIndex(rows(5), 1, 107)).toBe(1);
+    expect(insertionIndex(rows(5), 1, 109)).toBe(2);
   });
-  it("пустой список не роняет", () => {
+  it("СТАБИЛЬНОСТЬ: после обмена та же точка захвата не требует обратного хода", () => {
+    // Высокая секция (200) над короткой строкой (40) — случай «Для тебя».
+    // Захватили секцию у низа: точка 229 > mid(соседа)+8=228 → обмен.
+    const mixed = [
+      { top: 0, bottom: 200 },
+      { top: 200, bottom: 240 },
+    ];
+    expect(insertionIndex(mixed, 0, 229)).toBe(1);
+    // После обмена сосед сверху: [0..40], секция [40..240]. Та же точка 229
+    // НЕ выше mid(соседа)−8=12 → стоим. Осцилляции нет.
+    const after = [
+      { top: 0, bottom: 40 },
+      { top: 40, bottom: 240 },
+    ];
+    expect(insertionIndex(after, 1, 229)).toBe(1);
+  });
+  it("решает РУКА, а не габарит: большая секция уводится через середины соседей", () => {
+    const tallFirst = [
+      { top: 0, bottom: 200 },
+      { top: 200, bottom: 240 },
+      { top: 240, bottom: 280 },
+      { top: 280, bottom: 320 },
+    ];
+    // точка захвата 310 > 228, > 268, > 308 → в самый конец, без проноса
+    // центра секции за весь список
+    expect(insertionIndex(tallFirst, 0, 310)).toBe(3);
+  });
+  it("пустой список и битый from не роняют", () => {
     expect(insertionIndex([], 0, 50)).toBe(0);
+    expect(insertionIndex(rows(3), 9, 50)).toBe(2);
+    expect(insertionIndex(rows(3), -1, 50)).toBe(0);
   });
   it("не вылетает за границы", () => {
     expect(insertionIndex(rows(3), 0, 99999)).toBe(2);
@@ -176,51 +229,37 @@ const grid22 = [
   { top: 110, left: 110, right: 210, bottom: 210 },
 ];
 
-describe("gridInsertionIndex: слот сетки по ближайшему центру", () => {
-  it("курсор в ячейке — её индекс (splice-семантика: без поправок на from)", () => {
-    expect(gridInsertionIndex(grid22, 50, 50)).toBe(0);
-    expect(gridInsertionIndex(grid22, 160, 50)).toBe(1);
-    expect(gridInsertionIndex(grid22, 60, 170)).toBe(2);
-    expect(gridInsertionIndex(grid22, 200, 200)).toBe(3);
+describe("gridInsertionIndex: вход в чужую ячейку, а не ближайший центр (04.08)", () => {
+  it("центр плашки вошёл в чужую ячейку — её индекс (splice без поправок на from)", () => {
+    expect(gridInsertionIndex(grid22, 3, 50, 50)).toBe(0);
+    expect(gridInsertionIndex(grid22, 0, 160, 50)).toBe(1);
+    expect(gridInsertionIndex(grid22, 0, 60, 170)).toBe(2);
+    expect(gridInsertionIndex(grid22, 0, 200, 200)).toBe(3);
   });
 
-  it("курсор за пределами сетки — ближайшая крайняя ячейка (кламп смыслом)", () => {
-    expect(gridInsertionIndex(grid22, -50, -50)).toBe(0);
-    expect(gridInsertionIndex(grid22, 500, 500)).toBe(3);
+  it("СВОЯ ячейка и зазор между ячейками — стоим на месте (раньше тут дёргалось)", () => {
+    // ближайший центр «на месте не стоял»: он есть всегда, и на разных
+    // размерах ячеек прыгал туда-обратно после каждой перестановки
+    expect(gridInsertionIndex(grid22, 0, 50, 50)).toBe(0); // своя
+    expect(gridInsertionIndex(grid22, 0, 105, 50)).toBe(0); // зазор колонок
+    expect(gridInsertionIndex(grid22, 0, 50, 105)).toBe(0); // зазор рядов
+  });
+
+  it("ГИСТЕРЕЗИС: кромка чужой ячейки входом не считается", () => {
+    // ячейка 1 начинается на x=110; вход засчитывается с 110+8
+    expect(gridInsertionIndex(grid22, 0, 115, 50)).toBe(0);
+    expect(gridInsertionIndex(grid22, 0, 119, 50)).toBe(1);
+  });
+
+  it("за пределами сетки — стоим: «ничего не делать» безопаснее догадки", () => {
+    expect(gridInsertionIndex(grid22, 1, -50, -50)).toBe(1);
+    expect(gridInsertionIndex(grid22, 1, 500, 500)).toBe(1);
   });
 
   it("moveItem с этим индексом ставит плитку в конец без спец-случая «после последней»", () => {
-    // тащим 0 на место 3: ближайший центр 3 → splice(3) → [B,C,D,A]
-    const to = gridInsertionIndex(grid22, 160, 160);
+    // тащим 0, центр вошёл в ячейку 3 → splice(3) → [B,C,D,A]
+    const to = gridInsertionIndex(grid22, 0, 160, 160);
     expect(moveItem(["A", "B", "C", "D"], 0, to)).toEqual(["B", "C", "D", "A"]);
-  });
-});
-
-describe("reorderOffset: соседи съезжают на прямоугольник будущей позиции (2D)", () => {
-  it("тащим 0 → 3: все прочие сдвигаются на одну позицию назад", () => {
-    // 1 едет на место 0 (влево), 2 — на место 1 (вправо-вверх), 3 — на место 2 (влево-вниз)
-    expect(reorderOffset(grid22, 0, 3, 1)).toEqual({ x: -110, y: 0 });
-    expect(reorderOffset(grid22, 0, 3, 2)).toEqual({ x: 110, y: -110 });
-    expect(reorderOffset(grid22, 0, 3, 3)).toEqual({ x: -110, y: 0 });
-  });
-
-  it("тащим 3 → 0: все прочие сдвигаются вперёд", () => {
-    expect(reorderOffset(grid22, 3, 0, 0)).toEqual({ x: 110, y: 0 });
-    expect(reorderOffset(grid22, 3, 0, 1)).toEqual({ x: -110, y: 110 });
-    expect(reorderOffset(grid22, 3, 0, 2)).toEqual({ x: 110, y: 0 });
-  });
-
-  it("вне диапазона from..to — нули; сам тащимый — нуль (им правит курсор)", () => {
-    expect(reorderOffset(grid22, 1, 2, 0)).toEqual({ x: 0, y: 0 });
-    expect(reorderOffset(grid22, 1, 2, 3)).toEqual({ x: 0, y: 0 });
-    expect(reorderOffset(grid22, 1, 2, 1)).toEqual({ x: 0, y: 0 });
-    expect(reorderOffset(grid22, 2, 2, 3)).toEqual({ x: 0, y: 0 });
-  });
-
-  it("в столбце (сайдбар) вырождается в вертикальный сдвиг", () => {
-    const col = rows(3).map((r) => ({ ...r, left: 0, right: 200 }));
-    expect(reorderOffset(col, 0, 2, 1)).toEqual({ x: 0, y: -40 });
-    expect(reorderOffset(col, 2, 0, 1)).toEqual({ x: 0, y: 40 });
   });
 });
 
@@ -261,5 +300,27 @@ describe("clampShift/unionBox: край области упругий, а не �
     expect(x).toBeLessThan(0); // ушла за верхний/левый край, но недалеко
     expect(x).toBeGreaterThan(-BUDGET);
     expect(y).toBeCloseTo(x, 5);
+  });
+});
+
+describe("pickByOrder: живой порядок жеста накладывается на объекты", () => {
+  const items = [{ k: "a" }, { k: "b" }, { k: "c" }];
+  const key = (i: { k: string }) => i.k;
+
+  it("раскладывает по названному порядку", () => {
+    expect(pickByOrder(items, key, ["c", "a", "b"]).map(key)).toEqual(["c", "a", "b"]);
+  });
+
+  it("ключ без пары пропускается — список мог смениться под жестом", () => {
+    expect(pickByOrder(items, key, ["c", "ghost", "a", "b"]).map(key)).toEqual(["c", "a", "b"]);
+  });
+
+  it("НЕ ТЕРЯЕТ элемент, которого не назвали: молча пропасть он не может", () => {
+    expect(pickByOrder(items, key, ["c"]).map(key)).toEqual(["c", "a", "b"]);
+    expect(pickByOrder(items, key, []).map(key)).toEqual(["a", "b", "c"]);
+  });
+
+  it("повтор ключа не дублирует элемент", () => {
+    expect(pickByOrder(items, key, ["a", "a", "b", "c"]).map(key)).toEqual(["a", "b", "c"]);
   });
 });

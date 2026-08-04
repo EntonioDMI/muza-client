@@ -22,10 +22,11 @@ describe("buildThemeVars — дефолтный профиль", () => {
     // прямая α = c0 + c1·g (themeVars.ts, MATERIAL). Числа обязаны совпадать с
     // фолбэками в packages/ui/src/tokens/glass.css, иначе экран входа и первая
     // отрисовка будут отличаться от приложения.
-    expect(v["--glass-zone"]).toBe("rgba(23, 22, 20, 0.59)");
-    expect(v["--glass-panel"]).toBe("rgba(23, 22, 20, 0.64)");
-    expect(v["--glass-dialog"]).toBe("rgba(23, 22, 20, 0.82)");
-    expect(v["--glass-deep"]).toBe("rgba(18, 17, 16, 0.80)");
+    expect(v["--glass-zone"]).toBe("rgba(28, 26, 23, 0.62)");
+    expect(v["--glass-panel"]).toBe("rgba(28, 26, 23, 0.64)");
+    expect(v["--glass-dialog"]).toBe("rgba(28, 26, 23, 0.82)");
+    // Скрим полноэкранного — тон ФОНА ОКНА (--bg-0), а не поднятой плиты.
+    expect(v["--glass-deep"]).toBe("rgba(10, 9, 8, 0.80)");
     expect(v["--text-2"]).toBe("rgba(244, 243, 241, 0.62)");
     // 0.52 давало 4.23:1 на выделенной строке (плёнка surface-4) при норме 4.5,
     // и поднять плотность стекла эту пару не спасает — плёнка светлит поверх
@@ -40,14 +41,17 @@ describe("buildThemeVars — дефолтный профиль", () => {
   });
 
   it("размеры зон и списков = токенам ДС (профиль ничего не двигает)", () => {
-    expect(v["--h-playerbar"]).toBe("92px");
-    expect(v["--size-cover-bar"]).toBe("60px");
+    // Числа редизайна 2026-08-04 (были 92 / 60 / 12 / 280 / 20): зоны собраны,
+    // ширина отдана содержимому. Дефолты живут в DEFAULT_PREFS и в
+    // tokens/spacing.css — этот тест держит обе копии в одном значении.
+    expect(v["--h-playerbar"]).toBe("72px");
+    expect(v["--size-cover-bar"]).toBe("48px");
     expect(v["--w-tile"]).toBe("176px");
     expect(v["--pad-tile"]).toBe("16px");
-    expect(v["--gap-zone"]).toBe("12px");
-    expect(v["--w-sidebar"]).toBe("280px");
+    expect(v["--gap-zone"]).toBe("8px"); // «воздушный» дефолт; плоский — тумблером
+    expect(v["--w-sidebar"]).toBe("240px");
     expect(v["--w-nowplaying"]).toBe("340px");
-    expect(v["--pad-zone"]).toBe("20px");
+    expect(v["--pad-zone"]).toBe("16px");
     expect(v["--h-trackrow"]).toBe("60px");
     expect(v["--lh-ui"]).toBe("1.40");
     expect(v["--fs-karaoke"]).toBe("56px");
@@ -94,9 +98,11 @@ describe("buildThemeVars — ручки настроек", () => {
 
   it("скругление по типам: проценты от пресета radius, px — у кнопок и полей", () => {
     const v = vars({ ...DEFAULT_PREFS, radius: "round", radiusTiles: 50, radiusPanels: 200, radiusControls: 8 });
-    expect(v["--r-xs"]).toBe("7px"); // round.xs 14 × 0.5
-    expect(v["--r-md"]).toBe("13px"); // round.md 26 × 0.5
-    expect(v["--r-lg"]).toBe("72px"); // round.lg 36 × 2
+    // Пресет round после редизайна 2026-08-04 — это вид ДО него, число в
+    // число (tokens/radius.css): xs 10, md 20, lg 28.
+    expect(v["--r-xs"]).toBe("5px"); // round.xs 10 × 0.5
+    expect(v["--r-md"]).toBe("10px"); // round.md 20 × 0.5
+    expect(v["--r-lg"]).toBe("56px"); // round.lg 28 × 2
     expect(v["--r-control"]).toBe("8px");
     // «как в ДС» (сентинел 999) — токен не ставим вовсе
     expect(v).not.toHaveProperty("--r-field");
@@ -107,8 +113,8 @@ describe("buildThemeVars — ручки настроек", () => {
     // (rgba(255,255,255,…)), то есть жили в другом масштабе, чем плеер и меню:
     // соседние ползунки с одинаковыми числами давали разный результат.
     const v = vars({ ...DEFAULT_PREFS, glassZonesOn: true, glassPlayer: 40, glassSidebar: 10 });
-    expect(v["--glass-player"]).toBe("rgba(23, 22, 20, 0.4)");
-    expect(v["--glass-sidebar"]).toBe("rgba(23, 22, 20, 0.1)");
+    expect(v["--glass-player"]).toBe("rgba(28, 26, 23, 0.4)");
+    expect(v["--glass-sidebar"]).toBe("rgba(28, 26, 23, 0.1)");
   });
 
   it("включение «стекла по зонам» само по себе ничего не перекрашивает", () => {
@@ -160,7 +166,9 @@ describe("buildThemeVars — ручки настроек", () => {
 
   it("реакция фона на обложку смешивает пару bg-слоёв с цветом обложки", () => {
     const v = vars({ ...DEFAULT_PREFS, bgTint: true }, { coverTint: "#ff0000" });
-    expect(v["--bg-0"]).toBe(mixHex("#121110", "#ff0000", 0.22));
+    // База тонировки = --bg-0 тёмной темы (BG_DEFAULTS): углублён редизайном
+    // 04.08 с #121110 до #0a0908, обоснование — themeVars.ts::glassBase.
+    expect(v["--bg-0"]).toBe(mixHex("#0a0908", "#ff0000", 0.22));
     // Выключенная ручка — тонировки нет, даже когда цвет обложки известен
     expect(vars(DEFAULT_PREFS, { coverTint: "#ff0000" })).not.toHaveProperty("--bg-0");
   });
@@ -190,7 +198,7 @@ describe("buildThemeVars — ручки настроек", () => {
     // 3.06:1 у третьего при норме 4.5. Замер 03.08, разбор — в шапке themeVars.
     expect(v["--text-2"]).toBe("rgba(28, 26, 23, 0.78)");
     expect(v["--text-3"]).toBe("rgba(28, 26, 23, 0.66)");
-    expect(v["--glass-panel"]).toBe("rgba(250, 249, 246, 0.64)");
+    expect(v["--glass-panel"]).toBe("rgba(253, 252, 250, 0.64)");
   });
 });
 
@@ -345,8 +353,8 @@ describe("неполный вход", () => {
   it("считает по дефолтам всё, чего не прислали", () => {
     const v = vars({ blur: 10 });
     expect(v["--blur-glass"]).toBe("10px");
-    expect(v["--glass-panel"]).toBe("rgba(23, 22, 20, 0.64)");
-    expect(v["--pad-zone"]).toBe("20px");
+    expect(v["--glass-panel"]).toBe("rgba(28, 26, 23, 0.64)");
+    expect(v["--pad-zone"]).toBe("16px");
   });
 
   it("пустой вход = дефолтный профиль", () => {

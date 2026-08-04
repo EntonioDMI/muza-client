@@ -1,18 +1,35 @@
 /* ── Muza type system ─────────────────────────────────────────────
-   One UI family (Golos Text) carries everything; Unbounded appears only
-   at brand moments: wordmark, home greeting, listening-mode headliner. */
+   ПРАВИЛО ОДНОГО DISPLAY-МОМЕНТА (редизайн 2026-08-04).
+
+   Unbounded — это МУЗЫКА И БРЕНД, а не «крупный шрифт». Он звучит ровно в трёх
+   местах: вордмарк в сайдбаре, заголовок караоке, название играющего трека в
+   «Сейчас играет». Всё остальное — Golos Text.
+
+   Что было не так: Unbounded стоял ещё и на приветствии Главной (36px), и на
+   заголовке Статистики (36px), и в админке (28px) — четыре разных веса в
+   четырёх местах. Когда «особый» шрифт встречается везде, он перестаёт быть
+   особым, и заголовки экранов перестают читаться как одна ступень иерархии.
+   Отсюда ощущение владельца «нарушена иерархия».
+
+   Теперь заголовок экрана ровно один размер на всё приложение — --fs-h1,
+   Golos 700. --fs-greet сведён к нему же и сохранён как токен только потому,
+   что на него ссылаются сохранённые темы.
+
+   ⚠️ --fs-title / --fs-h1 / --fs-greet / --fs-num пересчитываются инлайном в
+   themeVars.ts (ползунок «Размер заголовков») — числа там дублируют эти и
+   правятся ПАРОЙ, иначе ползунок вернёт старый размер. */
 
 :root {
   --font-ui: "Golos Text", "Segoe UI", system-ui, sans-serif;
   --font-display: "Unbounded", "Golos Text", sans-serif;
 
-  /* Fixed rem scale, ratio ≈1.2 — spacious and large, few small elements */
   --fs-caption: 0.8125rem;   /* 13px — timestamps, counts */
   --fs-body:    0.9375rem;   /* 15px — default UI text */
   --fs-strong:  1.0625rem;   /* 17px — tile titles, row titles */
-  --fs-title:   1.375rem;    /* 22px — shelf/section headers */
-  --fs-h1:      1.75rem;     /* 28px — page titles */
-  --fs-greet:   2.25rem;     /* 36px — home greeting (display font) */
+  --fs-title:   1.25rem;     /* 20px — секционный h2, явно ниже h1 */
+  --fs-h1:      1.75rem;     /* 28px — ЕДИНСТВЕННЫЙ размер заголовка экрана */
+  --fs-greet:   1.75rem;     /* 28px — схлопнут в h1; токен жив ради старых тем */
+  --fs-num:     2rem;        /* 32px — числа статистики и админки, tabular-nums */
   --fs-lyric:   1.5rem;      /* 24px — synced lyrics, side panel */
   --fs-karaoke: 3.5rem;      /* 56px — fullscreen karaoke line */
 
@@ -32,8 +49,9 @@
      prefs.karaokeSize), and em keeps the tracking proportional to whatever
      size the user lands on instead of freezing it at the default. */
   --ls-caption: 0.005em;     /* 13px — opens up a hair */
-  --ls-title: -0.01em;       /* 22px section headers */
+  --ls-title: -0.01em;       /* 20px section headers */
   --ls-h1: -0.015em;         /* 28px page titles */
+  --ls-num: -0.02em;         /* 32px tabular figures — цифры шире букв */
   --ls-karaoke: -0.02em;     /* 56px+ — the only place we get truly large */
 
   --ls-display: -0.01em;     /* Unbounded is wide; never tighter than this */
