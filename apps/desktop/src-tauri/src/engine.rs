@@ -4182,6 +4182,20 @@ pub async fn engine_stream_start(
         // обычная дорога докачает файл и заиграет из кэша. (Если появится
         // источник с fMP4 — тому moov-в-начале, пересмотреть точечно.)
         if entry.ext == "m4a" {
+            // ⚠️ ЗАПИСЬ ОБЯЗАНА ВЕРНУТЬСЯ В РЕЕСТР (2026-08-05). take_live_warm_entry
+            // читает РАЗРУШАЮЩЕ, а этот выход отказывается только от СТРИМА, не от
+            // добытого адреса: ступень 0 отработала, url и размер на руках. Без
+            // возврата engine_resolve ТОГО ЖЕ КЛИКА не находил ни warm-записи, ни
+            // живого стрима и проходил ступень 0 ЗАНОВО — второй полный круг
+            // client_id → api-v2 → transcoding.
+            //
+            // И это не редкий случай, а ОСНОВНОЙ: SoundCloud отдаёт AAC HLS, у
+            // которого ext ровно "m4a" (sc_ext_from_mime → audio/mp4|audio/aac), а
+            // progressive из выдачи api-v2 вычищен (см. sc_pick_transcoding). То
+            // есть удвоение платил каждый холодный SC-трек, а владелец слушает в
+            // основном SoundCloud. Негативный кэш stage0_recently_failed здесь не
+            // помогал по построению: ступень 0 не провалилась, она УСПЕЛА.
+            store_warm_entry(&state, &cache_ns, &track_id, entry);
             stage0_log(
                 &state,
                 SystemTime::now(),
@@ -6847,6 +6861,39 @@ mod warm_tests {
         assert!(
             take_live_warm_entry(&state, "ns1", "42", now).is_none(),
             "повторное изъятие пусто — запись одноразовая"
+        );
+    }
+
+    /// ОТКАЗ ОТ СТРИМА — НЕ ОТКАЗ ОТ АДРЕСА (регрессия 2026-08-05).
+    ///
+    /// engine_stream_start читает запись РАЗРУШАЮЩЕ, а на m4a отказывается
+    /// только стримить: ступень 0 к этому моменту уже отработала, url и размер
+    /// добыты. Пока запись не возвращалась, engine_resolve того же клика не
+    /// находил ничего и проходил ступень 0 ЗАНОВО — второй полный круг
+    /// client_id → api-v2 → transcoding на КАЖДОМ холодном треке SoundCloud
+    /// (там AAC HLS, то есть ext ровно "m4a", а progressive из api-v2 вычищен).
+    ///
+    /// Проверяем сам инвариант реестра, на который опирается починка: вернули —
+    /// значит следующий читатель находит. Полный путь команды тестом не
+    /// покрыть — ей нужны AppHandle и сеть.
+    #[test]
+    fn returned_warm_entry_is_found_again() {
+        let state = EngineState::default();
+        let now = SystemTime::now();
+        let live = now + Duration::from_secs(3600);
+        store_warm_entry(&state, "ns1", "42", entry_with_expiry(live));
+
+        let taken = take_live_warm_entry(&state, "ns1", "42", now).expect("запись была живой");
+        assert!(
+            !has_live_warm_entry(&state, "ns1", "42", now),
+            "изъятие обязано опустошать реестр — иначе чинить было бы нечего"
+        );
+
+        // Ровно то, что делает ветка m4a: раздумали стримить — верните адрес.
+        store_warm_entry(&state, "ns1", "42", taken);
+        assert!(
+            has_live_warm_entry(&state, "ns1", "42", now),
+            "engine_resolve того же клика обязан найти адрес, а не добывать его снова"
         );
     }
 
