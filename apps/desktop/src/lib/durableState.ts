@@ -35,7 +35,12 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
  *  muza.device.v1 — стабильный id установки (сессия = устройство, 2026-07-20):
  *  его потеря не разлогинит, но задвоит устройство в списке сессий.
  *  Ключи обязаны проходить valid_key() в state_kv.rs ([a-z0-9._-]). */
-export const MIRROR_KEYS = ["muza.session.v1", "muza.prefs.v1", "muza.device.v1"] as const;
+/** muza.player.v1 — громкость, повтор, перемешивание, скорость (lib/playerState).
+ *  Без зеркала они живут только в LevelDB WebView2 и умирают от «Завершить
+ *  задачу» — ровно та болезнь, ради которой зеркало и заведено. В COALESCED_KEYS
+ *  его класть НЕ надо: playerState склеивает записи своим окном 250мс, на диск
+ *  уходит максимум четыре раза в секунду. */
+export const MIRROR_KEYS = ["muza.session.v1", "muza.prefs.v1", "muza.device.v1", "muza.player.v1"] as const;
 
 const mirrored = new Set<string>(MIRROR_KEYS);
 /** Парный ключ счётчика в localStorage. Сам он НЕ зеркалится (и не должен:

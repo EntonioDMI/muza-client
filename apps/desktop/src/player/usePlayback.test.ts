@@ -19,6 +19,7 @@ import type { EngineCallbacks } from "./audioEngine";
 import type { PlayerTrack } from "./types";
 import { invalidateCachedSources } from "./sourcesCache";
 import { usePlayback } from "./usePlayback";
+import { flushPlayerState, resetPlayerState } from "@muza/app/lib/playerState";
 
 const h = vi.hoisted(() => ({
   resolvePlayable: vi.fn(),
@@ -153,6 +154,12 @@ async function playA({ result }: Hook): Promise<void> {
 }
 
 beforeEach(() => {
+  // ⚠️ ПАМЯТЬ ПЛЕЕРА — СОСТОЯНИЕ МОДУЛЯ, а модуль на весь файл один. Без сброса
+  // повтор, включённый одним тестом, переезжал в соседние и ломал авто-переход:
+  // «следующий трек» оказывался тем же самым. localStorage.clear() тут не
+  // помогает — отложенная запись живёт в памяти и воскресала бы при чтении.
+  resetPlayerState();
+  localStorage.removeItem("muza.player.v1");
   vi.clearAllMocks();
   // Реализации задаём явно: clearAllMocks стирает только вызовы, а reset —
   // и реализации; position без неё вернул бы undefined и remaining стал бы NaN.
@@ -1197,5 +1204,48 @@ describe("тик позиции: значение точное, рендера �
 
     expect(ticks).toHaveBeenCalledTimes(5);
     expect(seconds).toHaveBeenCalledTimes(1); // 12 → 13, и только она
+  });
+});
+
+describe("память плеера между запусками", () => {
+  /** Прямая регрессия на жалобу владельца (05.08): «при перезаходе в приложение
+   *  не сохраняются настройки громкости и некоторые другие элементы».
+   *
+   *  ⚠️ Проверять надо ИМЕННО СКВОЗЬ ХРАНИЛИЩЕ, а не «модуль умеет писать»:
+   *  до 05.08 хранилище существовало, тесты на него были зелёные, а плеер его
+   *  не читал вовсе — жалоба оставалась в силе при полностью зелёном прогоне.
+   *  Поэтому «перезапуск» здесь настоящий: размонтировали и подняли заново. */
+  it("громкость, скорость, повтор и перемешивание переживают перезапуск", () => {
+    const first = mount();
+    act(() => {
+      first.result.current.setVol(31);
+      first.result.current.setRate(1.5);
+      first.result.current.cycleRepeat(); // off → all
+      first.result.current.toggleShuffle();
+    });
+    first.unmount();
+
+    // Отложенную запись сбрасываем руками: окно склейки 250мс, а «закрыл окно»
+    // в бою доводит её обработчик pagehide.
+    flushPlayerState();
+
+    const again = mount();
+    expect(again.result.current.vol).toBe(31);
+    expect(again.result.current.speed).toBe(1.5);
+    expect(again.result.current.repeat).toBe("all");
+    expect(again.result.current.shuffle).toBe(true);
+  });
+
+  it("восстановленная громкость доезжает до движка, а не остаётся числом на экране", async () => {
+    const first = mount();
+    act(() => first.result.current.setVol(17));
+    first.unmount();
+    flushPlayerState();
+
+    h.engine.setVolume.mockClear();
+    const again = mount();
+    await playA(again);
+    // Движок создаётся лениво первым же треком и догоняет значения из состояния.
+    expect(h.engine.setVolume).toHaveBeenCalledWith(17);
   });
 });

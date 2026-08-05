@@ -30,7 +30,8 @@ import {
 import { nextPollDelayMs, pickAutoFadeSec, planAutoAdvance } from "./gaplessPlan";
 import { createPositionStore } from "./positionStore";
 import { ensureSources, invalidateCachedSources } from "./sourcesCache";
-import { beginStart, markError, markPlayCall, markSound, markSources, markUrl } from "./startTelemetry";
+import { loadPlayerState, savePlayerState } from "@muza/app/lib/playerState";
+import { beginStart, markError, markPlayCall, markSilence, markSound, markSources, markUrl } from "./startTelemetry";
 import { shouldSilenceBeforeResolve } from "./startPlan";
 import type { PlayerTrack } from "./types";
 
@@ -134,10 +135,26 @@ export function usePlayback({
   // весь экран со строками треков, обе копии текста песни. Значение точное
   // всегда, подписываются на него только те узлы, которые его рисуют.
   const [posStore] = useState(() => createPositionStore(initialPos));
-  const [vol, setVolState] = useState(64);
-  const [speed, setSpeed] = useState(1);
-  const [repeat, setRepeat] = useState<RepeatMode>("off");
-  const [shuffle, setShuffle] = useState(false);
+  /** ПАМЯТЬ ПЛЕЕРА МЕЖДУ ЗАПУСКАМИ (заказ владельца 05.08: «при перезаходе не
+   *  сохраняются настройки громкости и некоторые другие элементы»). Читаем ОДИН
+   *  раз ленивым инициализатором — обращение к localStorage на каждый рендер
+   *  плеера было бы налогом на самый горячий компонент приложения.
+   *  Хранилище — lib/playerState (отдельный ключ, не Prefs; почему — в его шапке). */
+  const [saved] = useState(loadPlayerState);
+  const [vol, setVolState] = useState(saved.volume);
+  const [speed, setSpeed] = useState(saved.speed);
+  const [repeat, setRepeat] = useState<RepeatMode>(saved.repeat);
+  const [shuffle, setShuffle] = useState(saved.shuffle);
+
+  /** Запись — ОДНИМ эффектом на четыре значения, а не в каждом сеттере.
+   *  Сеттеров у них шесть (setVol, cycleSpeed, setRate, cycleRepeat,
+   *  toggleShuffle, плюс горячие клавиши), и «дописать сохранение в каждый» —
+   *  это гарантия, что седьмой забудут. Эффект видит результат независимо от
+   *  того, кто его поменял. Дорогой запись не бывает: playerState склеивает её
+   *  окном 250мс (см. его шапку). */
+  useEffect(() => {
+    savePlayerState({ volume: vol, speed, repeat, shuffle });
+  }, [vol, speed, repeat, shuffle]);
 
   // null — очередь пуста, «ничего не играет». Это НАСТОЯЩЕЕ состояние плеера, а
   // не край: раньше инвариант «трек есть всегда» держала демо-очередь-заглушка
@@ -460,6 +477,11 @@ export function usePlayback({
       // именно auto, а не fadeSec.
       if (shouldSilenceBeforeResolve({ auto: opts?.auto ?? false, preloaded: preloadedUrl !== null })) {
         engine().pause();
+        // Отметка ВНУТРИ этих скобок намеренно: «тишина» начинается ровно там,
+        // где глохнет звук. Переедет pause() — переедет и она, и метрика не
+        // соврёт молча. Окно тишины и есть то, что человек считает задержкой:
+        // старый трек уже выключен, новый ещё не пришёл.
+        markSilence();
       }
       let url: string;
       if (preloadedUrl !== null) {

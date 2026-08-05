@@ -11,6 +11,7 @@ import {
 } from "@muza/api-client";
 import { type Prefs, type View } from "./types";
 import { loadPrefs, PREFS_KEY } from "@muza/app/prefs/load";
+import { DEFAULT_PLAYER_STATE, loadPlayerState, savePlayerState } from "@muza/app/lib/playerState";
 // Общий движок темы: профиль настроек → CSS-переменные корня, одни и те же
 // формулы у приложения и у веба (см. шапку themeVars.ts).
 import { buildThemeVars } from "@muza/app/theme/themeVars";
@@ -1490,14 +1491,21 @@ function Player({
   // клик всегда открывает, даже если диалог уже открыт.
   const openHotkeys = () => setHotkeysOpen(true);
 
-  // Mute: клик по иконке громкости или клавиша M; помним прежний уровень
-  const prevVolRef = useRef(64);
+  // Mute: клик по иконке громкости или клавиша M; помним прежний уровень.
+  //
+  // Уровень ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (заказ владельца 05.08). Без этого человек,
+  // закрывший приложение в немоте, при следующем запуске получал не свой
+  // уровень, а зашитые 64 — то есть «включить звук» громко пугало.
+  const prevVolRef = useRef(loadPlayerState().volumeBeforeMute);
   const toggleMute = () => {
     if (vol > 0) {
       prevVolRef.current = vol;
+      savePlayerState({ volumeBeforeMute: vol, muted: true });
       pb.setVol(0);
     } else {
-      pb.setVol(prevVolRef.current || 64);
+      // Фолбэк на дефолт: сохранённый ноль вернул бы немоту навсегда.
+      pb.setVol(prevVolRef.current || DEFAULT_PLAYER_STATE.volume);
+      savePlayerState({ muted: false });
     }
   };
 

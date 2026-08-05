@@ -33,6 +33,7 @@ export { Tooltip } from "./components/feedback/Tooltip.jsx";
 
 // lib
 export { cssZoom } from "./lib/cssZoom.js";
+export { useLayerState } from "./lib/useLayerState.js";
 
 // media
 export { Cover } from "./components/media/Cover.jsx";
