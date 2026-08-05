@@ -157,6 +157,7 @@ export interface LocalReorder {
 export function useLocalReorder({
   ids,
   resolveTo,
+  hitTest,
   onCommit,
 }: {
   /** Порядок элементов — ровно тот, что на экране. */
@@ -166,6 +167,18 @@ export function useLocalReorder({
    *  серединам соседей, сетка и лента с переносом строк — gridInsertionIndex
    *  входом в чужую ячейку. */
   resolveTo: (rects: readonly Box[], from: number, x: number, y: number) => number;
+  /** ГДЕ СЕЙЧАС ТОЧКА ЗАХВАТА: индекс чужой ячейки под курсором или −1.
+   *
+   *  Передаётся только для СЕТОК (gridHitIndex). Наличие этой функции включает
+   *  ПАМЯТЬ О ВХОДЕ: перестановка случается не когда курсор НАХОДИТСЯ в чужой
+   *  ячейке, а когда он в неё ВОШЁЛ, то есть ответ изменился с прошлого раза.
+   *  Разбор, почему без памяти лента статистики осциллирует на 58% площади
+   *  большого блока, — в шапке gridHitIndex (dragEngine.ts).
+   *
+   *  У столбца её нет и не нужно: insertionIndex считает по серединам соседей,
+   *  и после обмена сосед оказывается по другую сторону точки захвата — условие
+   *  гаснет само, без всякой памяти. */
+  hitTest?: (rects: readonly Box[], from: number, x: number, y: number) => number;
   onCommit: (id: string, toIndex: number) => void;
 }): LocalReorder {
   const els = useRef(new Map<string, HTMLElement>());
@@ -204,6 +217,16 @@ export function useLocalReorder({
   const lastReorder = useRef(0);
   /** С кем и где был последний обмен — для сторожа пары (REORDER_UNDO_MIN). */
   const lastSwap = useRef<{ partner: string; x: number; y: number } | null>(null);
+  /** ПАМЯТЬ О ВХОДЕ (сетки): ключ ячейки, в которой точка захвата уже
+   *  засчитана. null — курсор в зазоре или над своей плашкой, то есть система
+   *  ВЗВЕДЕНА и следующий вход в чужую ячейку сработает сразу.
+   *
+   *  Перевзводится после КАЖДОЙ перестановки тем, что оказалось под курсором с
+   *  новой геометрией (см. layout-эффект). Это и разрывает обратную связь: если
+   *  курсор остался внутри съехавшего блока, блок помечен «уже войден», и
+   *  обратного обмена не будет, сколько мышью ни дрожи. Осознанный увод руки и
+   *  возврат работают мгновенно — без порогов и без таймеров. */
+  const enteredId = useRef<string | null>(null);
   /** Отложенный пересчёт на конец паузы: рука остановилась, а замысел ещё
    *  не применён — без этого последний сдвиг терялся бы до следующего
    *  pointermove, которого может не быть. */
@@ -231,6 +254,8 @@ export function useLocalReorder({
   idsRef.current = ids;
   const resolveRef = useRef(resolveTo);
   resolveRef.current = resolveTo;
+  const hitRef = useRef(hitTest);
+  hitRef.current = hitTest;
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
 
@@ -294,6 +319,25 @@ export function useLocalReorder({
     el.style.transform = `translate(${shift.x / z}px, ${shift.y / z}px)`;
   }, []);
 
+  /** ПЕРЕВЗВЕСТИ ПАМЯТЬ О ВХОДЕ по СВЕЖЕЙ геометрии. Зовётся сразу после
+   *  каждого замера, случившегося внутри жеста.
+   *
+   *  Здесь и живёт всё лекарство от прыжков. После перестановки блок, который
+   *  вытеснили, часто снова накрывает курсор — и без этой строки условие входа
+   *  срабатывало бы опять, в обратную сторону, и так по кругу, пока рука
+   *  движется. Помечая то, что сейчас под курсором, как «уже войденное», мы
+   *  требуем от руки настоящего выхода и повторного входа. */
+  const rearmEntered = useCallback(() => {
+    const hit = hitRef.current;
+    const d = drag.current;
+    if (!hit || !d) return;
+    const list = previewRef.current ?? idsRef.current;
+    const from = list.indexOf(d.id);
+    const rects = list.map((id) => slots.current.get(id) ?? ZERO_BOX);
+    const idx = hit(rects, from, pointer.current.x, pointer.current.y);
+    enteredId.current = idx >= 0 && idx < list.length ? list[idx] : null;
+  }, []);
+
   /** Пересчитать будущую позицию. Перестановка идёт через state: новый порядок
    *  рисует React, а разницу мест доигрывает FLIP в layout-эффекте ниже.
    *
@@ -310,6 +354,27 @@ export function useLocalReorder({
     const from = list.indexOf(d.id);
     if (from < 0) return;
     paint(); // плашка липнет к курсору ВСЕГДА, пауза её не касается
+    const rects = list.map((id) => slots.current.get(id) ?? ZERO_BOX);
+
+    // ВХОД, А НЕ НАХОЖДЕНИЕ (сетки; у столбца hitTest нет — см. его описание).
+    // Проверяем ДО паузы: пауза откладывает ДЕЙСТВИЕ, а не наблюдение. Если
+    // курсор не пересекал границу ячейки, решать вообще нечего и таймер
+    // пересчёта заводить не на что.
+    const hit = hitRef.current;
+    if (hit) {
+      const idx = hit(rects, from, pointer.current.x, pointer.current.y);
+      const hitId = idx >= 0 && idx < list.length ? list[idx] : null;
+      if (hitId === enteredId.current) return; // всё ещё там же — не вход
+      if (hitId === null) {
+        // Ушли в зазор или на свою плашку: взводим и ждём настоящего входа.
+        enteredId.current = null;
+        return;
+      }
+      // hitId !== enteredId и не null — это ВХОД. Отметку ставит НЕ здесь, а
+      // перевзвод после перестановки: до неё геометрия ещё старая, и запись
+      // «уже войден» относилась бы к раскладке, которой сейчас не станет.
+    }
+
     const wait = REORDER_LOCK_MS - (Date.now() - lastReorder.current);
     if (wait > 0) {
       if (stepTimer.current === null) {
@@ -320,21 +385,24 @@ export function useLocalReorder({
       }
       return;
     }
-    const rects = list.map((id) => slots.current.get(id) ?? ZERO_BOX);
     const to = resolveRef.current(rects, from, pointer.current.x, pointer.current.y);
     if (to !== from && to >= 0 && to < list.length) {
-      // Сторож пары (см. REORDER_UNDO_MIN): повторный обмен С ТЕМ ЖЕ соседом
-      // требует настоящего сдвига руки с места прошлого обмена — иначе широкий
-      // блок в ленте с переносом строк пилит обмен туда-сюда под микродвижениями.
-      const partner = list[to];
-      if (
-        lastSwap.current &&
-        lastSwap.current.partner === partner &&
-        dist(lastSwap.current.x, lastSwap.current.y, pointer.current.x, pointer.current.y) < REORDER_UNDO_MIN
-      ) {
-        return;
+      // Сторож пары (см. REORDER_UNDO_MIN) — ТОЛЬКО для столбца. В сетках его
+      // работу делает память о входе, и делает строго лучше: сторож помнил
+      // ровно ОДНОГО партнёра и цикл из трёх блоков проходил его насквозь, а
+      // ещё он мешал законному намерению — «увёл на 30px и вернул» он трактовал
+      // как повод для обмена, хотя рука явно передумала.
+      if (!hit) {
+        const partner = list[to];
+        if (
+          lastSwap.current &&
+          lastSwap.current.partner === partner &&
+          dist(lastSwap.current.x, lastSwap.current.y, pointer.current.x, pointer.current.y) < REORDER_UNDO_MIN
+        ) {
+          return;
+        }
+        lastSwap.current = { partner, x: pointer.current.x, y: pointer.current.y };
       }
-      lastSwap.current = { partner, x: pointer.current.x, y: pointer.current.y };
       lastReorder.current = Date.now();
       previewRef.current = moveItem(list, from, to);
       setPreview(previewRef.current);
@@ -427,6 +495,11 @@ export function useLocalReorder({
       pointer.current = { x, y };
       lastReorder.current = 0; // первый ход жеста пауза не задерживает
       lastSwap.current = null; // сторож пары — на каждый жест свой
+      // Память о входе — тоже на каждый жест своя. Взводим по тому, что под
+      // курсором ПРЯМО СЕЙЧАС: взяли плашку, стоя над соседом, — сосед считается
+      // уже войденным, и жест не начнётся с самопроизвольного обмена.
+      enteredId.current = null;
+      rearmEntered();
       swallowClick.current = true; // click после жеста — не клик (см. объявление)
       // Поверх соседей. zIndex работает и без position: элементы групп лежат в
       // flex/grid-контейнерах, а их дети образуют контекст наложения сами.
@@ -436,7 +509,7 @@ export function useLocalReorder({
       paint();
       autoScroll.current = requestAnimationFrame(tickAutoScroll);
     },
-    [measure, paint, settleLand, tickAutoScroll],
+    [measure, paint, rearmEntered, settleLand, tickAutoScroll],
   );
 
   /** ЗАВЕРШЕНИЕ ЖЕСТА. Порядок коммитится СРАЗУ: на экране он уже конечный, и
@@ -515,6 +588,9 @@ export function useLocalReorder({
       before.set(id, { x: slot.left + t.x * z, y: slot.top + t.y * z });
     }
     measure();
+    // Геометрия только что стала другой — память о входе обязана относиться к
+    // НЕЙ, а не к раскладке, которой больше нет.
+    rearmEntered();
     const reduced = prefersReducedMotion();
     const started: HTMLElement[] = [];
     for (const [id, now] of slots.current) {
@@ -541,7 +617,7 @@ export function useLocalReorder({
       for (const el of started) el.style.transform = "";
     }
     paint();
-  }, [preview, measure, paint]);
+  }, [preview, measure, paint, rearmEntered]);
 
   useEffect(() => {
     const move = (e: PointerEvent) => {

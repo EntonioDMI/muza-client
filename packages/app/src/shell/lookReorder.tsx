@@ -41,7 +41,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { gridInsertionIndex, insertionIndex, moveItem } from "../lib/dragEngine";
+import { gridHitIndex, gridInsertionIndex, insertionIndex, moveItem } from "../lib/dragEngine";
 import { useLocalReorder } from "../lib/useLocalReorder";
 import type { Prefs } from "../prefs/types";
 
@@ -172,6 +172,13 @@ export function useLookReorder({
     ids,
     resolveTo: (rects, from, x, y) =>
       axis === "grid" ? gridInsertionIndex(rects, from, x, y) : insertionIndex(rects, from, y),
+    // ПАМЯТЬ О ВХОДЕ — только сеткам (2026-08-05). У столбца её нет и не нужно:
+    // insertionIndex считает по серединам соседей, и после обмена сосед
+    // оказывается по другую сторону точки захвата — условие гаснет само.
+    // В сетке же вытесненный блок часто снова накрывает курсор, и без памяти
+    // обмен пилило туда-обратно (жалоба владельца: «Топ треков буквально
+    // прыгает вверх-вниз при микродвижении мыши»). Разбор — dragEngine.gridHitIndex.
+    hitTest: axis === "grid" ? gridHitIndex : undefined,
     onCommit: (id, to) => {
       const list = idsRef.current;
       const from = list.indexOf(id);
