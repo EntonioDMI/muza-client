@@ -379,11 +379,32 @@ export const viewsEn = {
     limits: {
       shown: "Showing {count}",
       shownOf: "Showing {shown} of {total}",
-      first: "Showing the first {count}",
-      last: "Showing the latest {count}",
+      // 06.08: заменило «Showing the first N» — оно говорило, что список
+      // неполный, но не говорило, чего человек не видит. Здесь общего числа нет
+      // физически (сервер его не считает), и подпись говорит об этом прямо.
+      topOnly: "This is the whole top the server sends — {count} rows. It doesn't count how many there are in total.",
       showAll: "Show all ({count})",
       collapse: "Collapse",
       themesCeiling: "That's everything the list holds at once. If there are more themes, they won't show up here.",
+    },
+    // Три состояния вкладки (06.08). Пустые списки — в empty ниже, у каждого
+    // свой текст: «пусто» у источников и у ошибок значит разное.
+    state: {
+      errorTitle: "The data didn't arrive",
+      errorHint: "The button below asks the server again — nothing on it changes.",
+      retry: "Ask again",
+      staleTitle: "These are the previous numbers — the refresh failed.",
+    },
+    empty: {
+      sources: "No sources yet — the catalog has nothing to play from.",
+      topTracks: "Nothing was played in the last two weeks.",
+      topArtists: "Nothing was played in the last two weeks, so there's no one to rank.",
+      recentTracks: "The catalog is empty — nothing has been added yet.",
+      users: "No accounts yet.",
+      reports: "No app sent a report in this window.",
+      // см. ru.views.ts: таблица файлов копит за всё время, окно её не режет
+      downloads: "No release files have been downloaded from GitHub yet.",
+      chart: "No data in this window.",
     },
     // Публичные плейлисты (2026-07-17): рубильник
     publicPlaylists: {
@@ -444,6 +465,8 @@ export const viewsEn = {
     },
     users: {
       piiNote: "Total {count}. Emails aren't shown — only a mark that one exists.",
+      // Во время поиска сервер считает total ПОД фильтром — «всего» было бы ложью
+      foundNote: "Found {count}. Emails aren't shown — only a mark that one exists.",
       userCol: "User",
       createdCol: "Created",
       plays30dCol: "Plays (30d)",
@@ -505,6 +528,7 @@ export const viewsEn = {
       clearConfirm: "Clear these errors? This can't be undone.",
       clearYes: "Clear",
       deleteOne: "Delete",
+      deleteFailed: "Couldn't delete — the errors are still here.",
       detailMessage: "Full text",
       detailHash: "Group hash",
       detailLast: "Last seen",

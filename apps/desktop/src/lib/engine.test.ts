@@ -9,7 +9,18 @@ vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
 }));
 
-import { cacheNamespace, fnv1a32, resolveTrack, toNativeSourceRefs } from "./engine";
+import {
+  beginStart,
+  getStartLog,
+  resetStartTelemetryForTests,
+} from "../player/startTelemetry";
+import {
+  cacheNamespace,
+  engineStreamStart,
+  fnv1a32,
+  resolveTrack,
+  toNativeSourceRefs,
+} from "./engine";
 
 const sources: TrackSource[] = [
   {
@@ -113,5 +124,96 @@ describe("toNativeSourceRefs", () => {
     expect(cacheNamespace()).toBe(ns);
     // разные origin — разные неймспейсы (сама суть фикса)
     expect(fnv1a32("http://localhost:8000")).not.toBe(fnv1a32("https://api.muza.lol"));
+  });
+});
+
+/** ПРОВОДКА ПОФАЗОВОГО ЗАМЕРА (2026-08-06). Rust научился отдавать отметки
+ *  шагов добычи, и здесь проверяется единственное, что может их потерять:
+ *  стык IPC. Форму отметок держит normalizeTimings (lib/startLog.ts), их
+ *  накопление — startTelemetry; здесь — что вызов вообще случается и что
+ *  ПУСТОЙ список (законный ответ кэш-хита) ничего не ломает. */
+describe("отметки добычи доезжают до журнала стартов", () => {
+  beforeEach(() => {
+    tauri.invoke.mockReset();
+    resetStartTelemetryForTests();
+  });
+
+  it("resolveTrack кладёт отметки в текущий старт", async () => {
+    beginStart("42", "трек", "manual");
+    tauri.invoke.mockResolvedValueOnce({
+      path: "C:/cache/42.webm",
+      from_cache: false,
+      provider: "soundcloud",
+      timings: [
+        ["sc_api_v2", 340],
+        ["sc_probe", 21],
+      ],
+    });
+
+    await resolveTrack("42", sources);
+
+    expect(getStartLog()[0].timings).toEqual([
+      ["sc_api_v2", 340],
+      ["sc_probe", 21],
+    ]);
+  });
+
+  it("engineStreamStart отчитывается и при отказе от стрима", async () => {
+    beginStart("42", "трек", "manual");
+    // Самый дорогой исход: ступень 0 отработала, стрим не завёлся — фазы
+    // обязаны доехать, иначе эта работа невидима.
+    tauri.invoke.mockResolvedValueOnce({
+      stream: false,
+      timings: [
+        ["sc_api_v2", 300],
+        ["first_chunk_wait", 8000],
+      ],
+    });
+
+    await expect(engineStreamStart("42", sources)).resolves.toBe(false);
+
+    expect(getStartLog()[0].timings).toEqual([
+      ["sc_api_v2", 300],
+      ["first_chunk_wait", 8000],
+    ]);
+  });
+
+  it("пустой список и отсутствие поля разбор не ломают", async () => {
+    beginStart("42", "трек", "manual");
+    // кэш-хит: добывать не пришлось — Rust отдаёт []
+    tauri.invoke.mockResolvedValueOnce({
+      path: "C:/cache/42.webm",
+      from_cache: true,
+      provider: null,
+      timings: [],
+    });
+    await expect(resolveTrack("42", sources)).resolves.toMatchObject({ fromCache: true });
+    // поля нет вовсе — так отвечает клиент, собранный до этой правки
+    tauri.invoke.mockResolvedValueOnce({ stream: false });
+    await expect(engineStreamStart("42", sources)).resolves.toBe(false);
+
+    // запись жива, просто без фаз — «нечего показать» вместо испорченного старта
+    const rec = getStartLog()[0];
+    expect(rec.trackId).toBe("42");
+    expect(rec.timings).toBeUndefined();
+  });
+
+  it("отметки нескольких вызовов накапливаются в одном старте", async () => {
+    beginStart("42", "трек", "manual");
+    tauri.invoke.mockResolvedValueOnce({ stream: false, timings: [["warm_hit", 0]] });
+    tauri.invoke.mockResolvedValueOnce({
+      path: "C:/cache/42.webm",
+      from_cache: false,
+      provider: "youtube",
+      timings: [["ladder", 4300]],
+    });
+
+    await engineStreamStart("42", sources);
+    await resolveTrack("42", sources);
+
+    expect(getStartLog()[0].timings).toEqual([
+      ["warm_hit", 0],
+      ["ladder", 4300],
+    ]);
   });
 });

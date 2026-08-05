@@ -21,9 +21,15 @@ vi.mock("../lib/engine", () => ({
   engineWarm: vi.fn(async () => ({ cached: true })),
 }));
 
+/** Движок аудио мокается целиком: здесь проверяется, что сигнал предгрева
+ *  ПОДАЁТСЯ, а что он строит — дело audioEngine.test.ts. */
+const { noteUserGesture } = vi.hoisted(() => ({ noteUserGesture: vi.fn() }));
+vi.mock("./audioEngine", () => ({ noteUserGesture }));
+
 const api = { getTrackSources: vi.fn(async () => []) } as unknown as MuzaApi;
 
 beforeEach(() => {
+  noteUserGesture.mockClear();
   vi.stubGlobal(
     "IntersectionObserver",
     class {
@@ -61,5 +67,27 @@ describe("useWarmer: пропсы строк", () => {
     const recent = result.current.warmRow("scroll-599");
 
     expect(result.current.warmRow("scroll-599")).toBe(recent);
+  });
+});
+
+/** Сигнал предгрева графа Web Audio (2026-08-06). Строка трека — самый ценный
+ *  жест (за ним почти наверняка клик), но не единственный путь к звуку: кнопка
+ *  play в баре, клик по обложке, восстановленный трек — всё это мимо warmRow.
+ *  Держим оба конца: строку и страховку на окне. */
+describe("useWarmer: предгрев графа по первому жесту", () => {
+  it("pointerdown по строке подаёт сигнал предгрева", () => {
+    const { result } = mount();
+
+    result.current.warmRow("t1").onPointerDown();
+
+    expect(noteUserGesture).toHaveBeenCalled();
+  });
+
+  it("страховка: первый pointerdown где угодно в окне тоже подаёт сигнал", () => {
+    mount();
+
+    window.dispatchEvent(new Event("pointerdown"));
+
+    expect(noteUserGesture).toHaveBeenCalled();
   });
 });

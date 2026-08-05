@@ -8,6 +8,10 @@ import { AdminView } from "./AdminView";
 // разметки в любой из них видна только в живом окне — этот тест открывает
 // каждую и проверяет, что она дорисовалась.
 // Без LanguageProvider → DEFAULT_LANG="en".
+//
+// 06.08: моки приведены к новому контракту — сервер присылает знаменатели
+// (AdminContent.totals, AdminErrors.topTotal) и страницу публичных плейлистов
+// вместо голого массива. Именно по ним экран пишет «показаны N из M».
 
 afterEach(() => cleanup());
 
@@ -38,13 +42,16 @@ function makeApi() {
       catalog: { tracks: 50, sources: 60, deadSources: 1, cached: 12 },
     }),
     getAdminContent: vi.fn().mockResolvedValue({
+      days: 14,
+      limit: 20,
+      totals: { topTracks: 9, topArtists: 4, recentTracks: 50 },
       topTracks: [{ track: track(), plays: 7 }],
       topArtists: [{ artist: "Anna", plays: 7 }],
       recentTracks: [track({ id: "t2", title: "Fresh" })],
       sourcesByProvider: [{ provider: "youtube", kind: "audio", count: 40, dead: 1 }],
       coverage: { tracks: 50, withLyrics: 30, withSynced: 10, withAnnotations: 5 },
     }),
-    getAdminPublicPlaylists: vi.fn().mockResolvedValue([]),
+    getAdminPublicPlaylists: vi.fn().mockResolvedValue({ total: 0, limit: 50, offset: 0, items: [] }),
     getMarketThemes: vi.fn().mockResolvedValue([]),
     getAdminHealth: vi.fn().mockResolvedValue({
       windowHours: 24,
@@ -75,7 +82,9 @@ function makeApi() {
     }),
     getAdminErrors: vi.fn().mockResolvedValue({
       days: 7,
+      limit: 20,
       totals: { count: 4, distinct: 2 },
+      topTotal: 2,
       series,
       top: [
         {
@@ -136,8 +145,10 @@ describe("AdminView — все вкладки рисуются", () => {
     await openTab("Content", "Catalog coverage");
     expect(screen.getByText("youtube · audio")).toBeTruthy();
     expect(screen.getByText("Anna — Fresh")).toBeTruthy();
-    // топ обрезан сервером — экран об этом говорит
-    expect(screen.getAllByText("Showing the first 1").length).toBe(2);
+    // топы обрезаны сервером — подпись называет и показанное, и общее
+    expect(screen.getByText("Showing 1 of 9")).toBeTruthy(); // треки
+    expect(screen.getByText("Showing 1 of 4")).toBeTruthy(); // артисты
+    expect(screen.getByText("Showing 1 of 50")).toBeTruthy(); // новое в каталоге
   });
 
   it("здоровье добычи: сводка и разбивки", async () => {

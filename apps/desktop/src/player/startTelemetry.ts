@@ -25,6 +25,7 @@ import {
   readStartLog,
   RING_MAX,
   summarizeStarts,
+  TIMINGS_MAX,
   writeStartLog,
   type StartClassStat,
   type StartPath,
@@ -234,12 +235,21 @@ export function markError(message: string): void {
  *  форма приходящего проверяется в normalizeTimings, потому что это ЧУЖИЕ
  *  данные и телеметрия не имеет права ронять из-за них плеер. Отметки
  *  накапливаются: за один старт добыча может отчитаться несколько раз
- *  (прогрев, стрим, лестница). */
-export function markTimings(input: unknown): void {
-  if (!current) return;
+ *  (прогрев, стрим, лестница).
+ *
+ *  ⚠️ ЧЕЙ ЭТО ТРЕК — ОБЯЗАТЕЛЬНЫЙ ВОПРОС. Добыча зовётся не только из старта:
+ *  преднагрузка соседа (usePlayback.preloadNext, за 20 с до конца текущего
+ *  трека) и эмбиент «Итогов года» резолвят треки МИМО beginStart. Без сверки их
+ *  фазы дописывались в запись играющего: сумма фаз переставала иметь отношение
+ *  к его urlMs, класс прогона выводился по чужому провайдеру (`startClass`
+ *  смотрит на префиксы sc_/yt_), а сам сосед потом стартовал вообще без фаз.
+ *  Тот же гвард закрывает перебитый клик: ответ по треку A не ложится в старт B. */
+export function markTimings(trackId: string, input: unknown): void {
+  if (!current || current.rec.trackId !== trackId) return;
   const add = normalizeTimings(input);
   if (!add) return;
-  current.rec.timings = [...(current.rec.timings ?? []), ...add];
+  // потолок и на накоплении: за старт вызовов несколько (см. TIMINGS_MAX)
+  current.rec.timings = [...(current.rec.timings ?? []), ...add].slice(-TIMINGS_MAX);
   notify();
 }
 

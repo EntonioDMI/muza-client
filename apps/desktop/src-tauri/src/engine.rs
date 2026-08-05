@@ -648,6 +648,69 @@ fn canonical_target(source: &SourceRef) -> Result<Url, String> {
     canonical_target_with_lookup(source, &mut lookup)
 }
 
+/// ПОФАЗОВЫЙ ЗАМЕР ДОБЫЧИ: «метка → сколько заняла ЭТА работа», миллисекунды.
+///
+/// Зачем. У фронта на всю добычу была ОДНА цифра (urlMs), а внутри неё у
+/// SoundCloud четыре последовательных сетевых шага подряд — по одной цифре
+/// невозможно сказать, который из них длинный, и оптимизировать приходилось
+/// вслепую. Значение метки — ДЛИТЕЛЬНОСТЬ ШАГА, а не момент времени: мгновения
+/// клика Rust не знает и знать не должен, оно живёт на фронте (startTelemetry).
+///
+/// ⚠️ ФОРМА СБОРА ВЫБРАНА НАРОЧНО. Пара `Instant::now()` вокруг каждого вызова
+/// расползлась бы по всей ступени 0 — пять шагов в трёх функциях плюс два в
+/// командах, — и любой рефакторинг ронял бы половину меток МОЛЧА: забытый
+/// `elapsed()` не ошибка компиляции, а просто исчезнувшая строка в журнале.
+/// Поэтому единственный обычный способ поставить метку — `measure`, обёрнутый
+/// ВОКРУГ БЛОКА: метка и измеряемая работа физически не могут разъехаться,
+/// потому что это одно выражение. `since` — единственная лазейка, и она
+/// заведена ровно под два случая: таймер уже есть по другой причине (бюджет
+/// лестницы) либо метка ставится по РЕЗУЛЬТАТУ работы, а не по факту её
+/// выполнения (warm_hit — попадание, у промаха измерять нечего).
+///
+/// Перечень меток НЕ закрыт и нигде не проверяется: незнакомую фронт печатает
+/// как есть (normalizeTimings в src/lib/startLog.ts) — это дешевле, чем держать
+/// в согласии две копии списка по разные стороны IPC.
+#[derive(Debug, Default)]
+struct Timings(Vec<(String, u32)>);
+
+/// Потолок числа отметок за один вызов — тот же, что у приёмника (TIMINGS_MAX
+/// в src/lib/startLog.ts). Ограничение не про размер IPC, а про повтор с
+/// ошибкой: метка внутри цикла не имеет права раздуть журнал стартов.
+const TIMINGS_MAX: usize = 32;
+
+impl Timings {
+    /// Измерить БЛОК и записать его длительность под меткой. Основная форма.
+    async fn measure<T>(
+        &mut self,
+        label: &'static str,
+        work: impl std::future::Future<Output = T>,
+    ) -> T {
+        let started = Instant::now();
+        let out = work.await;
+        self.since(label, started);
+        out
+    }
+
+    /// Записать длительность, измеренную ЧУЖИМ таймером (см. ⚠️ выше — форм
+    /// сбора нарочно всего две, и эта вторая).
+    fn since(&mut self, label: &'static str, started: Instant) {
+        if self.0.len() >= TIMINGS_MAX {
+            return;
+        }
+        // Насыщение вместо приведения по кругу: в u32 мс укладываются сутки с
+        // запасом, но замер не имеет права соврать даже на зависшем шаге.
+        let ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+        self.0.push((label.to_string(), ms));
+    }
+
+    /// Забрать накопленное в ответ фронту; коллектор остаётся пустым — одна и
+    /// та же отметка не должна уехать дважды (команда может отвечать из
+    /// нескольких точек выхода).
+    fn take(&mut self) -> Vec<(String, u32)> {
+        std::mem::take(&mut self.0)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ResolveOut {
     /// Абсолютный путь к файлу в кэше — JS оборачивает его в convertFileSrc.
@@ -655,6 +718,10 @@ pub struct ResolveOut {
     pub from_cache: bool,
     /// Провайдер, из которого добыли (None у кэш-хита — уже не важно).
     pub provider: Option<String>,
+    /// Пофазовые отметки добычи (см. Timings). serde сериализует кортеж
+    /// массивом — `[["sc_api_v2",340],…]`, ровно та форма, которую разбирает
+    /// normalizeTimings на фронте. Пустой список — законный ответ (кэш-хит).
+    pub timings: Vec<(String, u32)>,
 }
 
 /// Неймспейс кэша: короткий слаг окружения API (фронт передаёт хэш origin'а).
@@ -3517,9 +3584,15 @@ where
 ///     повтор, и только если передобытый id ДРУГОЙ (образец — visitorData);
 ///  3) выбор progressive-транскодинга → GET transcoding.url → CDN-URL;
 ///  4) синтаксическая граница до пробы, затем проба размера.
+///
+/// timings — пофазовые отметки шагов ступени (sc_client_id, sc_api_v2,
+/// sc_transcoding, sc_m3u8, sc_probe). Копятся И НА ПРОВАЛЬНОМ ПУТИ: провал
+/// ступени 0 стоит времени ровно так же, как удача, и без его цены непонятно,
+/// почему клик с уходом на лестницу дороже обычного.
 async fn resolve_via_soundcloud_with<F, Fut, P, PFut>(
     state: &EngineState,
     canonical: &Url,
+    timings: &mut Timings,
     mut call: F,
     mut probe: P,
 ) -> Result<SoundcloudFormat, SoundcloudFail>
@@ -3532,11 +3605,19 @@ where
     let cached = sc_cached_client_id(state, SystemTime::now());
     let was_cached = cached.is_some();
     let mut client_id = match cached {
+        // Метки sc_client_id НЕТ, когда ключ взят из состояния, — и это сам по
+        // себе ответ на вопрос «сколько стоит client_id»: обычно нисколько
+        // (TTL 7 суток + персист), а видно это по отсутствию строки.
         Some(id) => id,
-        None => sc_scrape_client_id(state, &mut call).await?,
+        None => {
+            timings
+                .measure("sc_client_id", sc_scrape_client_id(state, &mut call))
+                .await?
+        }
     };
 
-    let (status, body) = call(sc_api_lookup_url(canonical, &client_id))
+    let (status, body) = timings
+        .measure("sc_api_v2", call(sc_api_lookup_url(canonical, &client_id)))
         .await
         .map_err(SoundcloudFail::Other)?;
     let track_body = match status {
@@ -3545,14 +3626,20 @@ where
         // id 401 не лечится повтором (передобыча вернёт его же).
         401 | 403 if was_cached => {
             sc_drop_client_id(state);
-            let fresh = sc_scrape_client_id(state, &mut call).await?;
+            // Повтор метится ТЕМИ ЖЕ метками, а не «_retry»: обе строки
+            // доезжают до журнала, и лечение протухшего ключа видно как
+            // удвоение шага — то есть как цена, а не как отдельный случай.
+            let fresh = timings
+                .measure("sc_client_id", sc_scrape_client_id(state, &mut call))
+                .await?;
             if fresh == client_id {
                 return Err(SoundcloudFail::Other(format!(
                     "api-v2: статус {status}, передобытый client_id тот же — повтор бессмыслен"
                 )));
             }
             client_id = fresh;
-            let (status2, body2) = call(sc_api_lookup_url(canonical, &client_id))
+            let (status2, body2) = timings
+                .measure("sc_api_v2", call(sc_api_lookup_url(canonical, &client_id)))
                 .await
                 .map_err(SoundcloudFail::Other)?;
             if status2 != 200 {
@@ -3570,7 +3657,10 @@ where
     let ext = picked.ext;
 
     let with_id = sc_with_client_id(&picked.url, &client_id).map_err(SoundcloudFail::Other)?;
-    let (status, body) = call(with_id).await.map_err(SoundcloudFail::Other)?;
+    let (status, body) = timings
+        .measure("sc_transcoding", call(with_id))
+        .await
+        .map_err(SoundcloudFail::Other)?;
     if status != 200 {
         return Err(SoundcloudFail::Other(format!("transcoding: статус {status}")));
     }
@@ -3590,10 +3680,20 @@ where
     // AAC HLS: по cdn_url лежит манифест, а не аудио — Range-проба размера
     // здесь бессмысленна, состав и объём собираются из сегментов (отчёт H).
     if picked.protocol == ScProtocol::HlsAac {
-        return sc_resolve_hls(&picked, &track, cdn_url, &mut call).await;
+        // Метка на ВЕСЬ разбор плейлиста, а не на голый GET внутри него:
+        // спрашивают «во что обошёлся HLS», а там одна сетевая ходка плюс
+        // разбор текста — дробить не на что, зато замер не лезет внутрь.
+        return timings
+            .measure("sc_m3u8", sc_resolve_hls(&picked, &track, cdn_url, &mut call))
+            .await;
     }
 
-    let size = probe(cdn_url.clone()).await.map_err(SoundcloudFail::Other)?;
+    // ⚠️ Проба размера (sc_http_probe) — лишний RTT перед закачкой, и её снятие
+    // обсуждается. Пока она просто ПОМЕЧЕНА: сначала цифра, потом решение.
+    let size = timings
+        .measure("sc_probe", probe(cdn_url.clone()))
+        .await
+        .map_err(SoundcloudFail::Other)?;
     Ok(SoundcloudFormat {
         url: cdn_url,
         size,
@@ -3777,8 +3877,10 @@ fn soundcloud_warm_entry(fmt: &SoundcloudFormat, now: SystemTime) -> Result<Warm
 async fn resolve_via_soundcloud(
     state: &EngineState,
     canonical: &Url,
+    timings: &mut Timings,
 ) -> Result<WarmEntry, SoundcloudFail> {
-    let fmt = resolve_via_soundcloud_with(state, canonical, sc_http_get, sc_http_probe).await?;
+    let fmt =
+        resolve_via_soundcloud_with(state, canonical, timings, sc_http_get, sc_http_probe).await?;
     // Видимость доли HLS в диагностике: раньше эта ветка была отказом ступени
     // («только AAC HLS — качаем запасной дорогой»), теперь — рабочий путь.
     if !fmt.segments.is_empty() {
@@ -3902,7 +4004,10 @@ pub async fn engine_warm(
     if let Some((source_id, canonical)) = stage0_soundcloud_ref(&sources) {
         let sc_key = format!("sc:{source_id}");
         if !stage0_recently_failed(&state, &sc_key, SystemTime::now()) {
-            match resolve_via_soundcloud(&state, &canonical).await {
+            // Отметки прогрева уходят в никуда НАМЕРЕННО: журнал стартов мерит
+            // «клик → звук», а прогрев случается до клика и в чужом окне
+            // времени — приписать его фазы какому-то старту было бы враньём.
+            match resolve_via_soundcloud(&state, &canonical, &mut Timings::default()).await {
                 Ok(entry) => {
                     stage0_note_success(&state, &sc_key);
                     store_warm_entry(&state, &cache_ns, &track_id, entry);
@@ -4068,7 +4173,7 @@ const STREAM_START_TIMEOUT: Duration = Duration::from_secs(8);
 /// playback на порядок; ожидание дольше значит закачка умерла).
 const STREAM_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct StreamStartOut {
     /// true — закачка идёт и первые килобайты уже на диске: фронт может
     /// отдавать <audio> stream-URL. false — стрим не нужен/недоступен
@@ -4076,6 +4181,22 @@ pub struct StreamStartOut {
     /// молча идёт обычным путём. Ошибок наружу нет НАМЕРЕННО: стрим —
     /// best-effort, любой провал обязан выглядеть как «играй как раньше».
     pub stream: bool,
+    /// Пофазовые отметки добычи (см. Timings). Отдаются И ПРИ stream:false —
+    /// именно этот случай самый дорогой: ступень 0 отработала, стрим не
+    /// завёлся, фронт пошёл лестницей. Без отметок эта работа невидима.
+    pub timings: Vec<(String, u32)>,
+}
+
+/// Отказ от стрима «фронт идёт как раньше», но с уже собранными отметками:
+/// выходов из engine_stream_start семь, и каждый обязан донести цену работы,
+/// сделанной ДО отказа. Раньше здесь лежало одно готовое значение
+/// `StreamStartOut { stream: false }` — с отметками так уже нельзя, они
+/// накапливаются по пути.
+fn stream_declined(timings: &mut Timings) -> Result<StreamStartOut, String> {
+    Ok(StreamStartOut {
+        stream: false,
+        timings: timings.take(),
+    })
 }
 
 /// Начать (или подхватить) стрим трека. Подтверждает готовность только когда
@@ -4101,7 +4222,7 @@ pub async fn engine_stream_start(
     validate_track_id(&track_id)?;
     let dir = cache_dir(&app, &cache_ns)?;
     let key = warm_key(&cache_ns, &track_id);
-    let no_stream = Ok(StreamStartOut { stream: false });
+    let mut timings = Timings::default();
 
     // уже стримится (повторный клик по треку) — подхватываем тот же канал
     let existing = state.streams.lock().unwrap().get(&key).cloned();
@@ -4109,7 +4230,7 @@ pub async fn engine_stream_start(
         handle
     } else {
         if find_cached(&dir, &track_id).is_some() {
-            return no_stream; // кэш-хит быстрее обычным путём
+            return stream_declined(&mut timings); // кэш-хит быстрее обычным путём
         }
         // Прогрет — метаданные уже есть. Нет — добываем их ступенью 0 прямо
         // здесь: она быстрая (~0.75с) и не требует yt-dlp, а дальше звук идёт
@@ -4117,9 +4238,16 @@ pub async fn engine_stream_start(
         // youtube) — молча no_stream: фронт уйдёт обычной лестницей, как
         // раньше. Единственная дисциплина стрима: он не имеет права сделать
         // трек неиграбельным.
+        let warm_started = Instant::now();
         let warm = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now());
         let entry = match warm {
-            Some(entry) => entry,
+            Some(entry) => {
+                // Метка по РЕЗУЛЬТАТУ, а не вокруг вызова (см. Timings::since):
+                // у промаха измерять нечего — работа впереди, а не позади, и
+                // она уже помечена своими метками ступени 0.
+                timings.since("warm_hit", warm_started);
+                entry
+            }
             // Ступень 0 SoundCloud (2026-07-19): ведущий SC-источник резолвится
             // прямым api-v2 (~1–2 с до звука вместо 5–6 с ожидания полной
             // закачки yt-dlp — владелец слушает в основном SC, жалоба 19.07),
@@ -4127,39 +4255,54 @@ pub async fn engine_stream_start(
             // гейтит; свой предохранитель — негативный кэш "sc:<source_id>".
             None if matches!(sources.first(), Some(SourceRef::Soundcloud { .. })) => {
                 let Some((source_id, canonical)) = stage0_soundcloud_ref(&sources) else {
-                    return no_stream; // кривой canonical_url — лестница
+                    return stream_declined(&mut timings); // кривой canonical_url — лестница
                 };
                 let sc_key = format!("sc:{source_id}");
                 if stage0_recently_failed(&state, &sc_key, SystemTime::now()) {
-                    return no_stream; // провал уже оплачен — лестница
+                    return stream_declined(&mut timings); // провал уже оплачен — лестница
                 }
-                match resolve_via_soundcloud(&state, &canonical).await {
+                // Своей метки у ступени нет НАРОЧНО: её шаги метит сама
+                // resolve_via_soundcloud, а «итого» фронт сложит сам — общая
+                // метка поверх слагаемых только сбивала бы с толку.
+                // Результат — в переменную до match (см. ⚠️ в engine_resolve).
+                let resolved = resolve_via_soundcloud(&state, &canonical, &mut timings).await;
+                match resolved {
                     Ok(entry) => {
                         stage0_note_success(&state, &sc_key);
                         entry
                     }
                     Err(e) => {
                         stage0_note_sc_fail(&state, &sc_key, &e, SystemTime::now());
-                        return no_stream;
+                        return stream_declined(&mut timings);
                     }
                 }
             }
             None => {
                 let cfg = innertube_from_recipe(&state.recipe.lock().unwrap());
                 let (Some(cfg), Some(video_id)) = (cfg, stage0_youtube_id(&sources)) else {
-                    return no_stream;
+                    return stream_declined(&mut timings);
                 };
                 let now = SystemTime::now();
                 if stage0_recently_failed(&state, &video_id, now) || stage0_in_cooldown(&state, now)
                 {
-                    return no_stream; // провал уже оплачен / бот-гейт лежит — лестница
+                    // провал уже оплачен / бот-гейт лежит — лестница
+                    return stream_declined(&mut timings);
                 }
                 let itags = if quality.as_deref() == Some("econom") {
                     INNERTUBE_ITAGS_ECONOM
                 } else {
                     INNERTUBE_ITAGS_DEFAULT
                 };
-                match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                // Ступень 0 YouTube — один POST /player, дробить внутри нечего:
+                // метка на весь вызов и есть его цена. Результат — в переменную
+                // до match (см. ⚠️ в engine_resolve).
+                let resolved = timings
+                    .measure(
+                        "yt_innertube",
+                        resolve_via_innertube(&state, &cfg, &video_id, itags),
+                    )
+                    .await;
+                match resolved {
                     Ok(entry) => {
                         stage0_note_success(&state, &video_id);
                         stage0_breaker_note_success(&state);
@@ -4169,7 +4312,7 @@ pub async fn engine_stream_start(
                         classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
                         stage0_note_fail(&state, &video_id, SystemTime::now());
                         stage0_breaker_note_fail(&state, &fail, SystemTime::now());
-                        return no_stream;
+                        return stream_declined(&mut timings);
                     }
                 }
             }
@@ -4201,7 +4344,7 @@ pub async fn engine_stream_start(
                 SystemTime::now(),
                 "аудио пришло в MP4 (m4a) — играем после полной закачки (стрим для него не работает)",
             );
-            return no_stream;
+            return stream_declined(&mut timings);
         }
         let part = dir.join(format!("{track_id}.{}.part", entry.ext));
         let final_path = dir.join(format!("{track_id}.{}", entry.ext));
@@ -4280,13 +4423,20 @@ pub async fn engine_stream_start(
     };
 
     // добро фронту — только с первыми килобайтами на диске
-    match tokio::time::timeout(
-        STREAM_START_TIMEOUT,
-        stream_wait_first_chunk(handle.progress.clone()),
-    )
-    .await
-    {
-        Ok(true) => Ok(StreamStartOut { stream: true }),
+    let confirmed = timings
+        .measure(
+            "first_chunk_wait",
+            tokio::time::timeout(
+                STREAM_START_TIMEOUT,
+                stream_wait_first_chunk(handle.progress.clone()),
+            ),
+        )
+        .await;
+    match confirmed {
+        Ok(true) => Ok(StreamStartOut {
+            stream: true,
+            timings: timings.take(),
+        }),
         _ => {
             // Первый чанк не подтвердился (таймаут или провал): сносим
             // НЕподтверждённую закачку, иначе она жила бы до RESOLVE_TIMEOUT
@@ -4311,7 +4461,7 @@ pub async fn engine_stream_start(
                     STREAM_START_TIMEOUT.as_secs()
                 ),
             );
-            no_stream
+            stream_declined(&mut timings)
         }
     }
 }
@@ -4586,6 +4736,7 @@ pub async fn engine_resolve(
     // id каталога числовой; заодно это защита имени файла кэша
     validate_track_id(&track_id)?;
     let dir = cache_dir(&app, &cache_ns)?;
+    let mut timings = Timings::default();
 
     // Single-flight: параллельный резолв того же трека (play + преднагрузка)
     // ждёт первый, а не запускает второй yt-dlp
@@ -4607,6 +4758,8 @@ pub async fn engine_resolve(
             path: path.to_string_lossy().into_owned(),
             from_cache: true,
             provider: None,
+            // добывать не пришлось — мерить нечего, и пустой список это и значит
+            timings: timings.take(),
         });
     }
 
@@ -4637,6 +4790,9 @@ pub async fn engine_resolve(
                 path: path.to_string_lossy().into_owned(),
                 from_cache: true,
                 provider: None,
+                // байты добыл стрим, и его фазы уже уехали ответом
+                // engine_stream_start того же клика — не дублируем
+                timings: timings.take(),
             });
         }
     }
@@ -4646,8 +4802,18 @@ pub async fn engine_resolve(
     // (URL протух, CDN отказал, размер не сошёлся) — запись уже выброшена
     // самим take, молча падаем на обычную лестницу ниже: прогрев не имеет
     // права сделать трек неиграбельным.
+    let warm_started = Instant::now();
     if let Some(entry) = take_live_warm_entry(&state, &cache_ns, &track_id, SystemTime::now()) {
-        if let Ok(path) = fetch_to_cache(&dir, &track_id, &entry).await {
+        // Метка по РЕЗУЛЬТАТУ (см. Timings::since): у промаха измерять нечего.
+        timings.since("warm_hit", warm_started);
+        // ⚠️ САМАЯ ДОРОГАЯ ФАЗА — ИМЕННО ЭТА. `warm_hit` меряет взятие записи из
+        // HashMap (~0 мс), а секунды, из-за которых «заметная пауза до звука»,
+        // лежат в GET файла целиком: ~1.2 с по замерам, а у SC AAC HLS это ещё и
+        // последовательная сборка сегментов. Без метки сумма фаз объясняла ~0 %
+        // от urlMs, и строка `warm_hit=0` рядом с `urlMs=1200` читалась как «шаг
+        // бесплатен». let-перед-if — тот же заём timings, что и ниже в match.
+        let fetched = timings.measure("fetch", fetch_to_cache(&dir, &track_id, &entry)).await;
+        if let Ok(path) = fetched {
             let limit = *state.cache_limit_bytes.lock().unwrap();
             ensure_pins_loaded(&app, &state, &cache_ns);
             let pins = state.pins.lock().unwrap().clone();
@@ -4657,6 +4823,7 @@ pub async fn engine_resolve(
                 path: path.to_string_lossy().into_owned(),
                 from_cache: false,
                 provider: Some(entry.provider),
+                timings: timings.take(),
             });
         }
     }
@@ -4670,10 +4837,16 @@ pub async fn engine_resolve(
     if let Some((source_id, canonical)) = stage0_soundcloud_ref(&sources) {
         let sc_key = format!("sc:{source_id}");
         if !stage0_recently_failed(&state, &sc_key, SystemTime::now()) {
-            match resolve_via_soundcloud(&state, &canonical).await {
+            // см. ⚠️ ниже про let-перед-match: заём timings обязан кончиться
+            // до веток, иначе в них не собрать отметки в ответ
+            let resolved = resolve_via_soundcloud(&state, &canonical, &mut timings).await;
+            match resolved {
                 Ok(entry) => {
                     stage0_note_success(&state, &sc_key);
-                    match fetch_to_cache(&dir, &track_id, &entry).await {
+                    // см. warm-путь выше: `fetch` — доминирующая фаза, и заём
+                    // timings обязан кончиться до веток match
+                    let fetched = timings.measure("fetch", fetch_to_cache(&dir, &track_id, &entry)).await;
+                    match fetched {
                         Ok(path) => {
                             let limit = *state.cache_limit_bytes.lock().unwrap();
                             ensure_pins_loaded(&app, &state, &cache_ns);
@@ -4684,6 +4857,7 @@ pub async fn engine_resolve(
                                 path: path.to_string_lossy().into_owned(),
                                 from_cache: false,
                                 provider: Some(entry.provider),
+                                timings: timings.take(),
                             });
                         }
                         // байты не доехали (URL протух/CDN отказал) — лестница;
@@ -4718,11 +4892,25 @@ pub async fn engine_resolve(
                 } else {
                     INNERTUBE_ITAGS_DEFAULT
                 };
-                match resolve_via_innertube(&state, &cfg, &video_id, itags).await {
+                // ⚠️ Результат СНАЧАЛА в переменную, и только потом в match:
+                // future из measure держит `&mut timings`, а временное значение
+                // в СКРУТИНИИ живёт до конца всего match — внутри веток
+                // timings.take() тогда не собрать. В let-выражении заём
+                // кончается на точке с запятой.
+                let resolved = timings
+                    .measure(
+                        "yt_innertube",
+                        resolve_via_innertube(&state, &cfg, &video_id, itags),
+                    )
+                    .await;
+                match resolved {
                     Ok(entry) => {
                         stage0_note_success(&state, &video_id);
                         stage0_breaker_note_success(&state);
-                        match fetch_to_cache(&dir, &track_id, &entry).await {
+                        // см. warm-путь выше: `fetch` — доминирующая фаза
+                        let fetched =
+                            timings.measure("fetch", fetch_to_cache(&dir, &track_id, &entry)).await;
+                        match fetched {
                             Ok(path) => {
                                 let limit = *state.cache_limit_bytes.lock().unwrap();
                                 ensure_pins_loaded(&app, &state, &cache_ns);
@@ -4733,6 +4921,7 @@ pub async fn engine_resolve(
                                     path: path.to_string_lossy().into_owned(),
                                     from_cache: false,
                                     provider: Some(entry.provider),
+                                    timings: timings.take(),
                                 });
                             }
                             // байты не доехали (протухло/смена IP → 403) —
@@ -4775,6 +4964,11 @@ pub async fn engine_resolve(
     let mut last_error = String::new();
     // Общий дедлайн лестницы (аудит 2026-08-02): потолок был только у одной
     // попытки, поэтому четыре ступени складывались в минуты молчания.
+    //
+    // Он же и ЗАМЕР метки ladder: заводить второй Instant рядом с этим значило
+    // бы держать два таймера об одном и том же — а меряют они буквально одно,
+    // «сколько шла лестница целиком». Метка ставится только на удаче: на
+    // провале ответ уходит через Err, где отметкам места нет.
     let ladder_started = Instant::now();
     for attempt in attempts {
         let Some(left) = ladder_remaining(ladder_started, RESOLVE_LADDER_BUDGET) else {
@@ -4809,6 +5003,7 @@ pub async fn engine_resolve(
 
         match result {
             Ok(path) => {
+                timings.since("ladder", ladder_started);
                 let limit = *state.cache_limit_bytes.lock().unwrap();
                 ensure_pins_loaded(&app, &state, &cache_ns);
                 let pins = state.pins.lock().unwrap().clone();
@@ -4818,6 +5013,7 @@ pub async fn engine_resolve(
                     path: path.to_string_lossy().into_owned(),
                     from_cache: false,
                     provider: Some(attempt_provider),
+                    timings: timings.take(),
                 });
             }
             Err(e) => {
@@ -8193,14 +8389,34 @@ mod soundcloud_tests {
         Vec<String>,
         Vec<String>,
     ) {
+        let (result, calls, probes, _timings) =
+            run_sc_timed(state, canonical, responses, probe_response);
+        (result, calls, probes)
+    }
+
+    /// То же, но с отметками фаз: их смотрят только замерные тесты, остальным
+    /// они шум — поэтому run_sc их отбрасывает.
+    fn run_sc_timed(
+        state: &EngineState,
+        canonical: &str,
+        responses: Vec<Result<(u16, String), String>>,
+        probe_response: Result<u64, String>,
+    ) -> (
+        Result<SoundcloudFormat, SoundcloudFail>,
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, u32)>,
+    ) {
         let canonical = sc_canonical(canonical);
         let calls: Mutex<Vec<String>> = Mutex::new(Vec::new());
         let probes: Mutex<Vec<String>> = Mutex::new(Vec::new());
         let queue: Mutex<VecDeque<Result<(u16, String), String>>> =
             Mutex::new(VecDeque::from(responses));
+        let mut timings = Timings::default();
         let result = tauri::async_runtime::block_on(resolve_via_soundcloud_with(
             state,
             &canonical,
+            &mut timings,
             |url| {
                 calls.lock().unwrap().push(url);
                 let resp = queue
@@ -8220,6 +8436,7 @@ mod soundcloud_tests {
             result,
             calls.into_inner().unwrap(),
             probes.into_inner().unwrap(),
+            timings.take(),
         )
     }
 
@@ -8510,6 +8727,93 @@ mod soundcloud_tests {
 
     // ── Оркестрация (инъекция транспорта) ──────────────────────────
 
+    // ── Пофазовые отметки ступени 0 ────────────────────────────────
+
+    /// Обычный SC-путь размечен пофазово, и метки идут В ПОРЯДКЕ шагов.
+    /// Это и есть смысл замера: одна цифра urlMs не отвечала на вопрос,
+    /// который из четырёх сетевых шагов длинный.
+    ///
+    /// sc_client_id тут НЕТ намеренно: ключ взят из состояния — шага не было.
+    #[test]
+    fn sc_timings_label_each_network_step() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, _calls, _probes, timings) = run_sc_timed(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, sc_track_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+            ],
+            Ok(4_567_890),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        let labels: Vec<&str> = timings.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(labels, vec!["sc_api_v2", "sc_transcoding", "sc_probe"]);
+    }
+
+    /// Холодный старт: ключа в состоянии нет — появляется sc_client_id, и
+    /// именно он объясняет, почему первый SC-трек после запуска дороже.
+    #[test]
+    fn sc_timings_add_client_id_when_scraped() {
+        let state = EngineState::default();
+        let (result, _calls, _probes, timings) = run_sc_timed(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, SC_HOME_HTML.to_string())),
+                Ok((200, sc_bundle_with_id(SYNTH_CLIENT_ID))),
+                Ok((200, sc_track_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+            ],
+            Ok(4_567_890),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        let labels: Vec<&str> = timings.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["sc_client_id", "sc_api_v2", "sc_transcoding", "sc_probe"]
+        );
+    }
+
+    /// AAC HLS — своя метка вместо пробы: по cdn_url лежит манифест, а не
+    /// аудио, и Range-проба туда не ходит (см. sc_resolve_hls).
+    #[test]
+    fn sc_timings_mark_m3u8_instead_of_probe_on_hls() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, _calls, _probes, timings) = run_sc_timed(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![
+                Ok((200, sc_no_progressive_fixture())),
+                Ok((200, sc_transcoding_fixture())),
+                Ok((200, sc_hls_playlist_fixture().to_string())),
+            ],
+            Ok(0),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        let labels: Vec<&str> = timings.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(labels, vec!["sc_api_v2", "sc_transcoding", "sc_m3u8"]);
+    }
+
+    /// Провал ступени НЕ стирает уже собранные отметки: клик, ушедший на
+    /// лестницу, дороже обычного ровно на эту работу — и её обязано быть видно.
+    #[test]
+    fn sc_timings_survive_failed_stage() {
+        let state = EngineState::default();
+        sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
+        let (result, _calls, _probes, timings) = run_sc_timed(
+            &state,
+            "https://soundcloud.com/artist-a/track-b",
+            vec![Ok((200, sc_track_fixture())), Ok((500, String::new()))],
+            Ok(4_567_890),
+        );
+        assert!(result.is_err(), "transcoding 500 — провал ступени");
+        let labels: Vec<&str> = timings.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(labels, vec!["sc_api_v2", "sc_transcoding"]);
+    }
+
     /// Обычный путь: client_id уже в состоянии — resolve → transcoding →
     /// Range-проба; размер — из пробы (transcodings contentLength не отдают).
     #[test]
@@ -8670,13 +8974,16 @@ mod soundcloud_tests {
     fn live_soundcloud_hls_smoke() {
         let state = EngineState::default();
         let canonical = sc_canonical("https://soundcloud.com/not-rozshow/yara-yara-fonk-aura-farming");
+        let mut timings = Timings::default();
         let fmt = tauri::async_runtime::block_on(resolve_via_soundcloud_with(
             &state,
             &canonical,
+            &mut timings,
             sc_http_get,
             sc_http_probe,
         ))
         .expect("живой SC обязан резолвиться");
+        println!("фазы: {:?}", timings.take());
         println!(
             "путь: {}, ext={}, оценка размера={} Б, кусков={}",
             if fmt.segments.is_empty() { "progressive" } else { "AAC HLS" },
@@ -8908,14 +9215,16 @@ mod soundcloud_tests {
         let canonical = sc_canonical("https://soundcloud.com/forss/flickermood");
 
         let started = std::time::Instant::now();
+        let mut timings = Timings::default();
         let entry =
-            tauri::async_runtime::block_on(resolve_via_soundcloud(&state, &canonical))
+            tauri::async_runtime::block_on(resolve_via_soundcloud(&state, &canonical, &mut timings))
                 .expect("прямой SC-резолв обязан пройти");
         println!(
-            "резолв: {} мс, ext {}, size {}",
+            "резолв: {} мс, ext {}, size {}, фазы {:?}",
             started.elapsed().as_millis(),
             entry.ext,
-            entry.size
+            entry.size,
+            timings.take()
         );
 
         let started = std::time::Instant::now();
@@ -8931,5 +9240,94 @@ mod soundcloud_tests {
         assert_eq!(size, entry.size, "скачали ровно столько, сколько заявлено");
         assert!(size > 500_000, "полноразмерное аудио");
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod timings_tests {
+    use super::*;
+
+    /// ФОРМА СЕРИАЛИЗАЦИИ — договор с фронтом. Кортеж (String, u32) serde
+    /// отдаёт МАССИВОМ из двух элементов, и это ровно то, что разбирает
+    /// normalizeTimings (src/lib/startLog.ts): [["метка", мс], …].
+    /// Тест держит именно форму: смени тип поля на структуру — и приёмник
+    /// молча начнёт отбрасывать все отметки, потому что телеметрии запрещено
+    /// ронять плеер, а значит и жаловаться она не станет.
+    #[test]
+    fn timings_serialize_as_pairs_of_label_and_ms() {
+        let out = ResolveOut {
+            path: "C:/cache/42.webm".into(),
+            from_cache: false,
+            provider: Some("soundcloud".into()),
+            timings: vec![("sc_api_v2".into(), 340), ("sc_probe".into(), 21)],
+        };
+        let json: serde_json::Value = serde_json::to_value(&out).unwrap();
+        assert_eq!(
+            json["timings"],
+            serde_json::json!([["sc_api_v2", 340], ["sc_probe", 21]])
+        );
+    }
+
+    /// Пустой список — законный ответ (кэш-хит: добывать не пришлось), и он
+    /// обязан ехать как [], а не как null/отсутствующее поле: normalizeTimings
+    /// вернёт undefined, запись останется без фаз, разбор не сломается.
+    #[test]
+    fn empty_timings_serialize_as_empty_array() {
+        let resolve = ResolveOut {
+            path: "C:/cache/42.webm".into(),
+            from_cache: true,
+            provider: None,
+            timings: Vec::new(),
+        };
+        let stream = StreamStartOut {
+            stream: false,
+            timings: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_value(&resolve).unwrap()["timings"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            serde_json::to_value(&stream).unwrap(),
+            serde_json::json!({ "stream": false, "timings": [] })
+        );
+    }
+
+    /// measure метит ИЗМЕРЕННЫЙ БЛОК и сохраняет порядок шагов; значение —
+    /// длительность блока, а не момент времени (задержка видна в метке).
+    #[test]
+    fn measure_records_blocks_in_order_with_their_own_duration() {
+        let mut t = Timings::default();
+        let out = tauri::async_runtime::block_on(async {
+            t.measure("first", async {
+                std::thread::sleep(Duration::from_millis(12));
+                7u32
+            })
+            .await;
+            t.measure("second", async { "готово" }).await
+        });
+        assert_eq!(out, "готово");
+        let marks = t.take();
+        assert_eq!(
+            marks.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert!(marks[0].1 >= 10, "длительность блока, а не ноль: {marks:?}");
+        assert!(
+            marks[1].1 < marks[0].1,
+            "второй блок мерится ОТДЕЛЬНО, а не от начала: {marks:?}"
+        );
+        assert!(t.take().is_empty(), "take опустошает: отметка не уедет дважды");
+    }
+
+    /// Потолок отметок: цикл с ошибкой на стороне добычи не имеет права
+    /// раздуть журнал стартов (тот же предел, что у приёмника).
+    #[test]
+    fn timings_are_capped() {
+        let mut t = Timings::default();
+        for _ in 0..(TIMINGS_MAX + 10) {
+            t.since("sc_api_v2", Instant::now());
+        }
+        assert_eq!(t.take().len(), TIMINGS_MAX);
     }
 }

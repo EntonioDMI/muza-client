@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { AdminDayPoint } from "@muza/api-client";
 import { barGeometry, linePath, niceMax, xTickIndexes } from "../lib/adminChartMath";
+import { useT } from "../i18n";
 
 /** SVG-график дневной серии (админка). Свой рендер на токенах ДС — без
  *  чарт-библиотек (конвенция проекта). 2026-07-21 (жалоба владельца «навожусь
@@ -75,6 +76,7 @@ export function SeriesChart({
   color?: string;
   ariaLabel: string;
 }) {
+  const { t } = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [boxW, setBoxW] = useState(0);
@@ -89,8 +91,14 @@ export function SeriesChart({
     return () => ro.disconnect();
   }, []);
 
+  // ПУСТАЯ СЕРИЯ ГОВОРИТ СЛОВАМИ. Здесь стояло одинокое «—» — на месте графика
+  // это читается как «что-то не отрисовалось», а не «за это окно данных нет».
   if (points.length === 0) {
-    return <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", padding: "var(--sp-2) 0" }}>—</div>;
+    return (
+      <div style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", padding: "var(--sp-4) 0" }}>
+        {t("views.admin.empty.chart")}
+      </div>
+    );
   }
   const W = boxW || W_FALLBACK;
   const counts = points.map((p) => p.count);

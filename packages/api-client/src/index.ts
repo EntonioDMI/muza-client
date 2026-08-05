@@ -24,7 +24,7 @@ import type {
   Lyrics,
   MarketTheme,
   MarketPlugin,
-  AdminPublicPlaylist,
+  AdminPublicPlaylists,
   PlaylistDetail,
   PlaylistMeta,
   PlaylistVisibility,
@@ -213,7 +213,10 @@ export interface MuzaApi {
   updateRecsSettings(input: { epsilon?: number | null; tauScale?: number | null }): Promise<RecsSettings>;
 
   // Маркетплейс тем (Stage 6). Публикация rate-limit 5/час, payload ≤ 16КБ.
-  getMarketThemes(): Promise<MarketTheme[]>;
+  /** `limit` — сколько тем отдать (сервер клампит 1..100, дефолт 50). Без
+   *  параметра поведение прежнее; витрина упирается в потолок молча, поэтому
+   *  просить больше — единственный способ показать больше 50 тем. */
+  getMarketThemes(opts?: { limit?: number }): Promise<MarketTheme[]>;
   /** Опубликовать тему; своё имя = обновление записи. */
   publishMarketTheme(name: string, payload: Record<string, unknown>): Promise<MarketTheme>;
   /** Установка: инкремент счётчика + полный payload темы. */
@@ -283,8 +286,12 @@ export interface MuzaApi {
   /** Состав плейлиста SoundCloud (2026-07-20): треки уже в каталоге, играют
    *  как обычные; id — с префиксом sc: из выдачи или голый числовой. */
   getSoundcloudPlaylist(id: string): Promise<SoundcloudPlaylist>;
-  /** Админ-рубильник: обзор публичных + снятие с публикации (ban — навсегда). */
-  getAdminPublicPlaylists(): Promise<AdminPublicPlaylist[]>;
+  /** Админ-рубильник: обзор публичных + снятие с публикации (ban — навсегда).
+   *  ⚠️ Возврат сменился с голого массива на страницу (05.08): без `total`
+   *  подпись «показаны N из M» была невозможна. Вызов БЕЗ opts сервер трактует
+   *  как «отдай всё» (до 500) — старое поведение; страницу включает limit или
+   *  offset. Сервер клампит limit в 1..100. */
+  getAdminPublicPlaylists(opts?: { limit?: number; offset?: number }): Promise<AdminPublicPlaylists>;
   unpublishAdminPlaylist(playlistId: string, ban?: boolean): Promise<void>;
 
   // Jam — слушать вместе (Stage 7). Хост управляет, гости следуют и
@@ -324,15 +331,23 @@ export interface MuzaApi {
   /** true — текущий пользователь админ (по нему клиент показывает «Админку»). */
   adminPing(): Promise<boolean>;
   getAdminOverview(): Promise<AdminOverview>;
-  getAdminContent(): Promise<AdminContent>;
+  /** `days` — окно топов (дефолт 14), `limit` — длина каждого из трёх списков
+   *  (дефолт 20). Без opts — ровно прежнее поведение. */
+  getAdminContent(opts?: { days?: number; limit?: number }): Promise<AdminContent>;
   getAdminHealth(hours?: number): Promise<AdminHealth>;
   getAdminUsers(opts?: { limit?: number; offset?: number; q?: string }): Promise<AdminUsers>;
   /** Выдать/снять админку (2026-07-21, разворот решения 11.07): рубеж — сервер. */
   setAdminUser(id: string, isAdmin: boolean): Promise<void>;
   /** Кусок C: метрики роста (регистрации/посещения/скачивания по дням). */
   getAdminGrowth(days?: number): Promise<AdminGrowth>;
-  /** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры kind/версия. */
-  getAdminErrors(opts?: { days?: number; kind?: string; appVersion?: string }): Promise<AdminErrors>;
+  /** Кусок C: ошибки клиентов — серия, топ по stackHash, фильтры kind/версия.
+   *  `limit` — длина топа (дефолт 20, сервер клампит 1..100). */
+  getAdminErrors(opts?: {
+    days?: number;
+    kind?: string;
+    appVersion?: string;
+    limit?: number;
+  }): Promise<AdminErrors>;
   /** Очистка ошибок под текущими фильтрами (без фильтров = все). Возврат — сколько удалено. */
   clearAdminErrors(opts?: { kind?: string; appVersion?: string }): Promise<{ deleted: number }>;
   /** Удаление одной группы ошибок по stackHash. */

@@ -297,6 +297,22 @@ export interface AdminPublicPlaylist {
   publishedAt: string | null;
 }
 
+/** Страница публичных плейлистов (05.08). Раньше метод отдавал голый массив —
+ *  сервер присылал ВСЕ публикации разом, и подпись «показаны N из M» взять
+ *  было неоткуда: N и M совпадали всегда. Теперь режет сервер, `total` — по
+ *  всей выборке, а не по странице.
+ *
+ *  ⚠️ `null` ЗНАЧИТ «СЕРВЕР НЕ ЛИСТАЛ», а не «нисколько». Сервер ≤0.1.5 про
+ *  страницы не знает и отдаёт всё разом; подменять его молчание длиной списка
+ *  нельзя — экран нарисует листалку, которая никуда не листает. */
+export interface AdminPublicPlaylists {
+  total: number | null;
+  /** Сколько строк сервер согласился отдать (после кламра 1..100). */
+  limit: number | null;
+  offset: number | null;
+  items: AdminPublicPlaylist[];
+}
+
 export const HistoryItemSchema = z.object({
   track: TrackSchema,
   playedAt: z.string(),
@@ -562,6 +578,14 @@ export interface AdminOverview {
 }
 
 export interface AdminContent {
+  /** Окно топов в днях — ЭХО СЕРВЕРА (он клампит 1..365). `null` = не прислал. */
+  days: number | null;
+  /** Длина каждого из трёх списков — эхо сервера. `null` = не прислал. */
+  limit: number | null;
+  /** Сколько строк было бы БЕЗ потолка — знаменатель для «показаны 20 из N».
+   *  topTracks/topArtists — за окно `days`; recentTracks — весь каталог.
+   *  `null` = сервер этого не считает (≤0.1.5), и знаменателя просто нет. */
+  totals: { topTracks: number | null; topArtists: number | null; recentTracks: number | null };
   topTracks: { track: Track; plays: number }[];
   topArtists: { artist: string; plays: number }[];
   recentTracks: Track[];
@@ -632,7 +656,14 @@ export interface AdminGrowth {
  *  message уже проскраблен сервером; стеков нет — только хэш группировки. */
 export interface AdminErrors {
   days: number;
+  /** Длина топа — эхо сервера (он клампит 1..100). `null` = не прислал. */
+  limit: number | null;
+  /** count/distinct — за окно БЕЗ фильтров (как byKind/byApp). */
   totals: { count: number; distinct: number };
+  /** Сколько групп в окне ПОД текущими фильтрами — знаменатель для подписи
+   *  «показаны 20 из N». Именно он, а не totals.distinct: тот без фильтров.
+   *  `null` = сервер этого не считает (≤0.1.5). */
+  topTotal: number | null;
   series: AdminDayPoint[];
   top: {
     stackHash: string;

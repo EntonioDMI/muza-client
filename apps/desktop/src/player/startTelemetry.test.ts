@@ -133,9 +133,9 @@ describe("startTelemetry", () => {
 describe("startTelemetry: отметки добычи", () => {
   it("принимает пары, объекты и словарь, накапливая их", () => {
     beginStart("t1", "Первый", "manual");
-    markTimings([["sc_client_id", 12]]);
-    markTimings({ sc_api_v2: 340 });
-    markTimings([{ label: "first_chunk_wait", ms: 90 }]);
+    markTimings("t1", [["sc_client_id", 12]]);
+    markTimings("t1", { sc_api_v2: 340 });
+    markTimings("t1", [{ label: "first_chunk_wait", ms: 90 }]);
     expect(getStartLog()[0].timings).toEqual([
       ["sc_client_id", 12],
       ["sc_api_v2", 340],
@@ -145,9 +145,34 @@ describe("startTelemetry: отметки добычи", () => {
 
   it("мусор из добычи не роняет запись", () => {
     beginStart("t1", "Первый", "manual");
-    markTimings("ерунда");
-    markTimings([["ok", 5], ["без числа", "нет"], null, 42]);
+    markTimings("t1", "ерунда");
+    markTimings("t1", [["ok", 5], ["без числа", "нет"], null, 42]);
     expect(getStartLog()[0].timings).toEqual([["ok", 5]]);
+  });
+
+  it("отметки ЧУЖОГО трека в текущий старт не пишутся", () => {
+    // ⚠️ СТОРОЖ 06.08. Добыча зовётся не только из старта: преднагрузка соседа
+    // идёт за 20 с до конца текущего трека, а эмбиент «Итогов года» — вообще
+    // мимо. Без сверки трека фазы соседа дописывались в запись играющего: сумма
+    // фаз переставала отвечать его urlMs, а класс прогона выводился по чужому
+    // провайдеру. Тот же гвард закрывает перебитый клик.
+    beginStart("t1", "Первый", "manual");
+    markTimings("t1", [["sc_api_v2", 340]]);
+    markTimings("t77", [["yt_innertube", 700]]); // резолв преднагруженного соседа
+    expect(getStartLog()[0].timings).toEqual([["sc_api_v2", 340]]);
+  });
+
+  it("потолок держится и на накоплении: за старт вызовов несколько", () => {
+    // Rust режет 32 на ОДИН ответ, а за старт их приходит минимум два
+    // (stream_start + resolve) — без среза здесь в памяти копилось больше, чем
+    // переживало перезапуск, и запись после чтения с диска молча менялась.
+    beginStart("t1", "Первый", "manual");
+    for (let i = 0; i < 3; i++) {
+      markTimings("t1", Array.from({ length: 20 }, (_, k) => [`m${i}_${k}`, k] as [string, number]));
+    }
+    expect(getStartLog()[0].timings?.length).toBe(32);
+    // срез с КОНЦА: последние отметки важнее первых — они ближе к звуку
+    expect(getStartLog()[0].timings?.[31]).toEqual(["m2_19", 19]);
   });
 
   it("класс выводится из отметок добычи, если его не назвали", () => {
@@ -162,7 +187,7 @@ describe("startTelemetry: отметки добычи", () => {
   it("явный markClass побеждает вывод по отметкам", () => {
     beginStart("t1", "Первый", "manual"); // первый в запуске — он холодный
     beginStart("t2", "Второй", "manual");
-    markTimings({ sc_api_v2: 100 });
+    markTimings("t2", { sc_api_v2: 100 });
     markClass("local");
     expect(startClass(getStartLog()[0])).toBe("local");
     // приставка холодного старта остаётся и поверх явного класса

@@ -9,13 +9,19 @@
  *  Стенд: plain-режим (CORS-проба падает → граф Web Audio не строится) —
  *  jsdom без AudioContext; play/pause/load стабятся на прототипе. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AudioEngine } from "./audioEngine";
+import { AudioEngine, noteUserGesture, resetPrewarmForTests } from "./audioEngine";
 
 const playSpy = vi.spyOn(HTMLMediaElement.prototype, "play");
 const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, "pause");
 const loadSpy = vi.spyOn(HTMLMediaElement.prototype, "load");
 
 let onError: ReturnType<typeof vi.fn<(message: string) => void>>;
+/** Сколько AudioContext создано за тест и сколько раз собиралась цепь узлов
+ *  (анализатор в ней один — по нему и считаем). MockAudioContext инкрементит
+ *  сам. Смысл предгрева — построить граф ОДИН раз и ЗАРАНЕЕ; счётчики ловят
+ *  оба края: и второй контекст, и тихую пересборку узлов. */
+let ctxCount = 0;
+let chainCount = 0;
 
 const makeEngine = () => {
   onError = vi.fn<(message: string) => void>();
@@ -23,6 +29,11 @@ const makeEngine = () => {
 };
 
 beforeEach(() => {
+  // Предгрев держит МОДУЛЬНОЕ состояние (жест был / припаркованный контекст /
+  // последний созданный движок) — без сброса тесты подтекали бы друг в друга.
+  resetPrewarmForTests();
+  ctxCount = 0;
+  chainCount = 0;
   // CORS-проба ensureGraph падает → plain-режим (jsdom не умеет AudioContext)
   vi.stubGlobal(
     "fetch",
@@ -130,6 +141,9 @@ class MockAudioContext {
   destination = {};
   currentTime = 0;
   state = "running";
+  constructor() {
+    ctxCount++;
+  }
   createBiquadFilter() {
     return new MockBiquadNode() as unknown as BiquadFilterNode;
   }
@@ -149,9 +163,18 @@ class MockAudioContext {
     return new MockCompressorNode() as unknown as DynamicsCompressorNode;
   }
   createAnalyser() {
+    chainCount++; // анализатор в цепи один — считает пересборки всей цепи
     return new MockAnalyserNode() as unknown as AnalyserNode;
   }
-  resume = vi.fn(async () => {});
+  resume = vi.fn(async () => {
+    this.state = "running";
+  });
+  suspend = vi.fn(async () => {
+    this.state = "suspended";
+  });
+  close = vi.fn(async () => {
+    this.state = "closed";
+  });
 }
 
 /** Приватные поля AudioEngine, нужные только тестам (см. шапку выше). */
@@ -159,7 +182,9 @@ interface EngineInternals {
   taps: { deviceId: string; ok: boolean; el: HTMLAudioElement; gain: { gain: { value: number } } }[];
   master: { gain: { value: number } } | null;
   micTaps: Set<unknown>;
+  micStream: MediaStream | null;
   tapWork: Promise<void>;
+  ctx: MockAudioContext | null;
 }
 const peek = (e: AudioEngine): EngineInternals => e as unknown as EngineInternals;
 /** Дождаться конца текущей реконсиляции тапов (setSinkId/play/reconcileMic —
@@ -346,6 +371,45 @@ describe("AudioEngine: маршрутизация на устройства (т�
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("AEC/NS/AGC"), expect.anything());
       warnSpy.mockRestore();
     });
+
+    it("граф снесён, пока висел системный запрос микрофона → поток гасится, а не течёт", async () => {
+      // ⚠️ СТОРОЖ ПРОТИВ УТЕЧКИ 06.08. Системный диалог «разрешить микрофон»
+      // висит СЕКУНДАМИ, и за это окно граф может умереть (проба сказала
+      // «plain»). discardGraph() зовёт stopMic(), но micStream ещё null —
+      // гасить нечего; прилетевший следом поток записывался в поле мёртвого
+      // движка, и индикатор микрофона ОС горел до конца сессии. Снаружи не
+      // лечилось: setOutputs([]) выходит по !this.ctx.
+      const track = micTrack();
+      const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+      let release!: () => void;
+      const pending = new Promise<void>((r) => {
+        release = r;
+      });
+      let entered!: () => void;
+      const asked = new Promise<void>((r) => {
+        entered = r;
+      });
+      const getUserMedia = vi.fn(async () => {
+        entered();
+        await pending; // запрос «висит», как настоящий системный диалог
+        return stream as unknown as MediaStream;
+      });
+      (navigator as unknown as { mediaDevices: unknown }).mediaDevices = { getUserMedia };
+
+      const engine = makeEngine();
+      await engine.play(ASSET_URL, 1, 0);
+      engine.setOutputs([{ deviceId: "dev-mic", volume: 100, mixMic: true }]);
+      await asked; // разрешение спросили — дальше «диалог висит»
+
+      // граф умирает, пока запрос в полёте
+      (engine as unknown as { discardGraph: () => void }).discardGraph();
+      release();
+      await flush(engine);
+
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      expect(track.stop).toHaveBeenCalled(); // поток погашен, а не осиротел
+      expect(peek(engine).micStream).toBeNull();
+    });
   });
 });
 
@@ -439,5 +503,134 @@ describe("AudioEngine: обрыв кроссфейда (пауза/сик/нов
     await expect(engine.resume()).resolves.toBe(true);
 
     expect(soundingEls()).toHaveLength(1);
+  });
+});
+
+/** Предгрев графа Web Audio по первому жесту (2026-08-06).
+ *
+ *  До него play() сперва ждал ensureGraph — создание AudioContext, десяти
+ *  биквадов EQ, компрессора и анализатора, — и только потом присваивал el.src:
+ *  всё это время элемент не качал ни байта, и первый трек сессии платил цену
+ *  постройки целиком. Теперь граф строит первый pointerdown (useWarmer), а
+ *  play() достраивает лишь то, что без URL решить нельзя, — подключение слотов.
+ *
+ *  Стенд — тот же MockAudioContext, что у маршрутизации; он же считает
+ *  созданные контексты (ctxCount). Проверяются границы контракта: граф строится
+ *  ОДИН раз и заранее, повторный жест ничего не пересоздаёт, предгретый
+ *  контекст приостановлен, окружение без Web Audio предгрев не роняет, а
+ *  сорвавшаяся CORS-проба не оставляет висеть ненужный контекст. */
+describe("AudioEngine: предгрев графа по первому жесту", () => {
+  beforeEach(() => {
+    vi.stubGlobal("AudioContext", MockAudioContext);
+  });
+
+  it("жест до рождения движка: граф готов ДО play(), а play() второй не строит", async () => {
+    // Ровно первый клик сессии: pointerdown прошёл, движка ещё нет — его
+    // создаст startAt, уже после жеста (usePlayback заводит движок лениво).
+    noteUserGesture();
+
+    // Главное в предгреве: цепь собрана ЗДЕСЬ, на жесте, а не при рождении
+    // движка. Иначе постройка просто переехала бы из play() в конструктор —
+    // тот же путь «клик → звук», только раньше по нему.
+    expect(ctxCount).toBe(1);
+    expect(chainCount).toBe(1);
+
+    const engine = makeEngine();
+    await engine.prewarm(); // тот же промис, что запустил конструктор
+
+    expect(engine.analyser()).not.toBeNull(); // граф есть ДО всякого URL
+
+    await engine.play(ASSET_URL, 1, 0);
+
+    // play() переиспользовал предгретые контекст и цепь, не пересобрал их
+    expect(ctxCount).toBe(1);
+    expect(chainCount).toBe(1);
+  });
+
+  it("повторный жест ничего не пересоздаёт", async () => {
+    noteUserGesture();
+    const engine = makeEngine();
+    await engine.prewarm();
+    const analyser = engine.analyser();
+
+    noteUserGesture();
+    noteUserGesture();
+    await engine.prewarm();
+
+    expect(ctxCount).toBe(1);
+    expect(chainCount).toBe(1);
+    expect(engine.analyser()).toBe(analyser); // тот же узел, а не новый граф
+  });
+
+  it("предгретый контекст приостановлен (не держит поток WASAPI), play() его будит", async () => {
+    noteUserGesture();
+    const engine = makeEngine();
+    await engine.prewarm();
+
+    const ctx = peek(engine).ctx!;
+    expect(ctx.suspend).toHaveBeenCalled();
+    expect(ctx.state).toBe("suspended");
+
+    await engine.play(ASSET_URL, 1, 0);
+
+    expect(ctx.resume).toHaveBeenCalled();
+    expect(ctx.state).toBe("running");
+  });
+
+  it("жест после рождения движка греет уже созданный движок", async () => {
+    const engine = makeEngine();
+    expect(ctxCount).toBe(0); // жеста не было — граф не строится сам по себе
+
+    noteUserGesture();
+    await engine.prewarm();
+
+    expect(ctxCount).toBe(1);
+    expect(engine.analyser()).not.toBeNull();
+  });
+
+  it("play() посреди незавершённого предгрева не строит второй контекст", async () => {
+    const engine = makeEngine();
+    noteUserGesture(); // предгрев в полёте: suspend ещё не доехал
+    await engine.play(ASSET_URL, 1, 0);
+
+    expect(ctxCount).toBe(1);
+    // Предгрев дождались, а не бросили на полпути (иначе suspend/resume
+    // разъехались бы, и контекст остался бы в неопределённом состоянии).
+    expect(peek(engine).ctx?.suspend).toHaveBeenCalled();
+  });
+
+  it("проба CORS не прошла → предгретый граф сносится, играем элементами", async () => {
+    noteUserGesture();
+    const engine = makeEngine();
+    await engine.prewarm();
+    const ctx = peek(engine).ctx!;
+
+    // Чужой url (не asset/muza-stream) идёт через fetch-пробу, а она в стенде
+    // падает — это plain-режим, и предгретый граф в нём бесполезен.
+    await engine.play("https://cdn.example/x.mp3", 1, 0);
+
+    expect(ctx.close).toHaveBeenCalled(); // не висит suspended до конца сессии
+    expect(engine.analyser()).toBeNull();
+    expect(playSpy).toHaveBeenCalled(); // но звук всё равно пошёл
+  });
+
+  it("окружение без Web Audio (jsdom как есть): предгрев тих, старт играет в plain", async () => {
+    vi.stubGlobal("AudioContext", undefined);
+
+    noteUserGesture();
+    const engine = makeEngine();
+
+    await expect(engine.prewarm()).resolves.toBeUndefined();
+    await expect(engine.play("https://cdn.example/x.mp3", 1, 0)).resolves.toBeUndefined();
+    expect(playSpy).toHaveBeenCalled();
+  });
+
+  it("без жеста вовсе play() строит граф сам — старый путь цел", async () => {
+    const engine = makeEngine();
+
+    await engine.play(ASSET_URL, 1, 0);
+
+    expect(ctxCount).toBe(1);
+    expect(engine.analyser()).not.toBeNull();
   });
 });

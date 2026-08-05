@@ -15,11 +15,17 @@
  *  ref-cleanup) и onMouseEnter. Паттерн доступа — контекст-хук, как useDrag.
  *
  *  Прогрев греет и кэш ИСТОЧНИКОВ (sourcesCache, T1b): клик по прогретому
- *  треку не платит ни за yt-dlp-резолв, ни за RTT getTrackSources. */
+ *  треку не платит ни за yt-dlp-резолв, ни за RTT getTrackSources.
+ *
+ *  Отсюда же (2026-08-06) подаётся сигнал ПРЕДГРЕВА графа Web Audio —
+ *  audioEngine.noteUserGesture(). Модуль уже держит самые ранние сигналы
+ *  намерения, а первый жест человека — ещё и самая ранняя точка, где политика
+ *  автовоспроизведения вообще разрешает создать AudioContext. */
 
-import { createContext, useContext, useMemo, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import type { MuzaApi } from "@muza/api-client";
 import type { Prefs } from "../types";
+import { noteUserGesture } from "./audioEngine";
 import { engineAvailable, engineWarm } from "../lib/engine";
 import { applySourcePolicy } from "../lib/sources";
 import { ensureSources } from "./sourcesCache";
@@ -172,10 +178,22 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
           },
           onMouseEnter: () => queue.request(id, "hover"),
           onPointerDown: () => {
+            // ⚠️ ПОРЯДОК ЗДЕСЬ — НЕ КОСМЕТИКА. Сеть первой: noteUserGesture()
+            // синхронно строит контекст и полтора десятка узлов (десятки мс), и
+            // стоя перед ensureSources он отодвигал сетевой запрос ровно на эту
+            // цену — из той форы, ради которой префетч по pointerdown и сделан.
+            //
             // источники — мимо очереди (наш сервер, не бот-лимиты YouTube);
             // ошибка молчит: клик повторит запрос своим путём и покажет свою
             void ensureSources(id, () => apiRef.current.getTrackSources(id)).catch(() => {});
             queue.request(id, "hover", true);
+            // Предгрев графа Web Audio (audioEngine.ts, «Предгрев графа по
+            // первому жесту»). Обычно к этому моменту он уже случился: оконный
+            // слушатель ниже висит в фазе ЗАХВАТА на window и по определению
+            // приходит раньше любого React-обработчика. Вызов здесь — не
+            // «главный сигнал», а дубль на случай, если слушатель не встал
+            // (окружение без window, снятый once).
+            noteUserGesture();
           },
         };
         rowPropsById.set(id, props);
@@ -200,6 +218,23 @@ export function useWarmer({ api, prefs }: { api: MuzaApi; prefs: Prefs }): Warme
         io.disconnect();
       },
     };
+  }, []);
+
+  // ГЛАВНЫЙ (и практически единственный) сигнал предгрева графа. Он ловит любой
+  // путь к звуку — строку трека, кнопку play в баре, обложку, «продолжить с
+  // места», — и приходит РАНЬШЕ вызова из warmRow: захват на window стоит в
+  // самом начале маршрута события, а React вешает свои обработчики на корневой
+  // контейнер и в фазе всплытия. Слушатель одноразовый (once): дальше
+  // noteUserGesture и сам ничего не делает, но лишний обработчик на каждом
+  // клике окна не нужен. Он ВНЕ useMemo выше намеренно: тот отдаёт NOOP_WARMER
+  // без Tauri-движка и без IntersectionObserver, а Web Audio в этих окружениях
+  // как раз есть.
+  // Окна «mini» это не касается: там рендерится MiniPlayer, а не App, — хук не
+  // монтируется, движка в том окне нет, и греть нечего.
+  useEffect(() => {
+    const onDown = () => noteUserGesture();
+    window.addEventListener("pointerdown", onDown, { capture: true, once: true });
+    return () => window.removeEventListener("pointerdown", onDown, { capture: true });
   }, []);
 
   // Намеренно БЕЗ dispose на размонтировании. App живёт, пока жив документ, —

@@ -13,6 +13,9 @@
  *  мастера — страховка от клиппинга (буст EQ + буст нормализации лаудности
  *  вместе легко выходят за 0 dBFS). Так «буст полос клиппит» больше не случается.
  *
+ *  Предгрев (2026-08-06): граф строится не первым play(), а первым ЖЕСТОМ
+ *  человека — noteUserGesture()/prewarm(), подробности в блоке перед классом.
+ *
  *  Fallback «plain»: MediaElementSource без CORS-чистого источника выдаёт
  *  тишину — перед постройкой графа источник проверяется fetch-пробой; если
  *  CORS не прошёл, играем элементами напрямую (без EQ и буста нормализации).
@@ -100,6 +103,122 @@ export interface EngineCallbacks {
   onPlaying?: () => void;
 }
 
+/* ── Предгрев графа по первому жесту (2026-08-06) ─────────────────────────
+ *
+ *  ЗАЧЕМ. play() сперва ждал ensureGraph(url) и только потом присваивал el.src:
+ *  пока не создан AudioContext, десять биквадов EQ, компрессор, анализатор на
+ *  2048 точек и два MediaElementSource — элемент <audio> НЕ КАЧАЕТ НИ БАЙТА.
+ *  Первый трек сессии платил это целиком (жалоба владельца «первый трек после
+ *  запуска приложения особенно долгий»); дальше граф уже есть, и цена нулевая.
+ *  Заранее строится ВСЁ, кроме MediaElementSource: он — и есть выбор
+ *  webaudio/plain, а его делает CORS-проба, которой нужен URL (см. ensureGraph).
+ *
+ *  ПОЧЕМУ ЖЕСТ, А НЕ СТАРТ ПРИЛОЖЕНИЯ — три причины:
+ *  1) контекст, созданный ДО всякой активации, политика автовоспроизведения
+ *     запустить не даст вовсе: он останется suspended, пока не случится жест, и
+ *     открытие аудио-устройства (те самые десятки мс) всё равно уехало бы на
+ *     путь play() — то есть туда, откуда мы его и убираем;
+ *  2) приостановленный контекст отпускает аудио-устройство ОС. ⚠️ Именно
+ *     отпускает, а не «не будит»: `new AudioContext()` устройство как раз
+ *     открывает — иначе suspend() был бы не нужен, — и на первом pointerdown
+ *     сессии оно открывается и тиком позже гасится. Это осознанный размен;
+ *  3) между pointerdown и play() лежат секунды добычи — граф успевает
+ *     построиться в это окно бесплатно.
+ *
+ *  ПОЧЕМУ СОСТОЯНИЕ МОДУЛЬНОЕ, А НЕ ПОЛЕ КЛАССА. На ПЕРВОМ клике сессии движка
+ *  ещё не существует: usePlayback создаёт AudioEngine лениво, уже ВНУТРИ
+ *  startAt — то есть в момент pointerdown адресовать предгрев некому. Поэтому
+ *  жест собирает цепь прямо здесь и паркует её, а родившийся движок забирает
+ *  готовое (buildGraph). Через поле класса это не выразить: парковать надо
+ *  раньше, чем появится сам объект. И это не педантизм: положи сборку в
+ *  конструктор движка — она просто переедет из play() в клик, оставшись на том
+ *  же пути «клик → звук». Уйти с него она может только ДО клика, то есть в
+ *  pointerdown, где движка ещё нет. */
+interface GraphNodes {
+  eq: BiquadFilterNode[];
+  preamp: GainNode;
+  master: GainNode;
+  limiter: DynamicsCompressorNode;
+  analyser: AnalyserNode;
+}
+
+let parked: { ctx: AudioContext; nodes: GraphNodes } | null = null;
+let gestureSeen = false;
+let liveEngine: AudioEngine | null = null;
+
+/** Сборка и разводка узлов — ЕДИНСТВЕННОЕ место, где описана цепь. Вынесена из
+ *  класса потому, что предгрев строит её до появления движка (см. блок выше);
+ *  всё, что зависит от состояния движка (громкость, полосы EQ), доливается
+ *  снаружи — в buildGraph. */
+function makeGraphNodes(ctx: AudioContext): GraphNodes {
+  // EQ-цепь: shelf по краям, peaking в середине
+  const eq = EQ_FREQS.map((freq, i) => {
+    const f = ctx.createBiquadFilter();
+    f.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking";
+    f.frequency.value = freq;
+    if (f.type === "peaking") f.Q.value = 1.1;
+    f.gain.value = 0;
+    return f;
+  });
+  for (let i = 0; i < eq.length - 1; i++) eq[i].connect(eq[i + 1]);
+  // Преамп ПЕРЕД EQ: точка микса обоих слотов + хедрум под буст полос
+  const preamp = ctx.createGain();
+  preamp.connect(eq[0]);
+  const master = ctx.createGain();
+  eq[eq.length - 1].connect(master);
+  // Лимитер ПОСЛЕ мастера (последний перед выходом): страховка от клиппинга
+  // при бусте EQ + бусте нормализации. Не true-peak (нет lookahead/oversampling),
+  // но ловит явный клип; апгрейд до AudioWorklet-brickwall — если услышим pumping.
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -2; // dBFS
+  limiter.knee.value = 0; // жёсткое колено
+  limiter.ratio.value = 20; // ≈ лимитер
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.1;
+  master.connect(limiter);
+  // Визуализатор (Stage 6): analyser в конце цепи — видит финальный сигнал,
+  // как его слышит юзер (после EQ, нормализации и лимитера)
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  // T14: 0.82 давал вялый, «нежёсткий» отклик баров — 0.7 живее, но не дёрганый.
+  analyser.smoothingTimeConstant = 0.7;
+  limiter.connect(analyser);
+  analyser.connect(ctx.destination);
+  return { eq, preamp, master, limiter, analyser };
+}
+
+/** Человек коснулся окна. Зовёт useWarmer: практически всегда — одноразовым
+ *  слушателем на window в фазе захвата (он приходит первым), и вторым, уже
+ *  бесполезным, дублем из pointerdown строки трека. Первый вызов строит граф
+ *  заранее, остальные — no-op: повторный жест ничего не пересоздаёт. Тих там,
+ *  где Web Audio нет вовсе. */
+export function noteUserGesture(): void {
+  if (gestureSeen) return;
+  gestureSeen = true;
+  if (liveEngine) {
+    void liveEngine.prewarm();
+    return;
+  }
+  if (typeof AudioContext === "undefined") return; // jsdom / окружение без Web Audio
+  try {
+    const ctx = new AudioContext();
+    parked = { ctx, nodes: makeGraphNodes(ctx) };
+    // Гасим немедленно: контекст, созданный по жесту, рождается running и
+    // держал бы поток WASAPI всё время до первого трека (причина 2 выше).
+    void ctx.suspend().catch(() => {});
+  } catch {
+    parked = null; // нет аудио-устройства — обычный путь построит граф сам
+  }
+}
+
+/** Только для тестов: забыть жест, припаркованный граф и «живой» движок.
+ *  Состояние модульное — без сброса тесты подтекали бы друг в друга. */
+export function resetPrewarmForTests(): void {
+  parked = null;
+  gestureSeen = false;
+  liveEngine = null;
+}
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private slots: Slot[] = [];
@@ -110,6 +229,10 @@ export class AudioEngine {
   private limiter: DynamicsCompressorNode | null = null;
   private analyserNode: AnalyserNode | null = null;
   private mode: "unknown" | "webaudio" | "plain" = "unknown";
+  /** Предгрев в полёте (prewarm). ensureGraph ОБЯЗАН его дождаться: иначе
+   *  первый play(), пришедший в середине предгрева, построил бы второй
+   *  AudioContext поверх строящегося — два выхода на одно устройство. */
+  private warmup: Promise<void> | null = null;
 
   // ── Вывод на устройства (2026-07-22) ─────────────────────────────
   /** Желаемые маршруты (уже сопоставленные с живыми устройствами —
@@ -151,7 +274,13 @@ export class AudioEngine {
      *  вызовов — без него ошибки остаются на английском (DEFAULT_LANG). */
     private readonly t: (key: TranslationKey, params?: TParams) => string = (key, params) =>
       translate(DEFAULT_LANG, key, params),
-  ) {}
+  ) {
+    liveEngine = this;
+    // Жест уже был, а движок родился только сейчас — это и есть первый клик
+    // сессии (pointerdown → startAt → new AudioEngine → секунды добычи →
+    // play()). Греемся немедленно, чтобы постройка легла на окно добычи.
+    if (gestureSeen) void this.prewarm();
+  }
 
   private makeSlot(): Slot {
     const el = new Audio();
@@ -182,8 +311,12 @@ export class AudioEngine {
     return slot;
   }
 
-  /** Определить режим (webaudio/plain) по CORS-пробе первого источника
-   *  и построить граф. Зовётся при первом реальном воспроизведении.
+  /** Определить режим (webaudio/plain) по CORS-пробе первого источника и
+   *  ДОСТРОИТЬ граф под этот режим. Зовётся при первом воспроизведении.
+   *
+   *  Сам граф к этому моменту обычно уже построен предгревом (prewarm по
+   *  первому жесту) — здесь остаётся только то, что без URL решить нельзя:
+   *  подключение слотов через MediaElementSource, то есть выбор webaudio/plain.
    *
    *  Свои протоколы пробе НЕ подвергаются (И3 2026-07-22): asset.localhost и
    *  muza-stream.localhost отдают CORS-заголовки НА КАЖДОМ ответе (инвариант
@@ -194,6 +327,9 @@ export class AudioEngine {
    *  как раньше: webaudio с не-CORS источником молчит навсегда, угадывать
    *  нельзя. */
   private async ensureGraph(probeUrl: string): Promise<void> {
+    // Предгрев мог быть запущен первым жестом — дожидаемся его ДО проверки
+    // режима: иначе построим второй контекст поверх строящегося (см. warmup).
+    if (this.warmup) await this.warmup;
     if (this.mode !== "unknown") return;
     let corsOk = /^https?:\/\/(asset|muza-stream)\.localhost(?::\d+)?\//.test(probeUrl);
     if (!corsOk) {
@@ -209,56 +345,125 @@ export class AudioEngine {
     }
     if (!corsOk) {
       this.mode = "plain";
+      // Предгретый граф не пригодился. Слоты к нему подключены ещё не были
+      // (это делается ниже, уже зная ответ пробы) — сносим целиком, иначе
+      // контекст висел бы suspended до конца сессии, ничего не проигрывая.
+      this.discardGraph();
       return;
     }
     this.mode = "webaudio";
-    const ctx = new AudioContext();
-    this.ctx = ctx;
-    // EQ-цепь: shelf по краям, peaking в середине
-    this.eq = EQ_FREQS.map((freq, i) => {
-      const f = ctx.createBiquadFilter();
-      f.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking";
-      f.frequency.value = freq;
-      if (f.type === "peaking") f.Q.value = 1.1;
-      f.gain.value = 0;
-      return f;
-    });
-    for (let i = 0; i < this.eq.length - 1; i++) this.eq[i].connect(this.eq[i + 1]);
-    // Преамп ПЕРЕД EQ: точка микса обоих слотов + хедрум под буст полос
-    this.preamp = ctx.createGain();
-    this.preamp.connect(this.eq[0]);
-    this.master = ctx.createGain();
-    this.eq[this.eq.length - 1].connect(this.master);
-    // Лимитер ПОСЛЕ мастера (последний перед выходом): страховка от клиппинга
-    // при бусте EQ + бусте нормализации. Не true-peak (нет lookahead/oversampling),
-    // но ловит явный клип; апгрейд до AudioWorklet-brickwall — если услышим pumping.
-    this.limiter = ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -2; // dBFS
-    this.limiter.knee.value = 0; // жёсткое колено
-    this.limiter.ratio.value = 20; // ≈ лимитер
-    this.limiter.attack.value = 0.003;
-    this.limiter.release.value = 0.1;
-    this.master.connect(this.limiter);
-    // Визуализатор (Stage 6): analyser в конце цепи — видит финальный сигнал,
-    // как его слышит юзер (после EQ, нормализации и лимитера)
-    this.analyserNode = ctx.createAnalyser();
-    this.analyserNode.fftSize = 2048;
-    // T14: 0.82 давал вялый, «нежёсткий» отклик баров — 0.7 живее, но не дёрганый.
-    this.analyserNode.smoothingTimeConstant = 0.7;
-    this.limiter.connect(this.analyserNode);
-    this.analyserNode.connect(ctx.destination);
-    this.master.gain.value = volCurve(this.volume);
+    if (!this.ctx) {
+      try {
+        this.buildGraph();
+      } catch {
+        // Web Audio недоступен (нет AudioContext, нет устройства) — играем
+        // элементами напрямую: без EQ и нормализации, но играем.
+        this.mode = "plain";
+        this.discardGraph();
+        return;
+      }
+    }
+    const ctx = this.ctx;
+    const preamp = this.preamp;
+    if (!ctx || !preamp) {
+      this.mode = "plain";
+      this.discardGraph();
+      return;
+    }
     for (const slot of this.slots) {
       slot.source = ctx.createMediaElementSource(slot.el);
       slot.gain = ctx.createGain();
       slot.gain.gain.value = 0;
       slot.source.connect(slot.gain);
-      slot.gain.connect(this.preamp);
+      slot.gain.connect(preamp);
     }
-    this.applyEq();
     // Маршруты вывода могли быть заданы ДО постройки графа (prefs применяются
-    // при монтировании, граф строится при первом воспроизведении) — догоняем.
+    // при монтировании) — догоняем. Реконсиляция идемпотентна: тапы, поднятые
+    // предгревом, не пересоздаются.
     if (this.routes.length > 0) this.queueTapReconcile();
+  }
+
+  /** Построить граф ЗАРАНЕЕ — до того, как станет известен URL трека (зачем и
+   *  почему по жесту — блок «Предгрев графа по первому жесту» выше).
+   *  Идемпотентен: повторные вызовы отдают тот же промис и ничего не
+   *  пересоздают. Там, где Web Audio нет (jsdom, окружение без устройства), —
+   *  тихо ничего не делает и НЕ бросает: предгрев не имеет права ломать старт.
+   *
+   *  ⚠️ Слоты к графу здесь НЕ подключаются. createMediaElementSource — это уже
+   *  решение «webaudio или plain», а принимает его CORS-проба в ensureGraph,
+   *  когда URL наконец известен: подключить раньше значило бы рискнуть вечной
+   *  тишиной на не-CORS источнике (см. шапку файла, fallback «plain»). */
+  prewarm(): Promise<void> {
+    if (this.warmup) return this.warmup;
+    if (this.mode !== "unknown" || this.ctx) return Promise.resolve();
+    this.warmup = this.buildAhead();
+    return this.warmup;
+  }
+
+  private async buildAhead(): Promise<void> {
+    // Слоты от режима не зависят — их можно завести заранее вместе с графом.
+    if (this.slots.length === 0) this.slots = [this.makeSlot(), this.makeSlot()];
+    if (!parked && typeof AudioContext === "undefined") return;
+    try {
+      this.buildGraph();
+    } catch {
+      this.discardGraph(); // не построился — ensureGraph решит сам, как играть
+      return;
+    }
+    // Приостановку ЗАПУСКАЕМ, но не ждём: `warmup` — это промис, которого ждёт
+    // ensureGraph, а значит и play(). Ожидание приостановки внутри него клало на
+    // путь «клик → звук» ровно ту задержку, которую предгрев снимает. Порядок
+    // suspend/resume гарантирует сама платформа: операции над контекстом
+    // выполняются в порядке вызова, и подъём из play() придёт после.
+    void this.ctx?.suspend().catch(() => {});
+    // Маршруты вывода (setSinkId, getUserMedia) — тоже цена первого клика:
+    // раз уж мы внутри жеста, поднимаем тапы здесь же.
+    if (this.routes.length > 0) this.queueTapReconcile();
+  }
+
+  /** Забрать граф себе — всё, что НЕ зависит от URL. Цепь либо уже собрана
+   *  первым жестом и припаркована (обычный случай), либо собирается прямо
+   *  здесь (жеста не было: тесты, программный старт). Слоты подключает
+   *  ensureGraph, когда проба ответит про CORS. */
+  private buildGraph(): void {
+    let built = parked;
+    parked = null;
+    if (!built) {
+      const ctx = new AudioContext();
+      built = { ctx, nodes: makeGraphNodes(ctx) };
+    }
+    this.ctx = built.ctx;
+    this.eq = built.nodes.eq;
+    this.preamp = built.nodes.preamp;
+    this.master = built.nodes.master;
+    this.limiter = built.nodes.limiter;
+    this.analyserNode = built.nodes.analyser;
+    // Состояние движка на готовую цепь доливаем здесь: жест собирал её, ещё не
+    // зная ни громкости, ни полос эквалайзера этого движка.
+    this.master.gain.value = volCurve(this.volume);
+    this.applyEq();
+  }
+
+  /** Снести граф: он не пригодился (проба сказала «plain») или не достроился.
+   *  Контекст ЗАКРЫВАЕМ — предгретый и брошенный, он иначе висел бы suspended
+   *  до конца сессии, держа за собой узлы и тапы. */
+  private discardGraph(): void {
+    const ctx = this.ctx;
+    for (const tap of [...this.taps]) this.destroyTap(tap);
+    this.stopMic();
+    this.eq = [];
+    this.preamp = null;
+    this.master = null;
+    this.limiter = null;
+    this.analyserNode = null;
+    this.defaultOut = true;
+    this.ctx = null;
+    if (!ctx) return;
+    try {
+      (ctx as { close?: () => Promise<void> }).close?.()?.catch(() => {});
+    } catch {
+      /* контекст уже закрыт или не умеет close — терять нечего */
+    }
   }
 
   // ── Вывод на устройства: фан-аут финального сигнала ──────────────
@@ -270,7 +475,8 @@ export class AudioEngine {
   // не чинится на этом уровне, это потолок платформы, не баг движка.
 
   /** Задать маршруты вывода. Пустой массив — вернуться к системному выходу.
-   *  Безопасно звать до постройки графа (запомним и применим в ensureGraph)
+   *  Безопасно звать до постройки графа (запомним и применим в предгреве или в
+   *  ensureGraph — смотря что случится раньше)
    *  и сколь угодно часто (реконсиляции сериализованы). В plain-режиме
    *  маршрутизация недоступна — молча остаёмся на системном выходе. */
   setOutputs(routes: OutputRoute[]): void {
@@ -370,6 +576,18 @@ export class AudioEngine {
           // (те же констрейнты: AEC/NS/AGC вырезают голос НЕЗАВИСИМО от того,
           // какое физическое устройство их применяет)
           stream = await navigator.mediaDevices.getUserMedia({ audio: this.micConstraints(null) });
+        }
+        // ⚠️ ГРАФ МОГ УМЕРЕТЬ, ПОКА ВИСЕЛ СИСТЕМНЫЙ ЗАПРОС РАЗРЕШЕНИЯ. Это окно —
+        // секунды: пользователь читает диалог, а `discardGraph()` в это время
+        // сносит цепь (проба сказала «plain») и зовёт `stopMic()`, который видит
+        // `micStream === null` и не гасит ничего. Прилетевший следом поток
+        // записывался в поле мёртвого движка и не останавливался НИКОГДА —
+        // индикатор микрофона ОС горел до конца сессии. Снаружи это не лечилось:
+        // `setOutputs([])` выходит по `!this.ctx`, а `setMicConfig` глушит только
+        // при смене устройства. Сверяем контекст: не тот — гасим сразу.
+        if (this.ctx !== ctx) {
+          for (const tr of stream.getTracks()) tr.stop();
+          return;
         }
         this.micStream = stream;
         this.micSource = ctx.createMediaStreamSource(stream);
@@ -544,7 +762,13 @@ export class AudioEngine {
    *  текущего трека (слоты меняются местами). norm — множитель нормализации. */
   async play(url: string, norm: number, crossfadeSec = 0): Promise<void> {
     await this.ensureGraph(url);
-    if (this.ctx?.state === "suspended") await this.ctx.resume();
+    // ⚠️ ПОДЪЁМ КОНТЕКСТА ЗАПУСКАЕМ, НО НЕ ЖДЁМ ЗДЕСЬ. Предгретый контекст лежит
+    // suspended (см. buildAhead), и `await resume()` стоял ровно перед
+    // присвоением el.src — то есть возвращал на путь «клик → звук» ожидание,
+    // ради снятия которого предгрев и делался. Загрузку это ожидание не
+    // ускоряет: элементу, чтобы начать качать, контекст не нужен. Ждём ниже,
+    // перед расписанием усилений и el.play(), — там подъём действительно нужен.
+    const resuming = this.ctx?.state === "suspended" ? this.ctx.resume() : null;
 
     // Предыдущий стык мог ещё доигрывать в соседнем слоте — а именно он и
     // станет целью нового старта. Снимаем ДО того, как тронем слоты: иначе
@@ -564,6 +788,17 @@ export class AudioEngine {
     }
     slot.norm = norm;
     slot.el.playbackRate = this.speed;
+
+    // Закачка пошла — теперь дожидаемся подъёма: currentTime у приостановленного
+    // контекста не идёт, и кривые кроссфейда, расписанные до resume, начались бы
+    // не оттуда.
+    if (resuming) {
+      try {
+        await resuming;
+      } catch {
+        /* контекст не поднялся — el.play() ниже сам скажет, что не вышло */
+      }
+    }
 
     if (fade && this.ctx && current.gain && slot.gain) {
       const t = this.ctx.currentTime;
@@ -697,8 +932,10 @@ export class AudioEngine {
     this.applyEq();
   }
 
-  /** Анализатор для визуализатора (Stage 6); null — plain-режим или граф
-   *  ещё не построен (браузер без CORS-чистого источника — plain-режим). */
+  /** Анализатор для визуализатора (Stage 6); null — plain-режим или граф ещё
+   *  не построен (браузер без CORS-чистого источника — plain-режим). С
+   *  предгревом узел появляется ДО первого трека и до этого момента отдаёт
+   *  тишину — это правда о сигнале, а не поломка: играть ещё нечему. */
   analyser(): AnalyserNode | null {
     return this.analyserNode;
   }

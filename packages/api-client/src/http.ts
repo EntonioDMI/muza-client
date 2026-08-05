@@ -30,7 +30,7 @@ import {
   PlaylistDetailSchema,
   type PlaylistMeta,
   PlaylistMetaSchema,
-  type AdminPublicPlaylist,
+  type AdminPublicPlaylists,
   type PlaylistVisibility,
   type PublicPlaylist,
   PublicPlaylistSchema,
@@ -280,6 +280,17 @@ interface PublicPlaylistWire {
   preview_tracks?: PreviewTrackWire[];
   permalink_url?: string | null;
   name_matched?: boolean;
+}
+
+/** Проводной формат строки админ-обзора публичных плейлистов. */
+interface AdminPublicPlaylistWire {
+  id: string;
+  name: string;
+  owner_username: string;
+  track_count: number;
+  followers_count: number;
+  handle?: string | null;
+  published_at: string | null;
 }
 
 function previewTrackFromWire(w: PreviewTrackWire) {
@@ -977,19 +988,22 @@ export class HttpMuzaApi implements MuzaApi {
     });
   }
 
-  async getAdminPublicPlaylists(): Promise<AdminPublicPlaylist[]> {
+  async getAdminPublicPlaylists(opts?: { limit?: number; offset?: number }): Promise<AdminPublicPlaylists> {
+    const params = new URLSearchParams();
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
+    const qs = params.size > 0 ? `?${params}` : "";
     const out = await this.authedRequest<{
-      playlists: {
-        id: string;
-        name: string;
-        owner_username: string;
-        track_count: number;
-        followers_count: number;
-        handle?: string | null;
-        published_at: string | null;
-      }[];
-    }>("/admin/public-playlists");
-    return out.playlists.map((p) => ({
+      total?: number;
+      limit?: number;
+      offset?: number;
+      items?: AdminPublicPlaylistWire[];
+      playlists?: AdminPublicPlaylistWire[];
+    }>(`/admin/public-playlists${qs}`);
+    // `playlists` — ключ старого сервера (≤0.1.5) и дубль `items` у нового:
+    // клиент новее сервера не должен показывать пустой экран вместо списка
+    const rows = out.items ?? out.playlists ?? [];
+    const items = rows.map((p) => ({
       id: p.id,
       name: p.name,
       ownerUsername: p.owner_username,
@@ -998,6 +1012,19 @@ export class HttpMuzaApi implements MuzaApi {
       handle: p.handle ?? null,
       publishedAt: p.published_at,
     }));
+    // ⚠️ ОТСУТСТВИЕ ЧИСЛА — ЭТО ТОЖЕ ОТВЕТ, И ЕГО НЕЛЬЗЯ ПОДМЕНЯТЬ ДЛИНОЙ СПИСКА.
+    // Здесь стояло `total: out.total ?? items.length, limit: out.limit ??
+    // items.length`. Сервер ≤0.1.5 про `limit`/`offset` не знает вовсе и на
+    // просьбу о странице отдаёт ВСЕ публикации — но после такой подстановки его
+    // ответ становился неотличим от честной страницы: экран рисовал листалку
+    // «стр. 1 из 2», щёлкал номер и показывал те же 60 строк. Ключи приходят
+    // как есть; «сервер не листал» читается по `limit === null`.
+    return {
+      total: out.total ?? null,
+      limit: out.limit ?? null,
+      offset: out.offset ?? null,
+      items,
+    };
   }
 
   async unpublishAdminPlaylist(playlistId: string, ban?: boolean): Promise<void> {
@@ -1400,8 +1427,9 @@ export class HttpMuzaApi implements MuzaApi {
 
   // ---------- Маркетплейс тем (Stage 6) ----------
 
-  async getMarketThemes(): Promise<MarketTheme[]> {
-    const out = await this.authedRequest<{ themes: MarketThemeWire[] }>("/market/themes");
+  async getMarketThemes(opts?: { limit?: number }): Promise<MarketTheme[]> {
+    const qs = opts?.limit === undefined ? "" : `?limit=${opts.limit}`;
+    const out = await this.authedRequest<{ themes: MarketThemeWire[] }>(`/market/themes${qs}`);
     return out.themes.map(marketThemeFromWire);
   }
 
@@ -1526,15 +1554,34 @@ export class HttpMuzaApi implements MuzaApi {
     };
   }
 
-  async getAdminContent(): Promise<AdminContent> {
+  async getAdminContent(opts?: { days?: number; limit?: number }): Promise<AdminContent> {
+    const params = new URLSearchParams();
+    if (opts?.days !== undefined) params.set("days", String(opts.days));
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    const qs = params.size > 0 ? `?${params}` : "";
     const c = await this.authedRequest<{
+      days?: number;
+      limit?: number;
+      totals?: { top_tracks: number; top_artists: number; recent_tracks: number };
       top_tracks: { track: TrackWire; plays: number }[];
       top_artists: { artist: string; plays: number }[];
       recent_tracks: TrackWire[];
       sources_by_provider: { provider: string; kind: string; count: number; dead: number }[];
       coverage: { tracks: number; with_lyrics: number; with_synced: number; with_annotations: number };
-    }>("/admin/content");
+    }>(`/admin/content${qs}`);
+    // ⚠️ ЗНАМЕНАТЕЛЬ НЕ ВЫДУМЫВАЕМ. Здесь стояло `?? c.top_tracks.length`, и
+    // «сервер посчитал, вышло ровно 20» становилось неотличимо от «сервер не
+    // считает» — экран печатал «он не считает, сколько их всего» ровно тогда,
+    // когда сервер это и сообщил. `days`/`limit` — эхо СЕРВЕРА: подставлять сюда
+    // то, что мы у него попросили, значит утверждать за него.
     return {
+      days: c.days ?? null,
+      limit: c.limit ?? null,
+      totals: {
+        topTracks: c.totals?.top_tracks ?? null,
+        topArtists: c.totals?.top_artists ?? null,
+        recentTracks: c.totals?.recent_tracks ?? null,
+      },
       topTracks: rowsWithTrack(c.top_tracks, (track, r) => ({ track, plays: r.plays })),
       topArtists: c.top_artists,
       recentTracks: tracksFromWire(c.recent_tracks),
@@ -1658,13 +1705,21 @@ export class HttpMuzaApi implements MuzaApi {
     };
   }
 
-  async getAdminErrors(opts?: { days?: number; kind?: string; appVersion?: string }): Promise<AdminErrors> {
+  async getAdminErrors(opts?: {
+    days?: number;
+    kind?: string;
+    appVersion?: string;
+    limit?: number;
+  }): Promise<AdminErrors> {
     const params = new URLSearchParams({ days: String(opts?.days ?? 7) });
     if (opts?.kind) params.set("kind", opts.kind);
     if (opts?.appVersion) params.set("app_version", opts.appVersion);
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
     const e = await this.authedRequest<{
       days: number;
+      limit?: number;
       totals: { count: number; distinct: number };
+      top_total?: number;
       series: AdminDayPoint[];
       top: {
         stack_hash: string;
@@ -1679,7 +1734,11 @@ export class HttpMuzaApi implements MuzaApi {
     }>(`/admin/errors?${params.toString()}`);
     return {
       days: e.days,
+      // эхо сервера и его знаменатель — как есть; см. getAdminContent о том,
+      // почему подстановка длины списка здесь была враньём
+      limit: e.limit ?? null,
       totals: e.totals,
+      topTotal: e.top_total ?? null,
       series: e.series,
       top: e.top.map((t) => ({
         stackHash: t.stack_hash,

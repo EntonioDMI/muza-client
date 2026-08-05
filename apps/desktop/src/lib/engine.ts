@@ -5,6 +5,7 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { resolveApiBaseUrl, type MuzaApi, type TrackSource } from "@muza/api-client";
 import { DEFAULT_LANG, translate, type Lang } from "../i18n";
+import { markTimings } from "../player/startTelemetry";
 import { localResolve } from "./localFiles";
 
 export function engineAvailable(): boolean {
@@ -114,17 +115,26 @@ export async function resolveTrack(
   // всегда false, и настоящая причина («у трека нет живых источников (youtube:
   // DNS lookup failed…)») молча заменяется на generic-тост — из-за этого баг
   // 2026-07-15 пришлось расследовать вслепую. Оборачиваем на границе IPC.
-  const out = await invoke<{ path: string; from_cache: boolean; provider: string | null }>(
-    "engine_resolve",
-    {
-      trackId,
-      sources: toNativeSourceRefs(sources),
-      quality,
-      cacheNs: CACHE_NS,
-    },
-  ).catch((e: unknown) => {
+  const out = await invoke<{
+    path: string;
+    from_cache: boolean;
+    provider: string | null;
+    /** Пофазовые отметки добычи; unknown — форму проверяет normalizeTimings. */
+    timings?: unknown;
+  }>("engine_resolve", {
+    trackId,
+    sources: toNativeSourceRefs(sources),
+    quality,
+    cacheNs: CACHE_NS,
+  }).catch((e: unknown) => {
     throw e instanceof Error ? e : new Error(typeof e === "string" ? e : String(e));
   });
+  // Отметки — ДО возврата: следом вызывающий отдаёт URL плееру и ставит
+  // markUrl, и фазы обязаны лечь в тот же старт, внутри которого их измерили.
+  // На провале добычи их нет по построению — там Rust отвечает ошибкой.
+  // trackId обязателен: этот резолв мог быть преднагрузкой соседа или эмбиентом
+  // «Итогов года» — тогда фазы не имеют отношения к текущему старту.
+  markTimings(trackId, out.timings);
   return { url: convertFileSrc(out.path), fromCache: out.from_cache, provider: out.provider };
 }
 
@@ -183,12 +193,16 @@ export async function engineStreamStart(
   quality: StreamQuality = "auto",
 ): Promise<boolean> {
   if (!isTauri()) return false;
-  const out = await invoke<{ stream: boolean }>("engine_stream_start", {
+  const out = await invoke<{ stream: boolean; timings?: unknown }>("engine_stream_start", {
     trackId,
     sources: toNativeSourceRefs(sources),
     quality,
     cacheNs: CACHE_NS,
-  }).catch(() => ({ stream: false })); // стрим — best-effort по определению
+  }).catch(() => ({ stream: false, timings: undefined })); // стрим — best-effort по определению
+  // ⚠️ Отметки снимаются и при stream:false — это САМЫЙ дорогой исход: ступень 0
+  // отработала, стрим не завёлся, дальше пойдёт полная лестница. Без них эта
+  // работа была бы невидима, а именно она объясняет «иногда долго».
+  markTimings(trackId, out.timings);
   return out.stream;
 }
 

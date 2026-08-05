@@ -9,6 +9,7 @@ import type {
   AdminHealth,
   AdminOverview,
   AdminPublicPlaylist,
+  AdminPublicPlaylists,
   AdminUsers,
   MarketTheme,
   MuzaApi,
@@ -39,11 +40,51 @@ import { SeriesChart } from "./adminCharts";
  *     где это возможно — листается или разворачивается.
  *
  *  Из старого инлайна выжила только StatCard (почему — у самого компонента);
- *  Section и Row умерли: их работу делают Panel и Table. */
+ *  Section и Row умерли: их работу делают Panel и Table.
+ *
+ *  ВТОРОЙ ЗАХОД 06.08 — три вещи, до которых первый не дошёл:
+ *
+ *  1. ОБРЕЗАНИЕ БЕЗ ОБЩЕГО ЧИСЛА. «Показаны первые 20» говорит, что список
+ *     неполный, но не говорит, чего человек не видит. Где общее число есть
+ *     (новое в каталоге — это верхушка всего каталога, его размер лежит в
+ *     coverage.tracks) — теперь «показаны 20 из 3412». Где сервер общего числа
+ *     не считает ВООБЩЕ (топы за 14 дней) — так и написано словами, а не
+ *     придумано.
+ *  2. КОЛОНКИ НЕ ВЛЕЗАЛИ. Пиксельные ширины набирались на глаз и в двух
+ *     таблицах перевешивали доступное поле — таблица уезжала в собственную
+ *     горизонтальную прокрутку прямо на минимальном окне. Ширины сведены в
+ *     общий словарь (COL_*), суммы проверяет сторож AdminView.layout.test.tsx.
+ *  3. ТРИ СОСТОЯНИЯ. У половины таблиц не было текста «данных нет» — пустая
+ *     выдача рисовалась пустой строкой под шапкой и читалась как поломка. У
+ *     отказа сервера не было выхода: красная строка и всё. Теперь у каждой
+ *     вкладки есть загрузка, объяснимый отказ с кнопкой «запросить заново» и
+ *     свой текст пустоты у каждой таблицы. */
 
 /** Минимальная ширина плитки числа. Уже — и подпись вроде «Прослушиваний
  *  (30д)» ломается на три строки, а число перестаёт читаться первым. */
 const STAT_MIN_W = 150;
+
+/** СЛОВАРЬ ШИРИН КОЛОНОК. Приложение не открывается уже 1024px (tauri.conf,
+ *  minWidth), и на этом окне таблице внутри карточки остаётся примерно 660px —
+ *  замер записан в шапке Table (@muza/ui). Table держит нижнюю границу ширины
+ *  (сумма пиксельных ширин + 160px на каждую колонку без ширины) и, не влезая,
+ *  уезжает в свою горизонтальную прокрутку. Прокрутка — уже неудобство, поэтому
+ *  суммы держим НИЖЕ поля; сторож AdminView.layout.test.tsx читает minWidth
+ *  живых таблиц и не даёт им перевалить за 660.
+ *
+ *  Значения подобраны под подпись шапки: в неё входит текст + стрелка сортировки
+ *  (14px) + поля ячейки (2×12px). Подпись длиннее переносится на вторую строку —
+ *  это нормально, шапка не обрезается. */
+const COL_NUM = 92;
+/** Число с длинной подписью: «Прослушиваний (30д)», «Скачиваний». */
+const COL_NUM_WIDE = 116;
+/** Дата вида «10.07, 03:00». */
+const COL_DATE = 104;
+/** Ник, автор, имя релиза — обрезается многоточием, длина некритична. */
+const COL_NAME = 104;
+/** Колонка действия строки: круглая кнопка (36px) плюс поля ячейки; ширина
+ *  задана подписью шапки «Действие», а не кнопкой. */
+const COL_ACTION = 84;
 
 /** Ширина, с которой панель ещё имеет смысл: ниже неё три плитки чисел в ряд
  *  не помещаются, и панель уезжает на свою строку ленты. */
@@ -63,10 +104,22 @@ const USERS_PAGE = 50;
  *  задачи 05.08. */
 const PLAYLISTS_PAGE = 50;
 
-/** Сколько тем отдаёт витрина за один запрос. Число серверное (дефолт limit у
- *  GET /market/themes), клиент его не задаёт — метода с параметром в
- *  @muza/api-client пока нет. Упёрлись в потолок — говорим об этом вслух. */
-const THEMES_LIMIT = 50;
+/** Сколько тем просим у витрины. 100 — потолок сервера (limit клампится 1..100
+ *  в market.controller), и просить меньше незачем: модератору нужен весь список,
+ *  а не первая полусотня. */
+const THEMES_LIMIT = 100;
+
+/** Сколько витрина отдаёт, НЕ ЗНАЯ про limit (сервер ≤0.1.5 или старый
+ *  @muza/api-client). Список ровно такой длины мог упереться и в этот потолок,
+ *  и в наш — предупреждение «это не все темы» показываем на нём, иначе ровно
+ *  полсотни тем выдавались бы за полный список.
+ *
+ *  ⚠️ ИМЕННО РАВЕНСТВО, А НЕ `>=`. С `>= 50` предупреждение вылезало на любой
+ *  витрине от полусотни тем — включая ту, где сервер честно уважил `limit=100`
+ *  и отдал все шестьдесят. Хуже: в диапазоне 51–99 оно ошибочно ВСЕГДА — сервер,
+ *  не знающий про `limit`, столько строк вернуть физически не может (у него
+ *  потолок 50), а знающий на этой длине ни во что не упёрся. */
+const THEMES_SERVER_DEFAULT = 50;
 
 /** Сколько файлов релиза показываем сразу: обычно их 3-4 на релиз, остальное —
  *  хвост старых сборок, который нужен редко. Разворачивается кнопкой. */
@@ -156,11 +209,17 @@ function Stats({ children }: { children: React.ReactNode }) {
  *  7/30/90 подменяла всю вкладку на «Загрузка…» и отстраивала заново — экран
  *  «моргал». Теперь старый контент стоит на месте, о фоновом обновлении
  *  говорит тонкий спиннер у табов (тот же приём, что в StatsView). */
-function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null; loading: boolean } {
+function useAdminData<T>(
+  load: () => Promise<T>,
+  deps: unknown[],
+): { data: T | null; error: string | null; loading: boolean; retry: () => void } {
   const { t } = useT();
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Счётчик попыток: отказ сервера теперь не тупик — кнопка «Запросить заново»
+  // просто крутит его, и эффект уходит на второй круг с теми же аргументами.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -181,9 +240,10 @@ function useAdminData<T>(load: () => Promise<T>, deps: unknown[]): { data: T | n
     return () => {
       alive = false;
     };
+    // длина массива постоянна для каждой точки вызова — правило хуков цело
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return { data, error, loading };
+  }, [...deps, attempt]);
+  return { data, error, loading, retry: () => setAttempt((n) => n + 1) };
 }
 
 /** Слот спиннера ФИКСИРОВАННОЙ ширины возле табов: появление/уход индикатора
@@ -196,11 +256,84 @@ function BusyDot({ busy }: { busy: boolean }) {
   );
 }
 
-function Loading({ error }: { error: string | null }) {
+/** Два из трёх состояний вкладки: пока грузим и когда сервер не ответил.
+ *  Третье (данные пришли, но их ноль) живёт в каждой таблице отдельным текстом —
+ *  «пусто» у источников и у ошибок значит разное.
+ *
+ *  ОТКАЗ НЕ КРАСНЫЙ И НЕ ТУПИК. Раньше здесь была одна строка цвета --danger с
+ *  сырым текстом вроде «Failed to fetch»: экран выглядел сломанным, и выйти из
+ *  этого состояния можно было только сменой вкладки. Теперь сверху — что
+ *  случилось обычными словами, ниже мелким — сырой ответ сервера (он админу
+ *  полезен), и кнопка, которая повторяет тот же запрос. */
+function Loading({ error, onRetry }: { error: string | null; onRetry?: () => void }) {
+  const { t } = useT();
+  if (error === null) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--sp-2)",
+          padding: "var(--sp-6) 0",
+          color: "var(--text-3)",
+          fontSize: "var(--fs-body)",
+        }}
+      >
+        <Spinner size={ROW_ICON} color="var(--text-3)" />
+        {t("common.loading")}
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: "var(--sp-2)",
+        padding: "var(--sp-5) 0",
+      }}
+    >
+      <span style={{ fontSize: "var(--fs-body)", color: "var(--text-1)" }}>{t("views.admin.state.errorTitle")}</span>
+      <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("views.admin.state.errorHint")}</span>
+      <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", wordBreak: "break-word" }}>{error}</span>
+      {onRetry ? (
+        <Button variant="secondary" icon="rotate-cw" onClick={onRetry} style={{ marginTop: "var(--sp-1)" }}>
+          {t("views.admin.state.retry")}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Полоса «на экране старое» (06.08). `Loading` показывается только пока данных
+ *  НЕТ вовсе — а провалившаяся ПЕРЕЧИТКА (переключили окно 7→30, сняли
+ *  публикацию, нажали «заново») оставляла прежние цифры на экране молча: ни
+ *  ошибки, ни спиннера, ни признака, что показанное относится к другому запросу.
+ *  Админ принимал решения по устаревшим данным и не имел повода усомниться. */
+function StaleNote({ error, onRetry }: { error: string; onRetry: () => void }) {
   const { t } = useT();
   return (
-    <div style={{ padding: "var(--sp-6) 0", color: error ? "var(--danger)" : "var(--text-3)", fontSize: "var(--fs-body)" }}>
-      {error ?? t("common.loading")}
+    <div
+      role="status"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "var(--sp-2)",
+        margin: "0 0 var(--sp-3)",
+        padding: "var(--sp-2) var(--sp-3)",
+        borderRadius: "var(--r-sm)",
+        background: "var(--fill-2)",
+        fontSize: "var(--fs-caption)",
+        color: "var(--text-2)",
+      }}
+    >
+      <span>{t("views.admin.state.staleTitle")}</span>
+      <span style={{ color: "var(--text-3)", wordBreak: "break-word" }}>{error}</span>
+      <Button variant="ghost" icon="rotate-cw" onClick={onRetry} style={{ marginLeft: "auto" }}>
+        {t("views.admin.state.retry")}
+      </Button>
     </div>
   );
 }
@@ -226,6 +359,9 @@ function Note({ text, inset = false }: { text: string; inset?: boolean }) {
  *  он неполный. */
 function Counter({ shown, total }: { shown: number; total: number }) {
   const { t } = useT();
+  // Пустой список не считает сам себя: «Показано: 0» рядом с текстом «источников
+  // пока нет» — шум, а на первый взгляд ещё и похоже на сбой счётчика.
+  if (total === 0) return null;
   return (
     <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
       {shown === total ? t("views.admin.limits.shown", { count: total }) : t("views.admin.limits.shownOf", { shown, total })}
@@ -261,6 +397,30 @@ function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (
   );
 }
 
+/** Счётчик, который молчит, когда знаменателя нет: пустой список ничего не
+ *  считает, а список без знаменателя объясняется отдельной подписью под
+ *  таблицей — врать «показано 20» (читается как «это всё») он не станет. */
+function TailCounter({ shown, total }: { shown: number; total: number | null }) {
+  if (shown === 0 || total === null) return null;
+  return <Counter shown={shown} total={total} />;
+}
+
+/** Знаменатель для подписи под обрезанным списком — или null, если его нет.
+ *
+ *  Сервер ≥06.08 присылает «сколько было бы без потолка» (AdminContent.totals,
+ *  AdminErrors.topTotal). Сервер постарше их не считает — и тогда знаменателя
+ *  действительно нет: список упёрся в потолок, а что за потолком, никто не знает.
+ *
+ *  ⚠️ РАЗЛИЧИТЕЛЬ — ЭТО `null`, А НЕ АРИФМЕТИКА. Здесь стояла эвристика «длина
+ *  ровно в потолок и знаменатель ей равен → знаменателя нет». Она не отличала
+ *  «сервер не прислал» от «сервер прислал, и вышло ровно 20»: у полного топа из
+ *  двадцати экран печатал «сервер не считает, сколько их всего» — при том что
+ *  сервер именно это и посчитал. Молчание сервера теперь доезжает сюда как
+ *  `null` (см. http.ts), и гадать не надо. */
+function denominator(total: number | null | undefined): number | null {
+  return total ?? null;
+}
+
 /** «Показать все (N)» / «Свернуть» для списков с превью. Появляется только
  *  когда есть что разворачивать. */
 function ExpandButton({ open, total, onToggle }: { open: boolean; total: number; onToggle: () => void }) {
@@ -274,9 +434,11 @@ function ExpandButton({ open, total, onToggle }: { open: boolean; total: number;
 
 function OverviewTab({ api }: { api: MuzaApi }) {
   const { t } = useT();
-  const { data, error } = useAdminData<AdminOverview>(() => api.getAdminOverview(), [api]);
-  if (!data) return <Loading error={error} />;
+  const { data, error, retry } = useAdminData<AdminOverview>(() => api.getAdminOverview(), [api]);
+  if (!data) return <Loading error={error} onRetry={retry} />;
   return (
+    <>
+      {error ? <StaleNote error={error} onRetry={retry} /> : null}
     <PanelLane>
       <Panel title={t("views.admin.sections.listeners")} style={{ flexBasis: PANEL_MIN_W }}>
         <Stats>
@@ -319,13 +481,14 @@ function OverviewTab({ api }: { api: MuzaApi }) {
         </Stats>
       </Panel>
     </PanelLane>
+    </>
   );
 }
 
 function ContentTab({ api }: { api: MuzaApi }) {
   const { t } = useT();
-  const { data, error } = useAdminData<AdminContent>(() => api.getAdminContent(), [api]);
-  if (!data) return <Loading error={error} />;
+  const { data, error, retry } = useAdminData<AdminContent>(() => api.getAdminContent(), [api]);
+  if (!data) return <Loading error={error} onRetry={retry} />;
 
   const sourceCols: TableColumn<AdminContent["sourcesByProvider"][number]>[] = [
     {
@@ -335,8 +498,8 @@ function ContentTab({ api }: { api: MuzaApi }) {
       render: (s) => `${s.provider} · ${s.kind}`,
       sortValue: (s) => `${s.provider} ${s.kind}`,
     },
-    { key: "count", label: t("views.admin.rows.total"), width: "120px", numeric: true, sortable: true },
-    { key: "dead", label: t("views.admin.rows.dead"), width: "120px", numeric: true, sortable: true },
+    { key: "count", label: t("views.admin.rows.total"), width: `${COL_NUM}px`, numeric: true, sortable: true },
+    { key: "dead", label: t("views.admin.rows.dead"), width: `${COL_NUM}px`, numeric: true, sortable: true },
   ];
   const trackCols: TableColumn<AdminContent["topTracks"][number]>[] = [
     {
@@ -346,12 +509,20 @@ function ContentTab({ api }: { api: MuzaApi }) {
       render: (r) => `${r.track.artist} — ${r.track.title}`,
       sortValue: (r) => `${r.track.artist} ${r.track.title}`,
     },
-    { key: "plays", label: t("views.admin.rows.plays"), width: "140px", numeric: true, sortable: true },
+    { key: "plays", label: t("views.admin.rows.plays"), width: `${COL_NUM_WIDE}px`, numeric: true, sortable: true },
   ];
   const artistCols: TableColumn<AdminContent["topArtists"][number]>[] = [
     { key: "artist", label: t("views.admin.rows.artist"), sortable: true },
-    { key: "plays", label: t("views.admin.rows.plays"), width: "140px", numeric: true, sortable: true },
+    { key: "plays", label: t("views.admin.rows.plays"), width: `${COL_NUM_WIDE}px`, numeric: true, sortable: true },
   ];
+  // Знаменателя может не быть вовсе — см. denominator: `null` приезжает от
+  // сервера постарше и означает «столько, сколько всего, он не считает».
+  const topTracksShown = data.topTracks.length;
+  const topArtistsShown = data.topArtists.length;
+  const topTracksTotal = denominator(data.totals?.topTracks);
+  const topArtistsTotal = denominator(data.totals?.topArtists);
+  const recentTotal = data.totals?.recentTracks;
+
   const recentCols: TableColumn<AdminContent["recentTracks"][number]>[] = [
     {
       key: "title",
@@ -370,6 +541,7 @@ function ContentTab({ api }: { api: MuzaApi }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+      {error ? <StaleNote error={error} onRetry={retry} /> : null}
       <Panel title={t("views.admin.sections.catalogCoverage")}>
         <Stats>
           <StatCard label={t("views.admin.stats.tracks")} value={data.coverage.tracks} />
@@ -391,21 +563,53 @@ function ContentTab({ api }: { api: MuzaApi }) {
           rows={data.sourcesByProvider}
           rowKey={(s) => `${s.provider}:${s.kind}`}
           ariaLabel={t("views.admin.sections.sources")}
+          empty={t("views.admin.empty.sources")}
         />
       </Panel>
-      {/* Топы жёстко обрезаны сервером (20 строк, окно 14 дней зашито там же) —
-          подписью говорим об этом прямо, чтобы «топ» не читался как «весь». */}
-      <Panel title={t("views.admin.sections.topTracks")} flush>
-        <Table columns={trackCols} rows={data.topTracks} rowKey={(r) => r.track.id} ariaLabel={t("views.admin.sections.topTracks")} />
-        <Note text={t("views.admin.limits.first", { count: data.topTracks.length })} inset />
+      {/* ТРИ ОБРЕЗАННЫХ СПИСКА, ОДНА ПОДПИСЬ. Сервер режет каждый по `limit`
+          (по умолчанию 20) и с 06.08 присылает знаменатели — сколько строк было
+          бы без потолка. Есть знаменатель → «показаны 20 из 137»; сервер
+          постарше его не считает → подпись прямо говорит, что общего числа нет,
+          вместо того чтобы выдать «20 из 20» за полный список. */}
+      <Panel title={t("views.admin.sections.topTracks")} action={<TailCounter shown={topTracksShown} total={topTracksTotal} />} flush>
+        <Table
+          columns={trackCols}
+          rows={data.topTracks}
+          rowKey={(r) => r.track.id}
+          ariaLabel={t("views.admin.sections.topTracks")}
+          empty={t("views.admin.empty.topTracks")}
+        />
+        {topTracksShown > 0 && topTracksTotal === null ? (
+          <Note text={t("views.admin.limits.topOnly", { count: topTracksShown })} inset />
+        ) : null}
       </Panel>
-      <Panel title={t("views.admin.sections.topArtists")} flush>
-        <Table columns={artistCols} rows={data.topArtists} rowKey={(r) => r.artist} ariaLabel={t("views.admin.sections.topArtists")} />
-        <Note text={t("views.admin.limits.first", { count: data.topArtists.length })} inset />
+      <Panel title={t("views.admin.sections.topArtists")} action={<TailCounter shown={topArtistsShown} total={topArtistsTotal} />} flush>
+        <Table
+          columns={artistCols}
+          rows={data.topArtists}
+          rowKey={(r) => r.artist}
+          ariaLabel={t("views.admin.sections.topArtists")}
+          empty={t("views.admin.empty.topArtists")}
+        />
+        {topArtistsShown > 0 && topArtistsTotal === null ? (
+          <Note text={t("views.admin.limits.topOnly", { count: topArtistsShown })} inset />
+        ) : null}
       </Panel>
-      <Panel title={t("views.admin.sections.newInCatalog")} flush>
-        <Table columns={recentCols} rows={data.recentTracks} rowKey={(tr) => tr.id} ariaLabel={t("views.admin.sections.newInCatalog")} />
-        <Note text={t("views.admin.limits.last", { count: data.recentTracks.length })} inset />
+      {/* У «нового в каталоге» знаменатель есть всегда: это верхушка всего
+          каталога, а его размер приезжает тем же ответом (coverage.tracks) даже
+          от сервера постарше. */}
+      <Panel
+        title={t("views.admin.sections.newInCatalog")}
+        action={<Counter shown={data.recentTracks.length} total={Math.max(recentTotal ?? 0, data.coverage.tracks, data.recentTracks.length)} />}
+        flush
+      >
+        <Table
+          columns={recentCols}
+          rows={data.recentTracks}
+          rowKey={(tr) => tr.id}
+          ariaLabel={t("views.admin.sections.newInCatalog")}
+          empty={t("views.admin.empty.recentTracks")}
+        />
       </Panel>
       <AdminPublicPlaylistsSection api={api} />
       <AdminMarketThemesSection api={api} />
@@ -431,13 +635,21 @@ export function AdminMarketThemesSection({ api }: { api: MuzaApi }) {
 
   const load = () =>
     api
-      .getMarketThemes()
+      .getMarketThemes({ limit: THEMES_LIMIT })
       .then(setRows)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
+
+  /** Повтор после отказа: гасим прошлую ошибку и возвращаем блок в «грузим», а
+   *  то кнопка нажималась, а экран не менялся, пока сервер думает. */
+  const retry = () => {
+    setError(null);
+    setRows(null);
+    void load();
+  };
 
   const setHidden = async (id: string, hidden: boolean) => {
     setBusyId(id);
@@ -477,16 +689,28 @@ export function AdminMarketThemesSection({ api }: { api: MuzaApi }) {
         </span>
       ),
     },
-    { key: "author", label: t("views.admin.themes.authorCol"), width: "160px", sortable: true },
-    { key: "installs", label: t("views.admin.themes.installsCol"), width: "120px", numeric: true, sortable: true },
+    { key: "author", label: t("views.admin.themes.authorCol"), width: `${COL_NAME}px`, sortable: true },
+    { key: "installs", label: t("views.admin.themes.installsCol"), width: `${COL_NUM}px`, numeric: true, sortable: true },
     {
       key: "action",
       label: t("views.admin.rows.action"),
-      width: "190px",
+      width: `${COL_ACTION}px`,
+      align: "center",
+      // Круглая кнопка с подсказкой, а не Button с текстом — тот же приём и та
+      // же причина, что в таблице пользователей: «Вернуть в витрину» словами
+      // занимало 190px из шестисот с небольшим, и на имя темы не оставалось
+      // ничего. Название действия никуда не делось — оно в подсказке и в
+      // aria-label, то есть доступно и мыши, и скринридеру.
       render: (theme) => (
-        <Button variant="secondary" disabled={busyId === theme.id} onClick={() => void setHidden(theme.id, !theme.hidden)}>
-          {t(theme.hidden ? "views.admin.themes.restore" : "views.admin.themes.hide")}
-        </Button>
+        <IconButton
+          icon={theme.hidden ? "eye" : "eye-off"}
+          size="sm"
+          variant="surface"
+          disabled={busyId === theme.id}
+          label={t(theme.hidden ? "views.admin.themes.restore" : "views.admin.themes.hide")}
+          onClick={() => void setHidden(theme.id, !theme.hidden)}
+          style={theme.hidden ? undefined : { color: "var(--danger)" }}
+        />
       ),
     },
   ];
@@ -504,7 +728,7 @@ export function AdminMarketThemesSection({ api }: { api: MuzaApi }) {
         <div style={{ margin: "0 var(--sp-2) var(--sp-2)", fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{error}</div>
       ) : null}
       {rows === null ? (
-        <Loading error={error} />
+        <Loading error={error} onRetry={retry} />
       ) : (
         <>
           <Table
@@ -515,81 +739,135 @@ export function AdminMarketThemesSection({ api }: { api: MuzaApi }) {
             empty={t("views.admin.themes.empty")}
             defaultSort={{ key: "installs", dir: "desc" }}
           />
-          {rows.length >= THEMES_LIMIT ? <Note text={t("views.admin.limits.themesCeiling")} inset /> : null}
+          {rows.length === THEMES_SERVER_DEFAULT || rows.length >= THEMES_LIMIT ? (
+            <Note text={t("views.admin.limits.themesCeiling")} inset />
+          ) : null}
         </>
       )}
     </Panel>
   );
 }
 
+/** Одна форма ответа на две: страница `{total, items}` от свежего сервера и
+ *  голый массив от прежнего контракта. */
+type PlaylistPage = { total: number; items: AdminPublicPlaylist[]; serverPaged: boolean };
+
+/** ⚠️ ФОРМА ОТВЕТА СМЕНИЛАСЬ НА ХОДУ, И РАЗЛИЧИТЕЛЬ ЗДЕСЬ НЕ ТИП ЗНАЧЕНИЯ.
+ *  Серверную страницу публикаций вводили в ту же смену: до неё
+ *  `getAdminPublicPlaylists()` отдавал голый массив (сервер присылал ВСЕ
+ *  публикации разом), после — `{total, limit, offset, items}`.
+ *
+ *  Первая версия смотрела на `Array.isArray(res)` — и промахивалась мимо самого
+ *  вероятного случая: свежий клиент рядом с сервером ≤0.1.5. Объект приходит и
+ *  там, просто сервер `limit`/`offset` не понял и вернул весь список. Экран
+ *  рисовал листалку «стр. 1 из 2», щёлкал номер и показывал те же шестьдесят
+ *  строк, а сортировку выключал с подписью, которую сам же опровергал.
+ *
+ *  Различитель — `limit`: сервер, который резал, обязан сказать, по сколько. Нет
+ *  числа → страницы режет таблица, и сортировка честна (весь список в руках). */
+const asPlaylistPage = (res: AdminPublicPlaylist[] | AdminPublicPlaylists): PlaylistPage => {
+  if (Array.isArray(res)) return { total: res.length, items: res, serverPaged: false };
+  const items = res.items ?? [];
+  // Второй признак — по факту, а не по словам: пришло больше страницы, значит
+  // сервер её не резал, что бы он про себя ни сообщил.
+  const serverPaged = res.limit !== null && res.limit !== undefined && items.length <= PLAYLISTS_PAGE;
+  return { total: serverPaged ? (res.total ?? items.length) : items.length, items, serverPaged };
+};
+
 /** Рубильник публичных плейлистов (2026-07-17): обзор опубликованного +
  *  «Снять с публикации» (переключатель — ещё и запретить публиковать снова).
  *  Экспорт — для точечного теста без остального ContentTab.
  *
- *  Страницы КЛИЕНТСКИЕ (05.08): сервер отдаёт все публикации одним ответом, и
- *  раньше все они рисовались подряд — на паре сотен экран становился лентой без
- *  дна. Резать нужно на сервере (см. needsOutside), но пока хотя бы честно
- *  листается и говорится, сколько всего. */
+ *  СТРАНИЦЫ ТЕПЕРЬ СЕРВЕРНЫЕ (06.08, вслед за контрактом). Раньше сервер отдавал
+ *  все публикации одним ответом, и резать приходилось на клиенте. Сервер режет —
+ *  значит, на клиенте лежит только текущая страница, и сортировка по ней соврала
+ *  бы ровно так же, как в таблице пользователей: «пятьдесят самых свежих» под
+ *  видом «самых слушаемых». Поэтому сортировка включается только когда всё
+ *  поместилось на одну страницу. Если рядом окажется старый api-client (голый
+ *  массив) — весь список в руках, страницы режет таблица, сортировка честна
+ *  всегда. */
 export function AdminPublicPlaylistsSection({ api }: { api: MuzaApi }) {
   const { t, lang } = useT();
-  const [rows, setRows] = useState<AdminPublicPlaylist[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [rev, setRev] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [ban, setBan] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   /** Сколько строк показывает таблица прямо сейчас — она же и сообщает. */
   const [shownNow, setShownNow] = useState(0);
 
-  const load = () =>
-    api
-      .getAdminPublicPlaylists()
-      .then(setRows)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
+  const {
+    data,
+    error,
+    retry,
+  } = useAdminData<PlaylistPage>(
+    () =>
+      Promise.resolve(api.getAdminPublicPlaylists({ limit: PLAYLISTS_PAGE, offset: page * PLAYLISTS_PAGE })).then(
+        asPlaylistPage,
+      ),
+    [api, page, rev],
+  );
+
+  const total = data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / PLAYLISTS_PAGE));
+  const sortable = data !== null && (!data.serverPaged || data.total <= PLAYLISTS_PAGE);
 
   const unpublish = async (id: string) => {
     setBusyId(id);
+    setActionError(null);
     try {
       await api.unpublishAdminPlaylist(id, ban);
-      await load();
+      // сняли последнюю строку страницы — шагаем назад, иначе перечитка вернёт
+      // пустую страницу и экран прикинется «ничего не опубликовано»
+      if (data !== null && data.serverPaged && data.items.length === 1 && page > 0) setPage(page - 1);
+      else setRev((n) => n + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyId(null);
     }
   };
 
-  const total = rows?.length ?? 0;
-  // ⚠️ СТРАНИЦЫ РЕЖЕТ ТАБЛИЦА, А НЕ МЫ. Здесь стояло `rows.slice(...)` до
-  // сортировки, и клик по «Слушателей» сортировал ПЯТЬДЕСЯТ САМЫХ СВЕЖИХ
-  // публикаций, выдавая их за самые слушаемые вообще. Это ровно та ложь, из-за
-  // которой сортировку выключили в таблице пользователей (там данных на клиенте
-  // нет физически) — но здесь весь массив уже в руках, и врать не обязано ничто.
-
+  // ⚠️ ШЕСТЬ КОЛОНОК В ПОЛЕ 660px — САМАЯ ТЕСНАЯ ТАБЛИЦА ЭКРАНА. До 06.08 сумма
+  // ширин была 910px при поле 660: таблица гарантированно уезжала в свою
+  // горизонтальную прокрутку прямо на минимальном окне, а «Снять с публикации»
+  // словами съедало 200px из этой суммы. Ширины — из общего словаря COL_*,
+  // действие — круглая кнопка; сумма 636px, и сторож layout-теста её стережёт.
   const columns: TableColumn<AdminPublicPlaylist>[] = [
-    { key: "name", label: t("views.admin.publicPlaylists.nameCol"), sortable: true },
-    { key: "ownerUsername", label: t("views.admin.publicPlaylists.ownerCol"), width: "160px", sortable: true },
-    { key: "trackCount", label: t("views.admin.publicPlaylists.tracksCol"), width: "110px", numeric: true, sortable: true },
-    { key: "followersCount", label: t("views.admin.publicPlaylists.followersCol"), width: "130px", numeric: true, sortable: true },
+    { key: "name", label: t("views.admin.publicPlaylists.nameCol"), sortable },
+    { key: "ownerUsername", label: t("views.admin.publicPlaylists.ownerCol"), width: `${COL_NAME}px`, sortable },
+    { key: "trackCount", label: t("views.admin.publicPlaylists.tracksCol"), width: `${COL_NUM}px`, numeric: true, sortable },
+    {
+      key: "followersCount",
+      label: t("views.admin.publicPlaylists.followersCol"),
+      width: `${COL_NUM}px`,
+      numeric: true,
+      sortable,
+    },
     {
       key: "publishedAt",
       label: t("views.admin.publicPlaylists.publishedCol"),
-      width: "150px",
+      width: `${COL_DATE}px`,
       numeric: true,
-      sortable: true,
+      sortable,
       render: (p) => dt(p.publishedAt, lang),
       sortValue: (p) => at(p.publishedAt),
     },
     {
       key: "action",
       label: t("views.admin.rows.action"),
-      width: "200px",
+      width: `${COL_ACTION}px`,
+      align: "center",
       render: (p) => (
-        <Button variant="secondary" disabled={busyId === p.id} onClick={() => void unpublish(p.id)}>
-          {t("views.admin.publicPlaylists.unpublish")}
-        </Button>
+        <IconButton
+          icon="eye-off"
+          size="sm"
+          variant="surface"
+          disabled={busyId === p.id}
+          label={t("views.admin.publicPlaylists.unpublish")}
+          onClick={() => void unpublish(p.id)}
+          style={{ color: "var(--danger)" }}
+        />
       ),
     },
   ];
@@ -597,13 +875,22 @@ export function AdminPublicPlaylistsSection({ api }: { api: MuzaApi }) {
   return (
     <Panel
       title={t("views.admin.publicPlaylists.title")}
-      action={rows ? <Counter shown={shownNow} total={total} /> : null}
+      action={data ? <Counter shown={shownNow} total={total} /> : null}
       flush
     >
-      {rows === null ? (
-        <Loading error={error} />
+      {data === null ? (
+        <Loading error={error} onRetry={retry} />
       ) : (
         <>
+          {error ? <StaleNote error={error} onRetry={retry} /> : null}
+          {/* Ошибка ДЕЙСТВИЯ при загруженном списке — та же дыра, что чинили у
+              тем 04.08: отказ «снять с публикации» уходил в ветку «списка ещё
+              нет» и не показывался вовсе. */}
+          {actionError ? (
+            <div style={{ margin: "0 var(--sp-2) var(--sp-2)", fontSize: "var(--fs-caption)", color: "var(--danger)" }}>
+              {actionError}
+            </div>
+          ) : null}
           {/* Тумблер стоит НАД таблицей и относится к любой строке: он меняет
               смысл кнопки «Снять с публикации» — с «убрать сейчас» на «убрать
               и больше не пускать».
@@ -628,19 +915,23 @@ export function AdminPublicPlaylistsSection({ api }: { api: MuzaApi }) {
           </div>
           <Table
             columns={columns}
-            rows={rows}
+            rows={data.items}
             rowKey={(p) => p.id}
             ariaLabel={t("views.admin.publicPlaylists.title")}
             empty={t("views.admin.publicPlaylists.empty")}
-            pageSize={PLAYLISTS_PAGE}
+            // Страницы режет ТОТ, У КОГО ВЕСЬ СПИСОК. Режет сервер — таблице
+            // резать нечего (pageSize 0) и листалка своя, внешняя; отдал всё
+            // массивом — режет таблица, обязательно ПОСЛЕ сортировки.
+            pageSize={data.serverPaged ? 0 : PLAYLISTS_PAGE}
             prevLabel={t("views.admin.pager.prev")}
             nextLabel={t("views.admin.pager.next")}
             pageLabel={(p: number, n: number) => t("views.admin.pager.pageOf", { page: p, pages: n })}
-            // Счётчик в шапке панели обязан говорить про ТЕКУЩУЮ страницу, а её
-            // теперь знает только таблица (страницы уехали туда вместе с
-            // сортировкой — иначе сортировка врёт).
+            // Счётчик в шапке панели обязан говорить про ТЕКУЩУЮ страницу — при
+            // клиентской нарезке её знает только таблица.
             onView={(v) => setShownNow(v.shown)}
           />
+          {sortable ? null : <Note text={t("views.admin.users.sortOffNote")} inset />}
+          {data.serverPaged ? <Pager page={page} pages={pages} onPage={setPage} /> : null}
         </>
       )}
     </Panel>
@@ -650,7 +941,7 @@ export function AdminPublicPlaylistsSection({ api }: { api: MuzaApi }) {
 function HealthTab({ api }: { api: MuzaApi }) {
   const { t } = useT();
   const [hours, setHours] = useState(24);
-  const { data, error, loading } = useAdminData<AdminHealth>(() => api.getAdminHealth(hours), [api, hours]);
+  const { data, error, loading, retry } = useAdminData<AdminHealth>(() => api.getAdminHealth(hours), [api, hours]);
 
   const recipeCols: TableColumn<AdminHealth["byRecipe"][number]>[] = [
     {
@@ -661,13 +952,13 @@ function HealthTab({ api }: { api: MuzaApi }) {
       sortValue: (r) => r.recipeVersion,
       numeric: false,
     },
-    { key: "reports", label: t("views.admin.health.reports"), width: "120px", numeric: true, sortable: true },
-    { key: "ok", label: "OK", width: "100px", numeric: true, sortable: true },
-    { key: "fail", label: "Fail", width: "100px", numeric: true, sortable: true },
+    { key: "reports", label: t("views.admin.health.reports"), width: `${COL_NUM}px`, numeric: true, sortable: true },
+    { key: "ok", label: "OK", width: `${COL_NUM}px`, numeric: true, sortable: true },
+    { key: "fail", label: "Fail", width: `${COL_NUM}px`, numeric: true, sortable: true },
     {
       key: "successRate",
       label: "Success",
-      width: "120px",
+      width: `${COL_NUM}px`,
       numeric: true,
       sortable: true,
       render: (r) => pct(r.successRate),
@@ -676,9 +967,9 @@ function HealthTab({ api }: { api: MuzaApi }) {
   ];
   const appCols: TableColumn<AdminHealth["byApp"][number]>[] = [
     { key: "appVersion", label: t("views.admin.health.versionCol"), sortable: true },
-    { key: "reports", label: t("views.admin.health.reports"), width: "120px", numeric: true, sortable: true },
-    { key: "ok", label: "OK", width: "100px", numeric: true, sortable: true },
-    { key: "fail", label: "Fail", width: "100px", numeric: true, sortable: true },
+    { key: "reports", label: t("views.admin.health.reports"), width: `${COL_NUM}px`, numeric: true, sortable: true },
+    { key: "ok", label: "OK", width: `${COL_NUM}px`, numeric: true, sortable: true },
+    { key: "fail", label: "Fail", width: `${COL_NUM}px`, numeric: true, sortable: true },
   ];
 
   return (
@@ -697,8 +988,9 @@ function HealthTab({ api }: { api: MuzaApi }) {
         </div>
         <BusyDot busy={loading && data !== null} />
       </div>
+      {data && error ? <StaleNote error={error} onRetry={retry} /> : null}
       {!data ? (
-        <Loading error={error} />
+        <Loading error={error} onRetry={retry} />
       ) : (
         <>
           <PanelLane>
@@ -730,12 +1022,19 @@ function HealthTab({ api }: { api: MuzaApi }) {
               </Stats>
             </Panel>
           </PanelLane>
-          <Panel title={t("views.admin.sections.byRecipeVersion")} flush>
+          {/* Обе разбивки сервер отдаёт ЦЕЛИКОМ (GROUP BY без LIMIT), поэтому
+              счётчик здесь честно говорит «показано N» — это и есть всё. */}
+          <Panel
+            title={t("views.admin.sections.byRecipeVersion")}
+            action={<Counter shown={data.byRecipe.length} total={data.byRecipe.length} />}
+            flush
+          >
             <Table
               columns={recipeCols}
               rows={data.byRecipe}
               rowKey={(r) => String(r.recipeVersion)}
               ariaLabel={t("views.admin.sections.byRecipeVersion")}
+              empty={t("views.admin.empty.reports")}
             />
             <Note text={t("views.admin.health.recipeNote", { version: data.recipeVersion })} inset />
           </Panel>
@@ -744,7 +1043,13 @@ function HealthTab({ api }: { api: MuzaApi }) {
             action={<Counter shown={data.byApp.length} total={data.byApp.length} />}
             flush
           >
-            <Table columns={appCols} rows={data.byApp} rowKey={(r) => r.appVersion} ariaLabel={t("views.admin.sections.byAppVersion")} />
+            <Table
+              columns={appCols}
+              rows={data.byApp}
+              rowKey={(r) => r.appVersion}
+              ariaLabel={t("views.admin.sections.byAppVersion")}
+              empty={t("views.admin.empty.reports")}
+            />
           </Panel>
         </>
       )}
@@ -775,7 +1080,7 @@ export function UsersTab({ api }: { api: MuzaApi }) {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [query]);
-  const { data, error, loading } = useAdminData<AdminUsers>(
+  const { data, error, loading, retry } = useAdminData<AdminUsers>(
     () => api.getAdminUsers({ limit: USERS_PAGE, offset: page * USERS_PAGE, q: q || undefined }),
     [api, rev, q, page],
   );
@@ -810,17 +1115,17 @@ export function UsersTab({ api }: { api: MuzaApi }) {
     {
       key: "createdAt",
       label: t("views.admin.users.createdCol"),
-      width: "140px",
+      width: `${COL_DATE}px`,
       numeric: true,
       sortable,
       render: (u) => dt(u.createdAt, lang),
       sortValue: (u) => at(u.createdAt),
     },
-    { key: "plays30d", label: t("views.admin.users.plays30dCol"), width: "150px", numeric: true, sortable },
+    { key: "plays30d", label: t("views.admin.users.plays30dCol"), width: `${COL_NUM_WIDE}px`, numeric: true, sortable },
     {
       key: "lastPlayAt",
       label: t("views.admin.users.lastCol"),
-      width: "140px",
+      width: `${COL_DATE}px`,
       numeric: true,
       sortable,
       render: (u) => dt(u.lastPlayAt, lang),
@@ -829,7 +1134,7 @@ export function UsersTab({ api }: { api: MuzaApi }) {
     {
       key: "isAdmin",
       label: t("views.admin.users.adminCol"),
-      width: "110px",
+      width: `${COL_ACTION}px`,
       align: "center",
       // Кнопка прав — круглая иконка с подсказкой, а не полноразмерная Button:
       // строка с кнопкой в 40px вдвое выше строки с текстом, и полсотни таких
@@ -855,13 +1160,17 @@ export function UsersTab({ api }: { api: MuzaApi }) {
           <SearchInput value={query} onChange={setQuery} placeholder={t("views.admin.users.searchPlaceholder")} />
         </div>
         <BusyDot busy={loading && data !== null} />
+        {/* `total` сервер считает ПОД фильтром поиска, поэтому во время поиска
+            «Всего 137» было бы неправдой — это число найденных. Две подписи на
+            один счётчик: без запроса «всего», с запросом «нашлось». */}
         <span style={{ marginLeft: "auto", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
-          {data ? t("views.admin.users.piiNote", { count: data.total }) : null}
+          {data ? t(q ? "views.admin.users.foundNote" : "views.admin.users.piiNote", { count: data.total }) : null}
         </span>
       </div>
       {actionError ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{actionError}</div> : null}
+      {data && error ? <StaleNote error={error} onRetry={retry} /> : null}
       {!data ? (
-        <Loading error={error} />
+        <Loading error={error} onRetry={retry} />
       ) : (
         <Panel
           title={t("views.admin.tabs.users")}
@@ -873,7 +1182,8 @@ export function UsersTab({ api }: { api: MuzaApi }) {
             rows={data.users}
             rowKey={(u) => u.id}
             ariaLabel={t("views.admin.tabs.users")}
-            empty={t("views.admin.users.searchEmpty")}
+            // «Никого с таким ником нет» без запроса врало бы: ника не вводили.
+            empty={t(q ? "views.admin.users.searchEmpty" : "views.admin.empty.users")}
           />
           {sortable ? null : <Note text={t("views.admin.users.sortOffNote")} inset />}
           <Pager page={page} pages={pages} onPage={setPage} />
@@ -912,12 +1222,16 @@ function GrowthTab({ api }: { api: MuzaApi }) {
   const { t } = useT();
   const [days, setDays] = useState(30);
   const [allAssets, setAllAssets] = useState(false);
-  const { data, error, loading } = useAdminData<AdminGrowth>(() => api.getAdminGrowth(days), [api, days]);
+  /** Сколько строк таблица файлов показывает прямо сейчас — она же и говорит.
+   *  Считать это снаружи нельзя: у таблицы своя листалка, и на второй странице
+   *  «показаны 10 из 12» было бы враньём (там их две). */
+  const [assetsShown, setAssetsShown] = useState(0);
+  const { data, error, loading, retry } = useAdminData<AdminGrowth>(() => api.getAdminGrowth(days), [api, days]);
 
   const assetCols: TableColumn<AdminGrowth["downloads"]["byAsset"][number]>[] = [
     { key: "asset", label: t("views.admin.growth.assetCol"), sortable: true },
-    { key: "tag", label: t("views.admin.growth.tagCol"), width: "160px", sortable: true },
-    { key: "count", label: t("views.admin.growth.countCol"), width: "140px", numeric: true, sortable: true },
+    { key: "tag", label: t("views.admin.growth.tagCol"), width: `${COL_NAME}px`, sortable: true },
+    { key: "count", label: t("views.admin.growth.countCol"), width: `${COL_NUM_WIDE}px`, numeric: true, sortable: true },
   ];
   const assetsAll = data?.downloads.byAsset ?? [];
   // ⚠️ Здесь стоял `assetsAll.slice(0, ASSETS_PREVIEW)` ПЕРЕД таблицей, а у
@@ -929,8 +1243,9 @@ function GrowthTab({ api }: { api: MuzaApi }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
       <DaysTabs value={days} onChange={setDays} busy={loading && data !== null} />
+      {data && error ? <StaleNote error={error} onRetry={retry} /> : null}
       {!data ? (
-        <Loading error={error} />
+        <Loading error={error} onRetry={retry} />
       ) : (
         <>
           <Panel title={t("views.admin.growth.visits")}>
@@ -962,10 +1277,13 @@ function GrowthTab({ api }: { api: MuzaApi }) {
             <div style={{ marginTop: "var(--sp-4)" }}>
               <SeriesChart points={data.downloads.series} mode="bars" ariaLabel={t("views.admin.growth.downloads")} />
             </div>
-            {assetsAll.length > 0 ? (
-              <div style={{ marginTop: "var(--sp-4)" }}>
-                {/* счётчик и «показать все» относятся к таблице файлов, а не ко
-                    всей панели «Скачивания», поэтому стоят над ней, а не в шапке */}
+            {/* Таблица файлов рисуется ВСЕГДА, даже пустой: раньше при нуле
+                скачиваний она просто исчезала, и понять, «ничего не качали» или
+                «блок сломался», было нечем. */}
+            <div style={{ marginTop: "var(--sp-4)" }}>
+              {/* счётчик и «показать все» относятся к таблице файлов, а не ко
+                  всей панели «Скачивания», поэтому стоят над ней, а не в шапке */}
+              {assetsAll.length > 0 ? (
                 <div
                   style={{
                     display: "flex",
@@ -975,24 +1293,26 @@ function GrowthTab({ api }: { api: MuzaApi }) {
                     marginBottom: "var(--sp-2)",
                   }}
                 >
-                  <Counter shown={allAssets ? assetsAll.length : Math.min(ASSETS_PREVIEW, assetsAll.length)} total={assetsAll.length} />
+                  <Counter shown={assetsShown} total={assetsAll.length} />
                   {assetsAll.length > ASSETS_PREVIEW ? (
                     <ExpandButton open={allAssets} total={assetsAll.length} onToggle={() => setAllAssets((v) => !v)} />
                   ) : null}
                 </div>
-                <Table
-                  columns={assetCols}
-                  rows={assetsAll}
-                  rowKey={(a) => `${a.tag}:${a.asset}`}
-                  ariaLabel={t("views.admin.growth.downloads")}
-                  defaultSort={{ key: "count", dir: "desc" }}
-                  pageSize={allAssets ? 0 : ASSETS_PREVIEW}
-                  prevLabel={t("views.admin.pager.prev")}
-                  nextLabel={t("views.admin.pager.next")}
-                  pageLabel={(p: number, n: number) => t("views.admin.pager.pageOf", { page: p, pages: n })}
-                />
-              </div>
-            ) : null}
+              ) : null}
+              <Table
+                columns={assetCols}
+                rows={assetsAll}
+                rowKey={(a) => `${a.tag}:${a.asset}`}
+                ariaLabel={t("views.admin.growth.downloads")}
+                empty={t("views.admin.empty.downloads")}
+                defaultSort={{ key: "count", dir: "desc" }}
+                pageSize={allAssets ? 0 : ASSETS_PREVIEW}
+                prevLabel={t("views.admin.pager.prev")}
+                nextLabel={t("views.admin.pager.next")}
+                pageLabel={(p: number, n: number) => t("views.admin.pager.pageOf", { page: p, pages: n })}
+                onView={(v) => setAssetsShown(v.shown)}
+              />
+            </div>
             <Note text={t("views.admin.growth.downloadsNote")} />
           </Panel>
         </>
@@ -1103,7 +1423,11 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
   const [openHash, setOpenHash] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { data, error, loading } = useAdminData<AdminErrors>(
+  /** Отказ УДАЛЕНИЯ. До 06.08 у обеих кнопок стоял try/finally без catch:
+   *  сервер отвечал отказом — кнопка отжималась, строка оставалась на месте, и
+   *  человек видел «нажал, ничего не произошло». Теперь причина на экране. */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const { data, error, loading, retry } = useAdminData<AdminErrors>(
     () =>
       api.getAdminErrors({
         days,
@@ -1116,22 +1440,29 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
   const refresh = () => {
     setOpenHash(null);
     setConfirmClear(false);
+    setActionError(null);
     setReload((n) => n + 1);
   };
   const doClear = async () => {
     setBusy(true);
+    setActionError(null);
     try {
       await api.clearAdminErrors(filterArg);
       refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : t("views.admin.errors.deleteFailed"));
     } finally {
       setBusy(false);
     }
   };
   const doDeleteGroup = async (hash: string) => {
     setBusy(true);
+    setActionError(null);
     try {
       await api.deleteAdminErrorGroup(hash);
       refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : t("views.admin.errors.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -1173,10 +1504,12 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
       <DaysTabs value={days} onChange={setDays} busy={loading && data !== null} />
+      {data && error ? <StaleNote error={error} onRetry={retry} /> : null}
       {!data ? (
-        <Loading error={error} />
+        <Loading error={error} onRetry={retry} />
       ) : (
         <>
+          {actionError ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--danger)" }}>{actionError}</div> : null}
           <Panel>
             <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", alignItems: "flex-start" }}>
               <StatCard label={t("views.admin.errors.totalWindow")} value={data.totals.count} />
@@ -1234,9 +1567,11 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
             action={
               top.length > 0 ? (
                 <>
-                  {/* сервер отдаёт только верхушку (жёстко 20 групп), а сколько
-                      их всего в окне — знает totals.distinct: говорим обе цифры */}
-                  <Counter shown={top.length} total={data.totals.distinct} />
+                  {/* Знаменатель — topTotal, а НЕ totals.distinct: distinct
+                      считается по всему окну без фильтров, и при выбранном
+                      классе ошибок «показаны 20 из 137» относилось бы к другому
+                      множеству, чем сами строки. */}
+                  <TailCounter shown={top.length} total={denominator(data.topTotal)} />
                   <Tabs
                     items={[
                       { key: "count", label: t("views.admin.errors.sortByCount") },
@@ -1267,6 +1602,11 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
                 ))}
               </div>
             )}
+            {/* Знаменателя нет (сервер постарше его не считает) — говорим об
+                этом вслух, как у топов «Контента», а не молчим. */}
+            {top.length > 0 && denominator(data.topTotal) === null ? (
+              <Note text={t("views.admin.limits.topOnly", { count: top.length })} />
+            ) : null}
             <Note text={t("views.admin.errors.note")} />
           </Panel>
         </>
