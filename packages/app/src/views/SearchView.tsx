@@ -641,14 +641,17 @@ export function SearchView({
 
       {/* Панель массовых действий выделения (2026-07-20): в выдаче состав
           не правится — без «Убрать» */}
-      {multi.count > 0 && selectionActions.length > 0 ? (
+      
         <SelectionBar
+          // Уход играет ТОЛЬКО у того, кто передаёт open (2026-08-05): узел, снятый
+          // условием, вырывается кадром — анимировать нечего. Подпись и кнопки на
+          // кадре ухода уже пусты, но панель показывает последний открытый вид сама.
+          open={multi.count > 0 && selectionActions.length > 0}
           label={t("menu.selection.count", { count: multi.count })}
           clearLabel={t("menu.selection.clear")}
           onClear={multi.clear}
           actions={selectionActions}
         />
-      ) : null}
     </div>
   );
 }

@@ -96,7 +96,6 @@ export function SettingRow({
   danger?: boolean;
   children?: React.ReactNode;
 }) {
-  const [hover, setHover] = useState(false);
   const Tag = (onClick ? "button" : "div") as "button";
   return (
     <Tag
@@ -104,9 +103,12 @@ export function SettingRow({
       // Якорь поиска по настройкам: searchSettings ведёт к ряду по видимому
       // названию (data-rowtitle + CSS.escape) — ручной разметки ~150 рядов нет.
       data-rowtitle={title}
+      // Подсветка — каналом CSS (.muza-setting-row в @muza/ui/interactions.css),
+      // а не useState: до ~150 рядов на экране, и каждый платил перерисовкой за
+      // проход курсора. Класс висит и на некликабельном ряду — он просто не
+      // читает переменную (см. background ниже), зато класс один на все ряды.
+      className="muza-setting-row"
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       style={{
         display: "flex",
         alignItems: "center",
@@ -123,7 +125,9 @@ export function SettingRow({
         // сам по себе. Клип, не запас padding: фокус-кольца/тени контролов
         // остаются внутри padding var(--sp-4/5), проверено живьём на 200%.
         overflow: "hidden",
-        background: onClick && hover ? "var(--surface-3)" : "var(--surface-2)",
+        // Некликабельный ряд не подсвечивается вовсе — он и не читает канал:
+        // подсветка обещает нажатие, и обещать его нечему.
+        background: onClick ? "var(--setting-bg)" : "var(--surface-2)",
         cursor: onClick ? "pointer" : "default",
         fontFamily: "var(--font-ui)",
         transition: "background var(--dur-state) var(--ease-standard)",

@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { Track } from "@muza/api-client";
 import { useT } from "@muza/app";
+import { DEFAULT_PLAYER_STATE, loadPlayerState, PLAYER_STATE_KEY, savePlayerState } from "@muza/app/lib/playerState";
 import { getApi } from "./api";
 import { ensureChain, eqAttached, normFactor, setEqBands, setSlotLevel } from "./audioFx";
 import { usePrefs } from "./prefs";
@@ -32,7 +33,9 @@ import { usePrefs } from "./prefs";
  *   - скорость воспроизведения без «бурундука» — preservesPitch;
  *   - продолжить с места остановки — карта позиций ниже;
  *   - бесконечное радио — догрузка похожих, когда очередь кончилась;
- *   - подготовка очереди (сколько треков греть и за сколько секунд до конца).
+ *   - подготовка очереди (сколько треков греть и за сколько секунд до конца);
+ *   - память органов управления между заходами — ОБЩИЙ с приложением ключ
+ *     (@muza/app/lib/playerState, см. раздел «Память плеера» ниже).
  *  Чего браузер не умеет — того в настройках нет вовсе (см. settings/page.tsx).
  *
  *  ⚠️ СВЕРКА НОМЕРА СТАРТА (loadSeqRef) — инвариант файла, переживший эту
@@ -64,9 +67,10 @@ interface PlayerCtx {
   muted: boolean;
   repeat: Repeat;
   shuffle: boolean;
-  /** Скорость воспроизведения, ×. Живёт в плеере, а не в профиле настроек:
-   *  как и кнопка «1×» в приложении, это состояние сеанса — вернувшись завтра,
-   *  человек не должен обнаружить музыку на удвоенной скорости. */
+  /** Скорость воспроизведения, ×. Живёт в памяти ПЛЕЕРА, а не в профиле
+   *  настроек: это положение органа управления, а не решение человека о
+   *  поведении программы (разбор — шапка @muza/app/lib/playerState). Перезаход
+   *  она переживает, как и в приложении. */
   speed: number;
   /** «Откуда кликнул — то и очередь» (модель десктопа). */
   playContext: (tracks: Track[], startIndex: number) => void;
@@ -89,7 +93,13 @@ interface PositionCtx {
 const Player = createContext<PlayerCtx | null>(null);
 const Position = createContext<PositionCtx>({ position: 0, duration: 0 });
 
-const VOLUME_KEY = "muza.web.volume.v1";
+/** Старый ключ громкости веба. Читается ОДИН раз — при первом заходе на общей
+ *  памяти плеера, — и НЕ УДАЛЯЕТСЯ. Прецедент и обоснование дословно те же, что
+ *  у LEGACY_WEB_KEY в prefs.tsx: если релиз придётся откатить, человек вернётся
+ *  на прежнюю версию сайта и найдёт свою громкость на месте. Двойной записи
+ *  (сюда и в общий ключ) не заводим — откат и возврат воскресили бы протухшее
+ *  значение поверх свежего. */
+const LEGACY_VOLUME_KEY = "muza.web.volume.v1";
 
 /** Действия Media Session, которые страница берёт на себя. Список нужен
  *  ровно для того, чтобы их можно было СНЯТЬ, когда человек выключил
@@ -148,13 +158,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [volume, setVolumeState] = useState(0.9);
-  const [muted, setMuted] = useState(false);
-  const [repeat, setRepeat] = useState<Repeat>("off");
-  const [shuffle, setShuffle] = useState(false);
+  /** Органы управления стартуют с ДЕФОЛТОВ общей памяти, а сохранённое
+   *  приезжает эффектом после маунта. Ленивым инициализатором, как в
+   *  приложении (usePlayback), вебу нельзя: статический экспорт пререндерит
+   *  разметку без localStorage, и первый клиентский рендер разошёлся бы с ней
+   *  гидратацией. Тот же приём и по той же причине — в prefs.tsx. */
+  const [volume, setVolumeState] = useState(DEFAULT_PLAYER_STATE.volume / 100);
+  const [muted, setMuted] = useState(DEFAULT_PLAYER_STATE.muted);
+  const [repeat, setRepeat] = useState<Repeat>(DEFAULT_PLAYER_STATE.repeat);
+  const [shuffle, setShuffle] = useState(DEFAULT_PLAYER_STATE.shuffle);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [speed, setSpeedState] = useState(1);
+  const [speed, setSpeedState] = useState(DEFAULT_PLAYER_STATE.speed);
+  /** Память уже прочитана? До этого в неё НЕЛЬЗЯ писать (см. эффект записи). */
+  const [restored, setRestored] = useState(false);
 
   /** Два слота: активный звучит, второй готовит следующий трек. */
   const slotsRef = useRef<Slot[]>([]);
@@ -203,10 +220,74 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const current = index >= 0 ? (queue[index] ?? null) : null;
   const currentRef = useRef<Track | null>(null);
 
+  // ── Память плеера между заходами ─────────────────────────────────
+  //
+  // Ключ ОБЩИЙ с приложением (@muza/app/lib/playerState, `muza.player.v1`):
+  // громкость, немота, перемешивание, повтор, скорость. Раньше веб помнил одну
+  // громкость и своим ключом — уровень, выставленный в программе, в браузере
+  // просто не существовал, а всё остальное не переживало даже перезагрузку
+  // вкладки.
+  //
+  // ШКАЛА КОНВЕРТИРУЕТСЯ НА ГРАНИЦЕ. Канон общего ключа — 0..100 целыми (шкала
+  // слайдера приложения), веб внутри держит доли: делим на 100 при чтении,
+  // умножаем и округляем при записи. Хранить долями значило бы завести в одном
+  // ключе два вида значения и разъехаться на первом же клиенте, который об
+  // этом не знает.
   useEffect(() => {
-    const saved = Number(localStorage.getItem(VOLUME_KEY));
-    if (Number.isFinite(saved) && saved > 0 && saved <= 1) setVolumeState(saved);
+    // Общий ключ уже есть — старый веб-ключ больше не смотрим (порядок переезда
+    // тот же, что у настроек в prefs.tsx).
+    let legacy: number | null = null;
+    try {
+      if (!localStorage.getItem(PLAYER_STATE_KEY)) {
+        const raw = Number(localStorage.getItem(LEGACY_VOLUME_KEY));
+        if (Number.isFinite(raw) && raw > 0 && raw <= 1) legacy = Math.round(raw * 100);
+      }
+    } catch {
+      /* приватный режим — начинаем с дефолтов */
+    }
+    const saved = loadPlayerState();
+    // Миграция — РОВНО ОДИН раз: с этой записи общий ключ существует, и ветка
+    // выше больше не сработает никогда.
+    if (legacy !== null) savePlayerState({ volume: legacy, volumeBeforeMute: legacy });
+    // Немота приложения — это громкость 0 с отдельно запомненным уровнем, а
+    // немота веба — флаг ПОВЕРХ сохранённой громкости. Пришли из программы
+    // (ноль плюс флаг) — берём уровень до немоты: иначе снятие немоты здесь не
+    // дало бы звука вовсе, и кнопка выглядела бы сломанной.
+    const vol = legacy ?? (saved.muted && saved.volume === 0 ? saved.volumeBeforeMute : saved.volume);
+    setVolumeState(vol / 100);
+    setMuted(saved.muted);
+    setRepeat(saved.repeat);
+    // ⚠️ ФЛАГОМ, А НЕ toggleShuffle: тот пересобирает очередь и baseQueueRef.
+    // При монтировании очередь пуста, поэтому восстановление одного флага
+    // безопасно, а вызов переключателя однажды перетасовал бы то, чего ещё нет.
+    setShuffle(saved.shuffle);
+    setSpeedState(saved.speed);
+    setRestored(true);
   }, []);
+
+  /** Запись — ОДНИМ эффектом на пять значений, а не в каждом сеттере (приём
+   *  приложения, usePlayback): сеттеров у них шесть, и «дописать сохранение в
+   *  каждый» — гарантия, что седьмой забудут. Дорогой запись не бывает:
+   *  playerState склеивает её окном 250 мс (см. его шапку).
+   *
+   *  ⚠️ ДО ВОССТАНОВЛЕНИЯ НЕ ПИШЕМ. Первый кадр держит дефолты, и запись из
+   *  него затёрла бы сохранённое раньше, чем мы успели его прочитать. */
+  useEffect(() => {
+    if (!restored) return;
+    const v = Math.round(volume * 100);
+    // ⚠️ volumeBeforeMute ПИШЕТСЯ И ЗДЕСЬ, пока НЕ включена немота. Без этого
+    // веб оставлял поле дефолтным, а чтение выше принимало собственные данные
+    // за приложенческие: человек утягивал ползунок в ноль, жал немоту, получал
+    // {volume: 0, muted: true, volumeBeforeMute: 64} — и после перезахода
+    // ветка «ноль плюс флаг» отдавала ему 64 %, то есть громкость возвращалась
+    // сама. Теперь поле хранит уровень, который был ДО немоты: у нуля с
+    // немотой это тоже ноль, и ветка отдаёт ноль честно.
+    savePlayerState(
+      muted
+        ? { volume: v, muted, shuffle, repeat, speed }
+        : { volume: v, volumeBeforeMute: v, muted, shuffle, repeat, speed },
+    );
+  }, [restored, volume, muted, shuffle, repeat, speed]);
 
   // ── «Продолжить с места остановки» ───────────────────────────────
   const resumeRef = useRef<ResumeMap | null>(null);
@@ -945,7 +1026,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const clamped = Math.min(1, Math.max(0, v));
     setVolumeState(clamped);
     setMuted(false);
-    localStorage.setItem(VOLUME_KEY, String(clamped));
+    // В хранилище уровень уносит общий эффект памяти — здесь его писать не надо
+    // (протяжка слайдера дала бы 60–120 синхронных записей в секунду).
   }, []);
 
   const toggleMute = useCallback(() => setMuted((m) => !m), []);

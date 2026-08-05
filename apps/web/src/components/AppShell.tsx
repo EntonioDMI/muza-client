@@ -453,7 +453,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             прямо на фоне страницы. Веб добавлял ему четвёртую подложку, и от
             этого экран читался как «страница внутри страницы» (замечание
             владельца 02.08). */}
-        <main key={pathname} className="main muza-view">
+        {/* view-in — ПРИХОД экрана, и только он. Почему у веба нет фазы ухода
+            и почему класс свой, а не общий .muza-view приложения — в
+            globals.css, раздел «Переход между экранами». */}
+        <main key={pathname} className="main view-in">
           {children}
         </main>
 
@@ -567,7 +570,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </Dialog>
 
-      {mobileNp ? <MobileNowPlaying onClose={closeMobileNp} /> : null}
+      {/* Экран стоит в дереве ВСЕГДА и слушает проп: снимать его условием
+          нельзя — уходить будет нечему (см. шапку MobileNowPlaying). Пока он
+          закрыт, узла в разметке всё равно нет: компонент возвращает null сам,
+          пока хук слоя не смонтирован. */}
+      <MobileNowPlaying open={mobileNp} onClose={closeMobileNp} />
 
       {/* Караоке во весь экран — ПОСЛЕДНИМ ребёнком .shell и без обёрток:
           общий оверлей позиционируется absolute inset:0 и рассчитывает, что

@@ -8,7 +8,31 @@ import { Tooltip } from "../feedback/Tooltip.jsx";
  *  Keyboard-reachable: the index cell is a real play button (number → play icon
  *  on hover/focus), like/more appear on focus-within as well as hover.
  *  Labels default to English (ДС строко-нейтральна, DEFAULT_LANG=en) — приложение
- *  может передать локализованные playLabel/pauseLabel/likeLabel/moreLabel. */
+ *  может передать локализованные playLabel/pauseLabel/likeLabel/moreLabel.
+ *
+ *  ⚠️ ПОДСВЕТКА — БЕЗ СОСТОЯНИЯ REACT (2026-08-05). Наведение красит строку
+ *  каналами CSS (.muza-row / .muza-row--track в interactions.css, там же весь
+ *  разбор), а не useState: самый горячий список приложения платил перерисовкой
+ *  за каждый проход курсора. Заодно ушёл ручной разбор e.relatedTarget в onBlur
+ *  — :focus-within считает то же самое и не оставляет подсветку залипшей на
+ *  строке, уехавшей из-под неподвижного курсора.
+ *
+ *  ⚠️ ЧТО ОСТАЛОСЬ СОСТОЯНИЕМ И ПОЧЕМУ ИМЕННО ЭТО. Лайк и «⋯» — две IconButton,
+ *  каждая в Tooltip, и монтировать их у ВСЕХ строк нельзя: замер 2026-08-05 на
+ *  240 строках (vitest+jsdom, медиана из 9 прогонов) — 329 мс список как есть,
+ *  +470 мс за всегда-смонтированную пару (+143 %, то есть список дороже вдвое;
+ *  Tooltip в этой цене всего ~7 %, остальное — сама кнопка), а списки НЕ
+ *  виртуализированы. Поэтому монтируем ЛЕНИВО и НАВСЕГДА: `armed` взводится
+ *  первым касанием строки (курсор или фокус) и больше не гаснет. Перерисовка
+ *  строки становится однократной вместо двух на каждый проход курсора, а
+ *  ОБЁРТКА аффорданса живёт всегда — именно поэтому фейд наконец играет: её
+ *  прозрачность едет 0→1 обычным переходом, а кнопка появляется внутри уже
+ *  начавшегося перехода. Раньше кнопка МОНТИРОВАЛАСЬ по наведению, и никакой
+ *  фейд к ней не применялся в принципе.
+ *
+ *  Кружок-номер, наоборот, показывает ОБА слоя всегда (цифра и play гасят друг
+ *  друга прозрачностью): лишняя иконка на строку стоит +17 мс на те же 240
+ *  строк (+5 %) — за плавную подмену это честная цена. */
 /** Ширина слота версий = ширине распорки, чтобы ряд с версиями и без были
  *  одинаковы до пикселя (число + шеврон помещаются с запасом). */
 const VERSIONS_SLOT = 40;
@@ -41,21 +65,24 @@ export function TrackRow({
   likeLabel = "Like",
   moreLabel = "More",
 }) {
-  const [hover, setHover] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const lit = hover || focused;
+  // Единственное состояние строки — «строку уже трогали» (см. шапку файла).
+  // Взводится один раз и не сбрасывается: сброс вернул бы вторую перерисовку на
+  // каждый уход курсора, ради которой всё и затевалось.
+  const [armed, setArmed] = useState(false);
+  const arm = armed ? undefined : () => setArmed(true);
   return (
     <div
       // Отклик на нажатие — строка жмётся под пальцем (animations.css).
       // Строка трека кликается чаще всего в приложении, а путь от клика до
       // звука самый длинный: без мгновенной реакции палец успевает усомниться.
-      className="muza-press"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onFocus={() => setFocused(true)}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
-      }}
+      // muza-row/--track — каналы подсветки (interactions.css); там же живёт и
+      // transition строки: инлайном он перекрывал .muza-press целиком.
+      className="muza-press muza-row muza-row--track"
+      // Взводим и мышью, и фокусом: клавиатура обязана доставать лайк и «⋯»
+      // ровно так же, как курсор. Обработчика нет вовсе, когда уже взведено —
+      // ни одного вызова на проход курсора по прогретому списку.
+      onPointerEnter={arm}
+      onFocus={arm}
       /* ВСЯ ЛЕВАЯ ЧАСТЬ СТРОКИ ЗАПУСКАЕТ ТРЕК (заказ владельца 2026-08-05).
          Раньше играть можно было только по кружку-номеру 28×28 — самая частая
          цель в приложении была и самой мелкой, и владелец жаловался, что «трек
@@ -87,6 +114,11 @@ export function TrackRow({
           : undefined
       }
       aria-selected={selected || undefined}
+      // Каналу подсветки нужны АТРИБУТЫ, а не тернарники: «сильнее» решается
+      // порядком правил в interactions.css (выделение > играет > наведение), и
+      // это единственное место, где инвариант записан целиком.
+      data-active={active || undefined}
+      data-selected={selected || undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -96,22 +128,7 @@ export function TrackRow({
         borderRadius: "var(--r-sm)",
         // строка запускает трек — курсор обязан об этом говорить
         cursor: onPlay ? "pointer" : "default",
-        // выделение сильнее «играет сейчас»: иначе выделенный играющий трек
-        // визуально выпадает из выделения (мультивыбор, 2026-07-20)
-        background: selected ? "var(--surface-4)" : active ? "var(--surface-3)" : lit ? "var(--surface-2)" : "transparent",
-        /* transform ОБЯЗАН быть в этом списке: инлайн-transition ЦЕЛИКОМ
-           перекрывает классовый у .muza-press, и без transform нажатие
-           строки схлопывалось мгновенно — «резко, меньше кадра» (владелец
-           04.08). Список, а не shorthand-замена.
-
-           ФОН — --ease-standard, А НЕ --ease-out (2026-08-05). Подсветка НИКУДА
-           НЕ ЕДЕТ, она растворяется: экспоненциальная кривая выдавала 72%
-           изменения за первые 34 мс и читалась подменой цвета, а не переходом.
-           Ровно отсюда бралось «маленькие плашки резкие» при том, что плитка с
-           теми же 150 мс на transform казалась мягче — у неё вдобавок ЕДЕТ
-           play-пилюля. Длительность теперь одна со всеми списками и плитками:
-           путь у подсветки нулевой, значит и время одно. */
-        transition: "background var(--dur-state) var(--ease-standard), transform var(--dur-press-out) var(--ease-out)",
+        background: "var(--row-bg)",
       }}
     >
       <div style={{ width: 28, flex: "none", display: "flex", justifyContent: "center" }}>
@@ -131,6 +148,7 @@ export function TrackRow({
               : undefined
           }
           style={{
+            position: "relative",
             width: 28,
             height: 28,
             display: "flex",
@@ -138,9 +156,9 @@ export function TrackRow({
             justifyContent: "center",
             border: "none",
             borderRadius: "var(--r-pill)",
-            background: lit ? "var(--surface-3)" : "transparent",
+            background: "var(--row-slot-bg)",
             /* роль акцента «активный трек»: свой цвет, фолбэк — общий акцент */
-            color: active ? "var(--accent-active-text, var(--accent-text))" : lit ? "var(--text-1)" : "var(--text-3)",
+            color: active ? "var(--accent-active-text, var(--accent-text))" : "var(--row-slot-fg)",
             fontFamily: "var(--font-ui)",
             fontSize: "var(--fs-caption)",
             fontVariantNumeric: "tabular-nums",
@@ -154,13 +172,42 @@ export function TrackRow({
             transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
           }}
         >
-          {lit ? (
+          {/* ДВА СЛОЯ, А НЕ ПОДМЕНА. Пока содержимое кружка МОНТИРОВАЛОСЬ по
+              наведению, оно и не могло гаснуть: у только что вставленного узла
+              нет предыдущего значения, от которого едет переход. Слои лежат друг
+              на друге (inset:0) и гасят друг друга каналом --row-aff: сумма их
+              прозрачностей всегда равна единице, поэтому «между» кадрами нет ни
+              пустоты, ни двойной жирноты. */}
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "grid",
+              placeItems: "center",
+              opacity: "calc(1 - var(--row-aff))",
+              transition: "opacity var(--dur-state) var(--ease-standard)",
+            }}
+          >
+            {active && playing ? (
+              <Icon name="audio-lines" size={18} color="var(--accent-active-text, var(--accent-text))" />
+            ) : (
+              <span>{index}</span>
+            )}
+          </span>
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "grid",
+              placeItems: "center",
+              opacity: "var(--row-aff)",
+              transition: "opacity var(--dur-state) var(--ease-standard)",
+            }}
+          >
             <Icon name={active && playing ? "pause" : "play"} size={16} color="currentColor" />
-          ) : active && playing ? (
-            <Icon name="audio-lines" size={18} color="var(--accent-active-text, var(--accent-text))" />
-          ) : (
-            <span>{index}</span>
-          )}
+          </span>
         </button>
       </div>
       {showCover ? <Cover src={cover} size={42} /> : null}
@@ -271,20 +318,43 @@ export function TrackRow({
             <span style={{ width: VERSIONS_SLOT, flex: "none" }}></span>
           )
         ) : null}
-        {lit || liked ? (
-          <IconButton icon="heart" size="sm" active={liked} filled={liked} label={likeLabel} onClick={onLike} style={{ opacity: liked || lit ? 1 : 0 }} />
-        ) : (
-          <span style={{ width: 36 }}></span>
-        )}
+        {/* ОБЁРТКА ЖИВЁТ ВСЕГДА, КНОПКА — С ПЕРВОГО КАСАНИЯ (разбор и цифры
+            замера — в шапке файла). Прозрачность едет на обёртке, которая
+            никуда не пересоздаётся, поэтому переход стартует от честного нуля:
+            кнопка появляется внутри уже начавшегося фейда, а не поверх него.
+            Лайкнутый трек виден без наведения — это не аффорданс, а факт. */}
+        <span
+          style={{
+            width: 36,
+            flex: "none",
+            display: "inline-flex",
+            opacity: liked ? 1 : "var(--row-aff)",
+            // невидимое не ловит клики; фокусу это не мешает — он сам зажигает
+            // строку через :focus-within и возвращает pointer-events
+            pointerEvents: liked ? undefined : "var(--row-aff-pe)",
+            transition: "opacity var(--dur-state) var(--ease-standard)",
+          }}
+        >
+          {armed || liked ? (
+            <IconButton icon="heart" size="sm" active={liked} filled={liked} label={likeLabel} onClick={onLike} />
+          ) : null}
+        </span>
         {showDuration ? (
           <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", fontVariantNumeric: "tabular-nums", width: 40, textAlign: "right" }}>{duration}</span>
         ) : null}
         {onMore ? (
-          lit ? (
-            <IconButton icon="ellipsis" size="sm" label={moreLabel} onClick={onMore} />
-          ) : (
-            <span style={{ width: 36 }}></span>
-          )
+          <span
+            style={{
+              width: 36,
+              flex: "none",
+              display: "inline-flex",
+              opacity: "var(--row-aff)",
+              pointerEvents: "var(--row-aff-pe)",
+              transition: "opacity var(--dur-state) var(--ease-standard)",
+            }}
+          >
+            {armed ? <IconButton icon="ellipsis" size="sm" label={moreLabel} onClick={onMore} /> : null}
+          </span>
         ) : null}
       </div>
     </div>

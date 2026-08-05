@@ -12,7 +12,28 @@
  *  (player/wrappedAmbient — НЕ через usePlayback, чтобы не трогать очередь);
  *  регулятор громкости спрятан за иконкой в правом верхнем углу. Оверлей
  *  владеет только жизненным циклом канала: старт после прихода данных
- *  (totalPlays > 0 и есть топ-трек), стоп на закрытии/размонтировании. */
+ *  (totalPlays > 0 и есть топ-трек), стоп на закрытии/размонтировании.
+ *
+ *  ── ДВИЖЕНИЕ: ЭТО РАСКАДРОВКА, А НЕ ИНТЕРФЕЙС ──────────────────────────
+ *  Шкала приложения (--dur-state / --dur-pop-in / --dur-scene-in, см.
+ *  packages/ui/src/tokens/effects.css) отвечает на вопрос «сколько ждёт
+ *  человек, который нажал». Здесь никто ничего не нажимал: слайд сам
+ *  рассказывает историю, у неё свой ритм, и ритм этот — режиссура, а не
+ *  отклик. Поэтому у Wrapped СВОЯ локальная шкала --wr-* (объявлена в шапке
+ *  WrappedOverlay.css) и сводить её к общей НЕ НАДО.
+ *
+ *  Общая шкала действует ровно в трёх точках, и ни одна из них не про историю:
+ *   1. ховер сегмента прогресса — обычная смена состояния на месте
+ *      (--dur-state + --ease-standard);
+ *   2. поповер громкости — обычный мелкий якорный слой (--dur-pop-in);
+ *   3. кривые: длительности здесь свои, но почерк общий — --ease-out на
+ *      приход, --ease-in на уход. Кривая говорит «как объект движется», а не
+ *      «сколько длится сцена», и разъезжаться ей незачем.
+ *
+ *  ⚠️ ОДНО СОБЫТИЕ — ОДНО ЧИСЛО. Длительность ухода слайда живёт ЗДЕСЬ
+ *  (SLIDE_LEAVE_MS) и уезжает в CSS переменной --wr-leave на корне оверлея.
+ *  До 05.08 чисел было два — 240мс в .is-leaving-* и 260мс в таймере снятия
+ *  копии, — и они уже разъехались. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, IconButton, Slider } from "@muza/ui";
@@ -27,8 +48,17 @@ import "./WrappedOverlay.css";
 
 type SlideKind = "empty" | "intro" | "minutes" | "tracks" | "artists" | "rhythm" | "final";
 
-/** Длительность фазы ухода слайда; согласована с wrappedLeave* в CSS. */
-const SLIDE_LEAVE_MS = 260;
+/** ЕДИНСТВЕННЫЙ источник длительности ухода слайда: отсюда его берёт и таймер
+ *  снятия уходящей копии, и сам CSS — через --wr-leave на корне оверлея.
+ *  Направление именно такое (число в JS → переменная в CSS), потому что
+ *  обратное требовало бы getComputedStyle в кадре перелистывания и давало бы
+ *  NaN в jsdom (та же логика, что в шапке packages/ui/src/lib/motion.js). */
+const SLIDE_LEAVE_MS = 240;
+
+/** Сколько «набирается» крупная цифра слайда. Раскадровка, а не отклик: цифру
+ *  надо успеть прочитать ПОКА она едет, поэтому счёт заметно длиннее любого
+ *  перехода интерфейса — он и не должен быть на них похож. */
+const COUNT_UP_MS = 1100;
 
 /** Проводка эмбиента из App: резолв URL тем же путём, что у плеера
  *  (getTrackSources → политика источников → resolvePlayable, общий кэш),
@@ -54,27 +84,42 @@ function CleanCover({ src, className }: { src: string; className?: string }) {
   return clean ? <img className={className} src={clean} alt="" draggable={false} /> : null;
 }
 
-/** Плавный count-up числа при появлении слайда. */
-function CountUp({ value, duration = 1100 }: { value: number; duration?: number }) {
+/** Плавный count-up числа при появлении слайда.
+ *
+ *  ⚠️ ТВИН ПОДХВАТЫВАЕТ ТЕКУЩЕЕ, А НЕ НАЧИНАЕТ С НУЛЯ. До 05.08 смена value
+ *  перезапускала счёт от 0: показанное число сначала ПРЫГАЛО ВНИЗ и только
+ *  потом ехало вверх. Стартом берётся то, что человек видит сейчас, — тогда
+ *  обновление данных выглядит как «цифра доросла», а не как сброс.
+ *
+ *  `instant` — для уходящей копии слайда. Она стоп-кадр: CSS глушит её
+ *  анимации правилом `.wrapped__slide.is-leaving *`, и JS-твин обязан
+ *  подчиняться тому же правилу. Иначе счёт оказывался единственным, что на
+ *  улетающей копии ещё движется, — и она пересчитывала цифру с нуля прямо на
+ *  лету. С флагом копия показывает итоговое число и молчит. */
+function CountUp({ value, instant }: { value: number; instant?: boolean }) {
   const { lang } = useT();
-  const [shown, setShown] = useState(0);
+  const [shown, setShown] = useState(instant ? value : 0);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
 
   useEffect(() => {
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    if (instant || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       setShown(value);
       return;
     }
+    const from = shownRef.current;
+    if (from === value) return;
 
     let raf = 0;
     const start = performance.now();
     const tick = (now: number) => {
-      const progress = Math.min((now - start) / duration, 1);
-      setShown(Math.round(value * (1 - (1 - progress) ** 3)));
+      const progress = Math.min((now - start) / COUNT_UP_MS, 1);
+      setShown(Math.round(from + (value - from) * (1 - (1 - progress) ** 3)));
       if (progress < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [value, duration]);
+  }, [value, instant]);
 
   return <>{shown.toLocaleString(lang)}</>;
 }
@@ -82,7 +127,6 @@ function CountUp({ value, duration = 1100 }: { value: number; duration?: number 
 function rank(index: number) {
   return String(index + 1).padStart(2, "0");
 }
-
 
 /** Циферблат суток: 24 деления по кругу, акцентная дуга и точка любимого
  *  часа. SVG-штрихи — графика данных (та же роль, что точка на старой оси
@@ -338,8 +382,10 @@ export function WrappedOverlay({
     });
   };
 
-  /** Разметка одного слайда; зовётся и для текущего, и для уходящей копии. */
-  const renderSlide = (which: SlideKind | undefined) => {
+  /** Разметка одного слайда; зовётся и для текущего, и для уходящей копии.
+   *  `frozen` — «это уходящая копия, стоп-кадр»: CSS глушит её анимации, а
+   *  этот флаг глушит то, что двигает JS (см. CountUp). */
+  const renderSlide = (which: SlideKind | undefined, frozen = false) => {
     if (!wrapped && !error) {
       return (
         <section className="wrapped__state" aria-live="polite">
@@ -406,7 +452,7 @@ export function WrappedOverlay({
           <div className="wrapped__minutes-copy">
             <span className="wrapped__kicker">{t("views.wrapped.minutes.kicker")}</span>
             <div className="wrapped__metric">
-              <strong><CountUp value={minutes} /></strong>
+              <strong><CountUp value={minutes} instant={frozen} /></strong>
               <span>{t("views.wrapped.minutes.unit")}</span>
             </div>
             <h1>{t("views.wrapped.minutes.headline")}</h1>
@@ -598,6 +644,9 @@ export function WrappedOverlay({
       aria-label={t("views.wrapped.ariaLabel", { year: wrapped?.year ?? "" })}
       className="wrapped"
       data-slide={kind ?? "loading"}
+      // Одно число на уход слайда: отсюда его читают и .is-leaving-* в CSS, и
+      // таймер снятия копии выше (см. SLIDE_LEAVE_MS).
+      style={{ "--wr-leave": `${SLIDE_LEAVE_MS}ms` } as React.CSSProperties}
       onClick={() => {
         // Открытый поповер громкости: первый клик по сцене лишь закрывает его
         if (soundOpenRef.current) {
@@ -685,7 +734,7 @@ export function WrappedOverlay({
             className={`wrapped__slide wrapped__slide--${leaving.kind} is-leaving ${leaving.dir === 1 ? "is-leaving-next" : "is-leaving-prev"}`}
             aria-hidden="true"
           >
-            {renderSlide(leaving.kind)}
+            {renderSlide(leaving.kind, true)}
           </div>
         ) : null}
         <div

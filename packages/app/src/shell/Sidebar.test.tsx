@@ -229,3 +229,62 @@ describe("Боковая панель: площадка", () => {
     expect(labels.some((l) => l?.includes("Admin") || l?.includes("Админка"))).toBe(false);
   });
 });
+
+/** Подсветка панели переехала из useState в каналы CSS (@muza/ui,
+ *  src/interactions.css — там же разбор каскада; jsdom :hover не считает, так
+ *  что цвета проверяются там по тексту таблицы, а здесь — подключение).
+ *  Строк плейлистов на экране десятки, и каждая платила перерисовкой за проход
+ *  курсора; у вкладок к перерисовке добавлялся пересчёт пропсов реордера. */
+describe("Боковая панель: подсветка ушла в CSS", () => {
+  it("строка плейлиста подключена к каналу — и он живёт на ВНЕШНЕМ узле", () => {
+    // Ручка-⠿ лежит СНАРУЖИ кнопки: будь канал на кнопке, наведение на ручку
+    // гасило бы её из-под курсора.
+    const { container } = renderSidebar();
+    const row = rowOf(container, "Альфа");
+    expect(row.className).toContain("muza-row");
+    expect(row.querySelector("button")?.style.background).toBe("var(--row-bg)");
+  });
+
+  it("ручка проявляется каналом строки, а не состоянием", () => {
+    const { container } = renderSidebar();
+    const grip = rowOf(container, "Альфа").querySelector('[data-testid="reorder-grip"]') as HTMLElement;
+    expect(grip.style.opacity).toBe("var(--row-aff)");
+    // Невидимая ручка не должна ловить курсор — иначе у строки появляется
+    // полоса, где клик «не открывает плейлист» без всякой видимой причины.
+    expect(grip.style.pointerEvents).toBe("var(--row-aff-pe)");
+  });
+
+  it("«Любимое» держит тот же канал, что и обычные строки", () => {
+    const { container } = renderSidebar();
+    const fav = Array.from(container.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "Favorites");
+    expect(fav?.className).toContain("muza-row");
+    expect(fav?.style.background).toBe("var(--row-bg)");
+  });
+
+  it("вкладка: канал в покое, собственный цвет — только у активной", () => {
+    const { container } = renderSidebar({
+      nav: [
+        { key: "home", icon: "home", label: "Главная" },
+        { key: "search", icon: "search", label: "Поиск" },
+      ],
+      activeNavKey: "home",
+    });
+    const [active, idle] = Array.from(container.querySelectorAll("nav button"));
+    expect(idle.className).toContain("muza-nav");
+    expect((idle as HTMLElement).style.background).toBe("var(--nav-bg)");
+    expect((idle as HTMLElement).style.color).toBe("var(--nav-fg)");
+    // quiet-вкладка активной не красит себя сама: под ней едет пилюля слота,
+    // и собственный фон закрыл бы её собой.
+    expect((active as HTMLElement).style.background).toBe("transparent");
+  });
+
+  it("проход курсора по панели не меняет разметку", () => {
+    const { container } = renderSidebar();
+    const html = container.innerHTML;
+    for (const el of [rowOf(container, "Альфа"), rowOf(container, "Бета"), ...container.querySelectorAll("nav button")]) {
+      fireEvent.mouseEnter(el);
+      fireEvent.mouseLeave(el);
+    }
+    expect(container.innerHTML).toBe(html);
+  });
+});

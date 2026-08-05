@@ -140,8 +140,86 @@ describe("панель очереди", () => {
     expect(screen.queryByLabelText(translate(DEFAULT_LANG, "dialogs.queue.remove"))).not.toBeNull();
   });
 
-  it("закрытая панель не живёт в DOM — Tab не попадает в невидимые кнопки", () => {
+  it("неоткрытой панели в DOM нет вовсе — Tab не попадает в невидимые кнопки", () => {
     const { container } = renderPanel({ open: false });
     expect(container.querySelector("[role='dialog']")).toBeNull();
+  });
+});
+
+/** УХОД ПАНЕЛИ (2026-08-05). Раньше `if (!open) return null` снимал узел кадром,
+ *  и этот же возврат бесплатно чинил две вещи: панель уходила из обхода Tab и
+ *  переставала ловить клики. Теперь узел живёт ещё ~180 мс, и обе вещи обязаны
+ *  выключаться явно — иначе уходящая панель полсекунды ест клики по плеер-бару
+ *  под собой. Анимации в jsdom нет (стилей пакета тут не подключено), проверяем
+ *  ровно то, чем управляет компонент: атрибуты, свойства и момент снятия. */
+describe("панель очереди — уход", () => {
+  const endTransition = (node: Element, propertyName: string) =>
+    fireEvent(node, Object.assign(new Event("transitionend", { bubbles: true }), { propertyName }));
+
+  const down = (el: Element) => el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+
+  function renderToggling(onClose: () => void = noop) {
+    const view = (open: boolean) => (
+      <QueuePanel<Row>
+        open={open}
+        tracks={rows}
+        currentIndex={0}
+        playing={false}
+        canSave={false}
+        onPlayTrack={noop}
+        onClose={onClose}
+        toCatalog={toCatalog}
+      />
+    );
+    const utils = render(view(true));
+    return { ...utils, set: (open: boolean) => utils.rerender(view(open)) };
+  }
+
+  const panel = () => screen.queryByRole("dialog");
+
+  it("закрытие оставляет узел в дереве: закрытая поза, inert, клики насквозь", () => {
+    const { set } = renderToggling();
+    const node = panel() as HTMLElement;
+    set(false);
+
+    expect(panel()).toBe(node); // тот же узел — переход прерываем, ремаунта нет
+    expect(node.dataset.layerState).toBe("closed");
+    expect(node.hasAttribute("inert")).toBe(true); // вне Tab и вне хит-теста
+    expect(node.style.pointerEvents).toBe("none"); // клик уходит к тому, что под ней
+  });
+
+  it("узел снимается по концу прозрачности, а не сразу", () => {
+    const { set } = renderToggling();
+    const node = panel() as HTMLElement;
+    set(false);
+
+    endTransition(node, "transform");
+    expect(panel()).toBe(node); // поза доехала, панель ещё гаснет
+    endTransition(node, "opacity");
+    expect(panel()).toBeNull();
+  });
+
+  it("клик мимо во время ухода не закрывает второй раз — слушатель снят вместе с open", () => {
+    const onClose = vi.fn();
+    const { set } = renderToggling(onClose);
+    down(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1); // пока открыта — закрывает
+
+    set(false);
+    down(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1); // уходящая панель клик не трогает
+  });
+
+  it("открытие после закрытого старта уводит фокус в панель", () => {
+    // Узел появляется НЕ на том коммите, где сменился open (слою нужен кадр
+    // «до»): эффект фокуса обязан дождаться самого узла, иначе открытие
+    // остаётся без фокуса и Esc из вызывателя перестаёт работать.
+    const { set } = renderToggling();
+    set(false);
+    endTransition(panel() as HTMLElement, "opacity");
+    expect(panel()).toBeNull();
+
+    set(true);
+    expect(document.activeElement).toBe(panel());
   });
 });

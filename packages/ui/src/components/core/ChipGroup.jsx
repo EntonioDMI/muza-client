@@ -1,10 +1,14 @@
 import React, { useRef, useState, useLayoutEffect } from "react";
 import { Icon } from "./Icon.jsx";
 
-/** Row of filter chips with ONE selection — the highlight slides between chips. */
+/** Row of filter chips with ONE selection — the highlight slides between chips.
+ *
+ *  ⚠️ ПОДСВЕТКА ЧИПА — КАНАЛОМ CSS (.muza-chip, interactions.css), а не
+ *  состоянием (2026-08-05): hoverKey жил на всю группу, и наведение на один чип
+ *  перерисовывало ряд целиком — вместе с замерами подсветки. Тот же разбор, что
+ *  в Tabs.jsx. */
 export function ChipGroup({ items, value, onChange, style }) {
   const wrapRef = useRef(null);
-  const [hoverKey, setHoverKey] = useState(null);
   const [ind, setInd] = useState(null);
 
   // Подписи набора (склейка через NUL: такого символа в подписи быть не может, а
@@ -85,13 +89,11 @@ export function ChipGroup({ items, value, onChange, style }) {
             key={key}
             type="button"
             // зона попадания до --hit-min по вертикали (чип 36px)
-            className="muza-hit"
+            className="muza-hit muza-chip"
             role="tab"
             aria-selected={selected}
             data-chipkey={key}
             onClick={() => onChange && onChange(key)}
-            onMouseEnter={() => setHoverKey(key)}
-            onMouseLeave={() => setHoverKey(null)}
             style={{
               position: "relative",
               zIndex: 1,
@@ -102,8 +104,9 @@ export function ChipGroup({ items, value, onChange, style }) {
               padding: "0 var(--sp-4)",
               border: "none",
               borderRadius: "var(--r-pill)",
-              background: selected ? "transparent" : hoverKey === key ? "var(--surface-3)" : "var(--surface-2)",
-              color: selected || hoverKey === key ? "var(--text-1)" : "var(--text-2)",
+              // у выбранного чипа фон рисует подсветка под ним — свой прозрачен
+              background: selected ? "transparent" : "var(--chip-bg)",
+              color: selected ? "var(--text-1)" : "var(--chip-fg)",
               fontFamily: "var(--font-ui)",
               fontSize: "var(--fs-caption)",
               fontWeight: "var(--fw-medium)",

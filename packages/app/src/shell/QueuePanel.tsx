@@ -1,9 +1,16 @@
 /** ПАНЕЛЬ ОЧЕРЕДИ — одна на обе программы (Э3 веб-паритета, 2026-08-02).
  *
  *  Секции «История / Сейчас / Далее», удаление/перестановка/очистка хвоста,
- *  «Сохранить как плейлист», «К текущему». Закрытая панель НЕ живёт в DOM
- *  (unmount) — Tab не попадает в невидимые кнопки; фокус при открытии — в
- *  панель, при закрытии вызыватель возвращает его на кнопку очереди.
+ *  «Сохранить как плейлист», «К текущему». Фокус при открытии — в панель, при
+ *  закрытии вызыватель возвращает его на кнопку очереди.
+ *
+ *  ⚠️ ЗАКРЫТАЯ ПАНЕЛЬ ЖИВЁТ В ДЕРЕВЕ ЕЩЁ ~180 мс (2026-08-05) — столько идёт
+ *  уход (.muza-layer--panel). До этого узел снимался кадром, и ранний возврат
+ *  null держал ТРИ вещи разом: вид, слушатель pointerdown «закрыть кликом
+ *  мимо» и невидимые кнопки вне обхода Tab. Уходящая панель обязана не делать
+ *  ни одного из этих трёх дел: inert (из layerProps) убирает её из Tab и
+ *  хит-теста, pointer-events:none пропускает клики сквозь неё к плеер-бару под
+ *  ней, а слушатель закрытия по-прежнему висит ТОЛЬКО пока open.
  *
  *  Переехало из apps/desktop/src/shell/QueuePanel.tsx; на старом месте пенёк-
  *  обёртка, которая доставляет два умения приложения (см. ниже). В вебе
@@ -26,7 +33,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Track } from "@muza/api-client";
-import { Cover, Icon, IconButton } from "@muza/ui";
+import { Cover, Icon, IconButton, useLayerState } from "@muza/ui";
 import { fmtTime } from "../lib/format";
 import { useMultiSelect } from "../lib/useMultiSelect";
 import { SelectionBar } from "./SelectionBar";
@@ -242,6 +249,11 @@ export function QueuePanel<T extends QueueTrack>({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Свой ref отдаём хуку: он нужен и для фокуса, и для contains() в закрытии
+  // кликом мимо, и для querySelector по списку — двух ref'ов на узле не будет.
+  const { mounted, layerProps } = useLayerState(open, { ref: panelRef });
+  /** Панель ещё в дереве, но уже уезжает: ни фокуса, ни кликов, ни Tab. */
+  const closing = mounted && !open;
 
   // ── множественное выделение (2026-07-20) ──
   // ⚠️ ключ выделения — id трека; повторный трек в очереди (редкость) выделится
@@ -307,13 +319,17 @@ export function QueuePanel<T extends QueueTrack>({
     else list.scrollTop = top;
   };
 
-  // Открытие: фокус в панель (Esc из вызывателя работает) + текущий трек в видимости
+  // Открытие: фокус в панель (Esc из вызывателя работает) + текущий трек в видимости.
+  // ⚠️ mounted в зависимостях обязателен: узел появляется НЕ на том коммите, где
+  // сменился open, — хук сначала монтирует его, чтобы браузеру было от чего вести
+  // переход. Без mounted эффект отработал бы по пустому panelRef, и открытие
+  // осталось бы без фокуса и без прокрутки к текущему треку.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !mounted) return;
     panelRef.current?.focus({ preventScroll: true });
     scrollToCurrent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, mounted]);
 
   // Закрытие по клику на пустое место (2026-07-20). Полноэкранный backdrop НЕ
   // годится: плеер-бар на zIndex 40 — НИЖЕ панели (50), слой съел бы клики по
@@ -322,6 +338,9 @@ export function QueuePanel<T extends QueueTrack>({
   // открыл кликом» мигание); меню, открытое ИЗ очереди (клик по его ПУНКТУ не
   // должен ронять панель — а клик по его фону закрывает и меню, и очередь
   // одним движением, это сознательно).
+  // ⚠️ Условие «пока open», а не «пока mounted»: узел переживает закрытие, и
+  // слушатель, доживший до ухода, звал бы onClose второй раз по первому же
+  // клику вне — вызыватель получил бы закрытие уже закрытой панели.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
@@ -336,7 +355,7 @@ export function QueuePanel<T extends QueueTrack>({
     return () => window.removeEventListener("pointerdown", onDown);
   }, [open, onClose]);
 
-  if (!open) return null; // unmount: закрытая панель не ловит Tab
+  if (!mounted) return null; // ушла до конца (или не открывалась) — узла нет вовсе
 
   const history = tracks.slice(0, Math.max(currentIndex, 0));
   const current = tracks[currentIndex];
@@ -344,10 +363,11 @@ export function QueuePanel<T extends QueueTrack>({
 
   return (
     <div
-      ref={panelRef}
+      {...layerProps}
       role="dialog"
       aria-label={t("player.queue")}
       tabIndex={-1}
+      className="muza-layer muza-layer--panel"
       style={{
         position: "absolute",
         right: "var(--gap-zone)",
@@ -365,10 +385,18 @@ export function QueuePanel<T extends QueueTrack>({
         gap: "var(--sp-2)",
         zIndex: 50,
         outline: "none",
-        // Пружина вместо кривой: панель приезжает с массой и мягко
-        // доводится, а не тормозит по расписанию (animations.css).
-        animation: "muzaMenuIn var(--dur-panel-in) var(--spring-snap, var(--ease-out))",
-      }}
+        // Поза — ИНЛАЙНОМ, как требует .muza-layer--panel: из какого края
+        // выезжает панель, знает только разметка. Очередь прижата к правому
+        // краю (right выше) — туда же и уходит, на собственную ширину.
+        // Пружины здесь нет намеренно: у слоя одна кривая на позу и на
+        // прозрачность, а перелёт за единицу на прозрачности — просто ступенька.
+        "--layer-pose": "translateX(100%)",
+        // Уходящая панель накрывает собой плеер-бар (zIndex 40 — ПОД ней) ещё
+        // ~180 мс. inert из layerProps выключает хит-тест в браузере, но это
+        // поведение, а не свойство: явный pointer-events делает «клик проходит
+        // насквозь» проверяемым — в том числе в jsdom, где inert не реализован.
+        pointerEvents: closing ? "none" : undefined,
+      } as React.CSSProperties}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", padding: "0 var(--sp-2)" }}>
         <span
@@ -498,40 +526,41 @@ export function QueuePanel<T extends QueueTrack>({
       )}
 
       {/* Панель массовых действий выделения: без «Играть следующим»/«В очередь»
-          — они добавляли бы КОПИИ уже стоящих в очереди треков */}
-      {multi.count > 0 ? (
-        <SelectionBar
-          label={t("menu.selection.count", { count: multi.count })}
-          clearLabel={t("menu.selection.clear")}
-          onClear={multi.clear}
-          actions={[
-            ...(menu
-              ? [
-                  {
-                    icon: "plus",
-                    label: t("menu.addToPlaylist"),
-                    onClick: () => menu.ctx.current.addManyToPlaylist(selectedCatalog()),
-                  },
-                  {
-                    icon: "heart",
-                    label: t("menu.catalog.like"),
-                    onClick: () => menu.ctx.current.likeMany(selectedCatalog().map((x) => x.id)),
-                  },
-                ]
-              : []),
-            ...(onRemoveMany
-              ? [
-                  {
-                    icon: "list-x",
-                    label: t("menu.queue.remove"),
-                    danger: true,
-                    onClick: () => onRemoveMany(multi.ids),
-                  },
-                ]
-              : []),
-          ]}
-        />
-      ) : null}
+          — они добавляли бы КОПИИ уже стоящих в очереди треков.
+          Рендерится ВСЕГДА, видимостью правит open: снятая условием панель
+          исчезала бы кадром, а так у неё есть свой уход (см. SelectionBar). */}
+      <SelectionBar
+        open={multi.count > 0}
+        label={t("menu.selection.count", { count: multi.count })}
+        clearLabel={t("menu.selection.clear")}
+        onClear={multi.clear}
+        actions={[
+          ...(menu
+            ? [
+                {
+                  icon: "plus",
+                  label: t("menu.addToPlaylist"),
+                  onClick: () => menu.ctx.current.addManyToPlaylist(selectedCatalog()),
+                },
+                {
+                  icon: "heart",
+                  label: t("menu.catalog.like"),
+                  onClick: () => menu.ctx.current.likeMany(selectedCatalog().map((x) => x.id)),
+                },
+              ]
+            : []),
+          ...(onRemoveMany
+            ? [
+                {
+                  icon: "list-x",
+                  label: t("menu.queue.remove"),
+                  danger: true,
+                  onClick: () => onRemoveMany(multi.ids),
+                },
+              ]
+            : []),
+        ]}
+      />
     </div>
   );
 }

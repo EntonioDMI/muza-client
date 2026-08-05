@@ -52,54 +52,21 @@ textarea,
   -webkit-app-region: no-drag;
 }
 
-/* T15: фон «Анимированный» — два диска-обложки вращаются навстречу друг
-   другу. Медленно (фон, не карусель), только transform (GPU-компоузинг,
-   без layout thrash); will-change подсказывает браузеру заранее. Класс
-   ставится в App.tsx только когда prefs.anims=true и OS не просит
-   reduced-motion (JS-проверка) — CSS-медиазапрос ниже это дублирует как
-   защиту на случай прямого системного переключения на лету. */
-.muza-orb-spin--cw,
-.muza-orb-spin--ccw {
-  will-change: transform;
-}
-/* Скорость — var(--orb-dur) из zoneVars (prefs.bgAnimSpeedSec, зона 1 спеки
-   настроек 19.07); фолбэк 64s = прежней зашитой скорости. */
-.muza-orb-spin--cw {
-  animation: muzaOrbCW var(--orb-dur, 64s) linear infinite;
-}
-.muza-orb-spin--ccw {
-  animation: muzaOrbCCW var(--orb-dur, 64s) linear infinite;
-}
-/* Караоке (режим прослушивания) накрывает фон НЕПРОЗРАЧНЫМ оверлеем — диски
-   под ним крутились впустую, и это была не мелочь: их общий контейнер несёт
-   filter: blur(--blur-scenery) = 64px, поэтому каждый кадр вращения заставлял
-   браузер заново размывать полный экран. Жалоба владельца 02.08: «в
-   полноэкранном режиме песни ФПС в играх сильно падает».
-   Атрибут ставит App.tsx (orbitPaused). Именно ПАУЗА, а не animation:none —
-   угол диска замирает там, где был, и выход из караоке (плавное гашение,
-   --dur-slow) обходится без прыжка вращения. will-change снимаем заодно:
-   пока диск стоит, держать под него отдельный слой GPU незачем. */
-.muza-orb-spin--cw[data-orb-paused],
-.muza-orb-spin--ccw[data-orb-paused] {
-  animation-play-state: paused;
-  will-change: auto;
-}
-@keyframes muzaOrbCW {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes muzaOrbCCW {
-  to {
-    transform: rotate(-360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .muza-orb-spin--cw,
-  .muza-orb-spin--ccw {
-    animation: none;
-  }
-}
+/* ══ T15: фон «Анимированный» — два диска-обложки вращаются навстречу ═══════
+   ПРАВИЛА ВРАЩЕНИЯ ПЕРЕЕХАЛИ ЦЕЛИКОМ в packages/app/src/shell/
+   animatedBackdrop.css. Здесь лежала ВТОРАЯ реализация одного и того же
+   вращения: свои правила и своя пара кейфреймов под классы .muza-orb-spin--*,
+   в пакете — точно такие же под .muza-backdrop-orb--*. Ровно та история, что
+   уже случилась с .muza-settings* (см. SettingsView.layout.css): две копии
+   расходятся молча, и ловит расхождение пользователь.
+   Теперь общий файл описывает ОБА комплекта классов одним правилом — разметка
+   не тронута, App.tsx по-прежнему ставит .muza-orb-spin--cw/--ccw и
+   data-orb-paused, скорость по-прежнему приезжает переменной темы --orb-dur.
+   Правишь вращение — правь общий файл; полное «почему» — в его шапке.
+
+   В сборку десктопа он попадает статическим импортом ListeningMode →
+   AnimatedBackdrop (App.tsx, верх файла) — сделаете этот импорт ленивым,
+   подключайте стиль здесь явно. */
 
 /* ══ Настройки: каркас «навигация слева + панель справа» ═════════════════
    ПЕРЕЕХАЛ ЦЕЛИКОМ в общий пакет — packages/app/src/views/settings/

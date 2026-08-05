@@ -1,9 +1,14 @@
 "use client";
 
 import { createContext, useCallback, useContext, useRef, useState } from "react";
-import { Toast } from "@muza/ui";
+import { Toast, TOAST_HOLD } from "@muza/ui";
 
-/** Тосты веба: одна тихая пилюля над баром (модель десктопа). */
+/** Тосты веба: одна тихая пилюля над баром (модель десктопа).
+ *
+ *  Сколько тост живёт — ОБЩЕЕ число шкалы движения (TOAST_HOLD из
+ *  packages/ui/src/lib/motion.js, пара к токену --dur-toast-hold), а не своя
+ *  константа: пилюля в браузере и в программе обязана гаснуть одинаково, а
+ *  число, зашитое здесь, разъезжается молча — вид у обеих один. */
 
 type Notify = (text: string, icon?: string) => void;
 
@@ -20,7 +25,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const notify = useCallback<Notify>((text, icon = "check") => {
     if (timer.current) clearTimeout(timer.current);
     setToast({ open: true, text, icon });
-    timer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 2600);
+    timer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), TOAST_HOLD);
   }, []);
 
   return (

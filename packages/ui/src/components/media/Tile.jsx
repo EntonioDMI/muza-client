@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
 import { Cover } from "./Cover.jsx";
@@ -9,21 +9,25 @@ import { Cover } from "./Cover.jsx";
  *  Обложка — через Cover: нет картинки → плейсхолдер, а не дыра в плитке.
  *  width: дефолт — var(--w-tile, 176px), а не число: приложение крутит размер
  *  плиток одной переменной (настройка «Размер плитки», зона 4 спеки 19.07);
- *  явный width ("auto" в сетках) по-прежнему сильнее. */
+ *  явный width ("auto" в сетках) по-прежнему сильнее.
+ *
+ *  ⚠️ ПОДСВЕТКА — БЕЗ СОСТОЯНИЯ REACT (2026-08-05). Фон плитки и появление
+ *  play-пилюли красит канал .muza-tile (interactions.css); ручной разбор
+ *  e.relatedTarget в onBlur заменил :focus-within — он не оставляет плитку
+ *  подсвеченной, когда сетка уехала из-под неподвижного курсора (прокрутка,
+ *  смена фильтра). Пилюля и раньше была смонтирована всегда, так что здесь
+ *  переезд ничего не стоил: ушли два useState и две перерисовки на проход. */
 export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", playing = false, selected = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
-  const [hover, setHover] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const lit = hover || focused;
   return (
     <div
       // Отклик на нажатие — плитка жмётся под пальцем (animations.css).
       // Только кликабельная: у декоративной плитки жать нечего.
-      className={onClick ? "muza-press" : undefined}
+      // muza-tile — канал подсветки, и он же несёт transition плитки: инлайном
+      // тот перекрывал .muza-press целиком (interactions.css).
+      className={onClick ? "muza-press muza-tile" : "muza-tile"}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? title : undefined}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       // ПКМ = то же меню, что «⋯» у TrackRow (нативное браузерное меню в плеере — мусор)
       onContextMenu={
         onMenu
@@ -33,10 +37,6 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
             }
           : undefined
       }
-      onFocus={() => setFocused(true)}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
-      }}
       onKeyDown={(e) => {
         if ((e.key === "Enter" || e.key === " ") && onClick && e.target === e.currentTarget) {
           e.preventDefault();
@@ -50,17 +50,8 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
         flex: "none",
         padding: "var(--pad-tile)",
         borderRadius: "var(--r-md)",
-        background: selected ? "var(--surface-4)" : lit ? "var(--surface-3)" : "var(--surface-2)",
+        background: selected ? "var(--surface-4)" : "var(--tile-bg)",
         cursor: "pointer",
-        /* transform в списке обязателен — инлайн-transition перекрывает
-           классовый у .muza-press; без него нажатие плитки было мгновенным
-           («резко, меньше кадра» — владелец 04.08).
-
-           Фон — ТОТ ЖЕ закон, что у строки трека (2026-08-05). Раньше плитка
-           красилась за 220 мс, а строка за 150 — при том, что подсветка у обеих
-           проезжает ноль пикселей. Ощущение «плитка мягче» давал не фон, а
-           едущая play-пилюля ниже; её и оставляем длинной. */
-        transition: "background var(--dur-state) var(--ease-standard), transform var(--dur-press-out) var(--ease-out)",
       }}
     >
       <div style={{ position: "relative", marginBottom: "var(--sp-3)" }}>
@@ -90,8 +81,10 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
             position: "absolute",
             right: 8,
             bottom: 8,
-            opacity: lit || playing ? 1 : 0,
-            transform: lit || playing ? "translateY(0)" : "translateY(4px)",
+            // играющая плитка держит пилюлю показанной и без наведения: это
+            // ответ на «что сейчас звучит», а не аффорданс
+            opacity: playing ? 1 : "var(--tile-pill)",
+            transform: playing ? "translateY(0)" : "var(--tile-pill-y)",
             /* Пилюля ЕДЕТ — значит это --dur-state-move, а не --dur-state:
                единственная часть плитки с ненулевым путём, и именно она даёт
                то «медленно и правильно», о котором говорил владелец. */

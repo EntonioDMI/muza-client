@@ -420,8 +420,9 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
     "--text-2": `rgba(${textBase}, ${textAlpha2.toFixed(2)})`,
     "--text-3": `rgba(${textBase}, ${textAlpha3.toFixed(2)})`,
     "--blur-scenery": `${t.blurScenery}px`,
-    // Скорость орбит анимированного фона: app.css читает var(--orb-dur, 64s) —
-    // дефолт токена = прежней зашитой скорости.
+    // Скорость орбит анимированного фона. Читает shell/animatedBackdrop.css —
+    // единственная рисовалка орбит с 2026-08-05 (в app.css лежала вторая копия,
+    // снята вместе с секцией). Фолбэк там — токен --dur-orb-spin, а не литерал.
     "--orb-dur": `${t.bgAnimSpeedSec}s`,
     // Размеры плеера: все потребители уже читают эти переменные
     // (PlayerBar height/Cover size, отступы зон в App и PluginFrames).

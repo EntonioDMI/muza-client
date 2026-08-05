@@ -10,3 +10,8 @@
 @import "./tokens/glass.css";
 @import "./tokens/base.css";
 @import "./animations.css";
+/* Каналы наведения — ПОСЛЕ animations.css: переходы строки трека и плитки
+   объявлены там же, и при равной специфичности (0,1,0) обязан выиграть этот
+   файл — иначе базовый transition у .muza-press перекроет наш и вернёт
+   симметричное нажатие (разбор — в шапке interactions.css). */
+@import "./interactions.css";

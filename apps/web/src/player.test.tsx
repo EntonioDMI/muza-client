@@ -25,6 +25,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Track } from "@muza/api-client";
 import type { Prefs } from "@muza/app/prefs/types";
 import { savePrefs } from "@muza/app/prefs/load";
+import {
+  DEFAULT_PLAYER_STATE,
+  flushPlayerState,
+  type PlayerState,
+  resetPlayerState,
+} from "@muza/app/lib/playerState";
 import { DEFAULT_WEB_PREFS, PrefsProvider, usePrefs } from "./prefs";
 import { PlayerProvider, usePlayer, usePosition } from "./player";
 
@@ -32,8 +38,17 @@ import { PlayerProvider, usePlayer, usePosition } from "./player";
  *  (apps/desktop/src/lib/resumeStore.ts). Задан здесь строкой намеренно:
  *  переименование ключа обязано валить тест, а не молча терять позиции людей. */
 const RESUME_KEY = "muza.resume.v1";
+/** Память плеера — тот же случай: ключ общий с приложением, и его имя не
+ *  «деталь реализации», а обещание человеку. */
+const PLAYER_KEY = "muza.player.v1";
+/** Старый веб-ключ громкости: мигрируется один раз и НЕ удаляется. */
+const LEGACY_VOLUME_KEY = "muza.web.volume.v1";
 /** Шаг наблюдения за концом трека в плеере. */
 const TICK_MS = 40;
+/** Громкость плеера, когда память пуста, — доля от общей шкалы 0..100.
+ *  Числом здесь не пишем: дефолт живёт в общем модуле, и его правка обязана
+ *  доехать до тестов сама. */
+const VOL = DEFAULT_PLAYER_STATE.volume / 100;
 
 // ── Подменённый элемент воспроизведения ──────────────────────────────
 class FakeAudio extends EventTarget {
@@ -221,6 +236,10 @@ function deferred(): { promise: Promise<void>; open: () => void } {
 beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
+  // ⚠️ Память плеера держит состояние В МОДУЛЕ, а модуль в прогоне один на весь
+  // файл: очистка хранилища его не касается, и отложенная запись прошлого теста
+  // воскресала бы в уже вычищенном (разбор — шапка resetPlayerState).
+  resetPlayerState();
   FakeAudio.created = [];
   gates.clear();
   indexLog.length = 0;
@@ -418,7 +437,7 @@ describe("Два слота и эстафета", () => {
     expect(ctl.player.current?.id).toBe("b");
     expect(sounding().map((el) => el.src)).toEqual([urlOf("b")]);
     expect(slot(0).src).toBe(""); // уходящий слот освобождён
-    expect(slot(1).volume).toBeCloseTo(0.9, 3);
+    expect(slot(1).volume).toBeCloseTo(VOL, 3);
     expect(indexLog).toEqual([-1, 0, 1]); // очередь шагнула ровно один раз
   });
 
@@ -459,15 +478,15 @@ describe("Кроссфейд", () => {
 
     const going = slot(0).volume;
     const coming = slot(1).volume;
-    expect(coming).toBeCloseTo(0.9 * Math.SQRT1_2, 2);
-    expect(going).toBeCloseTo(0.9 * Math.SQRT1_2, 2);
+    expect(coming).toBeCloseTo(VOL * Math.SQRT1_2, 2);
+    expect(going).toBeCloseTo(VOL * Math.SQRT1_2, 2);
     // равная мощность: на линейных кривых стык просел бы на 3 дБ
-    expect((coming * coming + going * going) / (0.9 * 0.9)).toBeCloseTo(1, 2);
+    expect((coming * coming + going * going) / (VOL * VOL)).toBeCloseTo(1, 2);
     expect(slot(0).paused).toBe(false); // шесть секунд ещё не вышли
 
     await wait(3000);
     expect(slot(0).paused).toBe(true);
-    expect(slot(1).volume).toBeCloseTo(0.9, 3);
+    expect(slot(1).volume).toBeCloseTo(VOL, 3);
   });
 
   it("нулевая длительность (фейды выключены) — смена мгновенная, второй слот не нужен", async () => {
@@ -485,7 +504,7 @@ describe("Кроссфейд", () => {
 
     expect(ctl.player.current?.id).toBe("b");
     expect(slot(0).src).toBe(urlOf("b")); // тот же слот, без эстафеты
-    expect(slot(0).volume).toBeCloseTo(0.9, 3); // сразу на полном уровне
+    expect(slot(0).volume).toBeCloseTo(VOL, 3); // сразу на полном уровне
     expect(slot(1).paused).toBe(true);
   });
 });
@@ -503,7 +522,7 @@ describe("Переход без паузы", () => {
 
     await wait(100); // фейд в доли секунды: 0,1 с хватает с запасом
     expect(slot(0).paused).toBe(true);
-    expect(slot(1).volume).toBeCloseTo(0.9, 3);
+    expect(slot(1).volume).toBeCloseTo(VOL, 3);
     expect(ctl.player.current?.id).toBe("b");
   });
 
@@ -526,7 +545,7 @@ describe("Выравнивание громкости", () => {
     await mount({ normalize: true });
     await play([track("a", { loudness: -5 })], 0); // громче цели на 9 дБ
 
-    expect(slot(0).volume).toBeCloseTo(0.9 * 0.3548, 3);
+    expect(slot(0).volume).toBeCloseTo(VOL * 0.3548, 3);
   });
 
   it("выключили на ходу — уровень возвращается к громкости плеера", async () => {
@@ -536,14 +555,14 @@ describe("Выравнивание громкости", () => {
     await act(async () => {
       ctl.set({ normalize: false });
     });
-    expect(slot(0).volume).toBeCloseTo(0.9, 3);
+    expect(slot(0).volume).toBeCloseTo(VOL, 3);
   });
 
   it("громкость не измерена — уровень ровно тот, что у плеера", async () => {
     await mount({ normalize: true });
     await play([track("a", { loudness: null })], 0);
 
-    expect(slot(0).volume).toBeCloseTo(0.9, 3);
+    expect(slot(0).volume).toBeCloseTo(VOL, 3);
   });
 });
 
@@ -725,5 +744,105 @@ describe("Бесконечное радио", () => {
 
     expect(net.getRadio).not.toHaveBeenCalled();
     expect(ctl.player.playing).toBe(false);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+describe("Память плеера между заходами", () => {
+  /** Положить память так, как её кладёт ЛЮБОЙ клиент — сырым JSON в общий
+   *  ключ. Через savePlayerState нельзя: тот пишет отложенно и в память
+   *  модуля, то есть проверял бы сам себя. */
+  const stored = (state: Partial<PlayerState>): void => {
+    localStorage.setItem(PLAYER_KEY, JSON.stringify(state));
+  };
+  /** Что в ключе лежит сейчас (после сброса отложенной записи). */
+  const readKey = (): Partial<PlayerState> => {
+    flushPlayerState();
+    return JSON.parse(localStorage.getItem(PLAYER_KEY) ?? "{}") as Partial<PlayerState>;
+  };
+
+  it("поднимает громкость, немоту, повтор, перемешивание и скорость", async () => {
+    stored({ volume: 40, muted: true, repeat: "all", shuffle: true, speed: 1.5 });
+    await mount();
+
+    expect(ctl.player.volume).toBeCloseTo(0.4, 5);
+    expect(ctl.player.muted).toBe(true);
+    expect(ctl.player.repeat).toBe("all");
+    expect(ctl.player.shuffle).toBe(true);
+    expect(ctl.player.speed).toBe(1.5);
+  });
+
+  it("пустая память — дефолты общего модуля, а не своё число веба", async () => {
+    await mount();
+    await play([track("a")], 0);
+
+    expect(ctl.player.volume).toBeCloseTo(VOL, 5);
+    expect(slot(0).volume).toBeCloseTo(VOL, 3);
+  });
+
+  it("шкала конвертируется на границе: в ключе 0..100, внутри доли", async () => {
+    stored({ volume: 40 });
+    await mount();
+    expect(ctl.player.volume).toBeCloseTo(0.4, 5);
+
+    await act(async () => {
+      ctl.player.setVolume(0.35);
+    });
+    expect(readKey().volume).toBe(35); // целое, а не 0.35
+  });
+
+  it("восстановленный shuffle НЕ тасует очередь при монтировании", async () => {
+    stored({ shuffle: true });
+    await mount();
+
+    // Очередь пуста — тасовать нечего, и переключатель звать было нельзя:
+    // он пересобирает очередь и baseQueueRef.
+    expect(ctl.player.queue).toEqual([]);
+    expect(ctl.player.index).toBe(-1);
+    expect(ctl.player.current).toBeNull();
+    expect(ctl.player.shuffle).toBe(true);
+    expect(readKey().shuffle).toBe(true); // и флаг не потеряли по дороге
+
+    // Порядок первой же подборки — исходный, а не перемешанный.
+    await play([track("a"), track("b"), track("c")], 0);
+    expect(ctl.player.queue.map((tr) => tr.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("положение органов управления доезжает до общего ключа", async () => {
+    await mount();
+    await act(async () => {
+      ctl.player.cycleRepeat();
+      ctl.player.setSpeed(1.25);
+      ctl.player.toggleMute();
+    });
+
+    expect(readKey()).toMatchObject({ repeat: "all", speed: 1.25, muted: true });
+  });
+
+  it("старый веб-ключ мигрирует ОДИН раз и остаётся на месте", async () => {
+    localStorage.setItem(LEGACY_VOLUME_KEY, "0.35");
+    await mount();
+
+    expect(ctl.player.volume).toBeCloseTo(0.35, 5);
+    expect(readKey().volume).toBe(35);
+    // Откат релиза обязан застать старый ключ нетронутым (см. LEGACY_VOLUME_KEY).
+    expect(localStorage.getItem(LEGACY_VOLUME_KEY)).toBe("0.35");
+  });
+
+  it("общий ключ есть — старый больше не смотрим", async () => {
+    stored({ volume: 20 });
+    localStorage.setItem(LEGACY_VOLUME_KEY, "0.9");
+    await mount();
+
+    expect(ctl.player.volume).toBeCloseTo(0.2, 5);
+  });
+
+  it("немота, пришедшая из приложения, не оставляет веб без звука", async () => {
+    // В программе немота — это громкость 0 с отдельно запомненным уровнем.
+    stored({ volume: 0, volumeBeforeMute: 70, muted: true });
+    await mount();
+
+    expect(ctl.player.muted).toBe(true);
+    expect(ctl.player.volume).toBeCloseTo(0.7, 5); // снимут немоту — будет слышно
   });
 });

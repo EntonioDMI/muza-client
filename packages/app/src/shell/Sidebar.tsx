@@ -119,14 +119,15 @@ function NavItem({
    *  перестановки подмешивается в него ниже. */
   look?: LookItemProps;
 }) {
-  const [hover, setHover] = useState(false);
   return (
     <button
       type="button"
+      // Подсветка — каналом CSS (.muza-nav в @muza/ui/interactions.css), а не
+      // useState: вкладок с десяток, но перерисовка каждой стоила ещё и
+      // пересчёта пропсов реордера (look) на проход курсора.
+      className="muza-nav"
       onClick={onClick}
       {...look}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       style={{
         position: "relative",
         zIndex: 1,
@@ -139,16 +140,10 @@ function NavItem({
         padding: "0 var(--sp-4)",
         border: "none",
         borderRadius: "var(--r-sm)",
-        background: quiet
-          ? !active && hover
-            ? "var(--surface-2)"
-            : "transparent"
-          : active
-            ? "var(--surface-4)"
-            : hover
-              ? "var(--surface-2)"
-              : "transparent",
-        color: active ? "var(--text-1)" : hover ? "var(--text-1)" : "var(--text-2)",
+        // quiet-вкладка активной не красится сама: под ней едет ПИЛЮЛЯ слота
+        // (см. nav ниже), и собственный фон закрыл бы её собой.
+        background: active ? (quiet ? "transparent" : "var(--surface-4)") : "var(--nav-bg)",
+        color: active ? "var(--text-1)" : "var(--nav-fg)",
         fontFamily: "var(--font-ui)",
         fontSize: "var(--fs-body)",
         fontWeight: active ? "var(--fw-semibold)" : ("var(--fw-medium)" as never),
@@ -253,7 +248,6 @@ function PlaylistRow({
   /** 2026-07-20: закреплён — булавка в слоте ручки (у fixed-строк ручки нет). */
   pinned?: boolean;
 }) {
-  const [hover, setHover] = useState(false);
   const { t } = useT();
   // Track-иконка плейлиста — сырой ytimg-URL: срезаем вшитые поля тем же
   // canvas-кропом, что у плеера (локальные/не-ytimg проходят как есть).
@@ -282,8 +276,11 @@ function PlaylistRow({
       // (только у них touchAction: none).
       {...(grip ?? {})}
       ref={rowRef}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      // Подсветка строки и проявление ручки-⠿ — каналами CSS (.muza-row в
+      // @muza/ui/interactions.css), а не useState. Класс висит на ВНЕШНЕМ узле,
+      // потому что ручка живёт снаружи кнопки: наведение на неё обязано держать
+      // строку подсвеченной, иначе ручка гасит сама себя из-под курсора.
+      className="muza-row"
       style={{
         position: "relative",
         opacity: dimmed ? 0.45 : undefined,
@@ -315,7 +312,7 @@ function PlaylistRow({
         paddingRight: grip ? 30 : pinned ? 26 : "var(--sp-2)",
         border: "none",
         borderRadius: "var(--r-sm)",
-        background: dropLit ? "var(--accent-soft)" : hover ? "var(--surface-2)" : "transparent",
+        background: dropLit ? "var(--accent-soft)" : "var(--row-bg)",
         outline: dropLit ? "var(--focus-ring)" : undefined,
         outlineOffset: -2,
         cursor: "pointer",
@@ -388,8 +385,8 @@ function PlaylistRow({
       ) : null}
     </button>
     {grip ? (
-      // Появляется на hover строки (в узком сайдбаре постоянные точки на каждой
-      // строке — шум); пока список реордерится — видна везде (читается механика).
+      // Проявляется по наведению на строку (в узком сайдбаре постоянные точки
+      // на каждой строке — шум); пока список реордерится — видна везде.
       <span
         aria-hidden="true"
         data-testid="reorder-grip"
@@ -405,8 +402,12 @@ function PlaylistRow({
           height: 30,
           color: "var(--text-3)",
           cursor: dragged ? "grabbing" : "grab",
-          opacity: hover || reordering ? 1 : 0,
-          pointerEvents: hover || reordering ? "auto" : "none",
+          // Пока список реордерится — ручки видны везде (читаются цели), иначе
+          // ручка проявляется по наведению на строку: --row-aff/--row-aff-pe.
+          opacity: reordering ? 1 : "var(--row-aff)",
+          // csstype перечисляет ключевые слова pointer-events и var() в них не
+          // пускает; для CSS подстановка здесь так же законна, как везде
+          pointerEvents: (reordering ? "auto" : "var(--row-aff-pe)") as CSSProperties["pointerEvents"],
           transition: "opacity var(--dur-state) var(--ease-standard)",
           touchAction: "none",
         }}
@@ -459,7 +460,6 @@ function FavoritesRow({
   externalDrop?: SidebarExternalDrop;
 }) {
   const { t } = useT();
-  const [hover, setHover] = useState(false);
   // id зоны с тем же префиксом места, что у строк плейлистов (реестр зон в
   // DragLayer — плоская Map, одинаковые id затирали бы колбэки друг друга)
   const { over: pointerLit, props: dropProps } = useDropZone(
@@ -478,8 +478,8 @@ function FavoritesRow({
       // это стабильный role-name для тестов навигации
       aria-label={t("views.favorites.title")}
       aria-current={active ? "page" : undefined}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      // тот же канал подсветки, что у строк плейлистов (.muza-row)
+      className="muza-row"
       style={{
         display: "flex",
         alignItems: "center",
@@ -488,7 +488,7 @@ function FavoritesRow({
         border: "none",
         borderRadius: "var(--r-sm)",
         // подсветка приёма — как у строк плейлистов
-        background: dropLit ? "var(--accent-soft)" : active ? "var(--surface-4)" : hover ? "var(--surface-2)" : "transparent",
+        background: dropLit ? "var(--accent-soft)" : active ? "var(--surface-4)" : "var(--row-bg)",
         outline: dropLit ? "var(--focus-ring)" : undefined,
         cursor: "pointer",
         textAlign: "left",

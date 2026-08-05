@@ -11,7 +11,7 @@
  *  PlaylistView.test.tsx) — ассерты на английские строки. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, Track, Wrapped } from "@muza/api-client";
 import type { WrappedAmbientDeps } from "../player/wrappedAmbient";
 import { WrappedOverlay, type WrappedOverlayAmbient } from "./WrappedOverlay";
@@ -163,5 +163,58 @@ describe("WrappedOverlay × слайды (фиксация поведения)",
     await waitFor(() => expect(h.start).toHaveBeenCalled());
     fireEvent.keyDown(window, { code: "Escape" });
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+/** Уход слайда знают двое: CSS-анимация .is-leaving-* и таймер, снимающий
+ *  уходящую копию из дерева. До 05.08 у них были РАЗНЫЕ числа (240мс и 260мс),
+ *  и они успели разъехаться; теперь число одно — оно живёт в TSX и уезжает в
+ *  CSS переменной --wr-leave на корне оверлея.
+ *
+ *  ⚠️ Что именно стережёт первый тест: ПРОВОДКУ. Стилей в jsdom нет, сверить
+ *  таймер с реальной длительностью анимации отсюда нельзя — поэтому он
+ *  проверяет, что переменная вообще выставлена и что таймер отрабатывает
+ *  ровно её значение. Развяжут их снова (переменную выставят одним числом, а
+ *  таймер заведут другим) — тест упадёт. */
+describe("WrappedOverlay × уход слайда: одно число на анимацию и на таймер", () => {
+  /** Пролистнуть вперёд кликом по сцене (тот же путь, что у пользователя). */
+  const flip = (root: HTMLElement) => fireEvent.click(root);
+
+  it("таймер снятия копии отрабатывает ровно то число, что уехало в CSS", async () => {
+    renderOverlay(fullWrapped);
+    const root = await screen.findByRole("dialog");
+
+    // Часы подменяем ПОСЛЕ загрузки данных: иначе промис api не доехал бы.
+    vi.useFakeTimers();
+    try {
+      flip(root);
+      expect(root.querySelector(".wrapped__slide.is-leaving")).toBeTruthy();
+
+      const declared = root.style.getPropertyValue("--wr-leave");
+      expect(declared).toMatch(/^\d+ms$/);
+      const ms = Number.parseInt(declared, 10);
+
+      // За миг до конца анимации копия обязана быть на месте…
+      act(() => void vi.advanceTimersByTime(ms - 1));
+      expect(root.querySelector(".wrapped__slide.is-leaving")).toBeTruthy();
+      // …и ровно на нём — исчезнуть. Разъедься числа снова — упадёт одна из двух.
+      act(() => void vi.advanceTimersByTime(1));
+      expect(root.querySelector(".wrapped__slide.is-leaving")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("уходящая копия — стоп-кадр: цифра не пересчитывается с нуля на лету", async () => {
+    renderOverlay(fullWrapped);
+    const root = await screen.findByRole("dialog");
+
+    flip(root); // intro → minutes
+    flip(root); // minutes → tracks, уходит копия слайда с count-up
+    const leaving = root.querySelector(".wrapped__slide.is-leaving");
+
+    // 5 400 000 мс = 90 минут. Копия показывает ИТОГ; до фикса CountUp
+    // монтировался с нуля, и улетающий слайд начинал считать заново.
+    expect(leaving?.textContent).toContain("90");
   });
 });

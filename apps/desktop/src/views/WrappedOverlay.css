@@ -5,7 +5,24 @@
    .is-entering-* живут одновременно (стек absolute внутри __content).
    Материалы строго ДС: поверхности-слои и стекло, никаких теней/градиентов
    (effects.css); все шрифты — токены/rem, хардкод px запрещён (проход
-   «пиксели→токены» 16.07). */
+   «пиксели→токены» 16.07).
+
+   ── ДВИЖЕНИЕ: РАСКАДРОВКА, А НЕ ИНТЕРФЕЙС ──────────────────────────────
+   Числа времени здесь СВОИ и остаются своими. Общая шкала (--dur-state,
+   --dur-pop-in, --dur-scene-in; tokens/effects.css) описывает отклик на
+   действие человека — а слайд рассказывает историю сам, никто его не
+   нажимал. Приводить эти длительности к общей шкале не надо; полное
+   обоснование и список исключений — в шапке WrappedOverlay.tsx.
+
+   Чтобы «свои» не значило «россыпь магии», ритм собран в локальную шкалу
+   --wr-* ниже: раньше одна и та же wrappedRise жила в трёх длительностях
+   (540/700/520мс), а три списка поднимались тремя разными лесенками
+   (шаг 55/60/70мс) — разница была случайной, не замыслом.
+
+   Из общей шкалы сюда дотягиваются ровно три вещи: ховер сегмента прогресса
+   (--dur-state), поповер громкости (--dur-pop-in) и КРИВЫЕ — --ease-out на
+   приход, --ease-in на уход. Кривая отвечает на «как движется объект», а не
+   на «сколько длится сцена», и почерк у приложения один. */
 
 .wrapped {
   position: absolute;
@@ -26,6 +43,32 @@
   --wr-display-lg: clamp(3.4rem, 7.5vw, 5.25rem); /* минуты, час */
   --wr-display-md: clamp(2.4rem, 5vw, 3.4rem);  /* заголовки-строки */
   --wr-headliner: clamp(2.5rem, 6vw, 4.25rem);  /* имя артиста года */
+
+  /* ── Локальная шкала раскадровки (обоснование — шапка файла) ─────────
+     ПЕРЕХОДЫ СЦЕНЫ: их окончания зритель ждёт, но ждёт как зритель. */
+  --wr-lead: 40ms;        /* когда трогается первый блок слайда */
+  --wr-cue: 70ms;         /* шаг лесенки: насколько следующий блок позже */
+  --wr-late: calc(var(--wr-lead) + 3 * var(--wr-cue)); /* последний эшелон:
+                             списки и дуга — после того, как встала копия */
+  --wr-rise: 540ms;       /* подъём блока или строки списка на 12px */
+  --wr-slide-in: 560ms;   /* первый показ слайда, ещё без направления */
+  --wr-enter: 480ms;      /* приход слайда при перелистывании */
+  --wr-art: 720ms;        /* въезд арта сцены: винил, постер, коллаж */
+  --wr-scene: 900ms;      /* кроссфейд обложки-задника */
+  --wr-dial-draw: 900ms;  /* дуга набегает до любимого часа */
+  --wr-dial-dot: 420ms;   /* точка часа садится на дугу */
+  --wr-dial-dot-at: 950ms; /* и садится, НЕ дожидаясь конца дуги: пауза между
+                              «добежала» и «появилась» читалась бы заминкой */
+  /* --wr-leave приезжает инлайном с корня оверлея (SLIDE_LEAVE_MS в TSX):
+     одно число на анимацию ухода и на таймер снятия уходящей копии. */
+
+  /* ЧАСЫ РАСКАДРОВКИ: крутятся сами, окончания не ждёт никто. Ускорять их
+     ползунком «скорость анимаций» бессмысленно, поэтому они не в шкале. */
+  --wr-vinyl-turn: 22s;   /* оборот пластинки: медленнее настоящих 33⅓, иначе
+                             обложка на диске превращается в мельтешение */
+  --wr-drift: 36s;        /* дрейф задника: полминуты с лишним — порог, за
+                             которым движение перестаёт замечаться взглядом */
+  --wr-loading-sweep: 1.15s; /* пробег полоски ожидания */
 }
 
 .wrapped *,
@@ -99,14 +142,18 @@
   opacity: 0.34;
   filter: blur(var(--blur-scenery)) saturate(1.35) brightness(0.72);
   transform: scale(1.24);
+  /* Дрейф трогается ровно тогда, когда доиграл приход: две фазы одного
+     задника, а не две независимые анимации со случайно похожими числами. */
   animation:
-    wrappedSceneIn 900ms var(--ease-out) both,
-    wrappedDrift 36s ease-in-out 900ms infinite alternate;
+    wrappedSceneIn var(--wr-scene) var(--ease-out) both,
+    wrappedDrift var(--wr-drift) ease-in-out var(--wr-scene) infinite alternate;
 }
 
-/* Прошлая обложка гаснет ПОД новой — настоящий кроссфейд, без скачка яркости */
+/* Прошлая обложка гаснет ПОД новой — настоящий кроссфейд, без скачка яркости.
+   Длительность та же, что у прихода: разъедься они — на стыке провалилась бы
+   яркость (обе картинки полупрозрачны одновременно). */
 .wrapped__scenery.is-past {
-  animation: wrappedSceneOut 900ms var(--ease-out) forwards;
+  animation: wrappedSceneOut var(--wr-scene) var(--ease-out) forwards;
 }
 
 .wrapped__scrim {
@@ -203,8 +250,10 @@
   transform: scaleX(1);
 }
 
+/* Заливка догоняет слайд: она и есть «сегмент стал текущим», поэтому едет
+   ровно столько же, сколько приходит сам слайд. */
 .wrapped__progress span.is-current::after {
-  animation: wrappedProgressIn 500ms var(--ease-out) both;
+  animation: wrappedProgressIn var(--wr-enter) var(--ease-out) both;
 }
 
 .wrapped__controls {
@@ -275,7 +324,7 @@
   align-items: center;
   justify-content: center;
   padding: 8px 56px;
-  animation: wrappedSlideIn 560ms var(--ease-out) both;
+  animation: wrappedSlideIn var(--wr-slide-in) var(--ease-out) both;
 }
 
 .wrapped__slide > section {
@@ -285,11 +334,11 @@
 }
 
 .wrapped__slide.is-entering-next {
-  animation: wrappedEnterNext 480ms var(--ease-out) both;
+  animation: wrappedEnterNext var(--wr-enter) var(--ease-out) both;
 }
 
 .wrapped__slide.is-entering-prev {
-  animation: wrappedEnterPrev 480ms var(--ease-out) both;
+  animation: wrappedEnterPrev var(--wr-enter) var(--ease-out) both;
 }
 
 .wrapped__slide.is-leaving {
@@ -297,12 +346,16 @@
   pointer-events: none;
 }
 
+/* Уход: длительность приезжает из TSX (--wr-leave = SLIDE_LEAVE_MS) — там же
+   стоит таймер, снимающий эту копию, и число у них обязано быть одно.
+   Кривая --ease-in, а не --ease-out: копия улетает, ловить её взглядом нечего,
+   и тормозить в конце значит заставлять глаз ждать пустоты. */
 .wrapped__slide.is-leaving-next {
-  animation: wrappedLeaveNext 240ms var(--ease-out) forwards;
+  animation: wrappedLeaveNext var(--wr-leave) var(--ease-in) forwards;
 }
 
 .wrapped__slide.is-leaving-prev {
-  animation: wrappedLeavePrev 240ms var(--ease-out) forwards;
+  animation: wrappedLeavePrev var(--wr-leave) var(--ease-in) forwards;
 }
 
 /* Уходящая копия — стоп-кадр: внутренние reveal-анимации (fill: both)
@@ -312,7 +365,11 @@
 }
 
 /* Staggered reveal: смысловые блоки слайда поднимаются друг за другом.
-   Список задержек — здесь, а не в разметке: слайды статичны по составу. */
+   Список задержек — здесь, а не в разметке: слайды статичны по составу.
+   Лесенка одна на все слайды и считается от --wr-lead шагами --wr-cue: пока
+   задержки стояли числами, «одна ступень» на разных слайдах успела стать
+   55, 60 и 70мс. Подъём тоже один — --wr-rise: путь у всех блоков
+   одинаковый (12px), а длительность следует пути, а не важности блока. */
 .wrapped__kicker,
 .wrapped__slide h1,
 .wrapped__metric,
@@ -325,18 +382,44 @@
 .wrapped__rhythm-lead p,
 .wrapped__final-artist,
 .wrapped__share,
+.wrapped__empty-year,
 .wrapped__state p {
-  animation: wrappedRise 540ms var(--ease-out) both;
+  animation: wrappedRise var(--wr-rise) var(--ease-out) both;
 }
 
-.wrapped__kicker { animation-delay: 40ms; }
-.wrapped__slide h1, .wrapped__metric { animation-delay: 100ms; }
-.wrapped__intro-line, .wrapped__track-artist, .wrapped__headliner-sub, .wrapped__rhythm-lead p, .wrapped__state p { animation-delay: 170ms; }
-.wrapped__first-track, .wrapped__meta-line, .wrapped__track-plays, .wrapped__final-artist { animation-delay: 240ms; }
-.wrapped__share { animation-delay: 310ms; }
+.wrapped__kicker { animation-delay: var(--wr-lead); }
+.wrapped__slide h1, .wrapped__metric { animation-delay: calc(var(--wr-lead) + var(--wr-cue)); }
+.wrapped__intro-line, .wrapped__track-artist, .wrapped__headliner-sub, .wrapped__rhythm-lead p, .wrapped__state p { animation-delay: calc(var(--wr-lead) + 2 * var(--wr-cue)); }
+.wrapped__first-track, .wrapped__meta-line, .wrapped__track-plays, .wrapped__final-artist { animation-delay: var(--wr-late); }
+.wrapped__share { animation-delay: calc(var(--wr-lead) + 4 * var(--wr-cue)); }
 
+/* Списки слайда — чарт, line-up и факты — одна и та же лесенка в трёх
+   декорациях: строка списка везде появляется одинаково, а разъехавшиеся
+   ступени были случайностью правок, а не постановкой. */
+.wrapped__chart li,
+.wrapped__lineup li,
+.wrapped__rhythm-facts > div {
+  animation: wrappedRise var(--wr-rise) var(--ease-out) both;
+}
+
+.wrapped__chart li:nth-child(1),
+.wrapped__lineup li:nth-child(1),
+.wrapped__rhythm-facts > div:nth-child(1) { animation-delay: var(--wr-late); }
+.wrapped__chart li:nth-child(2),
+.wrapped__lineup li:nth-child(2),
+.wrapped__rhythm-facts > div:nth-child(2) { animation-delay: calc(var(--wr-late) + var(--wr-cue)); }
+.wrapped__chart li:nth-child(3),
+.wrapped__lineup li:nth-child(3),
+.wrapped__rhythm-facts > div:nth-child(3) { animation-delay: calc(var(--wr-late) + 2 * var(--wr-cue)); }
+.wrapped__chart li:nth-child(4),
+.wrapped__lineup li:nth-child(4),
+.wrapped__rhythm-facts > div:nth-child(4) { animation-delay: calc(var(--wr-late) + 3 * var(--wr-cue)); }
+
+/* Арт вступает посреди лесенки и едет дольше всех: он крупный, путь у него
+   длиннее (24px + поворот), и встать он должен примерно вместе с последним
+   блоком копии — не раньше, иначе картинка «обгоняет» рассказ. */
 .wrapped__art {
-  animation: wrappedArtIn 720ms var(--ease-out) 140ms both;
+  animation: wrappedArtIn var(--wr-art) var(--ease-out) calc(var(--wr-lead) + 1.5 * var(--wr-cue)) both;
 }
 
 .wrapped__kicker {
@@ -425,10 +508,12 @@
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  animation: wrappedLoading 1.15s var(--ease-out) infinite alternate;
+  animation: wrappedLoading var(--wr-loading-sweep) var(--ease-out) infinite alternate;
 }
 
-/* Пустой год: гигантский год — сценография, а не заголовок */
+/* Пустой год: гигантский год — сценография, а не заголовок.
+   Поднимается общей wrappedRise (см. лесенку выше) — до 05.08 у него была
+   своя длительность 700мс на ту же анимацию и тот же путь. */
 .wrapped__empty-year {
   position: absolute;
   inset: auto 0 63%; /* выше кикера — титры не наезжают на водяной год */
@@ -439,7 +524,6 @@
   font-weight: 700;
   line-height: 1;
   letter-spacing: var(--ls-display);
-  animation: wrappedRise 700ms var(--ease-out) both;
 }
 
 .wrapped__state--empty {
@@ -612,9 +696,9 @@
   place-items: center;
 }
 
-/* Винил = круг обложки (язык .muza-orb-spin из app.css): без колец-штрихов,
+/* Винил = круг обложки (язык орбит — packages/app/src/shell/animatedBackdrop.css): без колец-штрихов,
    глубина — затемняющая шайба и плотный центр. Пластинка медленно крутится. */
-/* Клип статичный, вращается внутренний спиннер (паттерн орбит app.css).
+/* Клип статичный, вращается внутренний спиннер (паттерн орбит — packages/app/src/shell/animatedBackdrop.css).
    В CDP-скриншотах круг «ломается» квадратом — артефакт captureScreenshot
    для вращающегося растра, на экране всё корректно (см. TSX-комментарий). */
 .wrapped__vinyl-disc {
@@ -626,11 +710,14 @@
   background: var(--bg-1);
 }
 
+/* ЧАСЫ, а не переход: пластинка крутится, пока слайд открыт, и её окончания
+   никто не ждёт — отсюда linear (у часов стрелка не разгоняется и не
+   тормозит) и своя длительность вне шкалы. */
 .wrapped__vinyl-spin {
   position: absolute;
   inset: 0;
   will-change: transform;
-  animation: wrappedSpin 22s linear infinite;
+  animation: wrappedSpin var(--wr-vinyl-turn) linear infinite;
 }
 
 .wrapped__vinyl-art {
@@ -764,13 +851,7 @@
   gap: var(--sp-3);
   align-items: center;
   min-height: 48px;
-  animation: wrappedRise 520ms var(--ease-out) both;
 }
-
-.wrapped__chart li:nth-child(1) { animation-delay: 260ms; }
-.wrapped__chart li:nth-child(2) { animation-delay: 315ms; }
-.wrapped__chart li:nth-child(3) { animation-delay: 370ms; }
-.wrapped__chart li:nth-child(4) { animation-delay: 425ms; }
 
 .wrapped__chart img {
   width: 40px;
@@ -859,13 +940,7 @@
   gap: var(--sp-3);
   align-items: baseline;
   min-width: 0;
-  animation: wrappedRise 520ms var(--ease-out) both;
 }
-
-.wrapped__lineup li:nth-child(1) { animation-delay: 240ms; }
-.wrapped__lineup li:nth-child(2) { animation-delay: 300ms; }
-.wrapped__lineup li:nth-child(3) { animation-delay: 360ms; }
-.wrapped__lineup li:nth-child(4) { animation-delay: 420ms; }
 
 .wrapped__lineup-rank {
   color: var(--accent-text);
@@ -934,13 +1009,7 @@
   gap: var(--sp-4);
   align-items: baseline;
   justify-content: space-between;
-  animation: wrappedRise 520ms var(--ease-out) both;
 }
-
-.wrapped__rhythm-facts > div:nth-child(1) { animation-delay: 260ms; }
-.wrapped__rhythm-facts > div:nth-child(2) { animation-delay: 330ms; }
-.wrapped__rhythm-facts > div:nth-child(3) { animation-delay: 400ms; }
-.wrapped__rhythm-facts > div:nth-child(4) { animation-delay: 470ms; }
 
 .wrapped__rhythm-facts dt {
   color: var(--text-2);
@@ -974,16 +1043,17 @@
   height: 100%;
 }
 
-/* Дуга «набегает» до любимого часа: draw-эффект через dashoffset */
+/* Дуга «набегает» до любимого часа: draw-эффект через dashoffset. Трогается
+   в один такт со списками (--wr-late) — это такой же «последний эшелон». */
 .wrapped__dial-arc {
   stroke-dashoffset: 0;
-  animation: wrappedDialDraw 900ms var(--ease-out) 250ms both;
+  animation: wrappedDialDraw var(--wr-dial-draw) var(--ease-out) var(--wr-late) both;
 }
 
 .wrapped__dial-dot {
   transform-box: fill-box;
   transform-origin: center;
-  animation: wrappedPop 420ms var(--ease-out) 950ms both;
+  animation: wrappedPop var(--wr-dial-dot) var(--ease-out) var(--wr-dial-dot-at) both;
 }
 
 .wrapped__dial-center {
@@ -1323,16 +1393,15 @@
    base.css превратил бы их в мерцание), разовые появления схлопываются в
    мгновенный показ тем же 1ms-правилом. */
 @media (prefers-reduced-motion: reduce) {
-  .wrapped__scenery,
-  .wrapped__vinyl-spin,
-  .wrapped__loading-line span,
-  .wrapped__progress span.is-current::after,
+  /* Всё, что живёт ВНУТРИ слайда, гасится одним `.wrapped__slide *`: винил,
+     арт, дуга и точка циферблата, полоска ожидания, водяной год. До 05.08 их
+     перечисляли поимённо рядом с этим же правилом — список повторял сам себя
+     и успел отстать от разметки. Снаружи слайда остались двое, и оба в хроме:
+     задник сцены и заливка текущего сегмента прогресса. */
   .wrapped__slide,
   .wrapped__slide *,
-  .wrapped__art,
-  .wrapped__dial-arc,
-  .wrapped__dial-dot,
-  .wrapped__empty-year {
+  .wrapped__scenery,
+  .wrapped__progress span.is-current::after {
     animation: none !important;
   }
 

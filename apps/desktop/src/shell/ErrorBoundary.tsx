@@ -154,15 +154,33 @@ export class ErrorBoundary extends Component<Props, { broken: boolean; message: 
           overflow: "hidden",
         }}
       >
+        {/* Токены с фолбэками — по железному правилу файла: крашскрин обязан
+            выглядеть собой даже когда таблицы стилей не доехали. */}
         <style>{`
           @keyframes muzaCrashFloat {
             0%, 100% { transform: translateY(0) rotate(0deg); }
             50% { transform: translateY(-12px) rotate(-2deg); }
           }
+          /* ЧАСЫ, а не переход: пластинка качается сама и не заканчивает —
+             ждать её окончания некому, поэтому число своё и в шкалу
+             длительностей не сводится. 7s — период, на котором качание
+             читается как «дышит»; вдвое быстрее оно уже суетится, а на
+             экране, где человеку сообщают о поломке, суетиться нельзя. */
           .muza-crash__art { animation: muzaCrashFloat 7s ease-in-out infinite; }
-          .muza-crash__btn { transition: filter 120ms ease-out, transform 120ms ease-out; }
+          /* А вот кнопка — обычное состояние обычной кнопки, ей место в общей
+             шкале: подсветка на месте (--dur-state), нажатие и отпускание
+             разной длины (палец ещё на кнопке — форма отвечает в порог
+             причинности; ушёл — она расслабляется, а не отскакивает). */
+          .muza-crash__btn {
+            transition:
+              filter var(--dur-state, 120ms) var(--ease-standard, cubic-bezier(0.4, 0, 0.2, 1)),
+              transform var(--dur-press-out, 180ms) var(--ease-standard, cubic-bezier(0.4, 0, 0.2, 1));
+          }
           .muza-crash__btn:hover { filter: brightness(1.1); }
-          .muza-crash__btn:active { transform: scale(0.98); }
+          .muza-crash__btn:active {
+            transform: scale(var(--press-scale, 0.98));
+            transition-duration: var(--dur-state, 120ms), var(--dur-press-in, 90ms);
+          }
           @media (prefers-reduced-motion: reduce) {
             .muza-crash__art { animation: none; }
           }

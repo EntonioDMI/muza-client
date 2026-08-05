@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Cover, IconButton, Slider } from "@muza/ui";
+import { useEffect, useRef, useState } from "react";
+import type { Track } from "@muza/api-client";
+import { Cover, IconButton, Slider, useLayerState } from "@muza/ui";
 import { useT } from "@muza/app";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
@@ -29,34 +30,55 @@ import { LyricsBlock } from "./LyricsPanel";
  *  там две колонки как раз есть, и раньше клик по обложке в полосе плеера не
  *  делал ничего, хотя в приложении открывал караоке. Два полноэкранных режима
  *  не пересекаются: хост не монтируется на телефонной раскладке, этот экран
- *  открывается только с мини-бара, которого на широком окне нет. */
-export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
+ *  открывается только с мини-бара, которого на широком окне нет.
+ *
+ *  ⚠️ ЭКРАН ЖИВЁТ ПРОПОМ `open`, А НЕ УСЛОВНЫМ РЕНДЕРОМ РОДИТЕЛЯ. Раньше
+ *  оболочка снимала его из дерева по клику — то есть полный экран телефона
+ *  исчезал кадром, без ухода. Теперь жизненным циклом заведует useLayerState:
+ *  узел остаётся в дереве, пока играет уход (.muza-layer--scene, поза и время —
+ *  в globals.css → .np-overlay). Снять его раньше нельзя ни здесь, ни у
+ *  родителя — уходить будет нечему. */
+export function MobileNowPlaying({ open, onClose }: { open: boolean; onClose: () => void }) {
   const p = usePlayer();
   const { position, duration } = usePosition();
   const { likedIds, toggle } = useLikes();
   const { t } = useT();
+  /** Вид переживает закрытие: узел теперь не размонтируется, и человек,
+   *  вернувшийся в текст песни, застаёт текст, а не обложку. Ровно так же
+   *  помнит себя караоке приложения (prefs.listeningLyricsShown). */
   const [view, setView] = useState<"cover" | "lyrics">("cover");
   const current = p.current;
+  const { mounted, layerProps } = useLayerState(open);
 
+  // Слушатель — ТОЛЬКО пока экран открыт: узел живёт всё время работы вкладки,
+  // и безусловная подписка отбирала бы Esc у диалогов оболочки.
   useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [open, onClose]);
 
   // трек кончился и очередь пуста — закрываемся сами
   useEffect(() => {
-    if (!current) onClose();
-  }, [current, onClose]);
+    if (open && !current) onClose();
+  }, [open, current, onClose]);
 
-  if (!current) return null;
+  /** Что показывать, пока экран УХОДИТ. Очередь могла кончиться (см. эффект
+   *  выше), и `current` уже null — без последнего известного трека сцена не
+   *  ушла бы, а схлопнулась кадром, то есть ровно то, что мы и лечим. */
+  const shownRef = useRef<Track | null>(null);
+  if (current) shownRef.current = current;
+  const track = current ?? shownRef.current;
+
+  if (!mounted || !track) return null;
 
   const repeatLabel = p.repeat === "one" ? t("player.repeat.one") : p.repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
 
   return (
-    <div className="np-overlay" role="dialog" aria-label={t("nowPlaying.heading")}>
+    <div className="np-overlay muza-layer muza-layer--scene" role="dialog" aria-label={t("nowPlaying.heading")} {...layerProps}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         {/* «Свернуть» — общая строка режима прослушивания: та же кнопка выхода
             из полноэкранного «Сейчас играет», что в приложении. */}
@@ -87,8 +109,8 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
             {/* Обложка — только через Cover ДС: он один знает про вшитые поля
                 тумбов источника и про то, какие варианты трогать нельзя. */}
             <Cover
-              key={current.coverUrl ?? "none"}
-              src={current.coverUrl}
+              key={track.coverUrl ?? "none"}
+              src={track.coverUrl}
               radius="var(--r-md)"
               className="muza-fade"
               style={{ width: "min(78vw, 46vh)" }}
@@ -115,17 +137,17 @@ export function MobileNowPlaying({ onClose }: { onClose: () => void }) {
               textOverflow: "ellipsis",
             }}
           >
-            {current.title}
+            {track.title}
           </div>
           <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {p.error ?? current.artist}
+            {p.error ?? track.artist}
           </div>
         </div>
         <IconButton
           icon="heart"
-          label={likedIds.has(current.id) ? t("menu.catalog.unlike") : t("menu.catalog.like")}
-          filled={likedIds.has(current.id)}
-          onClick={() => toggle(current)}
+          label={likedIds.has(track.id) ? t("menu.catalog.unlike") : t("menu.catalog.like")}
+          filled={likedIds.has(track.id)}
+          onClick={() => toggle(track)}
         />
       </div>
 

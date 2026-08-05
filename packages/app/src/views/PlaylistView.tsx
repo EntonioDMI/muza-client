@@ -785,14 +785,17 @@ export function PlaylistView({
           есть все пять (его панель не изменилась ни на пиксель), у браузера
           нет ни очереди-вставки, ни хранения на устройстве — там останется
           меньше. Правило розетки: нет умения — нет пункта, а не серый. */}
-      {multi.count > 0 ? (
+      
         <SelectionBar
+          // Уход играет ТОЛЬКО у того, кто передаёт open (2026-08-05): узел, снятый
+          // условием, вырывается кадром — анимировать нечего. Подпись и кнопки на
+          // кадре ухода уже пусты, но панель показывает последний открытый вид сама.
+          open={multi.count > 0}
           label={t("menu.selection.count", { count: multi.count })}
           clearLabel={t("menu.selection.clear")}
           onClear={multi.clear}
           actions={selectionActions}
         />
-      ) : null}
 
       <ShareVisibilityDialog
         api={api}

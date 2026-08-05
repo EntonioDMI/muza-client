@@ -3,10 +3,14 @@
 /** Segmented tabs — the selected background SLIDES between segments (never blinks).
  *  stretch: сегменты делят всю ширину контейнера поровну (формы, узкие карточки).
  *  wrap: сегменты переносятся на следующие строки — все вкладки видны при любой
- *  ширине (много разделов; скрытый горизонтальный скролл — антипаттерн). */
+ *  ширине (много разделов; скрытый горизонтальный скролл — антипаттерн).
+ *
+ *  ⚠️ ПОДСВЕТКА СЕГМЕНТА — КАНАЛОМ CSS (.muza-tab, interactions.css), а не
+ *  состоянием (2026-08-05). Здесь дело было не в длине списка, а в ОХВАТЕ:
+ *  hoverKey хранился на всю группу, и наведение на один сегмент перерисовывало
+ *  их все — вместе с замерами пилюли, которые висят на этом же компоненте. */
 export function Tabs({ items, value, onChange, stretch = false, wrap = false, style }) {
   const wrapRef = useRef(null);
-  const [hoverKey, setHoverKey] = useState(null);
   const [ind, setInd] = useState(null); // { left, top, width }
 
   // Подписи набора (склейка через NUL: такого символа в подписи быть не может, а
@@ -123,11 +127,10 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
             key={key}
             type="button"
             role="tab"
+            className="muza-tab"
             aria-selected={selected}
             data-tabkey={key}
             onClick={() => onChange && onChange(key)}
-            onMouseEnter={() => setHoverKey(key)}
-            onMouseLeave={() => setHoverKey(null)}
             style={{
               position: "relative",
               zIndex: 1,
@@ -136,7 +139,9 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
               padding: stretch ? "0 var(--sp-2)" : "0 var(--sp-4)",
               border: "none",
               borderRadius: "var(--r-tabs, var(--r-pill))",
-              background: !selected && hoverKey === key ? "var(--surface-2)" : "transparent",
+              // у выбранного сегмента фон рисует ПИЛЮЛЯ под ним — свой он
+              // обязан держать прозрачным, иначе она окажется под краской
+              background: selected ? "transparent" : "var(--tab-bg)",
               color: selected ? "var(--text-1)" : "var(--text-2)",
               fontFamily: "var(--font-ui)",
               fontSize: "var(--fs-body)",
