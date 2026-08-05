@@ -106,8 +106,11 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
             height: 36,
             borderRadius: "var(--r-tabs, var(--r-pill))",
             background: "var(--surface-4)",
+            /* Пилюля ПЕРЕЕЗЖАЕТ между вкладками — симметричная кривая, потому
+               что и уход с прежней вкладки, и приход на новую одинаково на виду
+               (в отличие от слоя, который появляется из ниоткуда). */
             transition:
-              "left var(--dur-base) var(--ease-out), top var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out)",
+              "left var(--dur-state-move) var(--ease-in-out), top var(--dur-state-move) var(--ease-in-out), width var(--dur-state-move) var(--ease-in-out)",
           }}
         ></div>
       ) : null}
@@ -140,7 +143,10 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
               fontWeight: selected ? "var(--fw-semibold)" : "var(--fw-medium)",
               lineHeight: 1,
               cursor: "pointer",
-              transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
+              /* Фон и цвет — ОДНИМ законом. Раньше они разъезжались (150 против
+                 220 мс): подсветка успевала налиться, пока подпись ещё
+                 доцвечивалась, и переключение читалось двухтактным. */
+              transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
             }}
           >
             {label}

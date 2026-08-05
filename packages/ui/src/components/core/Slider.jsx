@@ -200,7 +200,7 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
           borderRadius: "var(--r-pill)",
           background: "var(--surface-3)",
           overflow: "hidden",
-          transition: "height var(--dur-fast) var(--ease-out)",
+          transition: "height var(--dur-state) var(--ease-standard)",
         }}
       >
         <div
@@ -248,7 +248,7 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
               borderRadius: "var(--r-pill)",
               background: "var(--text-1)",
               opacity: hover || drag ? 1 : 0,
-              transition: "opacity var(--dur-fast) var(--ease-out)",
+              transition: "opacity var(--dur-state) var(--ease-standard)",
             }}
           ></div>
         )}

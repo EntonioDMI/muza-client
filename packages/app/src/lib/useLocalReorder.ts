@@ -534,7 +534,7 @@ export function useLocalReorder({
       // будет вовсе.
       void document.documentElement.offsetHeight;
       for (const el of started) {
-        el.style.transition = `transform var(--dur-base) var(--spring-snap, var(--ease-out))`;
+        el.style.transition = `transform var(--dur-transit) var(--spring-snap, var(--ease-out))`;
         el.style.transform = "";
       }
     } else {

@@ -699,7 +699,13 @@ export function PlaylistView({
                       // превью, а тут остаётся местом, куда встанет
                       opacity: dragged ? 0.35 : undefined,
                       // соседи едут плавно, сама тащимая — мгновенно за курсором
-                      transition: dragged ? "opacity var(--dur-fast) var(--ease-out)" : "transform 160ms var(--ease-out)",
+                      /* 160 мс числом было ТРЕТЬИМ законом одного и того же
+                         жеста: соседи в ленте ехали 220 мс пружиной, посадка —
+                         200 мс другой пружиной, а здесь — 160 мс кривой.
+                         Теперь разъезд соседей везде один (--dur-transit). */
+                      transition: dragged
+                        ? "opacity var(--dur-state) var(--ease-standard)"
+                        : "transform var(--dur-transit) var(--spring-snap, var(--ease-out))",
                       position: "relative",
                       zIndex: dragged ? 1 : undefined,
                     }

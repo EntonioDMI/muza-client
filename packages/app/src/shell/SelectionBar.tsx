@@ -41,7 +41,7 @@ export function SelectionBar({
         background: "var(--glass-panel)",
         backdropFilter: "blur(var(--blur-glass))",
         WebkitBackdropFilter: "blur(var(--blur-glass))",
-        animation: "muzaMenuIn var(--dur-fast) var(--ease-out)",
+        animation: "muzaMenuIn var(--dur-pop-in) var(--ease-out)",
       }}
     >
       <span

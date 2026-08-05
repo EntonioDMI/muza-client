@@ -61,7 +61,7 @@ function IconSwatch({ id, active, busy, onClick }: { id: string; active: boolean
         background: hover ? "var(--surface-3)" : "var(--surface-2)",
         cursor: busy ? "default" : "pointer",
         opacity: busy ? 0.6 : 1,
-        transition: "border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)",
+        transition: "border-color var(--dur-state) var(--ease-standard), background var(--dur-state) var(--ease-standard)",
       }}
     >
       <img
@@ -101,7 +101,7 @@ function CoverSwatch({ src, active, busy, onClick }: { src: string; active: bool
         background: hover ? "var(--surface-3)" : "var(--surface-2)",
         cursor: busy ? "default" : "pointer",
         opacity: busy ? 0.6 : 1,
-        transition: "border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)",
+        transition: "border-color var(--dur-state) var(--ease-standard), background var(--dur-state) var(--ease-standard)",
       }}
     >
       <img

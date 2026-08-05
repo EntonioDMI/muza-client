@@ -537,7 +537,7 @@ function ConsentRow({
           borderRadius: "var(--r-xs)",
           background: checked ? "var(--accent)" : "transparent",
           cursor: "pointer",
-          transition: "background var(--dur-fast) var(--ease-out)",
+          transition: "background var(--dur-state) var(--ease-standard)",
         }}
       >
         {checked ? <Icon name="check" size={14} color="var(--text-on-accent, #fff)" strokeWidth={3} /> : null}

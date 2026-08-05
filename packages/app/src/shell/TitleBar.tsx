@@ -115,7 +115,7 @@ function WindowButton({
         // достаточно тёмные (#d13c3a / #f76967).
         color: hover ? (danger ? "#fff" : "var(--text-1)") : "var(--text-3)",
         cursor: "pointer",
-        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
       }}
     >
       <Icon name={icon} size={14} strokeWidth={2} />

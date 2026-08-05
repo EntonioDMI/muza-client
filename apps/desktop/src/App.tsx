@@ -1005,8 +1005,8 @@ function Player({
     // Уход: панель уезжает вправо за кромку и гаснет. `forwards` держит её там
     // до размонтирования, pointerEvents снимают клики с уезжающего узла.
     animation: npClosing
-      ? "muzaNowPlayingOut var(--dur-base) var(--spring-snap, var(--ease-out)) forwards"
-      : "muzaNowPlayingIn var(--dur-base) var(--spring-snap, var(--ease-out))",
+      ? "muzaNowPlayingOut var(--dur-panel-out) var(--ease-in) forwards"
+      : "muzaNowPlayingIn var(--dur-panel-in) var(--spring-snap, var(--ease-out))",
     ...(npClosing ? { pointerEvents: "none" as const } : {}),
   };
   /** Виден ли язычок возврата: панель закрыта, но открыть её есть чем и есть
@@ -2395,7 +2395,9 @@ function Player({
             // из-за которого всё и затевалось. Плавно — чтобы открытие панели
             // не дёргало список.
             paddingRight: npMounted && !nowPlayingDocked ? "calc(var(--w-nowplaying) + var(--gap-zone))" : 0,
-            transition: "padding-right var(--dur-base) var(--ease-out)",
+            /* Поле под панель едет ВМЕСТЕ с самой панелью — одна длительность,
+               иначе содержимое доезжает после того, как панель уже встала. */
+            transition: "padding-right var(--dur-panel-in) var(--ease-out)",
           }}
         >
           {/* Своя граница на экран (02.08). Раньше единственная жила на корне
@@ -2705,7 +2707,7 @@ function Player({
                 // раскладки. Уменьшенное движение гасит переход глобально
                 // (packages/ui/src/tokens/base.css сводит длительность к 1мс).
                 transform: npHandleHover ? "translateX(-4px)" : "translateX(0)",
-                transition: "transform var(--dur-base) var(--spring-snap, var(--ease-out))",
+                transition: "transform var(--dur-state-move) var(--spring-snap, var(--ease-out))",
               }}
             />
           </div>
@@ -3281,7 +3283,7 @@ function PlaylistPickRow({
         fontWeight: 600,
         cursor: "pointer",
         textAlign: "left",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       {src ? (

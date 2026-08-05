@@ -62,7 +62,7 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
         padding: "0 2px",
         zIndex: 2,
         opacity: (hover || focus) && !hidden ? 1 : 0,
-        transition: "opacity var(--dur-fast) var(--ease-out)",
+        transition: "opacity var(--dur-state) var(--ease-standard)",
       }}
     >
       <span

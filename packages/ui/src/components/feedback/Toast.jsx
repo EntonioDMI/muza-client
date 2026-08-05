@@ -27,7 +27,12 @@ export function Toast({ open, message, icon, actionLabel, onAction, style }) {
         opacity: open ? 1 : 0,
         transform: open ? "translateY(0)" : "translateY(12px)",
         pointerEvents: interactive ? "auto" : "none",
-        transition: "opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out)",
+        /* Тост ПРИЛЕТАЕТ и УЛЕТАЕТ — законы разные. Приход надо успеть заметить
+           (--ease-out доводит), уход ловить нечего: --ease-in разгоняет наружу,
+           и пилюля не «оседает» в углу экрана лишние сто миллисекунд. */
+        transition: open
+          ? "opacity var(--dur-pop-in) var(--ease-out), transform var(--dur-pop-in) var(--ease-out)"
+          : "opacity var(--dur-pop-out) var(--ease-in), transform var(--dur-pop-out) var(--ease-in)",
         ...style,
       }}
     >

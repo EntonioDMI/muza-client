@@ -28,7 +28,7 @@ export function Chip({ children, icon, selected = false, onClick, style }) {
         fontWeight: "var(--fw-medium)",
         lineHeight: 1,
         cursor: "pointer",
-        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
         ...style,
       }}
     >

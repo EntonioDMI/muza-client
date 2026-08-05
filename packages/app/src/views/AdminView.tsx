@@ -771,7 +771,7 @@ function ErrorGroupRow({
           name="chevron-right"
           size={16}
           color="var(--text-3)"
-          style={{ flex: "none", transform: open ? "rotate(90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out)" }}
+          style={{ flex: "none", transform: open ? "rotate(90deg)" : "none", transition: "transform var(--dur-state-move) var(--ease-in-out)" }}
         />
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {kindName(group.kind)} · {group.message || "—"}

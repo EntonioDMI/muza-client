@@ -20,7 +20,7 @@ export function Switch({ checked = false, onChange, disabled = false, label, sty
         background: checked ? "var(--accent)" : "var(--surface-4)",
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.4 : 1,
-        transition: "background var(--dur-base) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
         ...style,
       }}
     >
@@ -33,7 +33,9 @@ export function Switch({ checked = false, onChange, disabled = false, label, sty
           height: 20,
           borderRadius: "var(--r-pill)",
           background: "var(--text-1)",
-          transition: "left var(--dur-base) var(--ease-out)",
+          /* Ручка ЕДЕТ, фон — нет: два разных закона на одном тумблере, и это
+             намеренно. Кривая симметричная — оба конца хода одинаково видны. */
+          transition: "left var(--dur-state-move) var(--ease-in-out)",
         }}
       ></span>
     </button>

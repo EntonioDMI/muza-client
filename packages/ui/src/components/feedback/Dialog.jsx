@@ -158,9 +158,12 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
         background: "var(--glass-deep)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
+        /* Затемнение приходит дольше, чем уходит: ему нужно время, чтобы
+           прочитаться затемнением, а не миганием. Уход — --ease-in, разгон
+           наружу (2026-08-05). */
         animation: closing
-          ? "muzaFadeOut var(--dur-base) var(--ease-out) forwards"
-          : "muzaFadeIn var(--dur-base) var(--ease-out)",
+          ? "muzaFadeOut var(--dur-modal-out) var(--ease-in) forwards"
+          : "muzaFadeIn var(--dur-modal-in) var(--ease-standard)",
       }}
     >
       <div
@@ -187,8 +190,8 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
           flexDirection: "column",
           gap: "var(--sp-5)",
           animation: closing
-            ? "muzaRiseOut var(--dur-base) var(--ease-out) forwards"
-            : "muzaRiseIn var(--dur-base) var(--spring-snap, var(--ease-out))",
+            ? "muzaRiseOut var(--dur-modal-out) var(--ease-in) forwards"
+            : "muzaRiseIn var(--dur-modal-in) var(--spring-snap, var(--ease-out))",
         }}
       >
         <style>{"@keyframes muzaFadeIn{from{opacity:0}}@keyframes muzaFadeOut{to{opacity:0}}@keyframes muzaRiseIn{from{opacity:0;transform:translateY(14px) scale(.98)}}@keyframes muzaRiseOut{to{opacity:0;transform:translateY(14px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=dialog]{animation:none!important}}"}</style>

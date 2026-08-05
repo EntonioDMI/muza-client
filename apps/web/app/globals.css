@@ -365,7 +365,7 @@ a {
   color: var(--text-3);
   font-size: 10.5px;
   font-weight: 600;
-  transition: color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-state) var(--ease-standard);
 }
 
 .bottomnav a.active {
@@ -384,7 +384,9 @@ a {
     calc(var(--safe-bottom) + var(--sp-5)) calc(var(--safe-left) + var(--sp-5));
   background: var(--glass-deep);
   backdrop-filter: blur(var(--blur-glass));
-  animation: npIn var(--dur-slow) var(--ease-out);
+  /* Мобильный «Сейчас играет» — КРАЕВАЯ ПАНЕЛЬ, а не сцена: тот же закон, что
+     у десктопной панели (раньше веб играл её 400 мс против 220 у приложения). */
+  animation: npIn var(--dur-panel-in) var(--ease-out);
   box-sizing: border-box;
 }
 
@@ -476,7 +478,7 @@ a {
   border: 2px solid transparent;
   cursor: pointer;
   padding: 0;
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition: border-color var(--dur-state) var(--ease-standard);
 }
 
 .swatch.active {

@@ -103,7 +103,7 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
           fontWeight: 500,
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.4 : 1,
-          transition: "background var(--dur-fast) var(--ease-out)",
+          transition: "background var(--dur-state) var(--ease-standard)",
           boxSizing: "border-box",
           ...style,
         }}
@@ -121,7 +121,10 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
           style={{
             flex: "none",
             transform: open ? "rotate(180deg)" : "none",
-            transition: "transform var(--dur-base) var(--ease-out)",
+            /* Шеврон ЕДЕТ (поворот на 180°) — один закон на все три шеврона
+               приложения: здесь, в строке трека и в админке. Раньше было
+               220/150/150 мс тремя разными кривыми. */
+            transition: "transform var(--dur-state-move) var(--ease-in-out)",
           }}
         />
       </button>

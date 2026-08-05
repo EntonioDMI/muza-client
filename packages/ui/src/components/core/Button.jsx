@@ -56,7 +56,10 @@ export function Button({
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.4 : 1,
         transform: press && !disabled ? "scale(var(--press-scale))" : "scale(1)",
-        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+        /* Несимметричное нажатие — разбор у того же места в IconButton.jsx. */
+        transition: `background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard), transform ${
+          press && !disabled ? "var(--dur-press-in) var(--ease-standard)" : "var(--dur-press-out) var(--ease-out)"
+        }`,
         ...style,
       }}
     >

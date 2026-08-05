@@ -182,7 +182,7 @@
   border-radius: var(--r-pill);
   background: var(--surface-3);
   cursor: pointer;
-  transition: height var(--dur-fast) var(--ease-out);
+  transition: height var(--dur-state) var(--ease-standard);
 }
 
 .wrapped__progress:hover span {
@@ -230,7 +230,7 @@
   background: var(--glass-panel);
   backdrop-filter: blur(var(--blur-glass));
   transform-origin: top right;
-  animation: wrappedPopIn var(--dur-base) var(--ease-out) both;
+  animation: wrappedPopIn var(--dur-pop-in) var(--ease-out) both;
 }
 
 .wrapped__sound-title {

@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef, useState, useEffect } from "react";
 import { portal } from "../../lib/layerRoot.js";
 import { cssZoom } from "../../lib/cssZoom.js";
+import { DELAY_TIP } from "../../lib/motion.js";
 
 /** Tooltip — small frosted label near its child, 450 ms hover delay.
  *  Клавиатура равноправна мыши: подсказка всплывает и по ФОКУСУ. Это не
@@ -35,13 +36,13 @@ export function Tooltip({ label, placement = "top", children, style }) {
   };
   const enter = () => {
     clear();
-    timer.current = setTimeout(() => setShow(true), 450);
+    timer.current = setTimeout(() => setShow(true), DELAY_TIP);
   };
   const leave = () => {
     clear();
     setShow(false);
   };
-  // По фокусу — СРАЗУ, без 450 мс: задержка защищает от мельтешения, когда
+  // По фокусу — СРАЗУ, без паузы: задержка защищает от мельтешения, когда
   // мышь проезжает над рядом кнопок; табуляция так не «проезжает».
   const focus = () => {
     clear();

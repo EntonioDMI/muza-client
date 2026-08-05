@@ -126,7 +126,7 @@ export function SettingRow({
         background: onClick && hover ? "var(--surface-3)" : "var(--surface-2)",
         cursor: onClick ? "pointer" : "default",
         fontFamily: "var(--font-ui)",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -390,7 +390,7 @@ export function HotkeyRow({
           fontVariantNumeric: "tabular-nums",
           cursor: "pointer",
           outline: conflict ? "1px solid var(--danger)" : "none",
-          transition: "background var(--dur-fast) var(--ease-out)",
+          transition: "background var(--dur-state) var(--ease-standard)",
         }}
       >
         {capturing ? t("settings.hotkeys.pressKey") : formatCombo(combo)}
@@ -568,7 +568,7 @@ export function AccentSwatch({
           cursor: "pointer",
           outline: selected ? "2px solid var(--text-1)" : "2px solid transparent",
           outlineOffset: 3,
-          transition: "outline-color var(--dur-base) var(--ease-out)",
+          transition: "outline-color var(--dur-state) var(--ease-standard)",
         }}
       ></button>
     </Tooltip>
@@ -606,12 +606,12 @@ export function PresetTile({
         background: selected ? "var(--surface-4)" : "var(--surface-2)",
         cursor: "pointer",
         textAlign: "left",
-        transition: "background var(--dur-base) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       <span style={{ display: "flex", gap: 6 }}>
-        <span style={{ width: 44, height: 30, borderRadius: r, background: accentColor, display: "block", transition: "border-radius var(--dur-base) var(--ease-out)" }}></span>
-        <span style={{ width: 24, height: 30, borderRadius: r, background: "var(--surface-4)", display: "block", transition: "border-radius var(--dur-base) var(--ease-out)" }}></span>
+        <span style={{ width: 44, height: 30, borderRadius: r, background: accentColor, display: "block", transition: "border-radius var(--dur-state-move) var(--ease-in-out)" }}></span>
+        <span style={{ width: 24, height: 30, borderRadius: r, background: "var(--surface-4)", display: "block", transition: "border-radius var(--dur-state-move) var(--ease-in-out)" }}></span>
       </span>
       <span>
         <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{name}</span>

@@ -154,7 +154,8 @@ function NavItem({
         fontWeight: active ? "var(--fw-semibold)" : ("var(--fw-medium)" as never),
         cursor: "pointer",
         textAlign: "left",
-        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
+        /* Фон и подпись — одним законом: раньше они разъезжались 150/220 мс. */
+        transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
         // Сдвиг перестановки — последним: он подмешивает transform и свой
         // transition поверх собственных стилей пункта, а не вместо них.
         ...look?.style,
@@ -169,7 +170,7 @@ function NavItem({
         size={20}
         color={active ? "var(--accent-text)" : "currentColor"}
         filled={Boolean(active) && isFillableNavIcon(icon)}
-        style={{ transition: "color var(--dur-base) var(--ease-out)" }}
+        style={{ transition: "color var(--dur-state) var(--ease-standard)" }}
       />
       {label}
     </button>
@@ -319,7 +320,7 @@ function PlaylistRow({
         outlineOffset: -2,
         cursor: "pointer",
         textAlign: "left",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       {cleanCover ? (
@@ -406,7 +407,7 @@ function PlaylistRow({
           cursor: dragged ? "grabbing" : "grab",
           opacity: hover || reordering ? 1 : 0,
           pointerEvents: hover || reordering ? "auto" : "none",
-          transition: "opacity var(--dur-fast) var(--ease-out)",
+          transition: "opacity var(--dur-state) var(--ease-standard)",
           touchAction: "none",
         }}
       >
@@ -491,7 +492,7 @@ function FavoritesRow({
         outline: dropLit ? "var(--focus-ring)" : undefined,
         cursor: "pointer",
         textAlign: "left",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       <span
@@ -693,7 +694,9 @@ export function Sidebar({
             // вкладки, а вкладка в этот момент едет за пальцем — оставшись на
             // месте, пилюля читалась бы как «подсветка съехала».
             opacity: idx >= 0 && !navReorder.draggingId ? 1 : 0,
-            transition: "transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out)",
+            /* Пилюля активной вкладки ПЕРЕЕЗЖАЕТ — тот же закон, что у пилюль
+               Tabs и ChipGroup: симметричная кривая, оба конца хода на виду. */
+            transition: "transform var(--dur-state-move) var(--ease-in-out), opacity var(--dur-state-move) var(--ease-in-out)",
           }}
         ></div>
         {pickByOrder(nav, (n) => n.key, navReorder.order).map((n) => (

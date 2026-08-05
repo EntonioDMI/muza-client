@@ -117,7 +117,7 @@ function QueueRow<T extends QueueTrack>({
         borderRadius: "var(--r-sm)",
         // выделение сильнее «текущего» — как в TrackRow ДС
         background: selected ? "var(--surface-4)" : current ? "var(--surface-3)" : hover ? "var(--surface-2)" : "transparent",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
       data-queue-current={current || undefined}
     >
@@ -367,7 +367,7 @@ export function QueuePanel<T extends QueueTrack>({
         outline: "none",
         // Пружина вместо кривой: панель приезжает с массой и мягко
         // доводится, а не тормозит по расписанию (animations.css).
-        animation: "muzaMenuIn var(--dur-base) var(--spring-snap, var(--ease-out))",
+        animation: "muzaMenuIn var(--dur-panel-in) var(--spring-snap, var(--ease-out))",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", padding: "0 var(--sp-2)" }}>

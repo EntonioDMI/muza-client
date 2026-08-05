@@ -106,7 +106,7 @@ export function SeriesChart({
                 r={hover === i ? 5 : 3}
                 fill={color}
                 opacity={hover === null || hover === i ? 1 : 0.45}
-                style={{ transition: "r var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out)" }}
+                style={{ transition: "r var(--dur-state) var(--ease-standard), opacity var(--dur-state) var(--ease-standard)" }}
               />
             ))}
           </>
@@ -122,7 +122,7 @@ export function SeriesChart({
               rx={2}
               fill={color}
               opacity={hover === null || hover === i ? 1 : 0.45}
-              style={{ transition: "opacity var(--dur-fast) var(--ease-out)" }}
+              style={{ transition: "opacity var(--dur-state) var(--ease-standard)" }}
             />
           ))
         )}

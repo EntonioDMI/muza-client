@@ -231,7 +231,9 @@ export function Bars({
               height: pct !== null ? `${pct}%` : 2,
               borderRadius: 3,
               background: pct !== null ? "var(--accent)" : "var(--surface-3)",
-              transition: "height var(--dur-base) var(--ease-out)",
+              /* Столбик РАСТЁТ из нуля — это приход данных, а не смена
+                 состояния на месте: --ease-out доводит его до цели. */
+              transition: "height var(--dur-state-move) var(--ease-out)",
             }}
           />
         </Tooltip>
@@ -681,7 +683,7 @@ export function StatsView({
                         height: "100%",
                         borderRadius: 4,
                         background: "var(--accent)",
-                        transition: "width var(--dur-base) var(--ease-out)",
+                        transition: "width var(--dur-state-move) var(--ease-out)",
                       }}
                     />
                   </div>
@@ -725,7 +727,7 @@ export function StatsView({
                           height: "100%",
                           borderRadius: 4,
                           background: "var(--accent)",
-                          transition: "width var(--dur-base) var(--ease-out)",
+                          transition: "width var(--dur-state-move) var(--ease-out)",
                         }}
                       />
                     </div>

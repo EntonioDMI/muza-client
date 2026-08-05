@@ -100,7 +100,7 @@ function SpeedButton({ speed, onClick }: { speed: number; onClick: () => void })
           fontWeight: 600,
           fontVariantNumeric: "tabular-nums",
           cursor: "pointer",
-          transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+          transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
           flex: "none",
         }}
       >

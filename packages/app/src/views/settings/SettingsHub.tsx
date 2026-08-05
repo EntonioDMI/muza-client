@@ -281,7 +281,7 @@ export function SettingsHub({
               cursor: "pointer",
               gridColumn: shown > 1 ? `span ${shown}` : undefined,
               gridRow: rows > 1 ? `span ${rows}` : undefined,
-              transition: "background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+              transition: "background var(--dur-state) var(--ease-standard), transform var(--dur-press-out) var(--ease-out)",
               ...look.style,
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}

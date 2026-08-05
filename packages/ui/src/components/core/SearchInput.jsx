@@ -20,7 +20,7 @@ export function SearchInput({ value, onChange, placeholder = "Search", icon = "s
         background: focus ? "var(--surface-4)" : hover ? "var(--surface-3)" : "var(--surface-2)",
         color: focus ? "var(--text-1)" : "var(--text-2)",
         cursor: "text",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
         ...style,
       }}
     >

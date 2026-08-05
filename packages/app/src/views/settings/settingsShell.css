@@ -211,9 +211,11 @@
   border-radius: var(--r-sm);
   background: var(--surface-4);
   pointer-events: none;
+  /* Пилюля рельса ПЕРЕЕЗЖАЕТ между разделами — тот же закон, что у пилюль
+     Tabs, ChipGroup и сайдбара: симметричная кривая. */
   transition:
-    transform var(--dur-base) var(--ease-out),
-    opacity var(--dur-base) var(--ease-out);
+    transform var(--dur-state-move) var(--ease-in-out),
+    opacity var(--dur-state-move) var(--ease-in-out);
 }
 
 .muza-settings-nav__item {
@@ -237,7 +239,7 @@
   cursor: pointer;
   box-sizing: border-box;
   flex-shrink: 0;
-  transition: color var(--dur-base) var(--ease-out);
+  transition: color var(--dur-state) var(--ease-standard);
 }
 
 /* Ховер — только у НЕактивного: под активным едет пилюля, свой фон затёр бы её. */
@@ -310,12 +312,15 @@
     opacity: 0;
     pointer-events: none;
     z-index: 60;
-    transition: opacity var(--dur-fast) var(--ease-out);
+    transition: opacity var(--dur-state) var(--ease-standard);
   }
 
   .muza-settings-nav__item:hover .muza-settings-nav__tip {
     opacity: 1;
-    transition-delay: 450ms; /* задержка появления как у Tooltip ДС; уход — сразу */
+    /* Задержка появления — ОДНИМ токеном с Tooltip ДС (--delay-tip). Раньше
+       450 мс стояли числом в двух местах независимо и могли разъехаться
+       молча: две подсказки в одном приложении с разной паузой. Уход — сразу. */
+    transition-delay: var(--delay-tip);
   }
 
   /* Заголовок с 04.08 живёт над панелью, а не в рельсе — прятать в рельсе

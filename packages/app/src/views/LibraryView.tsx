@@ -52,7 +52,7 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
         borderRadius: "var(--r-md)",
         background: lit ? "var(--surface-3)" : "var(--surface-2)",
         cursor: "pointer",
-        transition: "background var(--dur-base) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       <div
@@ -174,7 +174,7 @@ function PlaylistDropTile({
         opacity: dimmed ? 0.45 : undefined,
         outline: litTarget ? "var(--focus-ring)" : undefined,
         outlineOffset: 2,
-        transition: "outline-color var(--dur-fast) var(--ease-out)",
+        transition: "outline-color var(--dur-state) var(--ease-standard)",
         // ⚠️ transform/zIndex здесь НЕТ намеренно: движение перестановки пишет
         // в DOM сам движок (lib/useLocalReorder.ts), запись отсюда стирала бы
         // его через кадр.
@@ -213,7 +213,7 @@ function PlaylistDropTile({
             height: 30,
             color: hover || dragged ? "var(--text-1)" : "var(--text-3)",
             cursor: dragged ? "grabbing" : "grab",
-            transition: "color var(--dur-fast) var(--ease-out)",
+            transition: "color var(--dur-state) var(--ease-standard)",
             touchAction: "none",
           }}
         >

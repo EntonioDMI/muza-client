@@ -446,7 +446,7 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
           justifyContent: "center",
           outline: selected ? "2px solid var(--text-1)" : hover || open ? "2px solid var(--hairline)" : "2px solid transparent",
           outlineOffset: 2,
-          transition: "outline-color var(--dur-fast) var(--ease-out)",
+          transition: "outline-color var(--dur-state) var(--ease-standard)",
           flex: "none",
           cursor: "pointer",
         }}
@@ -457,7 +457,7 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
           color="rgba(255,255,255,0.92)"
           style={{
             opacity: hover || open ? 1 : 0,
-            transition: "opacity var(--dur-fast) var(--ease-out)",
+            transition: "opacity var(--dur-state) var(--ease-standard)",
           }}
         />
     </button>

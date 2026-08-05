@@ -67,7 +67,14 @@ export function IconButton({
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.4 : 1,
         transform: press && !disabled ? "scale(var(--press-scale))" : "scale(1)",
-        transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+        /* НАЖАТИЕ И ОТПУСКАНИЕ РАЗНЫЕ (2026-08-05). Нажатие обязано уложиться в
+           порог восприятия причинности (~100 мс) — иначе палец читает его как
+           «не попал»; отпускание длиннее, форма расслабляется, а не отскакивает.
+           Здесь это выразимо, потому что press — состояние React: у строки
+           трека и плитки transition инлайновый и такой развилки пока не даёт. */
+        transition: `background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard), transform ${
+          press && !disabled ? "var(--dur-press-in) var(--ease-standard)" : "var(--dur-press-out) var(--ease-out)"
+        }`,
         ...style,
       }}
     >

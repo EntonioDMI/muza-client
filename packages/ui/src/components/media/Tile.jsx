@@ -54,8 +54,13 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
         cursor: "pointer",
         /* transform в списке обязателен — инлайн-transition перекрывает
            классовый у .muza-press; без него нажатие плитки было мгновенным
-           («резко, меньше кадра» — владелец 04.08). */
-        transition: "background var(--dur-base) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+           («резко, меньше кадра» — владелец 04.08).
+
+           Фон — ТОТ ЖЕ закон, что у строки трека (2026-08-05). Раньше плитка
+           красилась за 220 мс, а строка за 150 — при том, что подсветка у обеих
+           проезжает ноль пикселей. Ощущение «плитка мягче» давал не фон, а
+           едущая play-пилюля ниже; её и оставляем длинной. */
+        transition: "background var(--dur-state) var(--ease-standard), transform var(--dur-press-out) var(--ease-out)",
       }}
     >
       <div style={{ position: "relative", marginBottom: "var(--sp-3)" }}>
@@ -87,7 +92,10 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
             bottom: 8,
             opacity: lit || playing ? 1 : 0,
             transform: lit || playing ? "translateY(0)" : "translateY(4px)",
-            transition: "opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out)",
+            /* Пилюля ЕДЕТ — значит это --dur-state-move, а не --dur-state:
+               единственная часть плитки с ненулевым путём, и именно она даёт
+               то «медленно и правильно», о котором говорил владелец. */
+            transition: "opacity var(--dur-state-move) var(--ease-out), transform var(--dur-state-move) var(--ease-out)",
           }}
         >
           <IconButton

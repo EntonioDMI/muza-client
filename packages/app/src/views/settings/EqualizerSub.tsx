@@ -190,7 +190,7 @@ function BandFader({
           fontWeight: value === 0 ? 400 : 600,
           fontVariantNumeric: "tabular-nums",
           color: value === 0 ? "var(--text-3)" : "var(--text-1)",
-          transition: "color var(--dur-fast) var(--ease-out)",
+          transition: "color var(--dur-state) var(--ease-standard)",
         }}
       >
         {dbText(value)}
@@ -202,7 +202,7 @@ function BandFader({
             height: "100%",
             borderRadius: "var(--r-pill)",
             background: "var(--surface-3)",
-            transition: "width var(--dur-fast) var(--ease-out)",
+            transition: "width var(--dur-state) var(--ease-standard)",
           }}
         />
         <div
@@ -215,7 +215,7 @@ function BandFader({
             width: w,
             borderRadius: "var(--r-pill)",
             background: "var(--accent-slider, var(--accent))",
-            transition: "width var(--dur-fast) var(--ease-out)",
+            transition: "width var(--dur-state) var(--ease-standard)",
           }}
         />
         {/* Ручка видна ВСЕГДА: при чёрном акценте заливка не читается, и без
@@ -232,7 +232,7 @@ function BandFader({
             height: 6,
             borderRadius: "var(--r-pill)",
             background: "var(--text-1)",
-            transition: "transform var(--dur-fast) var(--ease-out)",
+            transition: "transform var(--dur-state) var(--ease-standard)",
             pointerEvents: "none",
           }}
         />
@@ -253,7 +253,7 @@ function BandFader({
           fontSize: "var(--fs-caption)",
           fontVariantNumeric: "tabular-nums",
           color: active && !disabled ? "var(--text-2)" : "var(--text-3)",
-          transition: "color var(--dur-fast) var(--ease-out)",
+          transition: "color var(--dur-state) var(--ease-standard)",
         }}
       >
         {label}
@@ -276,7 +276,7 @@ function BandPanel({ bands, disabled, onBand, t }: { bands: number[]; disabled: 
         borderRadius: "var(--r-md)",
         background: "var(--surface-2)",
         opacity: disabled ? 0.45 : 1,
-        transition: "opacity var(--dur-base) var(--ease-out)",
+        transition: "opacity var(--dur-state) var(--ease-standard)",
         // Узкое окно (телефон в браузере): панель прокручивается вбок, а не
         // сдавливает полосы в нечитаемую гребёнку. Полоса не уже 40 px —
         // ниже этого в неё уже не попасть пальцем.

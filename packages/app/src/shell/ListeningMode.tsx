@@ -318,9 +318,13 @@ export function ListeningMode({
         opacity: open ? 1 : 0,
         visibility: open ? "visible" : "hidden",
         pointerEvents: open ? "auto" : "none",
+        /* Сцена приходит дольше, чем уходит: меняется вся картина, её надо
+           успеть прочитать. Уход разгоняется наружу (--ease-in), а скрытие
+           узла по-прежнему откладывается ровно на длительность УХОДА —
+           число обязано совпадать с opacity, иначе сцена мигнёт. */
         transition: open
-          ? "opacity var(--dur-slow) var(--ease-out), visibility 0s"
-          : "opacity var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow)",
+          ? "opacity var(--dur-scene-in) var(--ease-out), visibility 0s"
+          : "opacity var(--dur-scene-out) var(--ease-in), visibility 0s linear var(--dur-scene-out)",
       }}
     >
       {/* Задник сцены. До 03.08 здесь была намертво зашита размытая обложка
@@ -398,8 +402,8 @@ export function ListeningMode({
           // reduced-motion: схлопывание колонки мгновенно (anims=false и так
           // даёт --dur-slow: 1ms токеном App'а — отдельно не проверяем)
           transition: reducedMotion
-            ? "transform var(--dur-slow) var(--ease-out)"
-            : "transform var(--dur-slow) var(--ease-out), grid-template-columns var(--dur-slow) var(--ease-out), gap var(--dur-slow) var(--ease-out)",
+            ? "transform var(--dur-scene-in) var(--ease-out)"
+            : "transform var(--dur-scene-in) var(--ease-out), grid-template-columns var(--dur-scene-in) var(--ease-out), gap var(--dur-scene-in) var(--ease-out)",
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
@@ -432,7 +436,7 @@ export function ListeningMode({
             overflow: "hidden",
             opacity: lyricsShown ? 1 : 0,
             pointerEvents: lyricsShown ? "auto" : "none",
-            transition: reducedMotion ? undefined : "opacity var(--dur-slow) var(--ease-out)",
+            transition: reducedMotion ? undefined : "opacity var(--dur-scene-in) var(--ease-out)",
           }}
         >
           {lyrics.length > 0 ? (
@@ -462,7 +466,7 @@ export function ListeningMode({
           display: "flex",
           gap: "var(--sp-3)",
           opacity: calm ? 0 : 1,
-          transition: "opacity var(--dur-slow) var(--ease-out)",
+          transition: "opacity var(--dur-scene-in) var(--ease-out)",
           pointerEvents: calm ? "none" : "auto",
         }}
       >
@@ -493,7 +497,7 @@ export function ListeningMode({
           backdropFilter: "blur(var(--blur-glass))",
           WebkitBackdropFilter: "blur(var(--blur-glass))",
           opacity: calm ? 0 : 1,
-          transition: "opacity var(--dur-slow) var(--ease-out)",
+          transition: "opacity var(--dur-scene-in) var(--ease-out)",
           pointerEvents: calm ? "none" : "auto",
         }}
       >

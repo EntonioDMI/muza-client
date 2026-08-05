@@ -13,13 +13,13 @@
    и предназначен диалогам и панелям, а переход экрана обязан остаться быстрым
    при любой настройке. */
 .muza-view { animation: muzaViewIn 120ms var(--ease-out); }
-.muza-fade { animation: muzaFade var(--dur-slow) var(--ease-out); }
+.muza-fade { animation: muzaFade var(--dur-scene-in) var(--ease-out); }
 
 @keyframes muzaViewIn { from { opacity: 0; } }
 @keyframes muzaFade { from { opacity: 0; } }
 
 /* Лайк: короткий «пульс» сердца при включении (feedback, не декорация) */
-.muza-like-pop { animation: muzaLikePop 320ms var(--ease-out); }
+.muza-like-pop { animation: muzaLikePop var(--dur-state-move) var(--ease-out); }
 @keyframes muzaLikePop {
   0% { transform: scale(1); }
   40% { transform: scale(1.3); }
@@ -30,8 +30,8 @@
    .muza-spin-icon — для глифа внутри кнопки: до 04.08 иконка буферизации
    loader-circle в полосе плеера просто ПОДМЕНЯЛАСЬ и стояла неподвижно, из-за
    чего «готовлю трек» выглядело как «завис». */
-.muza-spin { animation: muzaSpin 900ms linear infinite; }
-.muza-spin-icon svg { animation: muzaSpin 900ms linear infinite; transform-origin: 50% 50%; }
+.muza-spin { animation: muzaSpin var(--dur-spin) linear infinite; }
+.muza-spin-icon svg { animation: muzaSpin var(--dur-spin) linear infinite; transform-origin: 50% 50%; }
 @keyframes muzaSpin { to { transform: rotate(360deg); } }
 
 /* ОТКЛИК НА НАЖАТИЕ, А НЕ НА ОТПУСКАНИЕ (ориентир владельца — Apple).
@@ -40,8 +40,20 @@
    между нажатием и реакцией лежал весь путь до звука, и палец успевал
    усомниться, попал ли он. Масштаб тот же, что у кнопок, и он отключается
    системным «меньше движения» (там --press-scale становится 1). */
-.muza-press { transition: transform var(--dur-fast) var(--ease-out); }
-.muza-press:active { transform: scale(var(--press-scale)); }
+/* НАЖАТИЕ И ОТПУСКАНИЕ — РАЗНЫЕ ПО ДЛИТЕЛЬНОСТИ (2026-08-05). Нажатие обязано
+   уложиться в порог восприятия причинности (~100 мс), иначе палец читает его
+   как «не попал». Отпускание длиннее намеренно: палец уже ушёл, ловить нечего,
+   и форма РАССЛАБЛЯЕТСЯ — одинаковая скорость туда-обратно читается отскоком
+   кнопки-игрушки. Это инверсия общего правила «уход быстрее входа»: здесь
+   «входом» является само нажатие, а не появление объекта.
+   ⚠️ У строки трека и плитки transition живёт ИНЛАЙНОМ и перекрывает этот
+   класс целиком — несимметричность там включится, когда инлайн уедет в CSS. */
+.muza-press { transition: transform var(--dur-press-out) var(--ease-out); }
+.muza-press:active {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--dur-press-in);
+  transition-timing-function: var(--ease-standard);
+}
 
 /* Кейфреймы всплывающих панелей (меню, очередь) — ГЛОБАЛЬНО, а не только в
    <style> внутри Menu.jsx: очередь ссылается на muzaMenuIn и открывалась БЕЗ

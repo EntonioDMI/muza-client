@@ -254,7 +254,7 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
               transformOrigin: "left center",
               cursor: hasNote || onSeek ? "pointer" : "default",
               pointerEvents: hidden ? "none" : "auto",
-              transition: "color var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
+              transition: "color var(--dur-lyric) var(--ease-out), opacity var(--dur-lyric) var(--ease-out), transform var(--dur-lyric) var(--ease-out)",
               textWrap: "balance",
             }}
           >
@@ -290,7 +290,7 @@ export function Lyrics({ lines, activeIndex = 0, mode = "panel", onSeek, onExpla
                 opacity: noteActive ? 1 : 0.55,
                 transform: `scale(${noteActive ? 1.15 : 1})`,
                 transition:
-                  "opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out)",
+                  "opacity var(--dur-lyric) var(--ease-out), transform var(--dur-lyric) var(--ease-out)",
               }}
             >
               <Icon

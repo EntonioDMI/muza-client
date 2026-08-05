@@ -215,8 +215,8 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           flexDirection: "column",
           gap: 2,
           animation: closing
-            ? "muzaMenuOut var(--dur-fast) var(--ease-out) forwards"
-            : "muzaMenuIn var(--dur-fast) var(--ease-out)",
+            ? "muzaMenuOut var(--dur-pop-out) var(--ease-in) forwards"
+            : "muzaMenuIn var(--dur-pop-in) var(--ease-out)",
         }}
       >
         <style>{"@keyframes muzaMenuIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@keyframes muzaMenuOut{to{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=menu]{animation:none!important}}"}</style>
@@ -268,7 +268,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
                 fontWeight: "var(--fw-medium)",
                 cursor: it.disabled ? "default" : "pointer",
                 textAlign: "left",
-                transition: "background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out)",
+                transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
               }}
             >
               {it.icon ? <Icon name={it.icon} size={18} /> : null}

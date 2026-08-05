@@ -287,7 +287,7 @@ export function LookEditLayer({
               height: grip.axis === "x" ? "100%" : 2,
               background: "var(--accent)",
               opacity: active?.key === grip.key ? 1 : 0,
-              transition: "opacity var(--dur-fast) var(--ease-out)",
+              transition: "opacity var(--dur-state) var(--ease-standard)",
             }}
           />
         </div>

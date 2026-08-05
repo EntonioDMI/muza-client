@@ -38,7 +38,7 @@ function StepPlate({
         textAlign: "left",
         color: "var(--text-1)",
         fontFamily: "var(--font-ui)",
-        transition: "background var(--dur-fast) var(--ease-out)",
+        transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
       <Icon name={step.icon} size={18} color={active ? "var(--accent-text)" : "var(--text-3)"} />

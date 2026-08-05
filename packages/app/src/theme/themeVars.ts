@@ -154,14 +154,29 @@ const BG_DEFAULTS = {
 const densityPad = (d: number) => 10 + Math.round((12 * d) / 100);
 const densityRow = (d: number) => 52 + Math.round((16 * d) / 100);
 
-/** Характер движения: пресеты кривой --ease-out. soft — родная кривая ДС
- *  (tokens/effects.css), crisp — быстрее выходит на цель, linear — ровный ход.
- *  Произвольного ввода кривой нет намеренно: это язык разработчика. */
-const EASE_CURVES: Record<Prefs["easeStyle"], string> = {
-  soft: "cubic-bezier(0.22, 1, 0.36, 1)",
-  crisp: "cubic-bezier(0.33, 1, 0.68, 1)",
-  linear: "linear",
-};
+/** Характер движения: пресеты ЧЕТЫРЁХ кривых ДС (tokens/effects.css).
+ *  soft — родные кривые, переменные не трогаем вовсе: профиль по умолчанию
+ *  обязан отдавать оформление токенам, а не тащить его в инлайн.
+ *  crisp — быстрее выходит на цель, linear — ровный ход.
+ *  Произвольного ввода кривой нет намеренно: это язык разработчика.
+ *
+ *  ⚠️ ПЕРЕОПРЕДЕЛЯТЬ ВСЕ ЧЕТЫРЕ. Пока пресет двигал одну только --ease-out,
+ *  «Линейный» оставлял три кривые из четырёх прежними — настройка врала
+ *  своему названию на трёх четвертях движения. */
+const EASE_CURVES = {
+  crisp: {
+    "--ease-standard": "cubic-bezier(0.3, 0, 0.2, 1)",
+    "--ease-out": "cubic-bezier(0.33, 1, 0.68, 1)",
+    "--ease-in": "cubic-bezier(0.55, 0, 1, 1)",
+    "--ease-in-out": "cubic-bezier(0.76, 0, 0.24, 1)",
+  },
+  linear: {
+    "--ease-standard": "linear",
+    "--ease-out": "linear",
+    "--ease-in": "linear",
+    "--ease-in-out": "linear",
+  },
+} satisfies Record<Exclude<Prefs["easeStyle"], "soft">, Record<string, string>>;
 
 /** Шкала отступов ДС (--sp-1..10, spacing.css) — база множителя «Простор». */
 const SPACE_SCALE_BASE = [4, 8, 12, 16, 20, 24, 32, 40, 56, 80];
@@ -500,6 +515,20 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
     // zoom масштабирует весь UI (WebView2/Chromium); 100% — без свойства
     ...(t.uiScale !== 100 ? { zoom: t.uiScale / 100 } : {}),
     ...(wideSidebar ? { "--w-sidebar": `${t.wSidebar}px` } : { "--w-sidebar": "220px" }),
+    // СКОРОСТЬ ДВИЖЕНИЯ. Отсюда уезжают ТРИ БЕЗРАЗМЕРНЫХ МНОЖИТЕЛЯ, а умножение
+    // живёт в CSS (tokens/effects.css, блок «шкала длительностей»). Считать
+    // здесь два десятка готовых длительностей значило бы раздувать инлайн корня
+    // на каждый рендер и править этот файл на каждый новый токен движения.
+    // Группы отвечают ровно трём ползункам, которые человек уже видит.
+    //
+    // ⚠️ «Переходы страниц» (--anim-view) до 2026-08-05 не действовал на сам
+    // переход экрана: тот был зашит числом 120 мс в .muza-view и ползунка не
+    // слушал вовсе — ручка двигала только караоке и текст песни.
+    //
+    // ⚠️ Ноль, а не отсутствие: при выключенных анимациях множитель обязан
+    // доехать нулём, чтобы шкала схлопнулась в 1 мс через max() (см. там же).
+    // Легаси-тройка --dur-fast/base/slow остаётся до конца переезда: её читает
+    // «свой CSS» пользователя и половина ещё не переведённых компонентов.
     ...(t.anims
       ? animMult !== 1 || t.durMenuMult !== 100 || t.durDialogMult !== 100 || t.durPageMult !== 100
         ? {
@@ -508,12 +537,22 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
             "--dur-fast": `${Math.round((150 * animMult * t.durMenuMult) / 100)}ms`,
             "--dur-base": `${Math.round((220 * animMult * t.durDialogMult) / 100)}ms`,
             "--dur-slow": `${Math.round((400 * animMult * t.durPageMult) / 100)}ms`,
+            "--anim-ui": (animMult * t.durMenuMult) / 100,
+            "--anim-layer": (animMult * t.durDialogMult) / 100,
+            "--anim-view": (animMult * t.durPageMult) / 100,
           }
         : {}
-      : { "--dur-fast": "1ms", "--dur-base": "1ms", "--dur-slow": "1ms" }),
-    // Характер движения: --ease-out из пресета; soft = прежняя кривая ДС
-    // (0.22,1,0.36,1) — переменную в этом случае не трогаем вовсе.
-    ...(t.easeStyle !== "soft" ? { "--ease-out": EASE_CURVES[t.easeStyle] } : {}),
+      : {
+          "--dur-fast": "1ms",
+          "--dur-base": "1ms",
+          "--dur-slow": "1ms",
+          "--anim-ui": 0,
+          "--anim-layer": 0,
+          "--anim-view": 0,
+        }),
+    // Характер движения: четыре кривые из пресета; soft = родные кривые ДС —
+    // переменные в этом случае не трогаем вовсе.
+    ...(t.easeStyle !== "soft" ? EASE_CURVES[t.easeStyle] : {}),
   } as CSSProperties;
 }
 

@@ -69,7 +69,9 @@ export function ChipGroup({ items, value, onChange, style }) {
             height: 36,
             borderRadius: "var(--r-pill)",
             background: "var(--surface-4)",
-            transition: "left var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out)",
+            /* Пилюля БЫЛА и ОСТАЛАСЬ — она переезжает, а не появляется. Значит
+               симметричная кривая: и старт, и финиш одинаково на виду. */
+            transition: "left var(--dur-state-move) var(--ease-in-out), width var(--dur-state-move) var(--ease-in-out)",
           }}
         ></div>
       ) : null}
@@ -107,7 +109,8 @@ export function ChipGroup({ items, value, onChange, style }) {
               fontWeight: "var(--fw-medium)",
               lineHeight: 1,
               cursor: "pointer",
-              transition: "background var(--dur-fast) var(--ease-out), color var(--dur-base) var(--ease-out)",
+              /* Фон и цвет — одним законом (см. тот же разбор в Tabs.jsx). */
+              transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
             }}
           >
             {icon ? <Icon name={icon} size={15} /> : null}

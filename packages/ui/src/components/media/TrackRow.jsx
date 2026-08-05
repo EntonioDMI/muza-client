@@ -82,8 +82,16 @@ export function TrackRow({
         /* transform ОБЯЗАН быть в этом списке: инлайн-transition ЦЕЛИКОМ
            перекрывает классовый у .muza-press, и без transform нажатие
            строки схлопывалось мгновенно — «резко, меньше кадра» (владелец
-           04.08). Список, а не shorthand-замена. */
-        transition: "background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out)",
+           04.08). Список, а не shorthand-замена.
+
+           ФОН — --ease-standard, А НЕ --ease-out (2026-08-05). Подсветка НИКУДА
+           НЕ ЕДЕТ, она растворяется: экспоненциальная кривая выдавала 72%
+           изменения за первые 34 мс и читалась подменой цвета, а не переходом.
+           Ровно отсюда бралось «маленькие плашки резкие» при том, что плитка с
+           теми же 150 мс на transform казалась мягче — у неё вдобавок ЕДЕТ
+           play-пилюля. Длительность теперь одна со всеми списками и плитками:
+           путь у подсветки нулевой, значит и время одно. */
+        transition: "background var(--dur-state) var(--ease-standard), transform var(--dur-press-out) var(--ease-out)",
       }}
     >
       <div style={{ width: 28, flex: "none", display: "flex", justifyContent: "center" }}>
@@ -108,6 +116,12 @@ export function TrackRow({
             fontVariantNumeric: "tabular-nums",
             cursor: "pointer",
             padding: 0,
+            /* ⚠️ ДО 2026-08-05 ЗДЕСЬ НЕ БЫЛО TRANSITION ВООБЩЕ. Кружок с номером
+               менял фон и цвет ровно в один кадр, пока вся остальная строка
+               плавно подсвечивалась — самый заметный источник «резкости», о
+               котором говорил владелец: глаз ловит рассинхрон внутри ОДНОГО
+               элемента больнее, чем быструю анимацию целиком. */
+            transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
           }}
         >
           {lit ? (
@@ -208,7 +222,10 @@ export function TrackRow({
                 name="chevron-down"
                 size={14}
                 color="currentColor"
-                style={{ transform: versionsExpanded ? "rotate(180deg)" : undefined, transition: "transform var(--dur-fast) var(--ease-out)" }}
+                style={{
+                  transform: versionsExpanded ? "rotate(180deg)" : undefined,
+                  transition: "transform var(--dur-state-move) var(--ease-in-out)",
+                }}
               />
             </button>
             </Tooltip>

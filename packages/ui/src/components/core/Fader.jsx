@@ -88,7 +88,7 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
           overflow: "hidden",
           display: "flex",
           alignItems: "flex-end",
-          transition: "width var(--dur-fast) var(--ease-out)",
+          transition: "width var(--dur-state) var(--ease-standard)",
         }}
       >
         <div style={{ width: "100%", height: pct + "%", background: "var(--accent-slider, var(--accent))", borderRadius: "var(--r-pill)" }}></div>
@@ -102,7 +102,7 @@ export function Fader({ value = 0, min = -12, max = 12, onChange, ariaLabel, hei
           borderRadius: "var(--r-pill)",
           background: "var(--text-1)",
           opacity: hover || drag ? 1 : 0,
-          transition: "opacity var(--dur-fast) var(--ease-out)",
+          transition: "opacity var(--dur-state) var(--ease-standard)",
           pointerEvents: "none",
         }}
       ></div>
