@@ -1305,7 +1305,6 @@ function Player({
     pbRaw.insertInQueue(fromCatalog(track), pbRaw.queue.length);
     showToast(t("toast.queue.added", { title: track.title }), "list-music");
   };
-  const onQueueCatalog = prefs.doubleClickAction === "queue" ? queueCatalog : undefined;
 
   /** «Играть следующим» из контекстного меню (2026-07-20): сразу после
    *  текущего; пустая очередь — insertInQueue клампит в начало. */
@@ -2419,7 +2418,6 @@ function Player({
                 playing={playing}
                 likes={likes}
                 onPlayCatalog={playCatalog}
-                onQueueCatalog={onQueueCatalog}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onCatalogMenu={openCatalogMenu}
@@ -2453,7 +2451,6 @@ function Player({
                 searchScope={prefs.searchScope}
                 searchGrouping={prefs.searchGrouping}
                 onPlayCatalog={playCatalog}
-                onQueueCatalog={onQueueCatalog}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onNotify={showToast}
@@ -2471,7 +2468,6 @@ function Player({
                 likes={likes}
                 rowShow={prefs.rowShow}
                 onPlayCatalog={playCatalog}
-                onQueueCatalog={onQueueCatalog}
                 onLike={toggleLike}
                 onNotify={showToast}
                 onTrackMenu={openCatalogMenu}
@@ -2486,7 +2482,6 @@ function Player({
                 currentId={track?.id ?? null}
                 playing={playing}
                 onPlayCatalog={playCatalog}
-                onQueueCatalog={onQueueCatalog}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onCatalogMenu={(tr, e) => openCatalogMenu(tr, e, { inFavorites: true })}
@@ -2502,7 +2497,6 @@ function Player({
                 currentId={track?.id ?? null}
                 playing={playing}
                 onPlayCatalog={playCatalog}
-                onQueueCatalog={onQueueCatalog}
                 rowShow={prefs.rowShow}
                 onLike={toggleLike}
                 onNotify={showToast}

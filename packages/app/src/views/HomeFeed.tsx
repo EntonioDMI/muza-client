@@ -16,7 +16,6 @@
  *     Не передали — лента просто ходит на сервер, плашки «оффлайн-копия» нет.
  *   - `warmRow` — прогрев добычи по наведению/видимости (десктопный движок).
  *   - `sourceLabel` — имя источника в строке (настройка «Строка трека»).
- *   - `onQueueCatalog` — «в очередь» по двойному клику.
  *   - `onOpenWrapped` — вход в «Итоги года» (сам оверлей десктопный).
  *  Вынос файла на рабочий стол берётся из розетки (`useAltFileDrag`): в
  *  браузере хук вернёт false, и перетаскивание отработает как обычный перенос
@@ -104,7 +103,6 @@ export function HomeFeed({
   playing,
   likes,
   onPlayCatalog,
-  onQueueCatalog,
   rowShow,
   sourceLabel,
   onLike,
@@ -130,8 +128,6 @@ export function HomeFeed({
   likes: string[];
   /** Играть каталожный трек в контексте секции (очередь = секция). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
-  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
-  onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
   rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   /** Имя источника для бейджа строки; нет — бейдж не рисуем даже при
@@ -404,7 +400,6 @@ export function HomeFeed({
                         playing={currentId === tr.id && playing}
                         liked={likes.includes(tr.id)}
                         onPlay={() => onPlayCatalog(s.tracks, tr.id)}
-                        onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(tr) : undefined}
                         onLike={() => onLike(tr.id)}
                         onMore={(e: React.MouseEvent) => onCatalogMenu(tr, e)}
                       />

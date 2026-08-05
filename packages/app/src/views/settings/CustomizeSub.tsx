@@ -998,16 +998,11 @@ export function CustomizeSub() {
         ) : null}
 
         <GroupTitle>{t("settings.customize.behavior.groupTitle")}</GroupTitle>
-        <SettingRow title={t("settings.customize.behavior.doubleClick.title")} hint={t("settings.customize.behavior.doubleClick.hint")}>
-          <Tabs
-            items={[
-              { key: "play", label: t("settings.customize.behavior.doubleClick.play") },
-              { key: "queue", label: t("settings.customize.behavior.doubleClick.queue") },
-            ]}
-            value={prefs.doubleClickAction}
-            onChange={(k: string) => set({ doubleClickAction: k as Prefs["doubleClickAction"] })}
-          />
-        </SettingRow>
+        {/* Ряда «Действие по двойному клику» здесь больше нет (2026-08-05).
+            Строка трека запускает трек ОДИНОЧНЫМ кликом по всей левой части, а
+            двойного клика у неё не осталось вовсе — настройка управляла бы
+            жестом, которого нет. «В очередь» никуда не делась: она в меню «⋯»
+            и по правому клику (App.queueTrack). */}
         <SettingRow title={t("settings.customize.behavior.startView.title")} hint={t("settings.customize.behavior.startView.hint")}>
           <Select
             ariaLabel={t("settings.customize.behavior.startView.title")}

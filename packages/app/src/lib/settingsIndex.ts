@@ -210,7 +210,6 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.extensions.bassShakeStrength", ["бас", "сила"]),
   e("appearance", "customize", "settings.extensions.bassSharp", ["бас", "резкость", "атака", "bass"]),
   e("appearance", "customize", "settings.extensions.bassReach", ["бас", "размах", "качание", "bass"]),
-  e("appearance", "customize", "settings.customize.behavior.doubleClick", ["двойной клик", "дабл-клик"]),
   e("appearance", "customize", "settings.customize.behavior.startView", ["стартовый экран", "запуск"]),
   e("appearance", "customize", "settings.customize.themes.saveAs", ["тема", "сохранить тему", "theme"]),
   e("appearance", "customize", "settings.customize.themes.importRow", ["вставить тему", "импорт темы"]),

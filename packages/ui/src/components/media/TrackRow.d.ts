@@ -42,9 +42,9 @@ export interface TrackRowProps {
   liked?: boolean;
   /** Quiet "E" mark — lyrics themselves are never censored. */
   explicit?: boolean;
+  /** Запуск трека. С 2026-08-05 его зовёт ВСЯ левая часть строки, а не только
+   *  кнопка-номер: правый кластер (лайк, длительность, «⋯») клик не пропускает. */
   onPlay?: () => void;
-  /** Двойной клик по строке (не по кнопке play); не задан — dblclick = onPlay. */
-  onRowDoubleClick?: () => void;
   onLike?: () => void;
   /** Shows an ellipsis button on hover — open a <Menu /> from it. */
   onMore?: (e: React.MouseEvent) => void;

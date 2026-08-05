@@ -527,8 +527,12 @@ export interface Prefs {
   language: Lang;
   /** Продолжать трек с места остановки (позиция per-track в localStorage). */
   resumePosition: boolean;
-  /** Двойной клик по строке трека: играть или добавить в очередь. */
-  doubleClickAction: "play" | "queue";
+  /* `doubleClickAction` жил здесь до 2026-08-05 и снят вместе с самим жестом:
+     строка трека запускает трек ОДИНОЧНЫМ кликом по всей левой части, двойного
+     клика у неё не осталось. Настройка, управляющая несуществующим жестом, —
+     ровно то «ощущение вечной беты», на которое жаловался владелец. Миграция не
+     нужна: лишний ключ в сохранённом профиле молча отбрасывает typedOverlay
+     (prefs/load.ts), а «в очередь» осталась в меню «⋯» и по правому клику. */
   /** Медиаклавиши/SMTC Windows (useMediaSession). */
   mediaKeys: boolean;
   /** Живой каталожный поиск при вводе (выкл = только по Enter). */
@@ -763,7 +767,6 @@ export const DEFAULT_PREFS: Prefs = {
   density: 50,
   language: "en",
   resumePosition: false,
-  doubleClickAction: "play",
   mediaKeys: true,
   instantSearch: true,
   searchScope: "all",

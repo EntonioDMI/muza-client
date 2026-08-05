@@ -29,7 +29,6 @@ export function FavoritesView({
   currentId,
   playing,
   onPlayCatalog,
-  onQueueCatalog,
   rowShow,
   onLike,
   onCatalogMenu,
@@ -45,8 +44,6 @@ export function FavoritesView({
   playing: boolean;
   /** Играть серверный трек в контексте избранного (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
-  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
-  onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
   rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
@@ -120,7 +117,6 @@ export function FavoritesView({
               playing={currentId === tr.id && playing}
               liked
               onPlay={() => onPlayCatalog(server ?? [], tr.id)}
-              onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(tr) : undefined}
               onLike={() => onLike(tr.id)}
               onMore={(e: React.MouseEvent) => onCatalogMenu(tr, e)}
             />

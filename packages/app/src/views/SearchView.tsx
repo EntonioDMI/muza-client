@@ -59,7 +59,6 @@ export function SearchView({
   searchScope = "all",
   searchGrouping = true,
   onPlayCatalog,
-  onQueueCatalog,
   rowShow,
   onLike,
   onNotify,
@@ -90,8 +89,6 @@ export function SearchView({
   searchGrouping?: boolean;
   /** Играть каталожный трек в контексте списка (Stage 3, движок). */
   onPlayCatalog: (tracks: Track[], id: string) => void;
-  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
-  onQueueCatalog?: (t: Track) => void;
   /** Строка трека (настройка «Строка трека»): что показывать. */
   rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onLike: (id: string) => void;
@@ -402,7 +399,6 @@ export function SearchView({
         liked={likes.includes(tr.id)}
         selected={multi.has(tr.id)}
         onPlay={() => onPlayCatalog(flatTracks, tr.id)}
-        onRowDoubleClick={onQueueCatalog && !multi.active ? () => onQueueCatalog(tr) : undefined}
         onLike={() => onLike(tr.id)}
         onMore={(e: React.MouseEvent) => {
           // ПКМ по выделенному — меню выделения; по невыделенному — сброс

@@ -34,7 +34,6 @@ export function TrackRow({
   explicit = false,
   selected = false,
   onPlay,
-  onRowDoubleClick,
   onLike,
   onMore,
   playLabel = "Play",
@@ -57,8 +56,27 @@ export function TrackRow({
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
       }}
-      // дабл-клик по строке настраивается («играть»/«в очередь»); кнопка-номер — всегда play
-      onDoubleClick={onRowDoubleClick ?? onPlay}
+      /* ВСЯ ЛЕВАЯ ЧАСТЬ СТРОКИ ЗАПУСКАЕТ ТРЕК (заказ владельца 2026-08-05).
+         Раньше играть можно было только по кружку-номеру 28×28 — самая частая
+         цель в приложении была и самой мелкой, и владелец жаловался, что «трек
+         не запускается с первого раза». Правый кластер (лайк, длительность,
+         «⋯») клик НЕ пропускает — см. stopPropagation на нём ниже: «случайно
+         не нажать» решается структурой, а не координатами.
+
+         ⚠️ e.detail — СЧЁТЧИК КЛИКОВ БРАУЗЕРА, и он здесь обязателен. Второй
+         клик двойного пришёл бы уже по ИГРАЮЩЕМУ треку, а повторный запуск
+         того же трека в той же очереди — это пауза (usePlayback.playContext).
+         То есть без этой строки любой случайный дабл-клик запускал бы песню и
+         тут же её глушил. Осознанная пауза кликом при этом работает: после
+         паузы двойного клика detail снова равен единице. */
+      onClick={
+        onPlay
+          ? (e) => {
+              if (e.detail > 1) return;
+              onPlay();
+            }
+          : undefined
+      }
       // ПКМ = то же меню, что «⋯» (нативное браузерное меню в плеере — мусор)
       onContextMenu={
         onMore
@@ -76,6 +94,8 @@ export function TrackRow({
         height: "var(--h-trackrow, 60px)",
         padding: "0 var(--sp-4)",
         borderRadius: "var(--r-sm)",
+        // строка запускает трек — курсор обязан об этом говорить
+        cursor: onPlay ? "pointer" : "default",
         // выделение сильнее «играет сейчас»: иначе выделенный играющий трек
         // визуально выпадает из выделения (мультивыбор, 2026-07-20)
         background: selected ? "var(--surface-4)" : active ? "var(--surface-3)" : lit ? "var(--surface-2)" : "transparent",
@@ -99,7 +119,17 @@ export function TrackRow({
         <button
           type="button"
           aria-label={active && playing ? pauseLabel : `${playLabel}: ${title}`}
-          onClick={onPlay}
+          /* ⚠️ stopPropagation обязателен с тех пор, как строка сама запускает
+             трек: иначе клик по кнопке звал бы onPlay ДВАЖДЫ — сначала кнопкой,
+             потом всплытием до строки, — то есть запускал и сразу ставил паузу. */
+          onClick={
+            onPlay
+              ? (e) => {
+                  e.stopPropagation();
+                  onPlay();
+                }
+              : undefined
+          }
           style={{
             width: 28,
             height: 28,
@@ -182,7 +212,15 @@ export function TrackRow({
           {source}
         </span>
       ) : null}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}>
+      {/* ПРАВЫЙ КЛАСТЕР — «ТИХАЯ» ЗОНА (заказ владельца 2026-08-05). Строка
+          целиком запускает трек, но здесь живут лайк, цифры и «⋯»: клик обязан
+          останавливаться, иначе промах мимо мелкого сердца запускал бы песню.
+          Гасим на КОНТЕЙНЕРЕ, а не на каждой кнопке: любая новая кнопка в этом
+          кластере получает защиту сама, и её не надо помнить. */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}
+      >
         {/* Версии (ремиксы/спидапы) — слот ряда, а не сосед строки снаружи.
             Раньше карточка группы вешала бейдж СБОКУ от TrackRow, тот ужимался
             на её ширину, и у трека с версиями таймкод уезжал влево относительно

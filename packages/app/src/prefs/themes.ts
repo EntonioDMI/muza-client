@@ -175,7 +175,6 @@ export const THEME_EXCLUDED = [
   "settingsCards",
   "language",
   "resumePosition",
-  "doubleClickAction",
   "mediaKeys",
   "instantSearch",
   "searchScope",

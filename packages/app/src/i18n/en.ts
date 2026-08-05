@@ -394,12 +394,6 @@ export const en = {
       },
       behavior: {
         groupTitle: "Behavior",
-        doubleClick: {
-          title: "Double-click action",
-          hint: "What double-clicking a track row does. Clicking the track number always starts playback.",
-          play: "Play",
-          queue: "Add to queue",
-        },
         startView: {
           title: "Start screen",
           hint: "Which screen opens when the app starts.",

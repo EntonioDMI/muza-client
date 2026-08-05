@@ -26,7 +26,6 @@ export function ExternalPlaylistView({
   likes,
   rowShow,
   onPlayCatalog,
-  onQueueCatalog,
   onLike,
   onNotify,
   onTrackMenu,
@@ -41,8 +40,6 @@ export function ExternalPlaylistView({
   likes: string[];
   rowShow?: { cover: boolean; duration: boolean; album: boolean; source: boolean };
   onPlayCatalog: (tracks: Track[], id: string) => void;
-  /** Дабл-клик = «в очередь» (настройка); нет — dblclick играет. */
-  onQueueCatalog?: (t: Track) => void;
   onLike: (id: string) => void;
   onNotify: (text: string, icon?: string) => void;
   /** «⋯»/ПКМ на треке — обычное меню каталожного трека. */
@@ -185,7 +182,6 @@ export function ExternalPlaylistView({
             playing={currentId === tr.id && playing}
             liked={likes.includes(tr.id)}
             onPlay={() => onPlayCatalog(pl?.tracks ?? [], tr.id)}
-            onRowDoubleClick={onQueueCatalog ? () => onQueueCatalog(tr) : undefined}
             onLike={() => onLike(tr.id)}
             onMore={(e: React.MouseEvent) => onTrackMenu(tr, e)}
           />
