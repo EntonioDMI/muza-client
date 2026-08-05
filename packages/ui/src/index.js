@@ -21,6 +21,8 @@ export { Slider } from "./components/core/Slider.jsx";
 export { Spinner } from "./components/core/Spinner.jsx";
 export { Switch } from "./components/core/Switch.jsx";
 export { Tabs } from "./components/core/Tabs.jsx";
+export { Panel } from "./components/core/Panel.jsx";
+export { Table } from "./components/core/Table.jsx";
 
 // feedback
 export { Dialog } from "./components/feedback/Dialog.jsx";

@@ -55,6 +55,32 @@ describe("SeriesChart", () => {
     expect(container.querySelector("path[data-line]")).toBeNull();
   });
 
+  // 05.08: ширина viewBox прибитая к 640 при картинке шириной 100 % растягивала
+  // весь рисунок вместе с подписями — на широком мониторе «мелкая» подпись
+  // приезжала крупнее соседнего текста.
+  it("без ResizeObserver (jsdom) ширина остаётся запасной", () => {
+    const { container } = render(<SeriesChart points={series} mode="line" ariaLabel="посещения" />);
+
+    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 640 168");
+  });
+
+  it("ширина берётся с контейнера, а не прибита к 640", () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const width = vi.spyOn(Element.prototype, "clientWidth", "get").mockReturnValue(900);
+
+    const { container } = render(<SeriesChart points={series} mode="line" ariaLabel="посещения" />);
+    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 900 168");
+
+    width.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it("подписи дат — короткие ДД.ММ", () => {
     const { container } = render(<SeriesChart points={series} mode="line" ariaLabel="посещения" />);
 

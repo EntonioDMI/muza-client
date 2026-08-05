@@ -1,75 +1,25 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 import { portal } from "../../lib/layerRoot.js";
+import { useLayerState } from "../../lib/useLayerState.js";
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-// Фолбэк-таймаут delayed-unmount: страхует на случай, если onAnimationEnd не
-// долетит (напр. окно/вкладка в фоне). С запасом покрывает --dur-base на
-// максимальной пользовательской скорости анимаций (170% → 220ms*1.7≈374ms).
-const EXIT_FALLBACK_MS = 500;
-
-function prefersReducedMotion() {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
 
 /** Modal dialog — frosted glass panel over a deep scrim. Use sparingly.
  *  Focus: jumps inside on open (first field or button), Tab loops within,
  *  Escape closes, focus returns to the opener on close.
- *  Закрытие — delayed-unmount: узел остаётся в DOM на время exit-анимации
- *  (muzaFadeOut/muzaRiseOut), снимается по onAnimationEnd с таймаут-фолбэком.
- *  Повторное открытие во время закрытия отменяет exit и возвращает узел в
- *  открытое состояние без ремаунта; prefers-reduced-motion закрывает мгновенно. */
+ *  Закрытие — delayed-unmount: узел остаётся в DOM, пока доигрывает уход. Весь
+ *  механизм (позы, страховка, prefers-reduced-motion, повторное открытие прямо
+ *  посреди закрытия) живёт в lib/useLayerState.js + классе .muza-layer; здесь
+ *  остаются только фокус, Escape и клик мимо. Затемнение и панель — ОДИН слой
+ *  на два узла: состояние диктует затемнение (на нём хук), панель повторяет за
+ *  ним атрибут и берёт свою позу модификатором. */
 export function Dialog({ open, title, headerAction, children, actions, onClose, width = 440 }) {
   const panelRef = useRef(null);
   const restoreRef = useRef(null);
-  const closeTimerRef = useRef(null);
   const pressTargetRef = useRef(null);
-  const [mounted, setMounted] = useState(open);
-  const [closing, setClosing] = useState(false);
-
-  // Delayed-unmount: при open=false узел остаётся смонтированным, пока не
-  // доиграет exit-анимация (или не истечёт фолбэк-таймаут).
-  useEffect(() => {
-    if (open) {
-      if (closeTimerRef.current) {
-        clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
-      }
-      setClosing(false);
-      setMounted(true);
-      return;
-    }
-    if (!mounted) return; // никогда не был открыт — закрывать нечего
-    if (prefersReducedMotion()) {
-      setClosing(false);
-      setMounted(false);
-      return;
-    }
-    setClosing(true);
-    closeTimerRef.current = setTimeout(() => {
-      closeTimerRef.current = null;
-      setClosing(false);
-      setMounted(false);
-    }, EXIT_FALLBACK_MS);
-    // mounted намеренно не в deps: реагируем только на смену open, читаем
-    // mounted из замыкания последнего рендера.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
-
-  const finishClosing = () => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    setClosing(false);
-    setMounted(false);
-  };
+  const { mounted, layerProps } = useLayerState(open);
+  const closing = mounted && !open;
 
   useEffect(() => {
     if (!open) return;
@@ -86,9 +36,10 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
   }, [open, onClose]);
 
   // Куда вернуть фокус — запоминаем В МОМЕНТ ОТКРЫТИЯ, на том же коммите, где
-  // open стал true. Панели в DOM тогда ещё нет (mounted включается пассивным
-  // эффектом, то есть коммитом позже), значит document.activeElement
-  // гарантированно снаружи — это и есть открывший элемент.
+  // open стал true: фокус внутрь панели уводит эффект НИЖЕ по файлу, то есть
+  // строго позже этого, значит document.activeElement здесь ещё снаружи — это и
+  // есть открывший элемент. Порядок объявления эффектов тут несущая
+  // конструкция, а не стиль: поменяешь местами — вернём фокус сами в себя.
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement;
@@ -145,10 +96,12 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
   // zoom масштаба интерфейса. Разбор с замером — packages/ui/src/lib/layerRoot.js.
   const layer = (
     <div
+      {...layerProps}
+      /* Затемнение приходит дольше, чем уходит: ему нужно время, чтобы
+         прочитаться затемнением, а не миганием (--scrim в animations.css). */
+      className="muza-layer muza-layer--scrim"
       onMouseDown={onScrimMouseDown}
       onClick={onScrimClick}
-      onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finishClosing(); }}
-      inert={closing || undefined}
       style={{
         position: "fixed",
         inset: 0,
@@ -158,12 +111,6 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
         background: "var(--glass-deep)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        /* Затемнение приходит дольше, чем уходит: ему нужно время, чтобы
-           прочитаться затемнением, а не миганием. Уход — --ease-in, разгон
-           наружу (2026-08-05). */
-        animation: closing
-          ? "muzaFadeOut var(--dur-modal-out) var(--ease-in) forwards"
-          : "muzaFadeIn var(--dur-modal-in) var(--ease-standard)",
       }}
     >
       <div
@@ -171,6 +118,10 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        className="muza-layer muza-layer--modal"
+        /* Панель повторяет состояние затемнения, а не заводит своё: разъехаться
+           им нельзя, а снимает узел хук по прозрачности ЗАТЕМНЕНИЯ. */
+        data-layer-state={layerProps["data-layer-state"]}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onTrapKeyDown}
         style={{
@@ -189,12 +140,8 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
           display: "flex",
           flexDirection: "column",
           gap: "var(--sp-5)",
-          animation: closing
-            ? "muzaRiseOut var(--dur-modal-out) var(--ease-in) forwards"
-            : "muzaRiseIn var(--dur-modal-in) var(--spring-snap, var(--ease-out))",
         }}
       >
-        <style>{"@keyframes muzaFadeIn{from{opacity:0}}@keyframes muzaFadeOut{to{opacity:0}}@keyframes muzaRiseIn{from{opacity:0;transform:translateY(14px) scale(.98)}}@keyframes muzaRiseOut{to{opacity:0;transform:translateY(14px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=dialog]{animation:none!important}}"}</style>
         {title || headerAction ? (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
             <div style={{ flex: 1, fontFamily: "var(--font-ui)", fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)", letterSpacing: "-0.01em" }}>{title}</div>

@@ -17,6 +17,8 @@ import type { SliderProps } from "./components/core/Slider";
 import type { SpinnerProps } from "./components/core/Spinner";
 import type { SwitchProps } from "./components/core/Switch";
 import type { TabsProps } from "./components/core/Tabs";
+import type { PanelProps } from "./components/core/Panel";
+import type { TableColumn, TableProps, TableSort } from "./components/core/Table";
 import type { DialogProps } from "./components/feedback/Dialog";
 import type { EmptyStateProps } from "./components/feedback/EmptyState";
 import type { MenuProps } from "./components/feedback/Menu";
@@ -39,6 +41,10 @@ export type {
   SliderProps,
   SwitchProps,
   TabsProps,
+  PanelProps,
+  TableColumn,
+  TableProps,
+  TableSort,
   DialogProps,
   MenuProps,
   ToastProps,
@@ -65,6 +71,8 @@ export declare function Slider(props: SliderProps): React.JSX.Element;
 export declare function Spinner(props: SpinnerProps): React.JSX.Element;
 export declare function Switch(props: SwitchProps): React.JSX.Element;
 export declare function Tabs(props: TabsProps): React.JSX.Element;
+export declare function Panel(props: PanelProps): React.JSX.Element;
+export declare function Table<Row>(props: TableProps<Row>): React.JSX.Element;
 export declare function Dialog(props: DialogProps): React.JSX.Element;
 export declare function EmptyState(props: EmptyStateProps): React.JSX.Element;
 export declare function Menu(props: MenuProps): React.JSX.Element;

@@ -61,22 +61,29 @@ describe("migrateLegacyValue", () => {
 
 describe("sanitizeTokens: легаси-темы со строковыми пресетами", () => {
   it("строки мигрируются в числа, а не отбрасываются typeof-фильтром", () => {
+    // ⚠️ Здесь стоял animSpeed, но с 2026-08-05 ключи движения (animSpeed,
+    // durMenuMult/DialogMult/PageMult, easeStyle) уехали из THEME_KEYS в
+    // THEME_EXCLUDED: тема молча меняла характер движения, и владельцу так
+    // приехал пресет «Резкий», которого он не выбирал. Проверяем на density —
+    // это тот же легаси-ключ со строковым пресетом, и он ОСТАЛСЯ ключом темы.
     const tokens = sanitizeTokens({
       radiusTiles: "rounder",
       radiusControls: "pill",
-      animSpeed: "slow",
+      density: "spacious",
       accent: "red",
     });
     expect(tokens.radiusTiles).toBe(160);
     expect(tokens.radiusControls).toBe(RADIUS_OVERRIDE_OFF);
-    expect(tokens.animSpeed).toBe(170);
+    expect(tokens.density).toBe(100);
     expect(tokens.accent).toBe("red");
   });
 
   it("числовые значения проходят с клампом, мусор отбрасывается", () => {
-    const tokens = sanitizeTokens({ radiusPanels: 9000, animSpeed: true, radiusFields: 12 });
+    // density вместо animSpeed по той же причине: на снятом ключе темы этот
+    // тест зеленел бы всегда и проверял бы не то, что заявляет.
+    const tokens = sanitizeTokens({ radiusPanels: 9000, density: true, radiusFields: 12 });
     expect(tokens.radiusPanels).toBe(200);
-    expect("animSpeed" in tokens).toBe(false);
+    expect("density" in tokens).toBe(false);
     expect(tokens.radiusFields).toBe(12);
   });
 

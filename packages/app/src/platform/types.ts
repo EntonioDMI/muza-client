@@ -232,7 +232,9 @@ export interface EngineHealth {
   events: EngineHealthEvent[];
 }
 
-/** Как быстро прошёл путь «клик → звук». null у фазы = её не было. */
+/** Как быстро прошёл путь «клик → звук». null у фазы = её не было.
+ *  Поля-моменты считаются от клика; разности между ними — это фазы, и считает
+ *  их площадка (см. startSummary), а не экран. */
 export interface TrackStartRecord {
   trackId: string;
   title: string;
@@ -244,15 +246,47 @@ export interface TrackStartRecord {
   playCallMs: number | null;
   soundMs: number | null;
   error: string | null;
+  /** Момент, когда старый трек заглушён. От него до soundMs — ТИШИНА, то есть
+   *  та самая задержка, которую человек и слышит. */
+  silenceMs?: number | null;
+  /** Класс прогона (провайдер, холодный старт) — по нему складывается сводка. */
+  cls?: string | null;
+  /** Первый старт после запуска программы. */
+  cold?: boolean;
+  /** Отметки изнутри добычи: [метка, сколько заняла эта работа в мс].
+   *  Поле НЕобязательное — записи без него обязаны читаться как есть. */
+  timings?: readonly (readonly [string, number])[];
+}
+
+/** Медиана и p90 одной фазы. p90, а не среднее: жалоба звучит как «иногда
+ *  долго», а «иногда» — это хвост распределения, среднее его размазывает. */
+export interface StartPhaseStat {
+  median: number;
+  p90: number;
+}
+
+/** Сводка по классу прогонов: сколько их было и во что укладываются фазы.
+ *  Ключи фаз: sources (сходили за источниками), url (добыли ссылку),
+ *  engine (завели движок), bytes (от play() до звука), silence (окно тишины),
+ *  total (клик → звук). Нет ключа — фазы не было ни в одном прогоне. */
+export interface TrackStartSummary {
+  cls: string;
+  count: number;
+  phases: Partial<Record<"sources" | "url" | "engine" | "bytes" | "silence" | "total", StartPhaseStat>>;
 }
 
 /** ЖУРНАЛ «ПОЧЕМУ ВКЛЮЧАЛОСЬ ДОЛГО». */
 export interface DiagnosticsPort {
   health(): Promise<EngineHealth>;
-  /** Последние старты (кольцо в памяти площадки). */
+  /** Последние старты (кольцо площадки; у приложения переживает перезапуск). */
   startLog(): TrackStartRecord[];
   /** Подписка на пополнение журнала; возвращает отписку. */
   subscribeStartLog(cb: () => void): () => void;
+  /** Журнал таблицей (TSV) для буфера обмена. Нет метода — нет и кнопки
+   *  «Скопировать журнал»: копировать нечего, а не «пока не умеем». */
+  startLogTsv?(): string;
+  /** Сводка по классам прогонов. Нет метода — сводки на экране нет. */
+  startSummary?(): TrackStartSummary[];
 }
 
 /** СТАТУС «СЛУШАЕТ MUZA» В DISCORD. */

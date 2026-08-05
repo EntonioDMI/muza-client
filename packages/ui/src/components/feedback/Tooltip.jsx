@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useRef, useState, useEffect } from "react";
 import { portal } from "../../lib/layerRoot.js";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { DELAY_TIP } from "../../lib/motion.js";
+import { useLayerState } from "../../lib/useLayerState.js";
 
 /** Tooltip — small frosted label near its child, 450 ms hover delay.
  *  Клавиатура равноправна мыши: подсказка всплывает и по ФОКУСУ. Это не
@@ -20,8 +21,16 @@ import { DELAY_TIP } from "../../lib/motion.js";
  *
  *  Узел существует ТОЛЬКО пока подсказка видна. Прежде он жил в разметке
  *  всегда (110 узлов на Главной) и ради скорости даже blur включался условно;
- *  теперь скрытая подсказка не стоит ничего. Исчезновение мгновенное, без
- *  анимации ухода — как у системных подсказок: провожать взглядом нечего. */
+ *  теперь скрытая подсказка не стоит ничего.
+ *
+ *  УХОД — 80 мс ПО ПРОЗРАЧНОСТИ (2026-08-05). Раньше здесь стояло обратное
+ *  решение: «исчезновение мгновенное, как у системных подсказок, провожать
+ *  взглядом нечего». Оно верно для подсказки, которая уходит вместе с курсором,
+ *  но эта — ПОРТАЛИТСЯ и схлопывается ровно там, где курсор ещё стоит: кадровое
+ *  исчезновение под неподвижной мышью читается не как «ушла», а как сбой
+ *  отрисовки. Гашение короче любого другого слоя и БЕЗ движения — сдвиг сделал
+ *  бы из неё второй объект, за которым зачем-то надо следить (.muza-layer--tip
+ *  в animations.css). Задержку появления держит DELAY_TIP из lib/motion.js. */
 export function Tooltip({ label, placement = "top", children, style }) {
   const [show, setShow] = useState(false);
   /** Позиция в единицах theme-div (экранные px / zoom); null — ещё меряем. */
@@ -29,6 +38,8 @@ export function Tooltip({ label, placement = "top", children, style }) {
   const wrap = useRef(null);
   const tip = useRef(null);
   const timer = useRef(null);
+  // Хук берёт НАШ ref: тот же узел меряется на переворот.
+  const { mounted, layerProps } = useLayerState(show, { ref: tip });
 
   const clear = () => {
     if (timer.current) clearTimeout(timer.current);
@@ -56,11 +67,15 @@ export function Tooltip({ label, placement = "top", children, style }) {
   // Позиция считается ПОСЛЕ монтирования пузырька: сначала рендерим его
   // невидимым, меряем настоящий размер, затем ставим на место — до первой
   // отрисовки, глаз черновой кадр не видит (useLayoutEffect синхронен).
+  // Сброс позиции — по СНЯТИЮ УЗЛА, а не по show: узел переживает show=false на
+  // время гашения, и обнуление позиции швырнуло бы гаснущий пузырёк в левый
+  // верхний угол окна.
   useLayoutEffect(() => {
-    if (!show) {
+    if (!mounted) {
       setPos(null);
       return;
     }
+    if (!show) return; // уходит — мерить нечего, позиция уже стоит
     const anchor = wrap.current;
     const el = tip.current;
     if (!anchor || !el) return;
@@ -81,7 +96,7 @@ export function Tooltip({ label, placement = "top", children, style }) {
     }
     y = Math.min(Math.max(y, M), window.innerHeight - t.height - M);
     setPos({ left: x / z, top: y / z });
-  }, [show, placement, label]);
+  }, [mounted, show, placement, label]);
 
   // Прокрутка под открытой подсказкой — прячем: кнопка уехала, пузырёк без
   // якоря повисает в воздухе. Так ведут себя и системные подсказки.
@@ -103,12 +118,12 @@ export function Tooltip({ label, placement = "top", children, style }) {
       style={{ position: "relative", display: "inline-flex", ...style }}
     >
       {children}
-      {show
+      {mounted
         ? portal(
             <span
-              ref={tip}
+              {...layerProps}
               aria-hidden="true"
-              className="muza-view"
+              className="muza-layer muza-layer--tip"
               style={{
                 position: "fixed",
                 left: pos ? pos.left : 0,

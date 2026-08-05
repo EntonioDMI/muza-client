@@ -16,10 +16,15 @@ import { AccentSwatch, CustomAccentSwatch, GLASS_MIN, LiveSlider, paneStyle, Pre
 import { appearancePresets, currentWindowLayout, WINDOW_LAYOUTS, type WindowLayout } from "./appearancePresets";
 import { useSettingsScreen } from "./settingsContext";
 
+/** Ключ псевдо-сегмента «Своя» в ряду раскладок. Не WindowLayout: применить
+ *  его нечего — он описывает состояние, а не задаёт его. */
+const CUSTOM = "custom";
+
 export function AppearancePane() {
   const { t } = useT();
   const { prefs, set, paneClass, openSub } = useSettingsScreen();
   const presets = appearancePresets(t);
+  const layout = currentWindowLayout(prefs);
   // ТУМБЛЕР ФОНА = «фон включён», а не «фон из обложки». Раньше он стоял
   // checked={bgType === "cover"} и писал "cover"/"none": человек собирал в
   // «Кастомизации» градиент или анимированный фон, возвращался сюда — тумблер
@@ -80,9 +85,19 @@ export function AppearancePane() {
             { key: "air", label: t("settings.appearance.layout.air") },
             { key: "flat", label: t("settings.appearance.layout.flat") },
             { key: "classic", label: t("settings.appearance.layout.classic") },
+            // ЧЕТВЁРТЫЙ СЕГМЕНТ «Своя» появляется ТОЛЬКО когда он и выбран, и
+            // нажать его нельзя (клик ниже игнорируется) — это не выбор, а
+            // ответ на вопрос «а что стоит сейчас?».
+            // Просто «ничего не выбрано» тут не годится: пилюля переползла бы
+            // на первый сегмент или исчезла вовсе, и получилась бы та же немота,
+            // с которой всё и началось, — вкладки уверенно показывали
+            // «Воздушная», пока окно стояло не в ней.
+            ...(layout === null ? [{ key: CUSTOM, label: t("settings.appearance.layout.custom") }] : []),
           ]}
-          value={currentWindowLayout(prefs)}
-          onChange={(k: string) => set(WINDOW_LAYOUTS[k as WindowLayout])}
+          value={layout ?? CUSTOM}
+          onChange={(k: string) => {
+            if (k !== CUSTOM) set(WINDOW_LAYOUTS[k as WindowLayout]);
+          }}
         />
       </SettingRow>
       <SettingRow title={t("settings.appearance.theme.title")} hint={t("settings.appearance.theme.hint")}>

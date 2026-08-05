@@ -3,18 +3,7 @@ import { Icon } from "../core/Icon.jsx";
 import { portal } from "../../lib/layerRoot.js";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
-
-// Фолбэк-таймаут delayed-unmount: см. Dialog.jsx. Покрывает --dur-fast на
-// максимальной скорости анимаций (170% → 150ms*1.7≈255ms) с запасом.
-const EXIT_FALLBACK_MS = 400;
-
-function prefersReducedMotion() {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
+import { useLayerState } from "../../lib/useLayerState.js";
 
 /** Context / dropdown menu — frosted panel anchored at a point.
  *  Keyboard: focus jumps into the menu on open (and back on close),
@@ -23,17 +12,16 @@ function prefersReducedMotion() {
  *  разделитель; { header } — заголовок секции («Выбрано: 3»). disabled-пункт
  *  выпадает из клавиатурного обхода (селектор :not([disabled]) в moveFocus —
  *  иначе стрелки застревают на нём). hint — тихая правая подпись.
- *  Закрытие — delayed-unmount (см. Dialog.jsx): узел остаётся в DOM на время
- *  exit-анимации (muzaMenuOut), снимается по onAnimationEnd с
- *  таймаут-фолбэком; reduced-motion и повторное открытие во время закрытия
- *  обрабатываются так же, как в Dialog. */
+ *  Закрытие — delayed-unmount: панель остаётся в DOM, пока доигрывает уход.
+ *  Механизм общий с диалогом и выпадашкой — lib/useLayerState.js + класс
+ *  .muza-layer; здесь его нет ни строчки, только позиционирование и клавиши. */
 export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   const panelRef = useRef(null);
   const restoreRef = useRef(null);
-  const closeTimerRef = useRef(null);
-  const [mounted, setMounted] = useState(open);
-  const [closing, setClosing] = useState(false);
+  // Хук берёт НАШ ref: тот же узел меряется на переворот и обходится стрелками.
+  const { mounted, layerProps } = useLayerState(open, { ref: panelRef });
+  const closing = mounted && !open;
   const [pos, setPos] = useState({ left: x, top: y, maxH: undefined });
 
   // x/y приходят в ЭКРАННЫХ пикселях (clientX ПКМ), а панель внутри
@@ -81,42 +69,6 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   }, [mounted, x, y, items]);
 
   useEffect(() => {
-    if (open) {
-      if (closeTimerRef.current) {
-        clearTimeout(closeTimerRef.current);
-        closeTimerRef.current = null;
-      }
-      setClosing(false);
-      setMounted(true);
-      return;
-    }
-    if (!mounted) return;
-    if (prefersReducedMotion()) {
-      setClosing(false);
-      setMounted(false);
-      return;
-    }
-    setClosing(true);
-    closeTimerRef.current = setTimeout(() => {
-      closeTimerRef.current = null;
-      setClosing(false);
-      setMounted(false);
-    }, EXIT_FALLBACK_MS);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
-
-  const finishClosing = () => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-    setClosing(false);
-    setMounted(false);
-  };
-
-  useEffect(() => {
     if (!open) return;
     // preventDefault — не ради браузера (у Escape тут нет действия по
     // умолчанию), а как ПОМЕТКА «событие взято». По ней режим правки вида
@@ -127,9 +79,9 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Куда вернуть фокус — берём на коммите смены open, ДО монтирования панели
-  // (mounted включается эффектом, то есть коммитом позже): активный элемент
-  // тогда ещё снаружи меню. См. Dialog.jsx.
+  // Куда вернуть фокус — берём на коммите смены open, ДО того как фокус уйдёт в
+  // первый пункт (это делает эффект ниже по файлу): активный элемент тогда ещё
+  // снаружи меню. Порядок объявления эффектов важен, см. Dialog.jsx.
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement;
@@ -182,11 +134,11 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
       style={{ position: "fixed", inset: 0, zIndex: 150 }}
     >
       <div
-        ref={panelRef}
+        {...layerProps}
         role="menu"
+        className="muza-layer"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onMenuKeyDown}
-        onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finishClosing(); }}
         style={{
           position: "absolute",
           left: pos.left,
@@ -214,12 +166,8 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           display: "flex",
           flexDirection: "column",
           gap: 2,
-          animation: closing
-            ? "muzaMenuOut var(--dur-pop-out) var(--ease-in) forwards"
-            : "muzaMenuIn var(--dur-pop-in) var(--ease-out)",
         }}
       >
-        <style>{"@keyframes muzaMenuIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@keyframes muzaMenuOut{to{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){[role=menu]{animation:none!important}}"}</style>
         {items.map((it, i) =>
           it === "-" ? (
             <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--hairline)", margin: "var(--sp-1) var(--sp-2)" }}></div>

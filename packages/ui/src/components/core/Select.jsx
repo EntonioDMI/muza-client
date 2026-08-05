@@ -3,12 +3,16 @@ import { Icon } from "./Icon.jsx";
 import { portal } from "../../lib/layerRoot.js";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
+import { useLayerState } from "../../lib/useLayerState.js";
 
 /** Выпадающий список — поле в стиле инпутов ДС + морозная панель опций.
  *  position: fixed — не режется overflow-контейнерами (панели настроек
  *  скроллятся); при нехватке места снизу раскрывается вверх.
  *  Клавиатура: Enter/Space/↓ открывают, ↑↓/Home/End ходят, Enter выбирает,
- *  Escape/клик-мимо закрывают, фокус возвращается на поле. */
+ *  Escape/клик-мимо закрывают, фокус возвращается на поле.
+ *  Панель — ПЛАВАЮЩИЙ СЛОЙ (.muza-layer + lib/useLayerState.js), а не экран:
+ *  до 2026-08-05 на ней висел класс перехода между экранами muza-view, поэтому
+ *  список проявлялся как страница, а исчезал вовсе без анимации — кадром. */
 export function Select({ items = [], value, onChange, ariaLabel, width = 220, disabled = false, style }) {
   const norm = items.map((it) => (typeof it === "string" ? { key: it, label: it } : it));
   const selected = norm.find((it) => it.key === value) ?? null;
@@ -18,6 +22,11 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
   const [hover, setHover] = useState(false);
+  // Слой живёт от ПОСЧИТАННОЙ позиции: панель рисуется только вторым коммитом,
+  // и до него анимировать нечего. panelPos при закрытии намеренно не сбрасываем
+  // — иначе уходящая панель прыгнула бы в левый верхний угол.
+  const { mounted, layerProps } = useLayerState(open && !!panelPos, { ref: panelRef });
+  const closing = mounted && !open;
 
   // позиция панели от поля; переворот вверх у нижнего края окна.
   // rect — ЭКРАННЫЕ пиксели, а fixed-панель внутри зумленного корня
@@ -45,18 +54,18 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
     return () => triggerRef.current?.focus();
   }, [open]);
 
-  // Фокус в выбранную опцию. panelPos В DEPS ОБЯЗАТЕЛЕН: панель рисуется
-  // только после того, как useLayoutEffect посчитает позицию, то есть ВТОРЫМ
-  // коммитом — на коммите открытия panelRef ещё null. С deps [open] фокус в
-  // список не входил вовсе, а стрелки/Home/End/Escape висят на панели и без
-  // фокуса не срабатывают (аудит 02.08).
+  // Фокус в выбранную опцию. mounted В DEPS ОБЯЗАТЕЛЕН: панель появляется не на
+  // коммите открытия, а через два — сначала useLayoutEffect считает позицию,
+  // потом слой монтируется хуком, и только тогда panelRef перестаёт быть null.
+  // С deps [open] фокус в список не входил вовсе, а стрелки/Home/End/Escape
+  // висят на панели и без фокуса не срабатывают (аудит 02.08).
   useEffect(() => {
-    if (!open || !panelPos) return;
+    if (!open || !mounted) return;
     const nodes = panelRef.current?.querySelectorAll('[role="option"]') ?? [];
     const idx = Math.max(norm.findIndex((it) => it.key === value), 0);
     nodes[idx]?.focus(NO_SCROLL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, panelPos]);
+  }, [open, mounted]);
 
   const moveFocus = (delta, edge) => {
     const nodes = [...(panelRef.current?.querySelectorAll('[role="option"]') ?? [])];
@@ -133,21 +142,25 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
           (backdrop-filter у рельса настроек, сайдбара, полосы плеера) стал бы
           для неё содержащим блоком — список уехал бы за край окна. Цель —
           theme-div, а не body: там токены темы и zoom. См. lib/layerRoot.js. */}
-      {open && panelPos ? (
+      {mounted && panelPos ? (
         portal(
         <div
-          onClick={() => setOpen(false)}
+          onClick={closing ? undefined : () => setOpen(false)}
           onContextMenu={(e) => {
             e.preventDefault();
-            setOpen(false);
+            if (!closing) setOpen(false);
           }}
+          /* Ловушка кликов уходит из-под пальца ВМЕСТЕ с решением закрыться:
+             иначе полсекунды уходящая панель ещё съедала бы клик по кнопке,
+             которую человек уже нажимает. */
+          inert={closing || undefined}
           style={{ position: "fixed", inset: 0, zIndex: 150 }}
         >
           <div
-            ref={panelRef}
+            {...layerProps}
             role="listbox"
             aria-label={ariaLabel}
-            className="muza-view"
+            className="muza-layer"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               if (e.key === "Escape") { e.stopPropagation(); setOpen(false); }

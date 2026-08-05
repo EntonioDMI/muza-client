@@ -38,7 +38,7 @@ import { checkForUpdate, updaterAvailable } from "../lib/updater";
 import { rpcAvailable } from "../lib/discord";
 import { miniHide, miniShow } from "../lib/miniBridge";
 import { deviceAccessDenied, listInputDevices, listOutputDevices } from "../player/outputDevices";
-import { getStartLog, subscribeStartLog } from "../player/startTelemetry";
+import { getStartLog, getStartSummary, getStartTsv, subscribeStartLog } from "../player/startTelemetry";
 import {
   cancelInstall,
   finalizeInstall,
@@ -125,11 +125,15 @@ export function createDesktopPlatform(): PlatformAdapter {
             clear: cacheClear,
           },
           // Журнал «почему включалось долго»: предохранители движка + кольцо
-          // последних включений из плеера.
+          // последних включений из плеера. Кольцо переживает перезапуск
+          // (lib/startLog.ts) — иначе «первый трек после запуска» измерить
+          // нечем: каждый следующий запуск стирал бы предыдущий замер.
           diagnostics: {
             health: engineStage0Status,
             startLog: getStartLog,
             subscribeStartLog,
+            startLogTsv: getStartTsv,
+            startSummary: getStartSummary,
           },
           // Готова ли связка с Discord (идентификатор зашит в сборку моста).
           discordStatus: { configured: rpcAvailable },

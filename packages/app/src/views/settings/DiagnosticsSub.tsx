@@ -38,12 +38,12 @@ export function useEngineHealth(port: DiagnosticsPort | undefined): [EngineHealt
 
 export function DiagnosticsSub() {
   const { t, lang } = useT();
-  const { platform, closeSub, paneClass } = useSettingsScreen();
+  const { platform, closeSub, paneClass, onNotify } = useSettingsScreen();
   const port = platform.diagnostics;
   const [health, reloadHealth] = useEngineHealth(port);
 
-  // Журнал включений живёт в площадке (кольцо на два десятка записей) —
-  // экран лишь подписан на пополнения.
+  // Журнал включений живёт в площадке (кольцо на две сотни записей, у
+  // приложения — переживающее перезапуск) — экран лишь подписан на пополнения.
   const [startLog, setStartLog] = useState<TrackStartRecord[]>(() => port?.startLog() ?? []);
   useEffect(() => {
     if (!port) return;
@@ -51,12 +51,42 @@ export function DiagnosticsSub() {
     return port.subscribeStartLog(() => setStartLog(port.startLog()));
   }, [port]);
 
+  // Сводка считается площадкой заново на каждую отрисовку — намеренно, без
+  // мемоизации: отрисовка случается ровно тогда, когда журнал пополнился, а
+  // двести записей складываются за доли миллисекунды. Кэш здесь стоил бы
+  // больше внимания, чем экономил.
+  const summary = port?.startSummary?.() ?? [];
+
+  /** Журнал в буфер обмена ТАБЛИЦЕЙ (TSV), а не JSON: он вставляется прямо в
+   *  Excel/Sheets и там же считает медианы — разбирать его руками не надо. */
+  const copyLog = async () => {
+    const tsv = port?.startLogTsv?.();
+    if (!tsv) return;
+    try {
+      await navigator.clipboard.writeText(tsv);
+      onNotify(t("settings.system.stage0.starts.copied"), "copy");
+    } catch {
+      onNotify(t("settings.system.stage0.starts.copyFailed"), "x");
+    }
+  };
+
+  const locale = lang === "ru" ? "ru-RU" : "en-US";
   const fmtEventClock = (ms: number) =>
-    new Date(ms).toLocaleTimeString(lang === "ru" ? "ru-RU" : "en-US", {
+    new Date(ms).toLocaleTimeString(locale, {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
     });
+
+  /** Журнал включений ПЕРЕЖИВАЕТ перезапуск, поэтому в нём попадаются вчерашние
+   *  старты — одно время без даты в такой ленте врёт (замер вчерашнего вечера
+   *  выглядел бы как сегодняшний). Дату дописываем только тогда, когда она не
+   *  сегодняшняя: у обычного разбора «что было только что» лишних цифр нет. */
+  const fmtStartClock = (ms: number) => {
+    const d = new Date(ms);
+    if (d.toDateString() === new Date().toDateString()) return fmtEventClock(ms);
+    return `${d.toLocaleDateString(locale, { day: "2-digit", month: "2-digit" })} ${fmtEventClock(ms)}`;
+  };
 
   // Строка фаз включения: «источники 12 мс · ссылка 180 мс (поток) · звук 215 мс».
   // Пропущенные фазы не печатаются (файл с устройства не ходит за источниками).
@@ -80,7 +110,29 @@ export function DiagnosticsSub() {
         ? `${t("settings.system.stage0.starts.sound")} ${startMs(r.soundMs)}`
         : t("settings.system.stage0.starts.noSound"),
     );
+    // Окно тишины — от глушения старого трека до звука нового. Считается от
+    // ЯВНОЙ отметки, а не «примерно от начала»: сегодня она стоит рядом с
+    // началом, но метрика не должна зависеть от этого совпадения.
+    if (r.soundMs !== null && r.silenceMs !== null && r.silenceMs !== undefined) {
+      parts.push(`${t("settings.system.stage0.starts.silence")} ${startMs(r.soundMs - r.silenceMs)}`);
+    }
     return parts.join(" · ");
+  };
+
+  // Отметки изнутри добычи (sc_api_v2, first_chunk_wait, …) печатаются как
+  // есть: их ставит добыча, и перевод здесь означал бы вторую копию перечня
+  // меток, которую некому держать в согласии с первой.
+  const formatTimings = (r: TrackStartRecord): string =>
+    (r.timings ?? []).map(([label, ms]) => `${label} ${startMs(ms)}`).join(" · ");
+
+  const PHASES = ["sources", "url", "engine", "bytes", "silence", "total"] as const;
+  const phaseLabel: Record<(typeof PHASES)[number], string> = {
+    sources: t("settings.system.stage0.starts.sources"),
+    url: t("settings.system.stage0.starts.url"),
+    engine: t("settings.system.stage0.starts.phaseStart"),
+    bytes: t("settings.system.stage0.starts.phaseFirstSound"),
+    silence: t("settings.system.stage0.starts.silence"),
+    total: t("settings.system.stage0.starts.total"),
   };
 
   return (
@@ -102,6 +154,12 @@ export function DiagnosticsSub() {
         <Button variant="ghost" icon="refresh-cw" onClick={reloadHealth}>
           {t("settings.system.stage0.refresh")}
         </Button>
+        {/* Нет умения выгрузить журнал — нет и кнопки (правило розетки). */}
+        {port?.startLogTsv ? (
+          <Button variant="ghost" icon="copy" onClick={() => void copyLog()}>
+            {t("settings.system.stage0.starts.copy")}
+          </Button>
+        ) : null}
       </SettingRow>
       {(health?.events.length ?? 0) === 0 ? (
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
@@ -122,6 +180,31 @@ export function DiagnosticsSub() {
           ))}
         </div>
       )}
+      {/* СВОДКА выше списка намеренно: список отвечает «что было только что»,
+          а вопрос владельца — «сколько это стоит вообще». Сырые числа на этот
+          вопрос не отвечают, поэтому первым идёт разбор по классам. */}
+      {summary.length > 0 ? (
+        <>
+          <SettingRow
+            title={t("settings.system.stage0.starts.summary")}
+            hint={t("settings.system.stage0.starts.summaryHint")}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+            {summary.map((s) => (
+              <div key={s.cls} style={{ fontSize: "var(--fs-caption)", lineHeight: 1.5 }}>
+                <span style={{ color: "var(--text-1)" }}>{s.cls}</span>
+                <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{` ×${s.count}`}</span>
+                <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
+                  {PHASES.filter((p) => s.phases[p]).map((p) => {
+                    const stat = s.phases[p];
+                    return stat ? ` · ${phaseLabel[p]} ${stat.median} / ${stat.p90} ${t("settings.system.stage0.starts.ms")}` : null;
+                  })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
       <SettingRow title={t("settings.system.stage0.starts.title")} hint={t("settings.system.stage0.starts.hint")} />
       {startLog.length === 0 ? (
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
@@ -135,12 +218,21 @@ export function DiagnosticsSub() {
               style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
             >
               <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                {fmtEventClock(r.at)}
+                {fmtStartClock(r.at)}
               </span>
               <span style={{ color: "var(--text-2)", minWidth: 0 }}>
                 <span style={{ color: "var(--text-1)" }}>{r.title}</span>
+                {/* Первый старт после запуска отмечен прямо в строке: именно
+                    он и есть жалоба владельца, и его надо видеть, не сверяясь
+                    со временем запуска программы. */}
+                {r.cold ? (
+                  <span style={{ color: "var(--text-3)" }}>{` (${t("settings.system.stage0.starts.cold")})`}</span>
+                ) : null}
                 {" — "}
                 {formatStartPhases(r)}
+                {r.timings?.length ? (
+                  <span style={{ color: "var(--text-3)" }}>{` · ${formatTimings(r)}`}</span>
+                ) : null}
               </span>
             </div>
           ))}

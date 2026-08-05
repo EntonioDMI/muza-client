@@ -58,7 +58,9 @@ describe("mergePrefs", () => {
       // с какой бы версии ни приехали. Номер 3 сожжён — не переиспользовать.
       expect(mergePrefs({ lookVersion: 2, gapZone: 8 }).gapZone).toBe(8);
       expect(mergePrefs({ lookVersion: 2, gapZone: 20 }).gapZone).toBe(20);
-      expect(mergePrefs({ lookVersion: 3, gapZone: 0 }).gapZone).toBe(0);
+      // Профили, которые ступень v3 всё-таки успела задеть, чинит уже v4 — см.
+      // «профиль, застрявший между раскладками» ниже.
+      expect(mergePrefs({ lookVersion: 3, gapZone: 20 }).gapZone).toBe(20);
     });
 
     it("после слияния профиль помечен текущей версией вида", () => {
@@ -71,6 +73,50 @@ describe("mergePrefs", () => {
       // новая шкала приезжает ко всем сама, а выбор человека — его выбор.
       expect(mergePrefs({ radius: "round" }).radius).toBe("round");
       expect(mergePrefs({ radius: "mild" }).radius).toBe("mild");
+    });
+  });
+
+  // ПЕРЕЕЗД НА ВЕРСИЮ 4 (2026-08-05). Две правки в одной ступени: «продолжить
+  // с места» включается по умолчанию, и чинится профиль, застрявший между
+  // раскладками после отмены ступени v3.
+  describe("переезд внешнего вида на версию 4", () => {
+    it("«продолжить с места» включается тем, кто его никогда не включал", () => {
+      // Улик нет (ключ позиций не заводился) → сегодняшнее false досталось от
+      // старого дефолта, а не от человека.
+      expect(mergePrefs({ resumePosition: false }).resumePosition).toBe(true);
+      // Профиль вообще без поля — тем более: у него уже дефолт площадки.
+      expect(mergePrefs({ blur: 10 }).resumePosition).toBe(true);
+    });
+
+    it("выключенное ОСОЗНАННО остаётся выключенным", () => {
+      // Ключ muza.resume.v1 существует ⇒ настройку когда-то включали ⇒ её
+      // нынешнее false — решение человека, и миграция обязана его пропустить.
+      const prefs = mergePrefs({ resumePosition: false }, DEFAULT_PREFS, { hadResumeHistory: true });
+      expect(prefs.resumePosition).toBe(false);
+    });
+
+    it("профиль, уже проехавший ступень, второй раз не трогается", () => {
+      // Иначе выключить настройку было бы НЕВОЗМОЖНО: каждый запуск включал бы
+      // её заново, и человек не смог бы её удержать.
+      expect(mergePrefs({ lookVersion: 4, resumePosition: false }).resumePosition).toBe(false);
+      expect(mergePrefs({ lookVersion: 4, zonesDocked: false, gapZone: 0 }).gapZone).toBe(0);
+    });
+
+    it("зазор 0 при выключенном плоском виде — след отменённой v3, возвращаем воздух", () => {
+      // Такой профиль показывает скруглённые зоны впритык, а вкладка раскладки
+      // при этом утверждает «Воздушная»: сам человек не чинится, потому что не
+      // нажимает уже выбранное.
+      expect(mergePrefs({ lookVersion: 3, zonesDocked: false, gapZone: 0 }).gapZone).toBe(8);
+      // Профиль версии 1 доезжает сюда же: ступени складываются.
+      expect(mergePrefs({ zonesDocked: false, gapZone: 0 }).gapZone).toBe(8);
+    });
+
+    it("обратная пара (плоский вид + зазор) не трогается — её могли собрать руками", () => {
+      const prefs = mergePrefs({ lookVersion: 3, zonesDocked: true, gapZone: 12 });
+      expect(prefs.gapZone).toBe(12);
+      expect(prefs.zonesDocked).toBe(true);
+      // И честный плоский вид (зоны встык) остаётся плоским.
+      expect(mergePrefs({ lookVersion: 3, zonesDocked: true, gapZone: 0 }).gapZone).toBe(0);
     });
   });
 
@@ -203,6 +249,54 @@ describe("loadPrefs", () => {
   it("битый JSON не роняет запуск", () => {
     localStorage.setItem(PREFS_KEY, "{не json");
     expect(loadPrefs()).toEqual(DEFAULT_PREFS);
+  });
+
+  it("улику для ступени v4 loadPrefs берёт с диска, а не выдумывает", () => {
+    const old = { ...DEFAULT_PREFS, lookVersion: 3, resumePosition: false };
+    localStorage.setItem(PREFS_KEY, JSON.stringify(old));
+    // Ключа позиций нет — настройку никогда не включали, переводим на дефолт.
+    expect(loadPrefs().resumePosition).toBe(true);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify(old));
+    // Пустая карта — тоже улика: позиции чистятся по мере проигрывания, а сам
+    // ключ остаётся. Поэтому проверяется СУЩЕСТВОВАНИЕ, а не содержимое.
+    localStorage.setItem("muza.resume.v1", "{}");
+    expect(loadPrefs().resumePosition).toBe(false);
+  });
+
+  it("МИГРАЦИЯ ЗАКРЕПЛЯЕТСЯ НА ДИСКЕ — иначе она отменяет сама себя", () => {
+    // ⚠️ РЕГРЕССИЯ НА НАСТОЯЩИЙ БАГ (найден противоборствующей проверкой
+    // 2026-08-05). Пока результат миграции никуда не писался, «продолжить с
+    // места» жило РОВНО ОДИН СЕАНС:
+    //   сеанс 1 — улик нет → resumePosition становится true;
+    //   человек слушает трек дольше пяти секунд → resumeStore заводит ключ;
+    //   сеанс 2 — улика теперь ЕСТЬ → та же ступень читает её как «выключил
+    //   осознанно», а в сохранении по-прежнему false → настройка гаснет сама.
+    // Лечится тем, что ступень одноразовая по-настоящему: версия схемы
+    // закрепляется в хранилище при первом же чтении.
+    const old = { ...DEFAULT_PREFS, lookVersion: 3, resumePosition: false };
+    localStorage.setItem(PREFS_KEY, JSON.stringify(old));
+
+    expect(loadPrefs().resumePosition).toBe(true); // сеанс 1: мигрировали
+    const onDisk = JSON.parse(localStorage.getItem(PREFS_KEY) as string);
+    expect(onDisk.lookVersion, "версия схемы обязана уехать в хранилище").toBe(DEFAULT_PREFS.lookVersion);
+    expect(onDisk.resumePosition, "результат миграции обязан уехать в хранилище").toBe(true);
+
+    // Человек послушал музыку — появилась улика, которая раньше всё ломала.
+    localStorage.setItem("muza.resume.v1", '{"track":42}');
+    expect(loadPrefs().resumePosition, "сеанс 2: настройка обязана выжить").toBe(true);
+    // И сеанс 3 тоже — ступень больше не выполняется вовсе.
+    expect(loadPrefs().resumePosition).toBe(true);
+  });
+
+  it("осознанно выключенную настройку миграция не воскрешает и на диск не лезет", () => {
+    // Профиль уже версии 4: ступени отработали когда-то, false — выбор человека.
+    const mine = { ...DEFAULT_PREFS, resumePosition: false };
+    const raw = JSON.stringify(mine);
+    localStorage.setItem(PREFS_KEY, raw);
+    expect(loadPrefs().resumePosition).toBe(false);
+    // Версия совпала — переписывать хранилище не за чем и незачем.
+    expect(localStorage.getItem(PREFS_KEY)).toBe(raw);
   });
 
   it("savePrefs → loadPrefs возвращает профиль ЦЕЛИКОМ, включая неприменимые поля", () => {

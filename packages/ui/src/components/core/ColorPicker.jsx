@@ -4,6 +4,7 @@ import { portal } from "../../lib/layerRoot.js";
 import { Tooltip } from "../feedback/Tooltip.jsx";
 import { cssZoom } from "../../lib/cssZoom.js";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
+import { useLayerState } from "../../lib/useLayerState.js";
 
 /* ── hex ⇄ HSV ─────────────────────────────────────────────────────
    SV-квадрат и hue-слайдер работают во внутренних HSV-координатах;
@@ -106,10 +107,15 @@ function thumbStyle(left, top) {
 }
 
 /** Popover-тело пикера: SV-квадрат + hue-слайдер + hex-поле + текущий/новый свотч.
- *  Внутреннее состояние — HSV, инициализируется из value один раз при монтировании
- *  (popover монтируется заново на каждое открытие) — так круг hue не «убегает»
- *  при s=0/v=0..1, где hex→HSV неоднозначен. */
-function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
+ *  Внутреннее состояние — HSV, инициализируется из value при монтировании — так
+ *  круг hue не «убегает» при s=0/v=0..1, где hex→HSV неоднозначен.
+ *  ⚠️ С 2026-08-05 узел переживает закрытие (уход слоя, lib/useLayerState.js),
+ *  поэтому «монтируется заново на каждое открытие» больше не гарантировано:
+ *  открыв палитру повторно ВНУТРИ ухода, попадёшь в то же HSV-состояние. Это и
+ *  есть желаемое — состояние там равно текущему цвету, а сохранённый оттенок для
+ *  ахроматичных значений точнее пересчитанного. Всё, что обязано повториться на
+ *  каждое открытие, висит на эффектах с deps [open], а не на монтировании. */
+function ColorPickerPopover({ open, layerProps, anchor, initialHex, label, onChange, onClose }) {
   const [hsv, setHsv] = useState(() => hexToHsv(initialHex));
   const [hexText, setHexText] = useState(initialHex);
   const [svDrag, setSvDrag] = useState(false);
@@ -117,9 +123,7 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
 
   const svRef = useRef(null);
   const hueRef = useRef(null);
-  const panelRef = useRef(null);
   const hexInputRef = useRef(null);
-  const restoreRef = useRef(null);
 
   const currentHex = hsvToHex(hsv.h, hsv.s, hsv.v);
 
@@ -130,22 +134,26 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
     if (onChange) onChange(hex);
   };
 
-  // фокус на hex-поле при открытии, Escape закрывает, фокус возвращается на свотч
+  // Фокус на hex-поле при открытии. Отдельно от слушателя Escape ниже: у того в
+  // deps лежит onClose, а его вызыватель обычно передаёт стрелку — эффект
+  // пересобирался бы на каждый рендер и переставлял бы курсор посреди набора.
   useEffect(() => {
-    restoreRef.current = document.activeElement;
+    if (!open) return;
     hexInputRef.current?.focus(NO_SCROLL);
     hexInputRef.current?.select();
+  }, [open]);
+
+  // Escape закрывает. Фокус на свотч возвращает РОДИТЕЛЬ (по смене open), а не
+  // уборка этого эффекта: узел живёт дольше закрытия, и возврат фокуса ждал бы
+  // конца ухода — то есть на кадр-другой фокус оставался бы в никуда.
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e) => {
       if (e.key === "Escape") { e.stopPropagation(); onClose && onClose(); }
     };
     window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      const el = restoreRef.current;
-      if (el && typeof el.focus === "function" && document.contains(el)) el.focus();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   const setSvFromEvent = (e) => {
     if (!svRef.current) return;
@@ -188,15 +196,18 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
   // содержащим блоком и увёл бы поповер за край окна. См. lib/layerRoot.js.
   return portal(
     <div
-      onClick={onClose}
-      onContextMenu={(e) => { e.preventDefault(); onClose && onClose(); }}
+      onClick={open ? onClose : undefined}
+      onContextMenu={(e) => { e.preventDefault(); if (open && onClose) onClose(); }}
+      /* Ловушка кликов уходит вместе с решением закрыться — уходящая палитра не
+         должна съедать клик по тому, что под ней. */
+      inert={!open || undefined}
       style={{ position: "fixed", inset: 0, zIndex: 150 }}
     >
       <div
-        ref={panelRef}
+        {...layerProps}
         role="dialog"
         aria-label={label ? `Color picker: ${label}` : "Color picker"}
-        className="muza-colorpicker-panel"
+        className="muza-layer"
         onClick={(e) => e.stopPropagation()}
         style={{
           position: "fixed",
@@ -213,11 +224,8 @@ function ColorPickerPopover({ anchor, initialHex, label, onChange, onClose }) {
           display: "flex",
           flexDirection: "column",
           gap: "var(--sp-3)",
-          animation: "muzaColorPickerIn var(--dur-fast) var(--ease-out)",
         }}
       >
-        <style>{"@keyframes muzaColorPickerIn{from{opacity:0;transform:translateY(6px) scale(.98)}}@media (prefers-reduced-motion: reduce){.muza-colorpicker-panel{animation:none!important}}"}</style>
-
         {/* SV-квадрат: насыщенность по X, яркость по Y (сверху — v=1) */}
         <div style={{ position: "relative", width: SV_SIZE, height: SV_HEIGHT }}>
           <div
@@ -394,6 +402,17 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
   // открытия и НЕ пересчитывается из живого value (иначе он «уезжает» вслед за
   // онгоинг-перетаскиванием и revert превращается в no-op).
   const openedWithRef = useRef(parseHex(value) || "#3b82f6");
+  // Слой живёт от ПОСЧИТАННОГО якоря: до него палитру рисовать негде. anchor при
+  // закрытии не сбрасываем — уходящая панель обязана гаснуть там же, где стояла.
+  const { mounted, layerProps } = useLayerState(open && !!anchor);
+
+  // Фокус обратно на свотч — по смене open, а не по размонтированию палитры:
+  // узел переживает закрытие на время ухода, и возврат «когда исчезнет» оставил
+  // бы фокус в никуда на всё это время.
+  useEffect(() => {
+    if (!open) return;
+    return () => triggerRef.current?.focus(NO_SCROLL);
+  }, [open]);
 
   // позиция popover'а от свотча; переворот вверх/влево у краёв вьюпорта.
   // Расчёт — в ЭКРАННЫХ пикселях (rect/innerWidth), поэтому габариты панели
@@ -478,8 +497,10 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
           {value}
         </span>
       ) : null}
-      {open && anchor ? (
+      {mounted && anchor ? (
         <ColorPickerPopover
+          open={open}
+          layerProps={layerProps}
           anchor={anchor}
           initialHex={openedWithRef.current}
           label={label}
