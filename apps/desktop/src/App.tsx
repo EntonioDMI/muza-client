@@ -16,6 +16,7 @@ import { DEFAULT_PLAYER_STATE, loadPlayerState, savePlayerState } from "@muza/ap
 // формулы у приложения и у веба (см. шапку themeVars.ts).
 import { buildThemeVars } from "@muza/app/theme/themeVars";
 import { backdropViewFromPrefs } from "@muza/app/prefs/backdrop";
+import { useViewTransition } from "@muza/app/shell/useViewTransition";
 import { LanguageProvider, translate, type TParams, type TranslationKey } from "./i18n";
 import { compactForAuth, expandAfterAuth, shouldAnimateStage } from "./lib/authWindowStage";
 import { devApiHost } from "./lib/devApiHost";
@@ -342,6 +343,12 @@ function Player({
   }
   // Стартовый экран — из prefs (Stage 6, «Поведение»)
   const [view, setView] = useState<View>(() => loadPrefs().startView);
+  /** ПЕРЕХОД МЕЖДУ ЭКРАНАМИ: `view` — что человек выбрал, `rendered` — что
+   *  сейчас нарисовано. Во время ухода они расходятся, и это НАМЕРЕННО: сайдбар
+   *  подсвечивает выбор в тот же кадр (нажатие обязано отзываться сразу), а
+   *  содержимое доигрывает своё затухание. Разбор — shell/useViewTransition.ts. */
+  const viewFade = useViewTransition(view);
+  const rendered = viewFade.rendered;
   // Пусто, пока не приедут серверные фавориты (эффект ниже). Раньше тут был
   // захардкоженный лайк демо-трека "t3", и, поскольку серверные фавориты
   // только МЕРЖАТСЯ в этот список, убрать его из «Любимого» было нельзя.
@@ -2383,7 +2390,11 @@ function Player({
             строк, а не заливкой всей зоны. Вернёшь фон сюда — вернёшь обе беды
             разом. */}
         <main
-          key={view}
+          /* key на НАРИСОВАННОМ экране, а не на выбранном: во время ухода
+             нарисован ещё прежний, и ремонт поддерева (то есть сброс прокрутки)
+             обязан случиться вместе с приходом нового, а не в начале ухода —
+             иначе уходить снова стало бы некому. */
+          key={rendered}
           style={{
             overflowY: "auto",
             scrollbarWidth: "none",
@@ -2415,9 +2426,9 @@ function Player({
               контейнер и раскладка сетки, заглушка садится ровно на его место.
               resetKey={view} — ушёл с упавшего экрана и вернулся, он пробует
               снова; кнопка в заглушке делает то же, не сходя с места. */}
-          <ErrorBoundary resetKey={view} fallback={(retry, msg) => <ViewCrash onRetry={retry} message={msg} />}>
-          <div className="muza-view">
-            {view === "home" ? (
+          <ErrorBoundary resetKey={rendered} fallback={(retry, msg) => <ViewCrash onRetry={retry} message={msg} />}>
+          <div className="muza-view" ref={viewFade.ref} data-view-phase={viewFade.phase}>
+            {rendered === "home" ? (
               <HomeFeed
                 api={api}
                 canSearch={canSearch}
@@ -2446,7 +2457,7 @@ function Player({
                   setPrefs({ ...prefs, homeSections: normalizeHomeSections([...keys, ...prefs.homeSections]) });
                 }}
               />
-            ) : view === "search" ? (
+            ) : rendered === "search" ? (
               <SearchView
                 api={api}
                 canSearch={canSearch}
@@ -2467,7 +2478,7 @@ function Player({
                 onOpenScPlaylist={(id) => navigate("scPlaylist", { scPlaylistId: id })}
                 onPlaylistsChanged={() => void reloadServerPlaylists()}
               />
-            ) : view === "scPlaylist" && openScPlaylistId ? (
+            ) : rendered === "scPlaylist" && openScPlaylistId ? (
               <ExternalPlaylistView
                 api={api}
                 playlistId={openScPlaylistId}
@@ -2482,7 +2493,7 @@ function Player({
                 canSave={canSearch}
                 onSaveCopy={saveScCopy}
               />
-            ) : view === "favorites" ? (
+            ) : rendered === "favorites" ? (
               <FavoritesView
                 api={api}
                 canSearch={canSearch}
@@ -2495,7 +2506,7 @@ function Player({
                 onCatalogMenu={(tr, e) => openCatalogMenu(tr, e, { inFavorites: true })}
                 onNotify={showToast}
               />
-            ) : view === "playlist" && openPlaylistId ? (
+            ) : rendered === "playlist" && openPlaylistId ? (
               <PlaylistView
                 key={`${openPlaylistId}:${plBump}`}
                 api={api}
@@ -2529,7 +2540,7 @@ function Player({
                 }}
                 onChangeIcon={(fromTrack) => openIconPicker(openPlaylistId, fromTrack)}
               />
-            ) : view === "library" ? (
+            ) : rendered === "library" ? (
               <LibraryView
                 api={api}
                 canSearch={canSearch}
@@ -2550,7 +2561,7 @@ function Player({
                 onReorderPlaylists={reorderPlaylists}
                 onPlaylistsChanged={() => void reloadServerPlaylists()}
               />
-            ) : view === "stats" ? (
+            ) : rendered === "stats" ? (
               <StatsView
                 api={api}
                 canSearch={canSearch}
@@ -2569,7 +2580,7 @@ function Player({
                 // список, что переставляют стрелками в настройках.
                 onSetStatsBlocks={(statsBlocks) => setPrefs({ ...prefs, statsBlocks })}
               />
-            ) : view === "admin" ? (
+            ) : rendered === "admin" ? (
               <AdminView api={api} />
             ) : (
               <SettingsView

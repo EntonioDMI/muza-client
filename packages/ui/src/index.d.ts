@@ -85,3 +85,10 @@ export declare function Tile(props: TileProps): React.JSX.Element;
 export declare function TrackRow(props: TrackRowProps): React.JSX.Element;
 export { cssZoom } from "./lib/cssZoom";
 export { useLayerState } from "./lib/useLayerState";
+/** Живая длительность перехода/анимации узла в мс; 0 — измерить нечем.
+ *  Нужна тем, кто ждёт конца движения таймером: ползунки скорости растягивают
+ *  длительность, и зашитая константа снимала бы узел на середине. */
+export declare function readDurationMs(node: Element | null | undefined): number;
+export declare const DELAY_TIP: number;
+export declare const TOAST_HOLD: number;
+export declare const TOAST_HOLD_ACTION: number;

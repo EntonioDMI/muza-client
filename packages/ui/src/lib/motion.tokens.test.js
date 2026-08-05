@@ -88,7 +88,6 @@ describe("шкала длительностей: форма и инвариан�
       "dur-lyric",
       "dur-view-in",
       "dur-view-out",
-      "dur-view-hold",
       "dur-transit",
       "dur-transit-land",
     ]) {
