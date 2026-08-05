@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Icon, SearchInput, Toast } from "@muza/ui";
+import { Button, Dialog, Icon, SearchInput, Toast, Tooltip } from "@muza/ui";
 import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
 import {
   HttpMuzaApi,
@@ -2691,41 +2691,45 @@ function Player({
               zIndex: 44,
             }}
           >
-            <button
-              type="button"
-              aria-label={t("nowPlaying.reopen")}
-              // Подсказка — родная, а не <Tooltip> ДС: тот центрируется по
-              // ребёнку (left: 50%) и над язычком шириной 12px у самой кромки
-              // окна пузырёк наполовину ушёл бы за экран, переворачиваться он
-              // пока не умеет. Здесь это единственное место с native title.
-              title={t("nowPlaying.reopen")}
-              onClick={() => setLyricsOn(true)}
-              onMouseEnter={() => setNpHandleHover(true)}
-              onMouseLeave={() => setNpHandleHover(false)}
-              onFocus={() => setNpHandleHover(true)}
-              onBlur={() => setNpHandleHover(false)}
-              style={{
-                pointerEvents: "auto",
-                width: 12,
-                height: 72,
-                padding: 0,
-                border: "none",
-                cursor: "pointer",
-                // Тот же материал, что у панели, но БЕЗ размытия: правило
-                // tokens/glass.css — размывают только зоны и панели, мелочь
-                // красится заливкой. На полоске 12px разницы не видно, а
-                // отдельный слой композитора она бы держала постоянно.
-                background: "var(--glass-nowplaying, var(--glass-panel))",
-                borderRadius: "var(--r-sm) 0 0 var(--r-sm)",
-                // Выезжает НАВСТРЕЧУ курсору, а не в сторону: язычок прижат к
-                // кромке окна, и «наружу» ему некуда. Только transform —
-                // ширину не трогаем, иначе на каждый кадр пришёлся бы пересчёт
-                // раскладки. Уменьшенное движение гасит переход глобально
-                // (packages/ui/src/tokens/base.css сводит длительность к 1мс).
-                transform: npHandleHover ? "translateX(-4px)" : "translateX(0)",
-                transition: "transform var(--dur-state-move) var(--spring-snap, var(--ease-out))",
-              }}
-            />
+            {/* ⚠️ ЯЗЫЧОК ОТКЛЕИВАЛСЯ ОТ КРОМКИ (жалоба владельца, закрыта
+                06.08). Здесь стояло `translateX(-4px)` на наведении: полоска
+                целиком отъезжала влево, и справа от неё, между ней и кромкой
+                окна, открывалась полоса фона в 4px на всю высоту язычка. Читалось
+                ровно как «отвалился». Теперь правый край ПРИБИТ: рост идёт
+                масштабом от правой грани, элемент тянется навстречу курсору,
+                а к кромке остаётся приклеенным. Transform по-прежнему один —
+                раскладка не пересчитывается ни на одном кадре. */}
+            {/* pointerEvents обязателен ЗДЕСЬ, а не только на кнопке: обёртка
+                снаружи их гасит (она лишь центрирует), а наведение слушает
+                именно Tooltip — без этого пузырёк не появился бы никогда. */}
+            <Tooltip label={t("nowPlaying.reopen")} placement="top" style={{ pointerEvents: "auto" }}>
+              <button
+                type="button"
+                aria-label={t("nowPlaying.reopen")}
+                onClick={() => setLyricsOn(true)}
+                onMouseEnter={() => setNpHandleHover(true)}
+                onMouseLeave={() => setNpHandleHover(false)}
+                onFocus={() => setNpHandleHover(true)}
+                onBlur={() => setNpHandleHover(false)}
+                style={{
+                  pointerEvents: "auto",
+                  width: 12,
+                  height: 72,
+                  padding: 0,
+                  border: "none",
+                  cursor: "pointer",
+                  // Тот же материал, что у панели, но БЕЗ размытия: правило
+                  // tokens/glass.css — размывают только зоны и панели, мелочь
+                  // красится заливкой. На полоске 12px разницы не видно, а
+                  // отдельный слой композитора она бы держала постоянно.
+                  background: "var(--glass-nowplaying, var(--glass-panel))",
+                  borderRadius: "var(--r-sm) 0 0 var(--r-sm)",
+                  transformOrigin: "100% 50%",
+                  transform: npHandleHover ? "scaleX(1.5)" : "scaleX(1)",
+                  transition: "transform var(--dur-state-move) var(--spring-snap, var(--ease-out))",
+                }}
+              />
+            </Tooltip>
           </div>
         ) : null}
       </div>
