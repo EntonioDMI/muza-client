@@ -28,7 +28,7 @@
  *  из розетки (useDragOut), у браузера порта нет — обработчики просто не
  *  навешиваются. Прямых импортов из lib/dragOut здесь больше нет. */
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Cover, IconButton, Menu, Slider, Tooltip } from "@muza/ui";
 import { normalizeBarButtons, type BarButtonKey, type BarButtonPref } from "../lib/barButtons";
 import { isPluginKey } from "../lib/pluginSlots";
@@ -253,12 +253,71 @@ export function PlayerBar({
 }) {
   const { t } = useT();
   const repeatLabel = repeat === "one" ? t("player.repeat.one") : repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
+
   // Компоновка: shuffle/repeat живут в центре вокруг транспорта, остальные —
   // справа в порядке массива; выключенное не рендерится
   const layout = normalizeBarButtons(buttons ?? [], pluginKeys);
   const barOn = (key: BarButtonKey) => layout.find((b) => b.key === key)?.on !== false;
   const rightOrder = layout.filter((b) => b.on && b.key !== "shuffle" && b.key !== "repeat");
   const pluginBtn = (key: string) => pluginButtons.find((b) => b.key === key);
+
+  /** ХВАТАЕТ ЛИ МЕСТА МЕТКЕ ВРЕМЕНИ (2026-08-05, поймано пикселями на
+   *  минимальном окне приложения 1024).
+   *
+   *  Правая колонка сетки — minmax(0, 1fr), ряд выровнен по правому краю, и
+   *  когда набор кнопок шире колонки, содержимое переливается ВЛЕВО, под
+   *  центральный транспорт. Кнопки в ряду flex: none, поэтому уступить может
+   *  только метка — и она обязана уступать целиком: обрезанное «0:(» читается
+   *  хуже, чем ничего, а позицию и длительность и так показывает полоса
+   *  прогресса с подсказкой под курсором.
+   *
+   *  ⚠️ ПОЧЕМУ ПО ФАКТУ, А НЕ ПО РАСЧЁТУ. Первая версия складывала ширины
+   *  кнопок и зазоров и сравнивала с колонкой — и ошибалась: на 1120 расчёт
+   *  давал 100 свободных пикселей при нужных 80, а метке доставалось 64,
+   *  потому что ряд переливался на 26px из-за содержимого, которого сумма
+   *  детей не видит. Поэтому смотрим на результат: метка обрезана — прячем.
+   *
+   *  Петли это не даёт, и вот почему: колонка сетки объявлена minmax(0, 1fr),
+   *  то есть её ширину задаёт СЕТКА, а не содержимое. Спрятали метку —
+   *  clientWidth колонки не изменился, значит порог возврата не «поехал» под
+   *  собственное решение. Возвращаем метку только когда колонка стала шире
+   *  той, на которой сдались. */
+  const rightRef = useRef<HTMLDivElement | null>(null);
+  /** Ширина колонки, на которой метка перестала помещаться. Ниже неё не
+   *  показываем, выше — пробуем снова. */
+  const hideBelowRef = useRef(0);
+  const [timeFits, setTimeFits] = useState(true);
+  useLayoutEffect(() => {
+    const el = rightRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const time = el.querySelector<HTMLElement>("[data-testid=player-timecode]");
+      if (!time) return;
+      // ⚠️ ПРОВЕРЯТЬ ВИДИМОСТЬ, А НЕ НАЛИЧИЕ. Скрываем через display: none, и
+      // узел ОСТАЁТСЯ в DOM — querySelector находит его всегда. Первая версия
+      // на этом и залипла: у скрытой метки scrollWidth и clientWidth оба нули,
+      // условие «обрезана» ложно, ветка возврата не выполнялась никогда, и
+      // однажды спрятанная метка не показывалась больше ни на какой ширине.
+      if (time.offsetParent !== null) {
+        // ВИДНА: смотрим не прогноз, а факт — обрезана или нет.
+        if (time.scrollWidth > time.clientWidth + 1) {
+          hideBelowRef.current = el.clientWidth;
+          setTimeFits(false);
+        }
+        return;
+      }
+      // СКРЫТА: возвращаем, когда колонка стала шире той, на которой сдались.
+      if (el.clientWidth > hideBelowRef.current) setTimeFits(true);
+    };
+    // Набор кнопок сменился — прежний порог больше ни о чём не говорит.
+    hideBelowRef.current = 0;
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => ro.disconnect();
+    // Набор кнопок справа меняется настройкой — пересобираем наблюдателя.
+  }, [rightOrder.length]);
   // Жест перетаскивания с обложки: pointerdown взводит подготовку файла,
   // движение >12px запускает системный перенос, клик без движения — обычный
   // «Режим прослушивания». Порт берётся из розетки: в браузере его нет, и
@@ -586,7 +645,10 @@ export function PlayerBar({
           ) : null}
         </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}>
+      <div
+        ref={rightRef}
+        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--sp-2)" }}
+      >
         {/* Время одной табличной меткой «1:12 / 3:28» (макет владельца). Раньше
             это были два отдельных числа по краям полосы прогресса в 36px
             колонках — они держали середину бара шириной 480px и мешали её
@@ -600,6 +662,25 @@ export function PlayerBar({
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
             paddingRight: "var(--sp-1)",
+            /* ⚠️ ВРЕМЯ УСТУПАЕТ ПЕРВЫМ (починка 2026-08-05, поймано пикселями
+               на минимальном окне приложения 1024). Правая колонка сетки —
+               minmax(0, 1fr), то есть ей позволено сжаться до нуля; её ряд
+               выровнен по правому краю, и когда содержимое шире колонки, оно
+               переливается ВЛЕВО — прямо под центральную группу транспорта.
+               Кнопки в ряду flex: none, а у метки времени whiteSpace: nowrap
+               даёт min-width: auto = ширине текста, поэтому не сжималось
+               НИЧЕГО и метка просто оказывалась под кнопкой повтора: на 1024
+               кнопка 594–630 лежала внутри метки 586–666.
+               minWidth: 0 возвращает метке способность сжиматься, overflow
+               обрезает её по своей же границе. Уступать обязана именно она:
+               позицию и длительность показывает сама полоса прогресса, у неё
+               же подсказка под курсором, — а кнопку, наехавшую на текст, не
+               спасает ничто. */
+            minWidth: 0,
+            overflow: "hidden",
+            // Обрезанное «0:(» читается хуже, чем ничего: цифры времени либо
+            // видны целиком, либо их нет. Порог считает эффект ниже.
+            display: timeFits ? undefined : "none",
           }}
         >
           {`${fmtTime(pos)} / ${fmtTime(track?.duration ?? 0)}`}
