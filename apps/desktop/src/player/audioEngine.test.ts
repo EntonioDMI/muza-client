@@ -183,6 +183,7 @@ interface EngineInternals {
   master: { gain: { value: number } } | null;
   micTaps: Set<unknown>;
   micStream: MediaStream | null;
+  slots: { url: string | null; el: HTMLAudioElement }[];
   tapWork: Promise<void>;
   ctx: MockAudioContext | null;
 }
@@ -575,6 +576,38 @@ describe("AudioEngine: предгрев графа по первому жест�
 
     expect(ctx.resume).toHaveBeenCalled();
     expect(ctx.state).toBe("running");
+  });
+
+  it("закачка начинается ДО подъёма контекста, а не после него", async () => {
+    // ⚠️ СТОРОЖ 06.08. `await ctx.resume()` стоял перед присвоением el.src — то
+    // есть предгрев убирал постройку графа с пути «клик → звук» и тут же клал
+    // на него ожидание подъёма. Загрузке контекст не нужен: элемент качает сам.
+    noteUserGesture();
+    const engine = makeEngine();
+    await engine.prewarm();
+    const ctx = peek(engine).ctx!;
+
+    let letResume!: () => void;
+    const held = new Promise<void>((r) => {
+      letResume = r;
+    });
+    ctx.resume.mockImplementation(async () => {
+      await held; // подъём «висит», как на настоящем устройстве
+      ctx.state = "running";
+    });
+
+    const playing = engine.play(ASSET_URL, 1, 0);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // src уже назначен, хотя контекст всё ещё поднимается
+    expect(peek(engine).slots.some((s) => s.url === ASSET_URL)).toBe(true);
+    expect(ctx.state).toBe("suspended");
+
+    letResume();
+    await playing;
+    expect(ctx.state).toBe("running");
+    expect(playSpy).toHaveBeenCalled();
   });
 
   it("жест после рождения движка греет уже созданный движок", async () => {
