@@ -68,7 +68,7 @@ import { useJam } from "./player/useJam";
 import { fromCatalog, fromLocalEntry, toCatalog, type PlayerTrack } from "./player/types";
 import type { ShareData } from "./lib/shareCard";
 import { LoginScreen } from "./auth/LoginScreen";
-import { Sidebar } from "./shell/Sidebar";
+import { Sidebar, type SidebarUpdate } from "./shell/Sidebar";
 import { favoritesDropAction } from "./shell/favoritesDrop";
 import { NowPlayingPanel } from "./shell/NowPlayingPanel";
 import { LookEditLayer } from "@muza/app/shell/LookEditLayer";
@@ -1398,28 +1398,49 @@ function Player({
     };
   }, []);
 
-  // Автопроверка обновлений (Stage 8): первая через 30с после старта, дальше
-  // КАЖДЫЕ UPDATE_CHECK_INTERVAL_MS. Интервал тут принципиален: раньше стоял
-  // одинокий setTimeout, то есть проверка случалась ровно один раз за запуск —
-  // а плеер живёт открытым сутками, и такая сессия не узнавала об обновлении
-  // никогда. Троттл внутри autoCheckForUpdate страхует от лишних проверок при
-  // частых перезапусках. Нашлось — тост с «Установить» (скачивание → перезапуск сам).
+  // Найденное обновление для пункта в сайдбаре. Ref — чтобы проверка по
+  // таймеру видела актуальное состояние, не переподписываясь на каждом
+  // изменении.
+  const [update, setUpdate] = useState<SidebarUpdate | undefined>(undefined);
+  const updateRef = useRef<SidebarUpdate | undefined>(undefined);
+  updateRef.current = update;
+
+  // Автопроверка обновлений: первая через 30 секунд после старта, дальше
+  // каждые полчаса (UPDATE_CHECK_INTERVAL_MS).
+  //
+  // Задержка в 30 секунд — чтобы проверка не конкурировала за сеть с первым
+  // треком: человек запускает плеер, чтобы включить музыку, а не чтобы
+  // обновиться. Троттла между запусками больше нет: он глушил проверку при
+  // старте, если приложение перезапускали часто (решение владельца 10.08 —
+  // проверять каждый запуск).
+  //
+  // Нашлось — качаем установщик молча и показываем пункт в сайдбаре: сперва
+  // неактивный, потом готовый к нажатию.
   useEffect(() => {
     const check = () =>
-      void autoCheckForUpdate().then((found) => {
-        if (!found) return;
-        if (toastTimer.current) clearTimeout(toastTimer.current);
-        setToast({
-          open: true,
-          text: t("toast.update.available", { version: found.version }),
-          icon: "download",
-          actionLabel: t("common.install"),
-          onAction: () => {
-            setToast({ open: true, text: t("toast.update.downloading"), icon: "download" });
-            found.install(() => undefined).catch(() => showToast(t("toast.update.installFailed"), "x"));
+      void autoCheckForUpdate().then(async (found) => {
+        // Уже нашли и качаем (или скачали) — второй раз не начинаем.
+        if (!found || updateRef.current) return;
+        // Установщик тянем СРАЗУ, молча. Кнопка в это время видна, но
+        // неактивна: к моменту, когда человек её заметит и нажмёт, ставить
+        // будет уже нечего — файл на диске.
+        setUpdate({ phase: "downloading", version: found.version, onInstall: () => undefined });
+        try {
+          await found.download(() => undefined);
+        } catch {
+          // Не скачалось (сеть, диск) — убираем пункт: следующая проверка
+          // попробует заново. Тревожить сообщением незачем, человек ничего
+          // не просил.
+          setUpdate(undefined);
+          return;
+        }
+        setUpdate({
+          phase: "ready",
+          version: found.version,
+          onInstall: () => {
+            void found.install().catch(() => showToast(t("toast.update.installFailed"), "x"));
           },
         });
-        toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 12000);
       });
     const timer = setTimeout(check, 30_000);
     const iv = setInterval(check, UPDATE_CHECK_INTERVAL_MS);
@@ -2378,6 +2399,7 @@ function Player({
           onReorderPlaylists={reorderPlaylists}
           isAdmin={isAdmin}
           onOpenHotkeys={openHotkeys}
+          update={update}
         />
         {/* key на main: смена экрана пересоздаёт скролл-контейнер — прокрутка
             прошлого экрана не протекает в новый (короткий экран улетал вверх) */}

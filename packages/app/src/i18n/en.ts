@@ -1321,6 +1321,10 @@ export const en = {
     newPlaylistTooltip: "New playlist",
     admin: "Admin",
     hotkeysTooltip: "Hotkeys (?)",
+    update: {
+      downloading: "Downloading update…",
+      ready: "Update to {version}",
+    },
     playlistMeta: {
       // Число треков с 04.08 — цифрой у правого края (count); словами не дублируем.
       collabFrom: "from {owner}",

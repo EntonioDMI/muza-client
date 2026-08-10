@@ -533,6 +533,19 @@ function FavoritesRow({
   );
 }
 
+/** Состояние обновления для пункта в сайдбаре.
+ *
+ *  Двух фаз достаточно: пока установщик качается — видно, что идёт работа, но
+ *  нажать нельзя; скачался — кнопка становится живой. Промежуточных состояний
+ *  («проверяем», «обновлений нет») в интерфейсе нет намеренно: они появлялись
+ *  бы и исчезали сами по себе и только мельтешили бы в панели. */
+export interface SidebarUpdate {
+  phase: "downloading" | "ready";
+  version: string;
+  /** Закрыть приложение и поставить новую версию. */
+  onInstall: () => void;
+}
+
 export function Sidebar({
   logoSrc,
   badge,
@@ -557,6 +570,7 @@ export function Sidebar({
   onOpenSettings,
   settingsActive = false,
   onOpenHotkeys,
+  update,
   style,
 }: {
   /** Готовый URL глифа: приложение отдаёт импорт Vite, веб — путь из public/.
@@ -608,6 +622,8 @@ export function Sidebar({
   settingsActive?: boolean;
   /** Видимая кнопка «?» — диалог горячих клавиш; нет колбэка — нет кнопки. */
   onOpenHotkeys?: () => void;
+  /** Найденное обновление. Нет — пункта нет вовсе. */
+  update?: SidebarUpdate;
   /** Довесок к стилям корневого <aside> (веб вписывает панель в свою сетку). */
   style?: CSSProperties;
 }) {
@@ -778,6 +794,39 @@ export function Sidebar({
       </div>
       <div style={{ marginTop: "auto" }}>
         {onOpenAdmin ? <NavItem icon="shield" label={t("sidebar.admin")} active={adminActive} onClick={onOpenAdmin} /> : null}
+        {update ? (
+          <button
+            type="button"
+            // Нажать можно только когда установщик уже на диске. Пока он
+            // качается, кнопка видна, но неактивна: человек знает, что
+            // обновление идёт, и не жмёт впустую.
+            disabled={update.phase !== "ready"}
+            onClick={update.phase === "ready" ? update.onInstall : undefined}
+            style={{
+              display: "block",
+              width: "100%",
+              marginBottom: "var(--sp-2)",
+              padding: "var(--sp-2) var(--sp-3)",
+              borderRadius: "var(--r-sm)",
+              border: "none",
+              textAlign: "left",
+              // Акцентная заливка: пункт обязан выделяться среди навигации,
+              // иначе обновление так и останется незамеченным.
+              background: "var(--accent-soft)",
+              color: "var(--accent-text)",
+              fontFamily: "var(--font-ui)",
+              fontSize: "var(--fs-body)",
+              fontWeight: "var(--fw-semibold)",
+              cursor: update.phase === "ready" ? "pointer" : "default",
+              opacity: update.phase === "ready" ? 1 : 0.72,
+              transition: "opacity var(--dur-state) var(--ease-standard)",
+            }}
+          >
+            {update.phase === "ready"
+              ? t("sidebar.update.ready", { version: update.version })
+              : t("sidebar.update.downloading")}
+          </button>
+        ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <NavItem icon="settings" label={t("settings.title")} active={settingsActive} onClick={onOpenSettings} />

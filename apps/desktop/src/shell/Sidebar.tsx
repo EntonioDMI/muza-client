@@ -14,7 +14,11 @@
  *  packages/app/tsconfig.json). Общий код получает готовый URL пропом. */
 
 import glyph from "@muza/ui/assets/logo/glyph.svg";
-import { Sidebar as SharedSidebar, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
+import {
+  Sidebar as SharedSidebar,
+  type SidebarPlaylist,
+  type SidebarUpdate,
+} from "@muza/app/shell/Sidebar";
 import { useLookEdit } from "@muza/app/shell/lookReorder";
 import { applyVisibleOrder } from "@muza/app/lib/dragEngine";
 import { NAV_ITEM_META, navItemLabel, normalizeNavItems, type NavItemPref } from "../lib/navItems";
@@ -22,7 +26,7 @@ import { isPluginKey } from "../lib/pluginSlots";
 import type { View } from "../types";
 import { useT } from "../i18n";
 
-export type { SidebarPlaylist };
+export type { SidebarPlaylist, SidebarUpdate };
 
 /** ⚠️ `isFillableNavIcon` из lib/navItems.ts здесь больше не зовётся: правило
  *  заливки активной иконки — часть отрисовки панели и уехало в неё вместе с
@@ -58,6 +62,7 @@ export function Sidebar({
   onSelectPluginTab,
   onSetNavItems,
   onOpenHotkeys,
+  update,
 }: {
   view: View;
   setView: (v: View) => void;
@@ -91,6 +96,8 @@ export function Sidebar({
   /** Записать компоновку вкладок (режим правки вида, Ctrl+E). Нет колбэка —
    *  вкладки не переставляются. */
   onSetNavItems?: (items: NavItemPref[]) => void;
+  /** Найденное обновление: пункт над «Настройками». Нет — пункта нет. */
+  update?: SidebarUpdate;
   /** T9: видимая кнопка «?» — открывает диалог горячих клавиш (App). */
   onOpenHotkeys: () => void;
 }) {
@@ -146,6 +153,7 @@ export function Sidebar({
       onOpenSettings={() => setView("settings")}
       settingsActive={view === "settings"}
       onOpenHotkeys={onOpenHotkeys}
+      update={update}
     />
   );
 }
