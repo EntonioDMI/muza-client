@@ -14,9 +14,9 @@
  *  играть растущий файл.
  *
  *  ⚠️ ЧТО ПОКА ТЕРЯЕТСЯ НА НАТИВНОМ ПУТИ (по одной задаче на каждое):
- *  эквалайзер и лимитер, кроссфейд и gapless, вывод на несколько устройств с
- *  подмешиванием голоса, визуализатор и скорость с сохранением тона. Всё это
- *  на веб-пути продолжает работать как раньше.
+ *  кроссфейд и gapless, вывод на несколько устройств с подмешиванием голоса,
+ *  визуализатор и скорость с сохранением тона. Всё это на веб-пути продолжает
+ *  работать как раньше. Эквалайзер, преамп и лимитер уже перенесены (dsp.rs).
  */
 import { invoke } from "@tauri-apps/api/core";
 import { AudioEngine, type EngineCallbacks, type MicConfig, type OutputRoute } from "./audioEngine";
@@ -63,6 +63,10 @@ export class HybridAudioEngine {
    *  громкость, потому что отдельного гейна слота там пока нет. */
   private norm = 1;
   private endedSent = false;
+  /** Состояние эквалайзера храним у себя: нативный движок рождается вместе с
+   *  треком, а полосы человек мог выставить до него — их надо донести. */
+  private eqOn = false;
+  private eqBands: number[] = [];
   /** Последняя известная позиция нативного пути: команда асинхронна, а
    *  вызывающие position() ждут число немедленно. */
   private lastPosition = 0;
@@ -126,6 +130,10 @@ export class HybridAudioEngine {
     this.native = true;
     this.lastPosition = 0;
     await invoke("native_play", { path, volume: this.gain() });
+    // Движок только что родился и про настройки не знает — доносим их.
+    if (this.eqBands.length > 0) {
+      void invoke("native_set_eq", { on: this.eqOn, bands: this.eqBands }).catch(() => {});
+    }
     this.startPolling();
     this.cb.onPlaying?.();
   }
@@ -181,7 +189,10 @@ export class HybridAudioEngine {
   }
 
   setEq(on: boolean, bands: number[]): void {
+    this.eqOn = on;
+    this.eqBands = bands;
     this.web.setEq(on, bands);
+    if (this.native) void invoke("native_set_eq", { on, bands }).catch(() => {});
   }
 
   setOutputs(routes: OutputRoute[]): void {

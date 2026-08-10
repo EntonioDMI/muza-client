@@ -2,6 +2,7 @@
 // это требование Tauri для будущих мобильных сборок).
 
 mod audio;
+mod dsp;
 mod engine;
 mod local;
 mod miniplayer;
@@ -105,6 +106,7 @@ pub fn run() {
             audio::native_set_paused,
             audio::native_seek,
             audio::native_set_volume,
+            audio::native_set_eq,
             audio::native_status,
             audio::native_stop,
             engine::recipe_apply,

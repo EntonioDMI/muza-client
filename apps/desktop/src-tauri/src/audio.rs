@@ -75,6 +75,10 @@ struct Shared {
     /// неудачном try_lock брала 1.0, и каждое движение ползунка давало скачок
     /// громкости до максимума — те самые хрипы (жалоба владельца 10.08).
     volume: AtomicU32,
+    /// Эквалайзер: включён и десять усилений полос в дБ (биты f32). Атомики —
+    /// по той же причине, что и громкость: колбэк вывода не ждёт блокировок.
+    eq_on: AtomicBool,
+    eq_gains: [AtomicU32; 10],
     /// Запрошенная перемотка, секунды. Исполняет поток декодера: только он
     /// владеет читателем формата.
     seek_to: Mutex<Option<f64>>,
@@ -117,6 +121,8 @@ impl NativeAudio {
             device_channels: AtomicU32::new(config.channels() as u32),
             volume: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
             fade_in_left: AtomicU64::new(0),
+            eq_on: AtomicBool::new(false),
+            eq_gains: std::array::from_fn(|_| AtomicU32::new(0f32.to_bits())),
             seek_to: Mutex::new(None),
             drained: AtomicBool::new(false),
         });
@@ -176,6 +182,10 @@ impl NativeAudio {
                     // старта с ненулевого уровня убирает целиком.
                     let fade_total = (rate as u64 / 50).max(1);
                     cb.fade_in_left.store(fade_total, Ordering::Relaxed);
+                    // Цепь обработки живёт вместе с потоком: у фильтров есть
+                    // состояние, и при переоткрытии вывода оно начинается
+                    // заново — это правильно, устройство другое.
+                    let mut dsp = crate::dsp::Dsp::new(rate as f32);
                     let stream = device.build_output_stream(
                         &config.clone().into(),
                     move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -217,6 +227,16 @@ impl NativeAudio {
                         cb.fade_in_left.store(fade_left, Ordering::Relaxed);
                         current_gain = target;
                         drop(pcm);
+
+                        // Эквалайзер и лимитер — после громкости, последними
+                        // перед выходом: лимитер обязан видеть тот уровень,
+                        // который реально уйдёт в устройство. Фильтры линейны,
+                        // поэтому порядок с громкостью на звук не влияет.
+                        let gains: [f32; 10] = std::array::from_fn(|i| {
+                            f32::from_bits(cb.eq_gains[i].load(Ordering::Relaxed))
+                        });
+                        dsp.set_bands(cb.eq_on.load(Ordering::Relaxed), &gains, rate as f32);
+                        dsp.process(&mut out[..ready], channels, rate as f32);
                         // Буфер не успел наполниться — тишина лучше мусора.
                         out[ready..].fill(0.0);
                         // Пауза сюда не доходит — выше ранний возврат, и часы
@@ -272,6 +292,15 @@ impl NativeAudio {
     pub fn position(&self) -> f64 {
         let frames = self.shared.frames_out.load(Ordering::Relaxed) as f64;
         frames / self.shared.device_rate.load(Ordering::Relaxed).max(1) as f64
+    }
+
+    /// Полосы эквалайзера в дБ. Пересборку коэффициентов делает сам DSP —
+    /// и только когда значения реально изменились.
+    pub fn set_eq(&self, on: bool, bands: &[f32]) {
+        self.shared.eq_on.store(on, Ordering::Relaxed);
+        for (slot, value) in self.shared.eq_gains.iter().zip(bands.iter()) {
+            slot.store(value.clamp(-24.0, 24.0).to_bits(), Ordering::Relaxed);
+        }
     }
 
     /// Громкость 0..1 (кривую считает вызывающий — она общая с прежним движком).
@@ -503,6 +532,13 @@ pub fn native_status() -> NativeStatus {
             playing: true,
         },
         None => NativeStatus { position: 0.0, ended: false, playing: false },
+    }
+}
+
+#[tauri::command]
+pub fn native_set_eq(on: bool, bands: Vec<f32>) {
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_eq(on, &bands);
     }
 }
 
