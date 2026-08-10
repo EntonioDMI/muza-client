@@ -74,6 +74,11 @@ struct Shared {
     /// Запрошенная перемотка, секунды. Исполняет поток декодера: только он
     /// владеет читателем формата.
     seek_to: Mutex<Option<f64>>,
+    /// Сколько кадров осталось до конца нарастания на старте. Звук всегда
+    /// начинается с произвольной точки формы волны, и мгновенный старт с
+    /// ненулевого уровня динамик отрабатывает низкочастотным щелчком —
+    /// «ударом баса» (жалоба владельца 10.08).
+    fade_in_left: AtomicU64,
     /// Декодер дошёл до конца файла. Трек считается сыгранным не здесь, а
     /// когда опустеет буфер — иначе конец объявлялся бы на полторы секунды
     /// раньше, чем человек его слышит.
@@ -86,7 +91,11 @@ pub struct NativeAudio {
 
 impl NativeAudio {
     /// Открыть устройство вывода и начать проигрывать файл.
-    pub fn play(path: &Path) -> Result<Self, String> {
+    ///
+    /// `gain` обязателен и передаётся сразу, а не выставляется следом: поток
+    /// вывода, начатый с чужой громкости, отдаёт первый буфер на ней — при
+    /// тихом ползунке это удар в уши на старте каждого трека.
+    pub fn play(path: &Path, gain: f32) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -102,7 +111,8 @@ impl NativeAudio {
             frames_out: AtomicU64::new(0),
             device_rate: config.sample_rate().0,
             device_channels: config.channels(),
-            volume: AtomicU32::new(1.0f32.to_bits()),
+            volume: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
+            fade_in_left: AtomicU64::new(0),
             seek_to: Mutex::new(None),
             drained: AtomicBool::new(false),
         });
@@ -131,7 +141,13 @@ impl NativeAudio {
                 let cb = Arc::clone(&stream_shared);
                 // Живёт между вызовами колбэка: от неё ведётся плавный переход
                 // громкости, иначе каждый буфер начинался бы со скачка.
-                let mut current_gain = 1.0f32;
+                // Стартуем с УЖЕ ЗАДАННОЙ громкости, а не с единицы — иначе
+                // первый буфер трека едет с максимума вниз.
+                let mut current_gain = f32::from_bits(cb.volume.load(Ordering::Relaxed));
+                // 20 мс нарастания: на слух неразличимо, а щелчок от старта с
+                // ненулевого уровня убирает целиком.
+                let fade_total = (cb.device_rate as u64 / 50).max(1);
+                cb.fade_in_left.store(fade_total, Ordering::Relaxed);
                 let stream = device.build_output_stream(
                     &config.into(),
                     move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -155,14 +171,23 @@ impl NativeAudio {
                         let frames = (ready / channels).max(1);
                         let step = (target - current_gain) / frames as f32;
                         let mut gain = current_gain;
+                        let mut fade_left = cb.fade_in_left.load(Ordering::Relaxed);
                         for (i, (slot, sample)) in
                             out.iter_mut().zip(pcm.drain(..ready)).enumerate()
                         {
-                            *slot = sample * gain;
+                            // Нарастание на старте: множитель от 0 к 1.
+                            let fade = if fade_left > 0 {
+                                (fade_total - fade_left) as f32 / fade_total as f32
+                            } else {
+                                1.0
+                            };
+                            *slot = sample * gain * fade;
                             if (i + 1) % channels == 0 {
                                 gain += step;
+                                fade_left = fade_left.saturating_sub(1);
                             }
                         }
+                        cb.fade_in_left.store(fade_left, Ordering::Relaxed);
                         current_gain = target;
                         drop(pcm);
                         // Буфер не успел наполниться — тишина лучше мусора.
@@ -374,8 +399,16 @@ pub struct NativeStatus {
 
 #[tauri::command]
 pub fn native_play(path: String, volume: f32) -> Result<(), String> {
-    let audio = NativeAudio::play(Path::new(&path))?;
-    audio.set_volume(volume);
+    // Прежний трек гасим ПЛАВНО и только потом сносим: обрыв потока на
+    // середине формы волны динамик отрабатывает низкочастотным щелчком —
+    // «ударом баса» при каждом переключении. Рампа громкости в колбэке сводит
+    // уровень за один буфер, ждём чуть дольше, чтобы он успел выйти.
+    if let Some(old) = ENGINE.lock().unwrap().as_ref() {
+        old.set_volume(0.0);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let audio = NativeAudio::play(Path::new(&path), volume)?;
     *ENGINE.lock().unwrap() = Some(audio);
     Ok(())
 }

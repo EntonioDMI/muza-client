@@ -62,7 +62,7 @@ pub fn run() {
             // мимо WebView2. Нужно, чтобы «захват аудио приложения» увидел
             // звук у PID окна. Убрать, когда движок подключат к плееру.
             if let Ok(path) = std::env::var("MUZA_NATIVE_AUDIO") {
-                match audio::NativeAudio::play(std::path::Path::new(&path)) {
+                match audio::NativeAudio::play(std::path::Path::new(&path), 1.0) {
                     // Держим живым до конца процесса: Drop остановил бы вывод.
                     Ok(handle) => std::mem::forget(handle),
                     Err(e) => eprintln!("[audio] проверка гейта не удалась: {e}"),
