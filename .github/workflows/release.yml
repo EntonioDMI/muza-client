@@ -49,6 +49,26 @@ jobs:
       - name: Установка зависимостей
         run: pnpm install --frozen-lockfile
 
+      # Нативный аудио-движок (10.08) тянет две сборочные зависимости, которых
+      # у проекта раньше не было: libopus собирается через cmake, а вокодер
+      # скорости — через bindgen, которому нужен libclang из LLVM. На образе
+      # windows-latest оба инструмента есть, но каталог LLVM не в PATH, и
+      # bindgen падает с «Unable to find libclang». Проверяем ЯВНО и до первой
+      # компиляции Rust: понятная ошибка здесь лучше невнятной посреди сборки.
+      # ⚠️ Без $PSNativeCommandUseErrorActionPreference: гейт считает эту строку
+      # пошагово и требует её ровно там, где в шаге НЕСКОЛЬКО гейт-команд.
+      # Здесь их нет, а от невыполнения защищает throw ниже.
+      - name: Инструменты нативного звука
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --version
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path (Join-Path $llvmBin 'libclang.dll'))) {
+            throw "libclang.dll не найден в $llvmBin — bindgen не соберётся"
+          }
+          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Проверенные sidecar-бинари
         shell: pwsh
         run: |
