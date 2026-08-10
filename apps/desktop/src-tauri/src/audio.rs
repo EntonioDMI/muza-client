@@ -34,6 +34,15 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::Time;
 
+/// Окно преобразования Фурье. 2048 — то же значение, что стояло у AnalyserNode:
+/// визуализатор рассчитан ровно на 1024 полосы, и менять его незачем.
+const FFT_SIZE: usize = 2048;
+/// Границы шкалы в дБ и сглаживание — тоже из AnalyserNode, иначе картинка
+/// стала бы другой по яркости и резкости.
+const MIN_DB: f32 = -100.0;
+const MAX_DB: f32 = -30.0;
+const SMOOTHING: f32 = 0.7;
+
 /// Сколько секунд звука держим готовыми. Меньше — риск подхрипываний на
 /// загруженной машине, больше — задержка реакции на паузу и перемотку.
 const BUFFER_SECONDS: f32 = 1.5;
@@ -106,6 +115,12 @@ struct Shared {
     taps: Mutex<Vec<Arc<Tap>>>,
     /// Захват голоса, общий на движок.
     mic: Mutex<Option<Arc<Mic>>>,
+    /// Последние кадры финального сигнала — сведённые в моно, для
+    /// визуализатора. Ровно окно преобразования Фурье, ничего сверх.
+    scope: Mutex<VecDeque<f32>>,
+    /// Сглаженный спектр между запросами: без него столбики дёргаются.
+    /// Постоянная 0.7 — та же, что стояла у AnalyserNode.
+    spectrum_prev: Mutex<Vec<f32>>,
     /// Есть живые маршруты — системный выход молчит: звук идёт только туда,
     /// куда человек его направил. Инвариант прежнего движка.
     taps_active: AtomicBool,
@@ -171,6 +186,8 @@ impl NativeAudio {
             xfade_in: AtomicBool::new(true),
             taps: Mutex::new(Vec::new()),
             mic: Mutex::new(None),
+            scope: Mutex::new(VecDeque::new()),
+            spectrum_prev: Mutex::new(Vec::new()),
             taps_active: AtomicBool::new(false),
         });
 
@@ -307,6 +324,19 @@ impl NativeAudio {
                         dsp.process(&mut out[..ready], channels, rate as f32);
                         // Буфер не успел наполниться — тишина лучше мусора.
                         out[ready..].fill(0.0);
+
+                        // Снимок для визуализатора: берём финальный сигнал —
+                        // тот, что человек слышит, уже после эквалайзера и
+                        // лимитера. Ровно как analyser стоял в конце цепи.
+                        if let Ok(mut scope) = cb.scope.try_lock() {
+                            for frame in out.chunks(channels) {
+                                let mono = frame.iter().sum::<f32>() / channels as f32;
+                                scope.push_back(mono);
+                            }
+                            while scope.len() > FFT_SIZE {
+                                scope.pop_front();
+                            }
+                        }
 
                         // Раздача в дополнительные устройства. try_lock, а не
                         // lock: колбэк реального времени не имеет права ждать
@@ -972,6 +1002,67 @@ pub fn native_set_eq(on: bool, bands: Vec<f32>) {
     if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
         audio.set_eq(on, &bands);
     }
+}
+
+/// Снимок для визуализатора: спектр и форма волны в тех же байтах, что отдавал
+/// AnalyserNode — 1024 полосы и 2048 точек, 128 = ноль.
+#[derive(serde::Serialize)]
+pub struct NativeScope {
+    freq: Vec<u8>,
+    wave: Vec<u8>,
+}
+
+#[tauri::command]
+pub fn native_scope() -> NativeScope {
+    let empty = NativeScope { freq: vec![0; FFT_SIZE / 2], wave: vec![128; FFT_SIZE] };
+    let guard = ENGINE.lock().unwrap();
+    let Some(audio) = guard.as_ref() else {
+        return empty;
+    };
+    let samples: Vec<f32> = {
+        let scope = audio.shared.scope.lock().unwrap();
+        if scope.len() < FFT_SIZE {
+            return empty;
+        }
+        scope.iter().copied().collect()
+    };
+
+    // Форма волны: байты вокруг 128, как getByteTimeDomainData.
+    let wave: Vec<u8> = samples
+        .iter()
+        .map(|s| (((s * 128.0) + 128.0).clamp(0.0, 255.0)) as u8)
+        .collect();
+
+    // Окно Блэкмана — им же окно накладывает AnalyserNode перед разложением.
+    let mut buffer: Vec<rustfft::num_complex::Complex<f32>> = samples
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let x = i as f32 / (FFT_SIZE - 1) as f32;
+            let w = 0.42 - 0.5 * (2.0 * std::f32::consts::PI * x).cos()
+                + 0.08 * (4.0 * std::f32::consts::PI * x).cos();
+            rustfft::num_complex::Complex::new(s * w, 0.0)
+        })
+        .collect();
+    let mut planner = rustfft::FftPlanner::new();
+    planner.plan_fft_forward(FFT_SIZE).process(&mut buffer);
+
+    let bins = FFT_SIZE / 2;
+    let mut prev = audio.shared.spectrum_prev.lock().unwrap();
+    if prev.len() != bins {
+        *prev = vec![MIN_DB; bins];
+    }
+    let freq: Vec<u8> = (0..bins)
+        .map(|i| {
+            let magnitude = buffer[i].norm() / bins as f32;
+            let db = 20.0 * magnitude.max(1e-9).log10();
+            // Сглаживание по времени: без него столбики дёргаются покадрово.
+            prev[i] = SMOOTHING * prev[i] + (1.0 - SMOOTHING) * db;
+            let normalized = (prev[i] - MIN_DB) / (MAX_DB - MIN_DB);
+            (normalized.clamp(0.0, 1.0) * 255.0) as u8
+        })
+        .collect();
+    NativeScope { freq, wave }
 }
 
 #[tauri::command]

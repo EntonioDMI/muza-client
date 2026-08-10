@@ -109,6 +109,7 @@ pub fn run() {
             audio::native_set_eq,
             audio::native_set_outputs,
             audio::native_set_mic,
+            audio::native_scope,
             audio::native_status,
             audio::native_stop,
             engine::recipe_apply,

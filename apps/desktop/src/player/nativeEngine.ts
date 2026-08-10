@@ -13,10 +13,10 @@
  *  иначе отдаём прежнему движку. Гибрид схлопнется, когда Rust научится
  *  играть растущий файл.
  *
- *  ⚠️ ЧТО ПОКА ТЕРЯЕТСЯ НА НАТИВНОМ ПУТИ: подмешивание голоса в маршруты,
- *  визуализатор и скорость с сохранением тона. На веб-пути всё это продолжает
- *  работать как раньше. Уже перенесены: эквалайзер, преамп и лимитер (dsp.rs),
- *  кроссфейд и вывод на несколько устройств.
+ *  ⚠️ ЧТО ПОКА ТЕРЯЕТСЯ НА НАТИВНОМ ПУТИ: только скорость воспроизведения с
+ *  сохранением тона (нужен WSOLA) — там движок молча остаётся на 1x. Всё
+ *  остальное перенесено: эквалайзер, преамп и лимитер (dsp.rs), кроссфейд,
+ *  вывод на несколько устройств, подмешивание голоса, визуализатор.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { AudioEngine, type EngineCallbacks, type MicConfig, type OutputRoute } from "./audioEngine";
@@ -47,6 +47,64 @@ export function assetUrlToPath(url: string): string | null {
   }
 }
 
+/** Подмена AnalyserNode для нативного пути.
+ *
+ *  Визуализатор берёт у анализатора ровно четыре вещи — размер окна, число
+ *  полос и два метода снятия данных. Поэтому вместо переписывания
+ *  визуализатора отдаём объект с той же поверхностью, а данные считает Rust
+ *  (тем же окном 2048 и той же шкалой в дБ, что были у Web Audio).
+ *
+ *  Опрос ленивый: он заводится при первом обращении и глохнет через секунду
+ *  после последнего. Визуализатор закрыт — преобразование Фурье не считается
+ *  вообще, а открыт он далеко не всегда. */
+class NativeAnalyser {
+  readonly fftSize = 2048;
+  readonly frequencyBinCount = 1024;
+  private freq = new Uint8Array(1024);
+  private wave = new Uint8Array(2048).fill(128);
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private lastAsk = 0;
+
+  private ensurePolling(): void {
+    this.lastAsk = Date.now();
+    if (this.timer !== null) return;
+    this.timer = setInterval(() => {
+      // Никто не спрашивал секунду — визуализатор закрыт, глушим опрос.
+      if (Date.now() - this.lastAsk > 1000) {
+        this.stop();
+        return;
+      }
+      void invoke<{ freq: number[]; wave: number[] }>("native_scope")
+        .then((scope) => {
+          this.freq = new Uint8Array(scope.freq);
+          this.wave = new Uint8Array(scope.wave);
+        })
+        .catch(() => {
+          /* движок мог остановиться между кадрами */
+        });
+    }, 33); // ~30 кадров в секунду: чаще глаз не различает
+  }
+
+  stop(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.freq = new Uint8Array(1024);
+    this.wave = new Uint8Array(2048).fill(128);
+  }
+
+  getByteFrequencyData(target: Uint8Array): void {
+    this.ensurePolling();
+    target.set(this.freq.subarray(0, target.length));
+  }
+
+  getByteTimeDomainData(target: Uint8Array): void {
+    this.ensurePolling();
+    target.set(this.wave.subarray(0, target.length));
+  }
+}
+
 interface NativeStatus {
   position: number;
   ended: boolean;
@@ -67,6 +125,7 @@ export class HybridAudioEngine {
    *  треком, а полосы человек мог выставить до него — их надо донести. */
   private eqOn = false;
   private eqBands: number[] = [];
+  private readonly nativeAnalyser = new NativeAnalyser();
   /** Последняя известная позиция нативного пути: команда асинхронна, а
    *  вызывающие position() ждут число немедленно. */
   private lastPosition = 0;
@@ -112,6 +171,7 @@ export class HybridAudioEngine {
   private async stopNative(): Promise<void> {
     await invoke("native_stop").catch(() => {});
     this.stopPolling();
+    this.nativeAnalyser.stop();
     this.native = false;
   }
 
@@ -239,10 +299,13 @@ export class HybridAudioEngine {
     return this.web.prewarm();
   }
 
-  /** На нативном пути анализатор молчит: сигнал не проходит через Web Audio.
-   *  Визуализатор это переживает — он и так рассчитан на null. */
+  /** На нативном пути отдаём подменный анализатор: данные считает Rust, а
+   *  поверхность та же, что у AnalyserNode — визуализатор не отличает.
+   *  Приведение типа честное по составу: визуализатор берёт только fftSize,
+   *  frequencyBinCount и два метода снятия данных, всё это реализовано. */
   analyser(): AnalyserNode | null {
-    return this.native ? null : this.web.analyser();
+    if (!this.native) return this.web.analyser();
+    return this.nativeAnalyser as unknown as AnalyserNode;
   }
 
   static normFactor(loudness: number | null, enabled: boolean): number {

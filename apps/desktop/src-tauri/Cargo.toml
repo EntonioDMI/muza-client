@@ -76,6 +76,7 @@ symphonia = { version = "0.6.0", features = ["mkv", "isomp4", "aac", "mp3", "fla
 symphonia-adapter-libopus = "0.3.0"
 rubato = "4.0.0"
 audioadapter-buffers = "4"
+rustfft = "6.4.1"
 
 # Системный прокси Windows для добычи (отчёт O, 22.07): sysproxy.rs, только
 # Windows-таргет. Версия 0.61 уже разрешена в дереве через tao/wry/tauri
