@@ -12,10 +12,10 @@
 //! принцип (гейт: пробник process-loopback должен поймать звук из PID окна).
 //! Перенос DSP-цепи и остального — задачи 2–6.
 //!
-//! ⚠️ Ресемплинг здесь линейный, временный. WASAPI в общем режиме держит
-//! частоту миксера (обычно 48 кГц), а mp3 в кэше — 44.1 кГц, без пересчёта
-//! музыка играла бы быстрее. Линейная интерполяция даёт слышимые артефакты на
-//! верхах — заменить на rubato вместе с задачей 2.
+//! Ресемплинг: WASAPI в общем режиме держит частоту миксера (обычно 48 кГц), а
+//! файлы в кэше сплошь 44.1 — без пересчёта музыка играла бы быстрее и выше.
+//! Считает rubato (FFT, синхронный — соотношение частот постоянно), потому что
+//! линейная интерполяция слышимо мажет верхи.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -23,9 +23,11 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use audioadapter_buffers::direct::InterleavedSlice;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
@@ -34,6 +36,21 @@ use symphonia::core::meta::MetadataOptions;
 /// Сколько секунд звука держим готовыми. Меньше — риск подхрипываний на
 /// загруженной машине, больше — задержка реакции на паузу и перемотку.
 const BUFFER_SECONDS: f32 = 1.5;
+
+/// Реестр кодеков: штатные symphonia ПЛЮС Opus поверх libopus.
+///
+/// Своими силами symphonia Opus не умеет, а он у нас основной формат — 312
+/// файлов из 423 в кэше (webm с YouTube). Поэтому вместо `default::get_codecs()`
+/// собираем реестр сами: сначала всё включённое фичами, затем адаптер.
+fn codecs() -> &'static CodecRegistry {
+    static REGISTRY: std::sync::OnceLock<CodecRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
+        registry
+    })
+}
 
 struct Shared {
     /// Готовые к выводу сэмплы, уже в частоте и каналах устройства.
@@ -171,16 +188,17 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
         .ok_or_else(|| "у дорожки нет параметров звука".to_string())?
         .clone();
 
-    let mut decoder = symphonia::default::get_codecs()
+    let mut decoder = codecs()
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("кодек не поддержан: {e}"))?;
 
-    let out_rate = shared.device_rate as f32;
+    let out_rate = shared.device_rate;
     let out_channels = shared.device_channels as usize;
-    let capacity = (out_rate * BUFFER_SECONDS) as usize * out_channels;
-    // Дробный остаток шага ресемплинга между пакетами — иначе на стыках
-    // накапливался бы сдвиг и раз в несколько секунд щёлкало.
-    let mut resample_pos = 0f32;
+    let capacity = (out_rate as f32 * BUFFER_SECONDS) as usize * out_channels;
+    // Ресемплер создаётся лениво: частота источника известна только из первого
+    // декодированного пакета, а не из заголовка (у некоторых контейнеров её
+    // там просто нет).
+    let mut resampler: Option<Resampler> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
         let packet = match format.next_packet() {
@@ -196,21 +214,30 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
             Err(_) => continue, // битый пакет — пропускаем, музыка важнее
         };
         let (samples, in_channels, in_rate) = flatten(&decoded);
-        let step = in_rate as f32 / out_rate;
-        let in_frames = samples.len() / in_channels.max(1);
-
-        let mut chunk: Vec<f32> = Vec::new();
-        while resample_pos < in_frames as f32 {
-            let idx = resample_pos as usize;
+        // Раскладка каналов делается ДО пересчёта частоты: моно идёт тем же
+        // сэмплом в оба уха, лишние каналы источника отбрасываются (настоящее
+        // сведение придёт с DSP-цепью).
+        let mut mapped = Vec::with_capacity(samples.len() / in_channels.max(1) * out_channels);
+        for frame in samples.chunks(in_channels.max(1)) {
             for ch in 0..out_channels {
-                // Моно в стерео — тем же сэмплом в оба уха; лишние каналы
-                // источника отбрасываем (сведение придёт с задачей 2).
-                let src_ch = if in_channels == 1 { 0 } else { ch.min(in_channels - 1) };
-                chunk.push(samples[idx * in_channels + src_ch]);
+                let src = if in_channels == 1 { 0 } else { ch.min(in_channels - 1) };
+                mapped.push(frame[src]);
             }
-            resample_pos += step;
         }
-        resample_pos -= in_frames as f32;
+
+        let chunk = match resampler.as_mut() {
+            Some(r) => r.push(&mapped),
+            None if in_rate == out_rate => mapped, // частоты совпали — пересчёт не нужен
+            None => {
+                let mut r = Resampler::new(in_rate, out_rate, out_channels)?;
+                let first = r.push(&mapped);
+                resampler = Some(r);
+                first
+            }
+        };
+        if chunk.is_empty() {
+            continue; // ресемплер копит кадры до полного окна
+        }
 
         // Ждём, пока в буфере освободится место: держать весь трек в памяти
         // незачем, а колбэк вывода не должен упереться в пустоту.
@@ -228,6 +255,78 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Пересчёт частоты дискретизации под устройство.
+///
+/// rubato работает планарно (канал за каналом) и требует ровно столько кадров,
+/// сколько скажет `input_frames_next` — а пакеты декодера приходят произвольной
+/// длины. Поэтому вход копится здесь, и окно отдаётся ресемплеру целиком.
+struct Resampler {
+    inner: rubato::Fft<f32>,
+    /// Накопленный вход, чередующийся.
+    pending: Vec<f32>,
+    /// Преаллоцированный выход: в реальном времени аллокаций быть не должно.
+    out: Vec<f32>,
+    out_max: usize,
+    channels: usize,
+}
+
+impl Resampler {
+    fn new(in_rate: u32, out_rate: u32, channels: usize) -> Result<Self, String> {
+        const CHUNK: usize = 1024;
+        let inner = rubato::Fft::<f32>::new(
+            in_rate as usize,
+            out_rate as usize,
+            CHUNK,
+            channels,
+            rubato::FixedSync::Input,
+        )
+        .map_err(|e| format!("ресемплер {in_rate}→{out_rate}: {e}"))?;
+        let out_max = rubato::Resampler::output_frames_max(&inner);
+        Ok(Self {
+            inner,
+            pending: Vec::new(),
+            out: vec![0.0; out_max * channels],
+            out_max,
+            channels,
+        })
+    }
+
+    /// Скормить чередующиеся кадры и забрать готовые — тоже чередующиеся.
+    /// Пусто, пока не набралось полное окно.
+    fn push(&mut self, interleaved: &[f32]) -> Vec<f32> {
+        let Self { inner, pending, out, out_max, channels } = self;
+        pending.extend_from_slice(interleaved);
+        let mut result = Vec::new();
+        loop {
+            let need_frames = rubato::Resampler::input_frames_next(inner);
+            let need = need_frames * *channels;
+            if pending.len() < need {
+                break;
+            }
+            let written = {
+                let Ok(input) = InterleavedSlice::new(&pending[..need], *channels, need_frames)
+                else {
+                    break;
+                };
+                let Ok(mut output) = InterleavedSlice::new_mut(&mut out[..], *channels, *out_max)
+                else {
+                    break;
+                };
+                match rubato::Resampler::process_into_buffer(inner, &input, &mut output, None) {
+                    Ok((_, written)) => written,
+                    Err(e) => {
+                        eprintln!("[audio] ресемплер сбоил: {e}");
+                        break;
+                    }
+                }
+            };
+            result.extend_from_slice(&out[..written * *channels]);
+            pending.drain(..need);
+        }
+        result
+    }
 }
 
 /// Привести буфер symphonia к плоскому f32-чередованию (L,R,L,R…).
