@@ -91,6 +91,12 @@ struct Shared {
     /// когда опустеет буфер — иначе конец объявлялся бы на полторы секунды
     /// раньше, чем человек его слышит.
     drained: AtomicBool,
+    /// Кроссфейд: сколько кадров кривой пройдено и сколько всего. Ноль в
+    /// длине — фейда нет, множитель единица.
+    xfade_pos: AtomicU64,
+    xfade_len: AtomicU64,
+    /// true — нарастаем (приходящий трек), false — гаснем (уходящий).
+    xfade_in: AtomicBool,
 }
 
 pub struct NativeAudio {
@@ -125,6 +131,9 @@ impl NativeAudio {
             eq_gains: std::array::from_fn(|_| AtomicU32::new(0f32.to_bits())),
             seek_to: Mutex::new(None),
             drained: AtomicBool::new(false),
+            xfade_pos: AtomicU64::new(0),
+            xfade_len: AtomicU64::new(0),
+            xfade_in: AtomicBool::new(true),
         });
 
         // Декодер живёт в своём потоке: он спит, когда буфер полон, и не имеет
@@ -209,6 +218,9 @@ impl NativeAudio {
                         let step = (target - current_gain) / frames as f32;
                         let mut gain = current_gain;
                         let mut fade_left = cb.fade_in_left.load(Ordering::Relaxed);
+                        let mut xpos = cb.xfade_pos.load(Ordering::Relaxed);
+                        let xlen = cb.xfade_len.load(Ordering::Relaxed);
+                        let xin = cb.xfade_in.load(Ordering::Relaxed);
                         for (i, (slot, sample)) in
                             out.iter_mut().zip(pcm.drain(..ready)).enumerate()
                         {
@@ -218,13 +230,31 @@ impl NativeAudio {
                             } else {
                                 1.0
                             };
-                            *slot = sample * gain * fade;
+                            // Кроссфейд равномощными кривыми (sin/cos), как в
+                            // прежнем движке: линейные дают провал −3 дБ на
+                            // стыке, потому что сумма мощностей проседает.
+                            let xfade = if xlen == 0 {
+                                1.0
+                            } else {
+                                let p = (xpos as f32 / xlen as f32).min(1.0);
+                                let angle = p * std::f32::consts::FRAC_PI_2;
+                                if xin {
+                                    angle.sin()
+                                } else {
+                                    angle.cos()
+                                }
+                            };
+                            *slot = sample * gain * fade * xfade;
                             if (i + 1) % channels == 0 {
                                 gain += step;
                                 fade_left = fade_left.saturating_sub(1);
+                                if xpos < xlen {
+                                    xpos += 1;
+                                }
                             }
                         }
                         cb.fade_in_left.store(fade_left, Ordering::Relaxed);
+                        cb.xfade_pos.store(xpos, Ordering::Relaxed);
                         current_gain = target;
                         drop(pcm);
 
@@ -292,6 +322,16 @@ impl NativeAudio {
     pub fn position(&self) -> f64 {
         let frames = self.shared.frames_out.load(Ordering::Relaxed) as f64;
         frames / self.shared.device_rate.load(Ordering::Relaxed).max(1) as f64
+    }
+
+    /// Запустить кривую кроссфейда: нарастание для приходящего трека,
+    /// затухание для уходящего. Длительность в секундах.
+    pub fn start_crossfade(&self, fade_in: bool, seconds: f64) {
+        let rate = self.shared.device_rate.load(Ordering::Relaxed) as f64;
+        let len = (seconds.max(0.0) * rate) as u64;
+        self.shared.xfade_in.store(fade_in, Ordering::Relaxed);
+        self.shared.xfade_pos.store(0, Ordering::Relaxed);
+        self.shared.xfade_len.store(len, Ordering::Relaxed);
     }
 
     /// Полосы эквалайзера в дБ. Пересборку коэффициентов делает сам DSP —
@@ -487,16 +527,42 @@ pub struct NativeStatus {
 }
 
 #[tauri::command]
-pub fn native_play(path: String, volume: f32) -> Result<(), String> {
-    // Прежний трек гасим ПЛАВНО и только потом сносим: обрыв потока на
-    // середине формы волны динамик отрабатывает низкочастотным щелчком —
-    // «ударом баса» при каждом переключении. Рампа громкости в колбэке сводит
-    // уровень за один буфер, ждём чуть дольше, чтобы он успел выйти.
-    if let Some(old) = ENGINE.lock().unwrap().as_ref() {
-        old.set_volume(0.0);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(30));
+pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), String> {
+    // Кроссфейд сделан двумя независимыми выводами, а не двумя слотами внутри
+    // одного: WASAPI в общем режиме спокойно держит два клиента и сводит их
+    // сам, а нам остаются встречные кривые громкости. Слот-микс своими руками
+    // дал бы ровно тот же звук ценой второго декодера, второго буфера и
+    // общего состояния между ними.
+    let fade = crossfade_sec.max(0.0);
+    let previous = ENGINE.lock().unwrap().take();
 
+    if fade > 0.0 {
+        if let Some(old) = previous {
+            old.start_crossfade(false, fade);
+            // Отпускаем уходящий, только когда кривая доработает: раньше —
+            // оборвём его на полуслове, позже — он будет впустую держать
+            // устройство. Запас в 100 мс на дорогу буфера до колонок.
+            let hold_ms = (fade * 1000.0) as u64 + 100;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+                drop(old);
+            });
+        }
+        let audio = NativeAudio::play(Path::new(&path), volume)?;
+        audio.start_crossfade(true, fade);
+        *ENGINE.lock().unwrap() = Some(audio);
+        return Ok(());
+    }
+
+    // Без кроссфейда: прежний трек всё равно гасим ПЛАВНО и только потом
+    // сносим — обрыв потока на середине формы волны динамик отрабатывает
+    // низкочастотным щелчком. Рампа громкости в колбэке сводит уровень за
+    // один буфер, ждём чуть дольше, чтобы он успел выйти.
+    if let Some(old) = previous {
+        old.set_volume(0.0);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        drop(old);
+    }
     let audio = NativeAudio::play(Path::new(&path), volume)?;
     *ENGINE.lock().unwrap() = Some(audio);
     Ok(())

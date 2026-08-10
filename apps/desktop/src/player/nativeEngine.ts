@@ -129,7 +129,7 @@ export class HybridAudioEngine {
     this.web.stop();
     this.native = true;
     this.lastPosition = 0;
-    await invoke("native_play", { path, volume: this.gain() });
+    await invoke("native_play", { path, volume: this.gain(), crossfadeSec });
     // Движок только что родился и про настройки не знает — доносим их.
     if (this.eqBands.length > 0) {
       void invoke("native_set_eq", { on: this.eqOn, bands: this.eqBands }).catch(() => {});
