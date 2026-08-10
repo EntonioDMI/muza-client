@@ -243,9 +243,11 @@ export class HybridAudioEngine {
   }
 
   setSpeed(speed: number): void {
-    // Скорость с сохранением тона нативно ещё не сделана (нужен WSOLA) —
-    // на нативном пути молча остаёмся на 1x, вместо «бурундука».
     this.web.setSpeed(speed);
+    // Нативно тон не едет: время растягивает фазовый вокодер, а не пересчёт
+    // частоты. Именно поэтому звучит как запись в другом темпе, а не как
+    // ускоренная плёнка.
+    void invoke("native_set_speed", { speed }).catch(() => {});
   }
 
   setEq(on: boolean, bands: number[]): void {

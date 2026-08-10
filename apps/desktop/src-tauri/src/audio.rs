@@ -84,6 +84,9 @@ struct Shared {
     /// неудачном try_lock брала 1.0, и каждое движение ползунка давало скачок
     /// громкости до максимума — те самые хрипы (жалоба владельца 10.08).
     volume: AtomicU32,
+    /// Скорость воспроизведения (биты f32). Тон при этом не едет: время
+    /// растягивает фазовый вокодер, а не пересчёт частоты.
+    speed: AtomicU32,
     /// Эквалайзер: включён и десять усилений полос в дБ (биты f32). Атомики —
     /// по той же причине, что и громкость: колбэк вывода не ждёт блокировок.
     eq_on: AtomicBool,
@@ -177,6 +180,7 @@ impl NativeAudio {
             device_channels: AtomicU32::new(config.channels() as u32),
             volume: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
             fade_in_left: AtomicU64::new(0),
+            speed: AtomicU32::new(1.0f32.to_bits()),
             eq_on: AtomicBool::new(false),
             eq_gains: std::array::from_fn(|_| AtomicU32::new(0f32.to_bits())),
             seek_to: Mutex::new(None),
@@ -364,8 +368,12 @@ impl NativeAudio {
                         }
                         // Пауза сюда не доходит — выше ранний возврат, и часы
                         // позиции на паузе честно стоят.
-                        let played = out.len() as u64 / channels as u64;
-                        cb.frames_out.fetch_add(played, Ordering::Relaxed);
+                        // Позиция считается по ИСХОДНОМУ треку: на удвоенной
+                        // скорости секунда вывода — это две секунды песни,
+                        // иначе полоса и текст отстали бы вдвое.
+                        let speed = f32::from_bits(cb.speed.load(Ordering::Relaxed));
+                        let played = out.len() as f32 / channels as f32 * speed;
+                        cb.frames_out.fetch_add(played as u64, Ordering::Relaxed);
                     },
                         |e| eprintln!("[audio] поток вывода: {e}"),
                         None,
@@ -447,6 +455,11 @@ impl NativeAudio {
         let active = !created.is_empty();
         *self.shared.taps.lock().unwrap() = created;
         self.shared.taps_active.store(active, Ordering::Relaxed);
+    }
+
+    /// Скорость воспроизведения. 1.0 — как записано.
+    pub fn set_speed(&self, speed: f32) {
+        self.shared.speed.store(speed.clamp(0.25, 4.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Микрофон для подмешивания. `None` в имени — системный по умолчанию.
@@ -560,6 +573,10 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
     // декодированного пакета, а не из заголовка (у некоторых контейнеров её
     // там просто нет).
     let mut resampler: Option<Resampler> = None;
+    // Растяжение времени. Заводится только когда скорость реально не 1x: на
+    // обычном прослушивании оно не должно ни стоить такта, ни добавлять
+    // задержку, а окно разложения её неизбежно вносит.
+    let mut stretcher: Option<signalsmith_stretch::Stretch> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Устройство могли переключить — тогда у него другая частота, и
@@ -571,6 +588,9 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
             out_channels = now_channels;
             capacity = (out_rate as f32 * BUFFER_SECONDS) as usize * out_channels;
             resampler = None;
+            // Вокодер настроен на прежнюю частоту и число каналов — собираем
+            // заново вместе с ресемплером.
+            stretcher = None;
         }
 
         // Перемотка: сносим всё, что уже насчитано вперёд, иначе после прыжка
@@ -631,6 +651,25 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
         if chunk.is_empty() {
             continue; // ресемплер копит кадры до полного окна
         }
+
+        // Скорость с сохранением тона. Фазовый вокодер растягивает время и
+        // заново сшивает фазы — удары не размазываются, высота не едет. Это
+        // не пересчёт частоты: тот сдвинул бы тон, как у прежнего движка.
+        let speed = f32::from_bits(shared.speed.load(Ordering::Relaxed));
+        let chunk = if (speed - 1.0).abs() < 0.001 {
+            stretcher = None;
+            chunk
+        } else {
+            let stretch = stretcher.get_or_insert_with(|| {
+                signalsmith_stretch::Stretch::preset_default(out_channels as u32, out_rate)
+            });
+            let in_frames = chunk.len() / out_channels.max(1);
+            // Быстрее — выходных кадров меньше: то же время звучит короче.
+            let out_frames = ((in_frames as f32) / speed).round() as usize;
+            let mut stretched = vec![0.0f32; out_frames * out_channels];
+            stretch.process(&chunk, &mut stretched);
+            stretched
+        };
 
         // Ждём, пока в буфере освободится место: держать весь трек в памяти
         // незачем, а колбэк вывода не должен упереться в пустоту.
@@ -872,6 +911,8 @@ static ENGINE: Mutex<Option<NativeAudio>> = Mutex::new(None);
 static ROUTES: Mutex<Vec<(String, f32, bool)>> = Mutex::new(Vec::new());
 /// Настройка микрофона тоже переживает смену трека.
 static MIC_CONFIG: Mutex<Option<(Option<String>, f32)>> = Mutex::new(None);
+/// И скорость: человек выставил 1.25x — она обязана пережить следующую песню.
+static SPEED: Mutex<f32> = Mutex::new(1.0);
 
 #[derive(serde::Deserialize)]
 pub struct NativeRoute {
@@ -886,6 +927,7 @@ pub struct NativeRoute {
 /// Донести до только что рождённого движка всё, что человек настроил раньше:
 /// движок живёт один трек, а настройки — всю сессию.
 fn apply_saved_routing(audio: &NativeAudio) {
+    audio.set_speed(*SPEED.lock().unwrap());
     audio.set_outputs(&ROUTES.lock().unwrap().clone());
     if let Some((name, gain)) = MIC_CONFIG.lock().unwrap().clone() {
         audio.set_mic(name, gain);
@@ -944,6 +986,14 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
     apply_saved_routing(&audio);
     *ENGINE.lock().unwrap() = Some(audio);
     Ok(())
+}
+
+#[tauri::command]
+pub fn native_set_speed(speed: f32) {
+    *SPEED.lock().unwrap() = speed;
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_speed(speed);
+    }
 }
 
 #[tauri::command]
