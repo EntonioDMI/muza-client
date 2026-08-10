@@ -13,10 +13,10 @@
  *  иначе отдаём прежнему движку. Гибрид схлопнется, когда Rust научится
  *  играть растущий файл.
  *
- *  ⚠️ ЧТО ПОКА ТЕРЯЕТСЯ НА НАТИВНОМ ПУТИ (по одной задаче на каждое):
- *  кроссфейд и gapless, вывод на несколько устройств с подмешиванием голоса,
- *  визуализатор и скорость с сохранением тона. Всё это на веб-пути продолжает
- *  работать как раньше. Эквалайзер, преамп и лимитер уже перенесены (dsp.rs).
+ *  ⚠️ ЧТО ПОКА ТЕРЯЕТСЯ НА НАТИВНОМ ПУТИ: подмешивание голоса в маршруты,
+ *  визуализатор и скорость с сохранением тона. На веб-пути всё это продолжает
+ *  работать как раньше. Уже перенесены: эквалайзер, преамп и лимитер (dsp.rs),
+ *  кроссфейд и вывод на несколько устройств.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { AudioEngine, type EngineCallbacks, type MicConfig, type OutputRoute } from "./audioEngine";
@@ -196,7 +196,26 @@ export class HybridAudioEngine {
   }
 
   setOutputs(routes: OutputRoute[]): void {
+    // Веб-путь настраиваем всегда: он обслуживает треки, которые ещё качаются.
     this.web.setOutputs(routes);
+    // Нативному нужны ПОДПИСИ устройств: браузерные идентификаторы — это хеши,
+    // которых в системе не существует, а cpal перечисляет устройства по именам.
+    // Точного соответствия между двумя перечислениями в Windows нет, поэтому
+    // сверка идёт по вхождению подстроки уже на стороне Rust.
+    void navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        const named = routes
+          .map((route) => ({
+            name: devices.find((d) => d.deviceId === route.deviceId)?.label ?? "",
+            volume: volCurve(route.volume),
+          }))
+          .filter((route) => route.name.length > 0);
+        return invoke("native_set_outputs", { routes: named });
+      })
+      .catch(() => {
+        /* доступ к списку устройств ещё не выдан — придёт со следующей правкой */
+      });
   }
 
   setMicConfig(cfg: MicConfig): void {

@@ -97,6 +97,25 @@ struct Shared {
     xfade_len: AtomicU64,
     /// true — нарастаем (приходящий трек), false — гаснем (уходящий).
     xfade_in: AtomicBool,
+    /// Дополнительные устройства вывода («вывод на устройства» в настройках).
+    ///
+    /// Кормятся УЖЕ ОБРАБОТАННЫМ сигналом — тем самым, что уходит в основной
+    /// выход. Так эквалайзер и лимитер считаются один раз, а все устройства
+    /// получают побитово одинаковый звук: посчитай мы каждому отдельно, они
+    /// разъехались бы по времени, потому что тактируются своими генераторами.
+    taps: Mutex<Vec<Arc<Tap>>>,
+    /// Есть живые маршруты — системный выход молчит: звук идёт только туда,
+    /// куда человек его направил. Инвариант прежнего движка.
+    taps_active: AtomicBool,
+}
+
+/// Одно дополнительное устройство вывода.
+struct Tap {
+    device_name: String,
+    pcm: Mutex<VecDeque<f32>>,
+    /// Своя громкость, независимая от ползунка приложения.
+    gain: AtomicU32,
+    stop: AtomicBool,
 }
 
 pub struct NativeAudio {
@@ -134,6 +153,8 @@ impl NativeAudio {
             xfade_pos: AtomicU64::new(0),
             xfade_len: AtomicU64::new(0),
             xfade_in: AtomicBool::new(true),
+            taps: Mutex::new(Vec::new()),
+            taps_active: AtomicBool::new(false),
         });
 
         // Декодер живёт в своём потоке: он спит, когда буфер полон, и не имеет
@@ -269,6 +290,31 @@ impl NativeAudio {
                         dsp.process(&mut out[..ready], channels, rate as f32);
                         // Буфер не успел наполниться — тишина лучше мусора.
                         out[ready..].fill(0.0);
+
+                        // Раздача в дополнительные устройства. try_lock, а не
+                        // lock: колбэк реального времени не имеет права ждать
+                        // ни настройку маршрутов, ни чужое устройство —
+                        // пропустить кадры в тапе не так страшно, как сорвать
+                        // основной вывод.
+                        if let Ok(taps) = cb.taps.try_lock() {
+                            for tap in taps.iter() {
+                                if let Ok(mut buf) = tap.pcm.try_lock() {
+                                    buf.extend(out.iter().copied());
+                                    // Устройство встало или отстаёт — не даём
+                                    // буферу расти без предела, роняем старое.
+                                    let cap = out.len() * 8;
+                                    while buf.len() > cap {
+                                        buf.pop_front();
+                                    }
+                                }
+                            }
+                        }
+                        // Есть живые маршруты — системный выход молчит: звук
+                        // идёт только туда, куда его направили. Считать цепь
+                        // всё равно надо, этот поток кормит тапы.
+                        if cb.taps_active.load(Ordering::Relaxed) {
+                            out.fill(0.0);
+                        }
                         // Пауза сюда не доходит — выше ранний возврат, и часы
                         // позиции на паузе честно стоят.
                         let played = out.len() as u64 / channels as u64;
@@ -322,6 +368,36 @@ impl NativeAudio {
     pub fn position(&self) -> f64 {
         let frames = self.shared.frames_out.load(Ordering::Relaxed) as f64;
         frames / self.shared.device_rate.load(Ordering::Relaxed).max(1) as f64
+    }
+
+    /// Маршруты вывода: пары «имя устройства, громкость 0..1».
+    ///
+    /// Имя приходит с фронта как подпись устройства из браузерного списка, а
+    /// cpal называет их по-своему — сверяем по вхождению подстроки в любую
+    /// сторону. Точного соответствия между двумя перечислениями устройств в
+    /// Windows не существует.
+    pub fn set_outputs(&self, routes: &[(String, f32)]) {
+        {
+            let mut taps = self.shared.taps.lock().unwrap();
+            for tap in taps.iter() {
+                tap.stop.store(true, Ordering::Relaxed);
+            }
+            taps.clear();
+        }
+        let mut created: Vec<Arc<Tap>> = Vec::new();
+        for (name, gain) in routes {
+            let tap = Arc::new(Tap {
+                device_name: name.clone(),
+                pcm: Mutex::new(VecDeque::new()),
+                gain: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
+                stop: AtomicBool::new(false),
+            });
+            spawn_tap(&self.shared, Arc::clone(&tap));
+            created.push(tap);
+        }
+        let active = !created.is_empty();
+        *self.shared.taps.lock().unwrap() = created;
+        self.shared.taps_active.store(active, Ordering::Relaxed);
     }
 
     /// Запустить кривую кроссфейда: нарастание для приходящего трека,
@@ -509,12 +585,110 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
     Ok(())
 }
 
+/// Поток одного дополнительного устройства: читает свой буфер и отдаёт его
+/// в железо. Никакой обработки — сигнал пришёл уже готовым.
+fn spawn_tap(shared: &Arc<Shared>, tap: Arc<Tap>) {
+    let shared = Arc::clone(shared);
+    std::thread::Builder::new()
+        .name("muza-tap".into())
+        .spawn(move || {
+            let host = cpal::default_host();
+            let Ok(devices) = host.output_devices() else {
+                return;
+            };
+            // Имена в браузерном списке и в cpal не совпадают дословно —
+            // сверяем по вхождению в любую сторону.
+            let wanted = tap.device_name.to_lowercase();
+            let device = devices.into_iter().find(|d| {
+                d.name()
+                    .map(|n| {
+                        let n = n.to_lowercase();
+                        n.contains(&wanted) || wanted.contains(&n)
+                    })
+                    .unwrap_or(false)
+            });
+            let Some(device) = device else {
+                eprintln!("[audio] устройство «{}» не найдено", tap.device_name);
+                return;
+            };
+
+            // Открываем ровно в формате основного вывода: сигнал приходит уже
+            // в его частоте, и пересчитывать его второй раз незачем. Если
+            // устройство такого не умеет — маршрут молча не заводится, звук
+            // при этом продолжает идти в остальные.
+            let want_rate = shared.device_rate.load(Ordering::Relaxed);
+            let want_channels = shared.device_channels.load(Ordering::Relaxed) as u16;
+            let config = device
+                .supported_output_configs()
+                .ok()
+                .and_then(|mut list| {
+                    list.find(|c| {
+                        c.channels() == want_channels
+                            && c.min_sample_rate().0 <= want_rate
+                            && want_rate <= c.max_sample_rate().0
+                    })
+                })
+                .map(|c| c.with_sample_rate(cpal::SampleRate(want_rate)));
+            let Some(config) = config else {
+                eprintln!(
+                    "[audio] «{}» не умеет {want_rate} Гц / {want_channels} кан.",
+                    tap.device_name
+                );
+                return;
+            };
+
+            let cb = Arc::clone(&tap);
+            let stream = device.build_output_stream(
+                &config.into(),
+                move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let gain = f32::from_bits(cb.gain.load(Ordering::Relaxed));
+                    let Ok(mut buf) = cb.pcm.try_lock() else {
+                        out.fill(0.0);
+                        return;
+                    };
+                    let ready = out.len().min(buf.len());
+                    for (slot, sample) in out.iter_mut().zip(buf.drain(..ready)) {
+                        *slot = sample * gain;
+                    }
+                    drop(buf);
+                    out[ready..].fill(0.0);
+                },
+                |e| eprintln!("[audio] поток устройства: {e}"),
+                None,
+            );
+            let Ok(stream) = stream else {
+                eprintln!("[audio] не открылось «{}»", tap.device_name);
+                return;
+            };
+            if stream.play().is_err() {
+                return;
+            }
+            while !tap.stop.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        })
+        .ok();
+}
+
 // ── Команды для фронта ───────────────────────────────────────────────
 //
 // Движок один на приложение: слот пока тоже один (второй придёт с кроссфейдом).
 // Новый play глушит прежний через Drop — вывод останавливается сам.
 
 static ENGINE: Mutex<Option<NativeAudio>> = Mutex::new(None);
+
+/// Маршруты живут дольше движка: движок рождается вместе с треком, а «вывод на
+/// устройства» человек настраивает один раз. Без этого маршруты слетали бы на
+/// каждом переключении песни.
+static ROUTES: Mutex<Vec<(String, f32)>> = Mutex::new(Vec::new());
+
+#[derive(serde::Deserialize)]
+pub struct NativeRoute {
+    /// Подпись устройства из браузерного списка — по ней ищем устройство cpal.
+    name: String,
+    /// Громкость маршрута 0..1, независимая от ползунка приложения.
+    volume: f32,
+}
 
 /// Что плееру нужно знать каждый тик. Позиция и конец трека спрашиваются
 /// вместе: фронт и так опрашивает позицию, отдельные события были бы лишним
@@ -550,6 +724,7 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
         }
         let audio = NativeAudio::play(Path::new(&path), volume)?;
         audio.start_crossfade(true, fade);
+        audio.set_outputs(&ROUTES.lock().unwrap().clone());
         *ENGINE.lock().unwrap() = Some(audio);
         return Ok(());
     }
@@ -564,6 +739,7 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
         drop(old);
     }
     let audio = NativeAudio::play(Path::new(&path), volume)?;
+    audio.set_outputs(&ROUTES.lock().unwrap().clone());
     *ENGINE.lock().unwrap() = Some(audio);
     Ok(())
 }
@@ -598,6 +774,15 @@ pub fn native_status() -> NativeStatus {
             playing: true,
         },
         None => NativeStatus { position: 0.0, ended: false, playing: false },
+    }
+}
+
+#[tauri::command]
+pub fn native_set_outputs(routes: Vec<NativeRoute>) {
+    let list: Vec<(String, f32)> = routes.into_iter().map(|r| (r.name, r.volume)).collect();
+    *ROUTES.lock().unwrap() = list.clone();
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_outputs(&list);
     }
 }
 
