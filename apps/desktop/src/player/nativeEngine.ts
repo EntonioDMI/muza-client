@@ -209,6 +209,7 @@ export class HybridAudioEngine {
           .map((route) => ({
             name: devices.find((d) => d.deviceId === route.deviceId)?.label ?? "",
             volume: volCurve(route.volume),
+            mixMic: route.mixMic === true,
           }))
           .filter((route) => route.name.length > 0);
         return invoke("native_set_outputs", { routes: named });
@@ -220,6 +221,18 @@ export class HybridAudioEngine {
 
   setMicConfig(cfg: MicConfig): void {
     this.web.setMicConfig(cfg);
+    // null в устройстве — системный микрофон по умолчанию; Rust это понимает.
+    void navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        const name = cfg.deviceId
+          ? (devices.find((d) => d.deviceId === cfg.deviceId)?.label ?? null)
+          : null;
+        return invoke("native_set_mic", { name, gain: volCurve(cfg.gain) });
+      })
+      .catch(() => {
+        /* список устройств ещё не доступен — догоним следующей правкой */
+      });
   }
 
   prewarm(): Promise<void> {

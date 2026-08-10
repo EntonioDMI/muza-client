@@ -104,6 +104,8 @@ struct Shared {
     /// получают побитово одинаковый звук: посчитай мы каждому отдельно, они
     /// разъехались бы по времени, потому что тактируются своими генераторами.
     taps: Mutex<Vec<Arc<Tap>>>,
+    /// Захват голоса, общий на движок.
+    mic: Mutex<Option<Arc<Mic>>>,
     /// Есть живые маршруты — системный выход молчит: звук идёт только туда,
     /// куда человек его направил. Инвариант прежнего движка.
     taps_active: AtomicBool,
@@ -114,6 +116,20 @@ struct Tap {
     device_name: String,
     pcm: Mutex<VecDeque<f32>>,
     /// Своя громкость, независимая от ползунка приложения.
+    gain: AtomicU32,
+    stop: AtomicBool,
+    /// Подмешивать ли голос. Голос идёт МИМО музыкальной цепи: эквалайзер и
+    /// нормализация настроены под музыку, и пропускать через них речь незачем.
+    mix_mic: AtomicBool,
+    /// Голос копится отдельно от музыки — у каждого маршрута свой запас,
+    /// иначе первый же прочитавший съел бы его у остальных.
+    mic_pcm: Mutex<VecDeque<f32>>,
+}
+
+/// Захват голоса. Один на приложение: микрофон общий, а раздаётся он в те
+/// маршруты, где включён.
+struct Mic {
+    device_name: Option<String>,
     gain: AtomicU32,
     stop: AtomicBool,
 }
@@ -154,6 +170,7 @@ impl NativeAudio {
             xfade_len: AtomicU64::new(0),
             xfade_in: AtomicBool::new(true),
             taps: Mutex::new(Vec::new()),
+            mic: Mutex::new(None),
             taps_active: AtomicBool::new(false),
         });
 
@@ -376,7 +393,7 @@ impl NativeAudio {
     /// cpal называет их по-своему — сверяем по вхождению подстроки в любую
     /// сторону. Точного соответствия между двумя перечислениями устройств в
     /// Windows не существует.
-    pub fn set_outputs(&self, routes: &[(String, f32)]) {
+    pub fn set_outputs(&self, routes: &[(String, f32, bool)]) {
         {
             let mut taps = self.shared.taps.lock().unwrap();
             for tap in taps.iter() {
@@ -385,12 +402,14 @@ impl NativeAudio {
             taps.clear();
         }
         let mut created: Vec<Arc<Tap>> = Vec::new();
-        for (name, gain) in routes {
+        for (name, gain, mix_mic) in routes {
             let tap = Arc::new(Tap {
                 device_name: name.clone(),
                 pcm: Mutex::new(VecDeque::new()),
                 gain: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
                 stop: AtomicBool::new(false),
+                mix_mic: AtomicBool::new(*mix_mic),
+                mic_pcm: Mutex::new(VecDeque::new()),
             });
             spawn_tap(&self.shared, Arc::clone(&tap));
             created.push(tap);
@@ -398,6 +417,22 @@ impl NativeAudio {
         let active = !created.is_empty();
         *self.shared.taps.lock().unwrap() = created;
         self.shared.taps_active.store(active, Ordering::Relaxed);
+    }
+
+    /// Микрофон для подмешивания. `None` в имени — системный по умолчанию.
+    /// Поток захвата один на движок и живёт, пока есть хоть один маршрут.
+    pub fn set_mic(&self, device_name: Option<String>, gain: f32) {
+        let mut slot = self.shared.mic.lock().unwrap();
+        if let Some(old) = slot.take() {
+            old.stop.store(true, Ordering::Relaxed);
+        }
+        let mic = Arc::new(Mic {
+            device_name,
+            gain: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
+            stop: AtomicBool::new(false),
+        });
+        spawn_mic(&self.shared, Arc::clone(&mic));
+        *slot = Some(mic);
     }
 
     /// Запустить кривую кроссфейда: нарастание для приходящего трека,
@@ -585,6 +620,113 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
     Ok(())
 }
 
+/// Поток захвата голоса: слушает микрофон и раздаёт его тем маршрутам, где
+/// подмешивание включено.
+///
+/// Голос идёт МИМО музыкальной цепи — эквалайзер и нормализация настроены под
+/// музыку, пропускать через них речь незачем. И мимо основного выхода тоже:
+/// человек не должен слышать сам себя в наушниках, голос нужен собеседникам
+/// на том конце виртуального кабеля.
+fn spawn_mic(shared: &Arc<Shared>, mic: Arc<Mic>) {
+    let shared = Arc::clone(shared);
+    std::thread::Builder::new()
+        .name("muza-mic".into())
+        .spawn(move || {
+            let host = cpal::default_host();
+            let device = match &mic.device_name {
+                Some(name) => {
+                    let wanted = name.to_lowercase();
+                    host.input_devices().ok().and_then(|list| {
+                        list.into_iter().find(|d| {
+                            d.name()
+                                .map(|n| {
+                                    let n = n.to_lowercase();
+                                    n.contains(&wanted) || wanted.contains(&n)
+                                })
+                                .unwrap_or(false)
+                        })
+                    })
+                }
+                None => host.default_input_device(),
+            };
+            let Some(device) = device else {
+                eprintln!("[audio] микрофон не найден");
+                return;
+            };
+
+            // Частоту берём выводную, чтобы не ресемплить голос отдельно;
+            // число каналов — родное для микрофона, их мы сведём сами.
+            let want_rate = shared.device_rate.load(Ordering::Relaxed);
+            let config = device
+                .supported_input_configs()
+                .ok()
+                .and_then(|mut list| {
+                    list.find(|c| {
+                        c.min_sample_rate().0 <= want_rate && want_rate <= c.max_sample_rate().0
+                    })
+                })
+                .map(|c| c.with_sample_rate(cpal::SampleRate(want_rate)));
+            let Some(config) = config else {
+                eprintln!("[audio] микрофон не умеет {want_rate} Гц");
+                return;
+            };
+            let in_channels = config.channels() as usize;
+            let out_channels = shared.device_channels.load(Ordering::Relaxed) as usize;
+
+            let cb_shared = Arc::clone(&shared);
+            let cb_mic = Arc::clone(&mic);
+            // Буфер переиспользуется между вызовами: колбэк захвата тоже
+            // реального времени, аллокации в нём ни к чему.
+            let mut frame: Vec<f32> = Vec::new();
+            let stream = device.build_input_stream(
+                &config.into(),
+                move |input: &[f32], _: &cpal::InputCallbackInfo| {
+                    let Ok(taps) = cb_shared.taps.try_lock() else {
+                        return;
+                    };
+                    if taps.is_empty() {
+                        return;
+                    }
+                    let gain = f32::from_bits(cb_mic.gain.load(Ordering::Relaxed));
+                    frame.clear();
+                    for chunk in input.chunks(in_channels.max(1)) {
+                        // Микрофон почти всегда моно — сводим и раскладываем
+                        // по всем каналам вывода.
+                        let mono = chunk.iter().sum::<f32>() / in_channels.max(1) as f32;
+                        for _ in 0..out_channels.max(1) {
+                            frame.push(mono * gain);
+                        }
+                    }
+                    for tap in taps.iter() {
+                        if !tap.mix_mic.load(Ordering::Relaxed) {
+                            continue;
+                        }
+                        if let Ok(mut buf) = tap.mic_pcm.try_lock() {
+                            buf.extend(frame.iter().copied());
+                            let cap = frame.len().max(1) * 8;
+                            while buf.len() > cap {
+                                buf.pop_front();
+                            }
+                        }
+                    }
+                },
+                |e| eprintln!("[audio] поток микрофона: {e}"),
+                None,
+            );
+            let Ok(stream) = stream else {
+                eprintln!("[audio] микрофон не открылся");
+                return;
+            };
+            if stream.play().is_err() {
+                return;
+            }
+            while !mic.stop.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        })
+        .ok();
+}
+
 /// Поток одного дополнительного устройства: читает свой буфер и отдаёт его
 /// в железо. Никакой обработки — сигнал пришёл уже готовым.
 fn spawn_tap(shared: &Arc<Shared>, tap: Arc<Tap>) {
@@ -652,6 +794,23 @@ fn spawn_tap(shared: &Arc<Shared>, tap: Arc<Tap>) {
                     }
                     drop(buf);
                     out[ready..].fill(0.0);
+
+                    // Голос поверх музыки. Складываем, а не заменяем: в
+                    // виртуальный кабель должно уйти и то, и другое —
+                    // собеседники слышат человека вместе с треком.
+                    if cb.mix_mic.load(Ordering::Relaxed) {
+                        if let Ok(mut voice) = cb.mic_pcm.try_lock() {
+                            let n = out.len().min(voice.len());
+                            for (slot, sample) in out.iter_mut().zip(voice.drain(..n)) {
+                                *slot += sample;
+                            }
+                        }
+                    }
+                    // Клип срезаем здесь же: музыка уже прошла лимитер, а
+                    // голос идёт мимо него и вдвоём они могут выйти за единицу.
+                    for slot in out.iter_mut() {
+                        *slot = slot.clamp(-1.0, 1.0);
+                    }
                 },
                 |e| eprintln!("[audio] поток устройства: {e}"),
                 None,
@@ -680,7 +839,9 @@ static ENGINE: Mutex<Option<NativeAudio>> = Mutex::new(None);
 /// Маршруты живут дольше движка: движок рождается вместе с треком, а «вывод на
 /// устройства» человек настраивает один раз. Без этого маршруты слетали бы на
 /// каждом переключении песни.
-static ROUTES: Mutex<Vec<(String, f32)>> = Mutex::new(Vec::new());
+static ROUTES: Mutex<Vec<(String, f32, bool)>> = Mutex::new(Vec::new());
+/// Настройка микрофона тоже переживает смену трека.
+static MIC_CONFIG: Mutex<Option<(Option<String>, f32)>> = Mutex::new(None);
 
 #[derive(serde::Deserialize)]
 pub struct NativeRoute {
@@ -688,6 +849,17 @@ pub struct NativeRoute {
     name: String,
     /// Громкость маршрута 0..1, независимая от ползунка приложения.
     volume: f32,
+    /// Подмешивать ли в этот маршрут голос.
+    mix_mic: bool,
+}
+
+/// Донести до только что рождённого движка всё, что человек настроил раньше:
+/// движок живёт один трек, а настройки — всю сессию.
+fn apply_saved_routing(audio: &NativeAudio) {
+    audio.set_outputs(&ROUTES.lock().unwrap().clone());
+    if let Some((name, gain)) = MIC_CONFIG.lock().unwrap().clone() {
+        audio.set_mic(name, gain);
+    }
 }
 
 /// Что плееру нужно знать каждый тик. Позиция и конец трека спрашиваются
@@ -724,7 +896,7 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
         }
         let audio = NativeAudio::play(Path::new(&path), volume)?;
         audio.start_crossfade(true, fade);
-        audio.set_outputs(&ROUTES.lock().unwrap().clone());
+        apply_saved_routing(&audio);
         *ENGINE.lock().unwrap() = Some(audio);
         return Ok(());
     }
@@ -739,9 +911,17 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
         drop(old);
     }
     let audio = NativeAudio::play(Path::new(&path), volume)?;
-    audio.set_outputs(&ROUTES.lock().unwrap().clone());
+    apply_saved_routing(&audio);
     *ENGINE.lock().unwrap() = Some(audio);
     Ok(())
+}
+
+#[tauri::command]
+pub fn native_set_mic(name: Option<String>, gain: f32) {
+    *MIC_CONFIG.lock().unwrap() = Some((name.clone(), gain));
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_mic(name, gain);
+    }
 }
 
 #[tauri::command]
@@ -779,7 +959,8 @@ pub fn native_status() -> NativeStatus {
 
 #[tauri::command]
 pub fn native_set_outputs(routes: Vec<NativeRoute>) {
-    let list: Vec<(String, f32)> = routes.into_iter().map(|r| (r.name, r.volume)).collect();
+    let list: Vec<(String, f32, bool)> =
+        routes.into_iter().map(|r| (r.name, r.volume, r.mix_mic)).collect();
     *ROUTES.lock().unwrap() = list.clone();
     if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
         audio.set_outputs(&list);
