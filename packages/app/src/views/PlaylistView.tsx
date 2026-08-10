@@ -6,6 +6,7 @@ import { fmtTime, primarySourceLabel } from "../lib/format";
 import { cursorInsertionIndex, moveItem, reorderShift } from "../lib/dragEngine";
 import { useCoverArt } from "../lib/coverArt";
 import { useDrag, useDropZone } from "../shell/DragLayer";
+import { useLayout } from "../shell/LayoutContext";
 import { useContextMenu } from "../shell/ContextMenu";
 import type { MenuAbilities } from "../shell/menuActions";
 import { SelectionBar } from "../shell/SelectionBar";
@@ -132,6 +133,7 @@ export function PlaylistView({
   style?: React.CSSProperties;
 }) {
   const { t, lang } = useT();
+  const { phone } = useLayout();
   const altFileDrag = useAltFileDrag();
   const portLocalFiles = useLocalFiles();
   const local = localFiles ?? portLocalFiles;
@@ -443,8 +445,10 @@ export function PlaylistView({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: "var(--sp-5)",
-        padding: "var(--sp-6) var(--sp-6) 0",
+        gap: phone ? "var(--sp-4)" : "var(--sp-5)",
+        // Телефонное поле вдвое меньше — ширина строки трека дороже воздуха
+        // по краям (разбор — в шапке TrackRow.jsx, «КОМПАКТНАЯ СТРОКА»).
+        padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-6) 0",
         ...style,
       }}
       // ПКМ по пустому месту страницы (2026-07-20): вход в выбор треков.
@@ -459,7 +463,15 @@ export function PlaylistView({
           : undefined
       }
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
+      {/* ⚠️ НА ТЕЛЕФОНЕ ШАПКА ПЕРЕНОСИТСЯ (10.08). В ряду с иконкой 56px и
+          пятью кнопками действий (совместный доступ, видимость, «Поделиться»,
+          оффлайн, «⋯») названию плейлиста оставалось 45 пикселей из нужных
+          197 — замер на iPhone 393pt. Разрешаем перенос и прибиваем блок
+          названия к остатку ПЕРВОЙ строки (100% минус иконка и зазор): кнопки
+          честно уезжают на вторую строку и остаются тач-целями, а название
+          получает всю ширину экрана. Кнопки не прячем — каждая из них
+          единственный способ сделать своё действие. */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: phone ? "wrap" : "nowrap" }}>
         <div
           aria-hidden="true"
           style={{
@@ -480,11 +492,11 @@ export function PlaylistView({
             <Icon name="list-music" size={26} color="var(--accent-text)" />
           )}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: phone ? "1 1 calc(100% - 68px)" : 1, minWidth: 0 }}>
           <h1
             style={{
               margin: 0,
-              fontSize: "var(--fs-h1)",
+              fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)",
               fontWeight: 700,
               color: "var(--text-1)",
               whiteSpace: "nowrap",
@@ -711,6 +723,7 @@ export function PlaylistView({
             >
               <TrackRow
                 {...trackRowL10n(t)}
+                compact={phone}
                 index={i + 1}
                 cover={tr.coverUrl}
                 showCover={rowShow?.cover !== false}

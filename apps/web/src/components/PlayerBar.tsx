@@ -7,6 +7,8 @@ import { PlayerBar as SharedPlayerBar } from "@muza/app/shell/PlayerBar";
 import { QueuePanel } from "@muza/app/shell/QueuePanel";
 import { useLikes } from "../likes";
 import { usePlayer, usePosition } from "../player";
+import { usePrefs } from "../prefs";
+import { useToast } from "../toast";
 
 /** Плеер веба: на широком экране — ТА ЖЕ полоса, что в приложении
  *  (@muza/app/shell/PlayerBar), на телефоне — мини-бар над нижней навигацией
@@ -54,7 +56,35 @@ export function PlayerBar({
   const { position, duration } = usePosition();
   const { likedIds, toggle } = useLikes();
   const { t } = useT();
+  const { prefs } = usePrefs();
+  const notify = useToast();
   const [queueOpen, setQueueOpen] = useState(false);
+
+  /** СКОРОСТЬ — кнопка полосы, которой в вебе не было (сверка кнопок обеих
+   *  полос 2026-08-10: у приложения «Скорость», у веба ничего). Движок веба
+   *  скорость умел с самого начала — с сохранением тона, — не хватало ровно
+   *  органа управления, как и с раскладкой окна.
+   *
+   *  Перебор по кругу и тост — поведение приложения (App.tsx →
+   *  cycleSpeedWithToast) один в один. Шаги берутся из настроек
+   *  (`prefs.speedSteps`), а не из своего списка: значение персистентно и
+   *  общее с приложением, а второй список тех же чисел разъехался бы.
+   *  Текущая скорость может не совпасть ни с одним шагом (человек убрал шаг
+   *  из настроек) — тогда начинаем с начала списка, а не застреваем. */
+  /** ⚠️ КАРАОКЕ ПЕРЕДАЁТСЯ КАК `onLyrics`, А НЕ КАК `onExpand` (2026-08-10).
+   *  Действие одно и то же — полноэкранная сцена с текстом (ListeningModeHost),
+   *  но общая полоса рисует эти два пропа РАЗНЫМИ кнопками: `onLyrics` — это
+   *  микрофон с подписью «Текст» (так в приложении), `onExpand` — стрелки «Во
+   *  весь экран». Пока веб передавал второй, одна и та же вещь выглядела в двух
+   *  программах двумя разными кнопками. У одного действия не бывает двух
+   *  глифов — берём тот, что в приложении. */
+  const cycleSpeed = () => {
+    const steps = prefs.speedSteps.length > 0 ? prefs.speedSteps : [1];
+    const at = steps.findIndex((s) => Math.abs(s - p.speed) < 0.001);
+    const next = steps[(at + 1) % steps.length];
+    p.setSpeed(next);
+    notify(t("player.speedToast", { speed: next }), "gauge");
+  };
   const current = p.current;
 
   // Длительность берём живую (метаданные <audio>), пока её нет — серверную:
@@ -125,7 +155,8 @@ export function PlayerBar({
         onRepeat={p.cycleRepeat}
         queueOn={queueOpen}
         onQueue={() => setQueueOpen((v) => !v)}
-        onExpand={onExpand}
+        onSpeed={cycleSpeed}
+        onLyrics={onExpand}
         // боковая панель «Сейчас играет» — веб-специфика: в приложении её
         // место занимает режим прослушивания, кнопки такой в компоновке нет
         extraButtons={

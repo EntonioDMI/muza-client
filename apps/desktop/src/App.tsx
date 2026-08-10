@@ -11,6 +11,7 @@ import {
 } from "@muza/api-client";
 import { type Prefs, type View } from "./types";
 import { loadPrefs, PREFS_KEY } from "@muza/app/prefs/load";
+import { usePrefsSync } from "@muza/app/prefs/usePrefsSync";
 import { DEFAULT_PLAYER_STATE, loadPlayerState, savePlayerState } from "@muza/app/lib/playerState";
 // Общий движок темы: профиль настроек → CSS-переменные корня, одни и те же
 // формулы у приложения и у веба (см. шапку themeVars.ts).
@@ -471,6 +472,17 @@ function Player({
     setPrefsState(p);
     localStorage.setItem(PREFS_KEY, JSON.stringify(p));
   };
+  /** ОДИН ПРОФИЛЬ НА АККАУНТ, общий с браузером (разбор — @muza/app
+   *  prefs/sync.ts). До 11.08 профиля было два и они не знали друг о друге:
+   *  настроенный здесь вид в вебе не появлялся.
+   *
+   *  У анонима синхронизации нет: аккаунт-на-устройстве на то и локальный, а
+   *  серверного профиля у него не существует. Настройки при этом работают
+   *  ровно как раньше — просто никуда не уезжают.
+   *
+   *  `ready` не передаём: профиль поднимается синхронно в `useState(loadPrefs)`,
+   *  то есть к первому же кадру он настоящий, а не дефолтный. */
+  usePrefsSync({ api, signedIn: !isAnonymous, prefs, applyPrefs: setPrefs });
   // T31 (i18n): Player — сам родитель <LanguageProvider> (см. return ниже),
   // поэтому useT() внутри тела Player читал бы контекст СНАРУЖИ своего же
   // провайдера (фолбэк на DEFAULT_LANG) — вместо хука зовём чистую translate()

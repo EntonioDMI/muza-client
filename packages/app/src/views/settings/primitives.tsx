@@ -110,9 +110,15 @@ export function SettingRow({
       className="muza-setting-row"
       onClick={onClick}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "var(--sp-5)",
+        // ⚠️ РАСКЛАДКА РЯДА (display/align/gap) ЖИВЁТ В CSS, А НЕ ЗДЕСЬ —
+        // settingsShell.css, правило .muza-setting-row. Инлайн-стиль сильнее
+        // любого селектора, и пока эти три свойства стояли тут, узкий экран
+        // перестроить ряд не мог В ПРИНЦИПЕ: контрол (сегменты «English /
+        // Русский», ~250px) не жался, заголовку с подсказкой оставалось ~45px,
+        // и текст вставал СТОЛБИКОМ ПО ОДНОМУ СЛОВУ — та самая жалоба
+        // владельца «в настройках совершенно ничего не понятно» (10.08).
+        // Теперь ряд ниже 560px контейнера складывается в стек: заголовок и
+        // подсказка во всю ширину, контрол под ними.
         padding: "var(--sp-4) var(--sp-5)",
         border: "none",
         width: "100%",
@@ -133,14 +139,18 @@ export function SettingRow({
         transition: "background var(--dur-state) var(--ease-standard)",
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
+      <div className="muza-setting-row__text" style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
           <div style={{ fontSize: "var(--fs-body)", fontWeight: 500, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
           {titleExtra}
         </div>
-        {hint ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>{hint}</div> : null}
+        {hint ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.45 }}>{hint}</div> : null}
       </div>
-      {children}
+      {/* Обёртка контрола нужна СТЕКУ: в узком ряду она встаёт второй строкой
+          и прижимает контрол к левому краю (в широком — не делает ничего).
+          Без неё сегменты и слайдеры оставались приклеены к правому краю
+          плашки и читались как оторванные от своего заголовка. */}
+      {children ? <div className="muza-setting-row__control">{children}</div> : null}
       {chevron ? <Icon name="chevron-right" size={18} color="var(--text-3)" /> : null}
     </Tag>
   );

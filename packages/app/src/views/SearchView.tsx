@@ -5,6 +5,7 @@ import type { GroupedSearchResult, MuzaApi, PublicPlaylist, PublicPlaylistHit, T
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
+import { useLayout } from "../shell/LayoutContext";
 import { useAltFileDrag } from "../platform";
 import { flattenGroupedResults, loadMoreScope, mergeGroupedResults, nextGroupLimit } from "../lib/searchGrouping";
 import { parsePlaylistCode, parsePlaylistHandle } from "../lib/playlistCode";
@@ -116,6 +117,7 @@ export function SearchView({
   style?: React.CSSProperties;
 }) {
   const { t, lang } = useT();
+  const { phone } = useLayout();
   // Публичные плейлисты (2026-07-17): режим кода PL_… + хиты обычного поиска
   const [codeResult, setCodeResult] = useState<PublicPlaylist | null>(null);
   const [codeBusy, setCodeBusy] = useState(false);
@@ -377,6 +379,7 @@ export function SearchView({
     >
       <TrackRow
         {...trackRowL10n(t)}
+        compact={phone}
         index={index}
         cover={tr.coverUrl}
         showCover={rowShow?.cover !== false}
@@ -500,8 +503,10 @@ export function SearchView({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: "var(--sp-5)",
-        padding: "var(--sp-6) var(--sp-5) 0",
+        gap: phone ? "var(--sp-4)" : "var(--sp-5)",
+        // Телефонное поле вдвое меньше — ширина строки трека дороже воздуха
+        // по краям (разбор — в шапке TrackRow.jsx, «КОМПАКТНАЯ СТРОКА»).
+        padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-5) 0",
         ...style,
       }}
     >

@@ -37,6 +37,38 @@ import { Tooltip } from "../feedback/Tooltip.jsx";
  *  одинаковы до пикселя (число + шеврон помещаются с запасом). */
 const VERSIONS_SLOT = 40;
 
+/** ══ КОМПАКТНАЯ СТРОКА (телефон) ═════════════════════════════════════════
+ *  Включается пропом `compact`; на десктопе и планшете ряд прежний.
+ *
+ *  ЗАЧЕМ. Замер 10.08 на iPhone 393pt: фиксированные слоты обычной строки —
+ *  номер 28 + обложка 42 + лайк 36 + время 40 + «⋯» 36 = 182px, пять зазоров
+ *  по 16 = 80px, поля 32px. Итого 294px из 345 доступных, и НАЗВАНИЮ
+ *  ОСТАВАЛСЯ 51 ПИКСЕЛЬ — «Сваровски на моей шее» показывалось как «Сва…».
+ *  Владелец описал это точно: «слева и справа от названия много свободного
+ *  места». Свободным оно и было — под слотами, которые на телефоне не нужны.
+ *
+ *  ЧТО УБРАНО И ПОЧЕМУ ИМЕННО ЭТО.
+ *  1. Номер. На телефоне он ничего не адресует (вслух «включи двадцать
+ *     седьмой» не говорят), а роль кнопки играет вся строка — она и раньше
+ *     запускала трек целиком. Играющий трек показывает значок поверх обложки.
+ *  2. Слот версий и бейдж источника — служебная информация большого экрана.
+ *  3. ЛАЙК И ВРЕМЯ БОЛЬШЕ НЕ СТОЯТ РЯДОМ — прямая просьба владельца («сделать
+ *     так, чтобы они не отображались одновременно»). Слот один: у любимого
+ *     трека в нём сердце, у остальных — длительность. Это не компромисс, а
+ *     честная логика: сердце здесь и есть ответ на вопрос «а это любимое?»,
+ *     ради которого на список и смотрят, а время у нелюбимого трека — всё,
+ *     что о нём стоит знать одной цифрой. Снять лайк можно тем же сердцем,
+ *     поставить — из меню «⋯» рядом.
+ *
+ *  ⚠️ АФФОРДАНСЫ В КОМПАКТЕ ВИДНЫ ВСЕГДА (--row-aff: 1), и это ПОЧИНКА, а не
+ *  оформление. Прозрачность лайка и «⋯» едет от канала наведения
+ *  (interactions.css), а у пальца наведения нет: на телефоне обе кнопки имели
+ *  opacity 0 И pointer-events: none — то есть «⋯» на сайте с телефона нельзя
+ *  было нажать вообще. Ленивый монтаж (`armed`) в компакте тоже не нужен: он
+ *  экономил перерисовки на списке в 240 строк с курсором, а здесь кнопка
+ *  обязана существовать с первого кадра. */
+const COMPACT_ROW_H = 64;
+
 export function TrackRow({
   index,
   cover,
@@ -57,6 +89,7 @@ export function TrackRow({
   liked = false,
   explicit = false,
   selected = false,
+  compact = false,
   onPlay,
   onLike,
   onMore,
@@ -122,15 +155,19 @@ export function TrackRow({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: "var(--sp-4)",
-        height: "var(--h-trackrow, 60px)",
-        padding: "0 var(--sp-4)",
+        gap: compact ? "var(--sp-3)" : "var(--sp-4)",
+        height: compact ? COMPACT_ROW_H : "var(--h-trackrow, 60px)",
+        padding: compact ? "0 var(--sp-2)" : "0 var(--sp-4)",
         borderRadius: "var(--r-sm)",
         // строка запускает трек — курсор обязан об этом говорить
         cursor: onPlay ? "pointer" : "default",
         background: "var(--row-bg)",
+        // см. «АФФОРДАНСЫ В КОМПАКТЕ» в шапке: у пальца нет наведения, и без
+        // этой пары «⋯» была невидимой и не ловила касания.
+        ...(compact ? { "--row-aff": 1, "--row-aff-pe": "auto" } : null),
       }}
     >
+      {compact ? null : (
       <div style={{ width: 28, flex: "none", display: "flex", justifyContent: "center" }}>
         {/* всегда настоящая кнопка: клавиатура достаёт play без ховера */}
         <button
@@ -210,7 +247,35 @@ export function TrackRow({
           </span>
         </button>
       </div>
-      {showCover ? <Cover src={cover} size={42} /> : null}
+      )}
+      {showCover ? (
+        compact ? (
+          /* Обложка + признак «играет»: в компакте кружка-номера нет, и о
+             состоянии говорить больше нечему. Значок лежит ПОВЕРХ обложки на
+             затемнении — не сдвигая ни одного пикселя раскладки, чтобы список
+             не дёргался при смене трека. */
+          <div style={{ position: "relative", flex: "none", lineHeight: 0 }}>
+            <Cover src={cover} size={44} />
+            {active ? (
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  borderRadius: "var(--r-sm)",
+                  background: "rgba(0, 0, 0, 0.5)",
+                }}
+              >
+                <Icon name={playing ? "audio-lines" : "pause"} size={18} color="var(--accent-active-text, var(--accent-text))" />
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <Cover src={cover} size={42} />
+        )
+      ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           <span
@@ -239,7 +304,7 @@ export function TrackRow({
       {/* Источник трека — тихий информ-бейдж (всегда виден, не по ховеру): откуда
           добывается. Нативного title нет: он дублировал видимый текст стоковой
           плашкой WebView2 (жалоба 2026-07-16). */}
-      {source ? (
+      {source && !compact ? (
         <span
           style={{
             flex: "none",
@@ -264,6 +329,25 @@ export function TrackRow({
           останавливаться, иначе промах мимо мелкого сердца запускал бы песню.
           Гасим на КОНТЕЙНЕРЕ, а не на каждой кнопке: любая новая кнопка в этом
           кластере получает защиту сама, и её не надо помнить. */}
+      {compact ? (
+        /* Компактный правый кластер: ОДИН информационный слот плюс меню.
+           Что в слоте и почему — в шапке файла, пункт 3. Ширина слота
+           фиксирована, чтобы «⋯» у всех строк стояла на одной вертикали и
+           список не выглядел рваным при смешанных лайках. */
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ display: "flex", alignItems: "center", gap: 2, flex: "none" }}
+        >
+          <span style={{ width: 40, flex: "none", display: "inline-flex", justifyContent: "center" }}>
+            {liked ? (
+              <IconButton icon="heart" size="sm" active filled label={likeLabel} onClick={onLike} />
+            ) : showDuration ? (
+              <span style={{ color: "var(--text-3)", fontSize: "var(--fs-caption)", fontVariantNumeric: "tabular-nums" }}>{duration}</span>
+            ) : null}
+          </span>
+          {onMore ? <IconButton icon="ellipsis" size="sm" label={moreLabel} onClick={onMore} /> : null}
+        </div>
+      ) : (
       <div
         onClick={(e) => e.stopPropagation()}
         style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flex: "none" }}
@@ -357,6 +441,7 @@ export function TrackRow({
           </span>
         ) : null}
       </div>
+      )}
     </div>
   );
 }

@@ -1680,6 +1680,10 @@ export const en = {
       // the app» — неправда с тех пор, как у веба появилась кнопка «+».
       playlistsEmptyHint: "Press + above — the first one shows up here",
       bottomNavAria: "Main navigation",
+      more: "More",
+      openMenu: "Open menu",
+      closeMenu: "Close menu",
+      menuAria: "Playlists and sections",
     },
     playlist: {
       // Адрес страницы без id: у приложения такого состояния нет — там

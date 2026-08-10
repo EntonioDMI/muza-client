@@ -48,6 +48,17 @@ import type {
 } from "./schemas";
 
 export * from "./schemas";
+
+/** Профиль клиента, каким его хранит сервер: непрозрачный объект + отметка
+ *  времени последней записи (ISO 8601). Отметка — арбитр «чья версия свежее»
+ *  при расхождении устройств. */
+export interface PrefsSnapshot {
+  data: Record<string, unknown>;
+  updatedAt: string;
+}
+
+/** Ответ на попытку прочитать профиль — см. `MuzaApi.getPrefs`. */
+export type PrefsSyncResult = { supported: false } | { supported: true; prefs: PrefsSnapshot | null };
 export { resolveApiBaseUrl, type ApiBuildMode } from "./api-base-url";
 
 export interface MuzaApi {
@@ -208,6 +219,21 @@ export interface MuzaApi {
   getHomeSection(key: string, opts?: { offset?: number; limit?: number }): Promise<Track[]>;
   /** Бесконечное радио: продолжение очереди от сид-трека. */
   getRadio(seedTrackId: string): Promise<Track[]>;
+  /** Профиль клиента с сервера — общий для всех устройств аккаунта.
+   *
+   *  ⚠️ ТРИ РАЗНЫХ ОТВЕТА, И ПУТАТЬ ИХ НЕЛЬЗЯ:
+   *   - `{ supported: true, prefs: {...} }` — профиль есть, применяем;
+   *   - `{ supported: true, prefs: null }` — ручка есть, профиля ещё нет:
+   *     заливаем наверх свой;
+   *   - `{ supported: false }` — ручки нет вовсе (сервер старее клиента: на
+   *     проде это штатно, выкладка сервера отстаёт от выкладки веба).
+   *     Синхронизации нет, локальные настройки не трогаем и наверх не шлём.
+   *  Схлопнуть второе и третье в один `null` значило бы залить дефолты нового
+   *  устройства в аккаунт при первом же заходе на старый сервер. */
+  getPrefs(): Promise<PrefsSyncResult>;
+  /** Сохранить профиль целиком. `false` — ручки нет (старый сервер): это не
+   *  ошибка, звать снова незачем. */
+  putPrefs(data: Record<string, unknown>): Promise<PrefsSnapshot | false>;
   getRecsSettings(): Promise<RecsSettings>;
   /** null в поле = сбросить на серверный дефолт; отсутствие поля = не трогать. */
   updateRecsSettings(input: { epsilon?: number | null; tauScale?: number | null }): Promise<RecsSettings>;

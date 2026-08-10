@@ -3,6 +3,7 @@ import { Button, EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, SoundcloudPlaylist, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
+import { useLayout } from "../shell/LayoutContext";
 import { useT } from "../i18n";
 
 /** Read-only страница плейлиста SoundCloud (2026-07-20). Тонкий вью ОТДЕЛЬНО
@@ -50,6 +51,7 @@ export function ExternalPlaylistView({
   onSaveCopy: (name: string, tracks: Track[]) => Promise<void>;
 }) {
   const { t, lang } = useT();
+  const { phone } = useLayout();
   const [pl, setPl] = useState<SoundcloudPlaylist | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -84,7 +86,7 @@ export function ExternalPlaylistView({
     : "";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: phone ? "var(--sp-4)" : "var(--sp-5)", padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-6) 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
         {pl?.artworkUrl ? (
           <img
@@ -169,6 +171,7 @@ export function ExternalPlaylistView({
           <TrackRow
             key={tr.id}
             {...trackRowL10n(t)}
+            compact={phone}
             index={i + 1}
             cover={tr.coverUrl}
             showCover={rowShow?.cover !== false}

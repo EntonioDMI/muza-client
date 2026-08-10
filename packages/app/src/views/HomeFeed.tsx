@@ -34,6 +34,7 @@ import { pickByOrder } from "../lib/dragEngine";
 import { shelfL10n, tileL10n, trackRowL10n } from "../lib/dsLabels";
 import type { RowWarmProps, WarmRow } from "../lib/rowWarm";
 import { useDrag } from "../shell/DragLayer";
+import { useLayout } from "../shell/LayoutContext";
 import { useLookReorder } from "../shell/lookReorder";
 import { useAltFileDrag } from "../platform";
 import { useT } from "../i18n";
@@ -165,6 +166,7 @@ export function HomeFeed({
   padding?: string;
 }) {
   const { t, lang } = useT();
+  const { phone } = useLayout();
   const { dragSource } = useDrag();
   const altFileDrag = useAltFileDrag();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
@@ -240,7 +242,11 @@ export function HomeFeed({
     WRAPPED_ENABLED && canSearch && !!onOpenWrapped && (WRAPPED_BANNER_PREVIEW || season.inSeason);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding }}>
+    // Поле экрана на телефоне вдвое меньше: 24px с каждой стороны — это 48
+    // пикселей строки, и уходят они у содержимого, которому ширины и не
+    // хватало. Проп `padding` (его задаёт площадка) при этом сильнее — веб
+    // его не передаёт, приложение передаёт своё.
+    <div style={{ display: "flex", flexDirection: "column", gap: phone ? "var(--sp-5)" : "var(--sp-6)", padding: phone ? "var(--sp-4) var(--sp-4) 0" : padding }}>
       {/* ПРАВИЛО ОДНОГО DISPLAY-МОМЕНТА (редизайн 04.08, решение владельца
           «всё на Golos, без исключений»). Unbounded оставлен вордмарку,
           караоке и названию играющего трека — тому, что и есть музыка. Пока он
@@ -249,17 +255,33 @@ export function HomeFeed({
           в одну ступень иерархии. Заголовок экрана теперь один на всё
           приложение: Golos 700, --fs-h1. Шрифт не задаём вовсе — наследуется
           --font-ui, и пользовательский выбор шрифта работает без исключений. */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-4)" }}>
+      {/* ⚠️ НА ТЕЛЕФОНЕ ШАПКА — СТОЛБИК, А НЕ РЯД (10.08). Приветствие и дата
+          стояли в одном ряду: у даты `flex: none` и `nowrap`, то есть она не
+          жмётся вовсе и на iPhone 393pt забирала ~250px из 340. Заголовку
+          оставалось ~90px, он ломался на три строки и НАЕЗЖАЛ на дату — это
+          и есть «элементы наплывают друг на друга» из жалобы владельца
+          (снимок главной с iPhone, 10.08). Ряд правилен ровно там, где обе
+          части помещаются целиком; ниже — столбик, дата уходит под заголовок
+          подписью, и обе строки читаются полностью. */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: phone ? "column" : "row",
+          alignItems: phone ? "stretch" : "baseline",
+          gap: phone ? "var(--sp-1)" : "var(--sp-4)",
+        }}
+      >
         <h1
           style={{
             margin: 0,
-            flex: 1,
+            flex: phone ? "none" : 1,
             minWidth: 0,
             fontWeight: 700,
-            fontSize: "var(--fs-h1)",
+            fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)",
             letterSpacing: "var(--ls-h1)",
             color: "var(--text-1)",
             lineHeight: "var(--lh-tight)",
+            textWrap: "balance",
           }}
         >
           {greetName ? `${greeting(t)}, ${greetName}!` : greeting(t)}
@@ -267,7 +289,17 @@ export function HomeFeed({
         {/* Дата и время за сегодня — тихой строкой напротив приветствия
             (набросок 04.08). Времени нет (аноним, ноль, сервер молчит) —
             остаётся одна дата: пустой хвост « · » не рисуем. */}
-        <span style={{ flex: "none", fontSize: "var(--fs-caption)", color: "var(--text-3)", whiteSpace: "nowrap" }}>
+        <span
+          style={{
+            flex: "none",
+            fontSize: "var(--fs-caption)",
+            color: "var(--text-3)",
+            // В столбике перенос разрешён: строка «понедельник, 10 августа ·
+            // 43 мин за сегодня» на 340px в одну не помещается, а обрезать
+            // дату многоточием — потерять её смысл.
+            whiteSpace: phone ? "normal" : "nowrap",
+          }}
+        >
           {new Date().toLocaleDateString(lang, { weekday: "long", day: "numeric", month: "long" })}
           {todayMs !== null && todayMs > 0 ? ` · ${t("views.home.meta.today", { time: fmtListenTime(todayMs, t) })}` : ""}
         </span>
@@ -387,6 +419,7 @@ export function HomeFeed({
                     >
                       <TrackRow
                         {...trackRowL10n(t)}
+                        compact={phone}
                         index={i + 1}
                         cover={tr.coverUrl}
                         showCover={rowShow?.cover !== false}

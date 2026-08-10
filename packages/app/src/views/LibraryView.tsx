@@ -6,6 +6,7 @@ import { tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { applyVisibleOrder, gridInsertionIndex } from "../lib/dragEngine";
 import { useLocalReorder } from "../lib/useLocalReorder";
 import { useDrag, useDropZone } from "../shell/DragLayer";
+import { useLayout } from "../shell/LayoutContext";
 import { useContextMenu } from "../shell/ContextMenu";
 import type { MenuAbilities } from "../shell/menuActions";
 import { SelectionBar } from "../shell/SelectionBar";
@@ -310,6 +311,7 @@ export function LibraryView({
   onPlaylistsChanged?: () => void;
 }) {
   const { t } = useT();
+  const { phone } = useLayout();
   const { dragSource } = useDrag();
   // Умения площадки: файлы с диска (вкладка «Локальные») и вынос файла
   // Alt+перетаскиванием. Нет умения — нет вкладки и нет жеста.
@@ -467,7 +469,15 @@ export function LibraryView({
     // Минимум колонки = настройка «Размер плитки» (--w-tile, зона 4 спеки
     // 19.07): в текучей сетке ручка задаёт нижнюю границу, тянуться дальше
     // колонкам никто не мешает.
-    gridTemplateColumns: "repeat(auto-fill, minmax(var(--w-tile, 176px), 1fr))",
+    /* ⚠️ НА ТЕЛЕФОНЕ КОЛОНОК РОВНО ДВЕ, И ЭТО ПОЧИНКА ЖАЛОБЫ «огромные
+       плашки» (10.08). `auto-fill` с минимумом 176px на строке 353px не
+       набирает второй колонки (двум нужно 176·2 + 16 = 368) и честно отдаёт
+       ОДНУ — растянутую во всю ширину. Так «Любимое» и занимало у владельца
+       весь экран: настройка «Размер плитки» задумана как нижняя граница для
+       большого окна, а на телефоне она сама себе противоречит. Ниже планшета
+       ручка перестаёт быть минимумом и становится тем, чем должна быть на
+       узком экране, — ничем: колонок две, ширина делится поровну. */
+    gridTemplateColumns: phone ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(var(--w-tile, 176px), 1fr))",
     // Плитки живут своей высотой, а не высотой самой высокой в ряду: при
     // stretch (умолчание grid) обёртка PlaylistDropTile растягивалась под
     // соседа, Tile внутри оставался прежним — и абсолютная ручка-⠿
@@ -479,7 +489,7 @@ export function LibraryView({
 
   return (
     <div
-      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}
+      style={{ display: "flex", flexDirection: "column", gap: phone ? "var(--sp-4)" : "var(--sp-5)", padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-6) 0" }}
       // ПКМ по пустому месту (2026-07-20): плитки и строки гасят всплытие в
       // openMenu, так что сюда долетает только пустота. Анониму меню не
       // показываем — все пункты требуют серверной сессии.
@@ -496,11 +506,24 @@ export function LibraryView({
           : undefined
       }
     >
+      {/* ⚠️ ШАПКА НА ТЕЛЕФОНЕ — ЗАГОЛОВОК, ПОТОМ СЕТКА ДЕЙСТВИЙ (10.08).
+          Четыре кнопки с `flexWrap` рядом с заголовком складывались в рваную
+          лесенку: «Твоя медиатека» ужималось до двух слов в столбик, а кнопки
+          разъезжались по три строки разной длины (снимок владельца). Ряд
+          работает, пока кнопки помещаются в остаток строки; на 353px остатка
+          нет вовсе. Внизу — честная сетка 2×2: главное действие («Создать
+          плейлист») занимает всю ширину первой строки, три вспомогательных
+          делят вторую и третью пополам. Ни одна подпись не режется. */}
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", flexWrap: "wrap" }}>
-        <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)", flex: 1 }}>
+        {/* ⚠️ БЕЗ minWidth: 0. Заголовок обязан держать свою ширину: у ряда
+            стоит flexWrap, и когда кнопки перестают помещаться, уехать на
+            следующую строку должны ОНИ, а не буквы заголовка. С minWidth: 0
+            «Твоя медиатека» ужималось до 82px из нужных 150 и наезжало на
+            первую кнопку (замер 10.08 на планшете и ноутбуке). */}
+        <h1 style={{ margin: 0, fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)", flex: 1 }}>
           {t("views.library.title")}
         </h1>
-        {canSearch ? (
+        {canSearch && !phone ? (
           <>
             {onAddLink ? (
               <Button variant="secondary" icon="link" onClick={onAddLink}>
@@ -527,7 +550,45 @@ export function LibraryView({
           </>
         ) : null}
       </div>
-      <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+      {canSearch && phone ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--sp-2)" }}>
+          {onCreatePlaylist ? (
+            <Button variant="primary" icon="plus" onClick={onCreatePlaylist} style={{ gridColumn: "1 / -1" }}>
+              {t("menu.library.createPlaylist")}
+            </Button>
+          ) : null}
+          {/* Порядок и ширины — по ДЛИНЕ ПОДПИСИ, а не по важности: «Импорт
+              плейлиста» в половине строки (168px) ломается на две строки и
+              делает кнопку выше соседки, из-за чего ряд читается как сбой.
+              Длинная подпись получает всю ширину, две короткие делят строку. */}
+          {onImport ? (
+            <Button variant="secondary" icon="import" onClick={onImport} style={{ gridColumn: "1 / -1" }}>
+              {t("views.library.importPlaylist")}
+            </Button>
+          ) : null}
+          {onAddLink ? (
+            <Button variant="secondary" icon="link" onClick={onAddLink}>
+              {t("views.library.addLink")}
+            </Button>
+          ) : null}
+          {onJoinCode ? (
+            <Button variant="secondary" icon="users" onClick={onJoinCode}>
+              {t("views.library.byCode")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {/* Вкладки на телефоне листаются вбок: четыре чипа («Плейлисты»,
+          «История», «Альбомы», «Артисты») в 353px не влезают — последний
+          вылезал за край на 30px и обрезался кромкой экрана. Прятать вкладку
+          нельзя, ужимать подписи — врать о содержимом. */}
+      <div
+        style={{
+          display: "flex",
+          gap: "var(--sp-2)",
+          ...(phone ? { overflowX: "auto", scrollbarWidth: "none", margin: "0 calc(-1 * var(--sp-4))", padding: "0 var(--sp-4)" } : null),
+        }}
+      >
         <ChipGroup items={chips} value={chip} onChange={setChip} />
       </div>
 
@@ -554,6 +615,7 @@ export function LibraryView({
               <TrackRow
                 key={`${h.track.id}:${h.playedAt}`}
                 {...trackRowL10n(t)}
+                compact={phone}
                 index={i + 1}
                 cover={h.track.coverUrl}
                 title={h.track.title}
@@ -613,6 +675,7 @@ export function LibraryView({
               >
                 <TrackRow
                   {...trackRowL10n(t)}
+                  compact={phone}
                   index={i + 1}
                   title={e.title}
                   artist={e.available ? e.artist : t("views.library.artistFileMissing", { artist: e.artist })}

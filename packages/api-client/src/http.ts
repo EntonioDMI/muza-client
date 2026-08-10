@@ -1,4 +1,4 @@
-import type { MuzaApi } from "./index";
+import type { MuzaApi, PrefsSnapshot, PrefsSyncResult } from "./index";
 import {
   type AdminContent,
   type AdminDayPoint,
@@ -1211,6 +1211,38 @@ export class HttpMuzaApi implements MuzaApi {
       `/radio?seed=${encodeURIComponent(seedTrackId)}`,
     );
     return tracksFromWire(out.tracks);
+  }
+
+  // ---------- Профиль клиента, общий для всех устройств ----------
+
+  /** ⚠️ 404 = «СЕРВЕР СТАРЕЕ КЛИЕНТА», А НЕ ОШИБКА. Веб и приложение
+   *  выкладываются отдельно от сервера, и на проде клиент регулярно оказывается
+   *  новее. Ручки `/me/prefs` там нет — синхронизации просто не существует, и
+   *  это штатная работа, а не сбой: ни тоста, ни повторов, ни затирания
+   *  локальных настроек.
+   *  Ловим ровно 404; любую другую ошибку (401, 500, обрыв сети) пропускаем
+   *  наверх — молчать о них было бы тем самым «клиент утверждает за сервер». */
+  async getPrefs(): Promise<PrefsSyncResult> {
+    try {
+      const out = await this.authedRequest<{ data: Record<string, unknown>; updated_at: string } | null>("/me/prefs");
+      return { supported: true, prefs: out ? { data: out.data, updatedAt: out.updated_at } : null };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return { supported: false };
+      throw e;
+    }
+  }
+
+  async putPrefs(data: Record<string, unknown>): Promise<PrefsSnapshot | false> {
+    try {
+      const out = await this.authedRequest<{ data: Record<string, unknown>; updated_at: string }>("/me/prefs", {
+        method: "PUT",
+        body: JSON.stringify({ data }),
+      });
+      return { data: out.data, updatedAt: out.updated_at };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return false;
+      throw e;
+    }
   }
 
   async getRecsSettings(): Promise<RecsSettings> {

@@ -117,4 +117,39 @@ describe("TrackRow: аффордансы", () => {
     expect(onLike).toHaveBeenCalledTimes(1);
     expect(onPlay).not.toHaveBeenCalled();
   });
+
+  /** ══ КОМПАКТНАЯ СТРОКА (телефон) ═══════════════════════════════════════
+   *  Разбор и замеры — в шапке TrackRow.jsx. Здесь сторожатся ровно те
+   *  свойства, ради которых компакт и заведён, — каждое отвечает пункту
+   *  жалобы владельца от 10.08. */
+  describe("compact", () => {
+    it("лайк и длительность не показываются одновременно — прямая просьба владельца", () => {
+      const { rerender } = render(<TrackRow compact title="A" duration="2:18" liked likeLabel="Лайк" onLike={() => {}} />);
+      expect(screen.getByRole("button", { name: "Лайк" })).toBeTruthy();
+      expect(screen.queryByText("2:18")).toBeNull();
+
+      rerender(<TrackRow compact title="A" duration="2:18" likeLabel="Лайк" onLike={() => {}} />);
+      expect(screen.getByText("2:18")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Лайк" })).toBeNull();
+    });
+
+    it("«⋯» доступна БЕЗ наведения: у пальца наведения нет", () => {
+      // До 10.08 кнопка монтировалась по pointerEnter и гасилась каналом
+      // :hover — на телефоне она была невидима И не ловила касания.
+      render(<TrackRow compact title="A" moreLabel="Ещё" onMore={() => {}} />);
+      expect(screen.getByRole("button", { name: "Ещё" })).toBeTruthy();
+    });
+
+    it("номер трека не занимает слот — его место отдано названию", () => {
+      render(<TrackRow compact index={7} title="A" playLabel="Играть" />);
+      expect(screen.queryByText("7")).toBeNull();
+    });
+
+    it("обычная строка от компакта не изменилась: номер и время на месте", () => {
+      render(<TrackRow index={7} title="A" duration="2:18" liked likeLabel="Лайк" onLike={() => {}} />);
+      expect(screen.getByText("7")).toBeTruthy();
+      expect(screen.getByText("2:18")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Лайк" })).toBeTruthy();
+    });
+  });
 });

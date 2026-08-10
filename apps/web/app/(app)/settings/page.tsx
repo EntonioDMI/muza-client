@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ChipGroup, Switch, Tabs } from "@muza/ui";
-import { LANGS, useT, type Lang } from "@muza/app";
+import { ChipGroup, Switch } from "@muza/ui";
+import { useT } from "@muza/app";
 import { usePlatform } from "@muza/app/platform";
 import { SettingsScreen } from "@muza/app/views/settings/SettingsScreen";
 import { AccountPane } from "@muza/app/views/settings/AccountPane";
+import { AppearancePane } from "@muza/app/views/settings/AppearancePane";
+import { CustomizeSub } from "@muza/app/views/settings/CustomizeSub";
+import { NavSub } from "@muza/app/views/settings/NavSub";
+import { BarSub } from "@muza/app/views/settings/BarSub";
 import { IntegrationsPane } from "@muza/app/views/settings/IntegrationsPane";
 import { LibraryPane } from "@muza/app/views/settings/LibraryPane";
 import { SystemPane } from "@muza/app/views/settings/SystemPane";
@@ -23,13 +27,9 @@ import { RecsTuning } from "@muza/app/views/settings/PlaybackPane";
 import { paneRows, SettingsProvider, settingsCaps, type SettingsSubKey } from "@muza/app/views/settings/settingsContext";
 import type { SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
 import {
-  AccentSwatch,
-  CustomAccentSwatch,
-  GLASS_MIN,
   GroupTitle,
   LiveSlider,
   PresetRow,
-  PresetTile,
   RowValue,
   SettingRow,
   SettingsPane,
@@ -96,16 +96,10 @@ import { useRouter } from "next/navigation";
  *  Ряды без записи в индексе («Панель Сейчас играет», «Скорость», «Перевод»)
  *  сюда не идут — поиск про них не знает вовсе. */
 const WEB_OWN_ROWS: Readonly<Record<string, SettingsSubKey | null>> = {
-  // Внешний вид
-  "settings.appearance.language.title": null,
-  "settings.appearance.theme.title": null,
-  "settings.appearance.accent.title": null,
-  "settings.appearance.radius.title": null,
-  "settings.customize.typography.fontUi.title": null,
-  "settings.appearance.glass.title": null,
-  "settings.customize.glass.panelBlur.title": null,
-  "settings.customize.colors.textDim.title": null,
-  "settings.appearance.background.title": null,
+  // «Внешний вид» здесь БОЛЬШЕ НЕТ (2026-08-10): раздел приезжает готовым
+  // компонентом, и опись за него отдаёт paneRows("appearance") в теле
+  // страницы — как у остальных общих разделов. Девять ключей, лежавших тут,
+  // описывали самописную копию раздела и вместе с ней удалены.
   // Воспроизведение
   "settings.playback.crossfade.title": null,
   "settings.playback.crossfade.duration.title": null,
@@ -136,36 +130,35 @@ const WEB_OWN_ROWS: Readonly<Record<string, SettingsSubKey | null>> = {
  *  результат, ведущий в под-экран, показывается, только если открыть его есть
  *  чем. Discord сюда не входит — статус в нём умеет ставить только программа
  *  на устройстве (см. «Интеграции» ниже). */
-const WEB_SUBS = ["sessions", "data", "privacy", "stats", "licenses"] as const;
+/** ⚠️ «customize», «nav» и «bar» приехали 2026-08-10 вместе с общим разделом
+ *  «Внешний вид». До этого веб рисовал оформление СВОЕЙ разметкой образца до
+ *  редизайна, и в ней не было ни «Раскладки» (Воздушная/Плоская/Классика), ни
+ *  «Масштаба», ни входа в «Кастомизацию»: владелец видел воздушную раскладку и
+ *  не мог её сменить, потому что органа управления в вебе не существовало.
+ *  Движок при этом работал всегда — переменные раскладки globals.css читает
+ *  наравне с приложением (--win-pad, --pad-under-bar, --r-zone,
+ *  --player-inset). Не хватало ровно переключателя.
+ *  Все три под-экрана браузеру по силам целиком: это чистые поля профиля. */
+const WEB_SUBS = ["customize", "nav", "bar", "sessions", "data", "privacy", "stats", "licenses"] as const;
 
-/** Пресеты оформления — те же три, что на первом экране «Внешнего вида» в
- *  приложении (пара «акцент + углы» одним нажатием). */
-const APPEARANCE_PRESETS = [
-  { key: "muza", accent: "blue", accentColor: "#3b82f6", radius: "soft" },
-  { key: "flame", accent: "red", accentColor: "#f76967", radius: "round" },
-  { key: "graphite", accent: "bolt", accentColor: "#327ad9", radius: "mild" },
-] as const;
-
-/** Границы ползунков оформления — те же числа, что в приложении: одна тема
- *  обязана настраиваться одинаково на обеих площадках. */
-const BLUR_MAX = 64;
-const TEXT_DIM_MIN = 40;
-const TEXT_DIM_MAX = 80;
-/** Размер караоке-строки, px: те же 36..72, что у ползунка в приложении
- *  (@muza/app/views/settings/LyricsPane.tsx). */
+/** ⚠️ Здесь лежали ТРИ КОПИИ чисел приложения — пресеты оформления, потолок
+ *  размытия, границы приглушения текста и список шрифтов. Все они обслуживали
+ *  самописный «Внешний вид» и удалены вместе с ним 2026-08-10: общий раздел
+ *  берёт те же значения из своего источника (appearancePresets.ts, themeVars),
+ *  и второго списка тех же чисел в дереве больше нет.
+ *
+ *  Размер караоке-строки, px: те же 36..72, что у ползунка в приложении
+ *  (@muza/app/views/settings/LyricsPane.tsx). Раздел «Тексты» страница пока
+ *  рисует своей разметкой, поэтому пара границ ещё нужна. */
 const KARAOKE_SIZE_MIN = 36;
 const KARAOKE_SIZE_MAX = 72;
-
-/** Golos/Unbounded — имена шрифтов, не переводятся ни в одном языке;
- *  «Системный» — единственная переводимая подпись этого выбора. */
-const FONT_KEYS = ["golos", "unbounded", "system"] as const;
 
 
 export default function SettingsPage() {
   const { prefs, set } = usePrefs();
   const { session, logout } = useSession();
   const router = useRouter();
-  const { t, lang } = useT();
+  const { t } = useT();
   const platform = usePlatform();
   const notify = useToast();
   /** Скорость воспроизведения — состояние плеера, а не профиля настроек:
@@ -184,7 +177,17 @@ export default function SettingsPage() {
    *
    *  Пересчёт по `platform`: вилка браузера — константа модуля
    *  (src/platform/webAdapter.ts), так что на деле это разовый расчёт. */
-  const caps = useMemo(() => settingsCaps(platform), [platform]);
+  /** ⚠️ `themeMarket` СНИМАЕТСЯ РУКАМИ, и это предусмотрено контрактом
+   *  (`settingsCaps`: «площадка, которой они не нужны, передаёт свой список
+   *  руками»). Витрину оформлений браузер потянул бы — она серверная, — но
+   *  живёт она в под-экране `market`, а его дом по SUB_HOME_TAB — раздел
+   *  «Расширения», которого у веба нет вовсе (плагины требуют Tauri). Ряд
+   *  «Готовые оформления» в «Кастомизации» вёл бы в раздел, отсутствующий в
+   *  рельсе: рельс подсветил бы пустоту, а «назад» возвращаться было бы
+   *  некуда. Нет умения — нет ряда; это то же правило, по которому в вебе нет
+   *  «Устройств вывода». Витрина тем в браузере — отдельная работа: ей нужен
+   *  свой дом среди разделов веба. */
+  const caps = useMemo(() => settingsCaps(platform).filter((c) => c !== "themeMarket"), [platform]);
   /** Тот же список множеством — его спрашивают сами ряды через контекст экрана
    *  (`caps.has("discord")` в «Интеграциях»). Отдельный memo нужен, чтобы новый
    *  Set на каждый рендер не пересобирал контекст настроек впустую. */
@@ -203,6 +206,7 @@ export default function SettingsPage() {
   const rows = useMemo(
     () => ({
       ...paneRows("account", caps),
+      ...paneRows("appearance", caps),
       ...paneRows("library", caps),
       ...paneRows("integrations", caps),
       ...paneRows("system", caps),
@@ -301,127 +305,26 @@ export default function SettingsPage() {
    *  это новая вкладка с noopener). */
   const systemPane = sub === "licenses" ? <LicensesSub /> : <SystemPane />;
 
-  /* Разделы, собранные прямо на странице, заворачиваются в <SettingsPane> —
-     контракт каркаса «раздел оборачивает себя сам» (шапка SettingsScreen.tsx).
-     Раньше поле вокруг них заводил каркас, и разделам, приехавшим готовым
-     компонентом (они заводят его у себя), оно доставалось дважды: 60px до
-     первого ряда против 36px здесь. */
-  const appearancePane = (
-    <SettingsPane>
-      {/* Язык — первым, как в приложении: живой, без перезагрузки страницы. */}
-      <SettingRow title={t("settings.appearance.language.title")} hint={t("settings.appearance.language.hint")}>
-        <Tabs
-          items={LANGS.map((l) => ({
-            key: l,
-            label: l === "ru" ? t("settings.appearance.language.optionRu") : t("settings.appearance.language.optionEn"),
-          }))}
-          value={lang}
-          onChange={(k: string) => set({ language: k as Lang })}
-        />
-      </SettingRow>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--sp-3)" }}>
-        {APPEARANCE_PRESETS.map((p) => (
-          <PresetTile
-            key={p.key}
-            name={t(`settings.appearance.presets.${p.key}.name`)}
-            hint={t(`settings.appearance.presets.${p.key}.hint`)}
-            accentColor={p.accentColor}
-            radius={p.radius}
-            selected={prefs.accent === p.accent && prefs.radius === p.radius}
-            onClick={() => set({ accent: p.accent, radius: p.radius })}
-          />
-        ))}
-      </div>
-      <SettingRow title={t("settings.appearance.theme.title")} hint={t("settings.appearance.theme.hint")}>
-        <Tabs
-          items={[
-            { key: "dark", label: t("settings.appearance.theme.dark") },
-            { key: "light", label: t("settings.appearance.theme.light") },
-          ]}
-          value={prefs.theme}
-          onChange={(k: string) => set({ theme: k as WebPrefs["theme"] })}
-        />
-      </SettingRow>
-      <SettingRow title={t("settings.appearance.accent.title")} hint={t("settings.appearance.accent.hint")}>
-        <div style={{ display: "flex", gap: "var(--sp-3)" }}>
-          <AccentSwatch color="#3b82f6" label={t("settings.appearance.accent.blue")} selected={prefs.accent === "blue"} onClick={() => set({ accent: "blue" })} />
-          <AccentSwatch color="#f76967" label={t("settings.appearance.accent.red")} selected={prefs.accent === "red"} onClick={() => set({ accent: "red" })} />
-          <AccentSwatch color="#327ad9" label={t("settings.appearance.accent.bolt")} selected={prefs.accent === "bolt"} onClick={() => set({ accent: "bolt" })} />
-          <CustomAccentSwatch
-            color={prefs.customAccent}
-            selected={prefs.accent === "custom"}
-            onPick={(customAccent) => set({ accent: "custom", customAccent })}
-          />
-        </div>
-      </SettingRow>
-      <SettingRow title={t("settings.appearance.radius.title")} hint={t("settings.appearance.radius.hint")}>
-        <Tabs
-          items={[
-            { key: "mild", label: t("settings.appearance.radius.mild") },
-            { key: "soft", label: t("settings.appearance.radius.soft") },
-            { key: "round", label: t("settings.appearance.radius.round") },
-          ]}
-          value={prefs.radius}
-          onChange={(radius: string) => set({ radius: radius as WebPrefs["radius"] })}
-        />
-      </SettingRow>
-      <SettingRow title={t("settings.customize.typography.fontUi.title")} hint={t("settings.customize.typography.fontUi.hint")}>
-        <Tabs
-          items={FONT_KEYS.map((k) => ({
-            key: k,
-            // Имена шрифтов не переводятся; переводится только «Системный».
-            label: k === "system" ? t("web.settings.fontSystem") : k === "golos" ? "Golos" : "Unbounded",
-          }))}
-          value={prefs.fontUi}
-          onChange={(k: string) => set({ fontUi: k as WebPrefs["fontUi"] })}
-        />
-      </SettingRow>
-      <SettingRow title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
-        <LiveSlider
-          value={prefs.glassOpacity - GLASS_MIN}
-          max={100 - GLASS_MIN}
-          label={t("settings.appearance.glass.title")}
-          suffix={`${prefs.glassOpacity} %`}
-          onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
-        />
-      </SettingRow>
-      <SettingRow title={t("settings.customize.glass.panelBlur.title")} hint={t("settings.customize.glass.panelBlur.hint")}>
-        <LiveSlider
-          value={prefs.blur}
-          max={BLUR_MAX}
-          label={t("settings.customize.glass.panelBlur.title")}
-          suffix={`${prefs.blur} px`}
-          onChange={(v) => set({ blur: Math.round(v) })}
-        />
-      </SettingRow>
-      <SettingRow title={t("settings.customize.colors.textDim.title")} hint={t("settings.customize.colors.textDim.hint")}>
-        <LiveSlider
-          value={prefs.textDim - TEXT_DIM_MIN}
-          max={TEXT_DIM_MAX - TEXT_DIM_MIN}
-          label={t("settings.customize.colors.textDim.title")}
-          suffix={`${prefs.textDim} %`}
-          onChange={(v) => set({ textDim: TEXT_DIM_MIN + Math.round(v) })}
-        />
-      </SettingRow>
-      <SettingRow title={t("settings.appearance.background.title")} hint={t("settings.appearance.background.hint")}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-          {/* Общая модель хранит вид фона перечислением (bgType), а вкладка
-              умеет ровно один — «из обложки». Тумблер переключает между ним
-              и «выкл»; выбранный в программе цвет/градиент/картинку веб
-              бережёт в профиле, но не рисует (слияние моделей 2026-08-02). */}
-          <RowValue>{prefs.bgType === "cover" ? t("settings.appearance.background.fromCover") : t("common.off")}</RowValue>
-          <Switch
-            checked={prefs.bgType === "cover"}
-            onChange={(on: boolean) => set({ bgType: on ? "cover" : "none" })}
-            label={t("settings.appearance.background.ariaLabel")}
-          />
-        </div>
-      </SettingRow>
-      <SettingRow title={t("web.settings.npPanelRow.title")} hint={t("web.settings.npPanelRow.hint")}>
-        <Switch checked={prefs.npOpen} onChange={(npOpen: boolean) => set({ npOpen })} label={t("web.settings.npPanelRow.title")} />
-      </SettingRow>
-    </SettingsPane>
-  );
+  /** РАЗДЕЛ «ВНЕШНИЙ ВИД» — ОБЩИЙ С ПРИЛОЖЕНИЕМ (2026-08-10).
+   *
+   *  Здесь лежала своя разметка на 130 строк: язык, три плитки-пресета, тема,
+   *  акцент, углы, стекло, фон. Она была слепком раздела ДО редизайна и с тех
+   *  пор отстала — в приложении добавились «Раскладка» (Воздушная / Плоская /
+   *  Классика), «Масштаб», вход в «Кастомизацию» и подсказка про Ctrl+E.
+   *  Владелец 10.08: «сейчас там установлена, кажется, воздушная тема, а
+   *  поменять её нельзя, потому что настройки остались прежними» — ровно этот
+   *  разрыв. Причём движок раскладки веб исполнял всегда: --win-pad,
+   *  --pad-under-bar, --r-zone и --player-inset globals.css читает наравне с
+   *  приложением. Не хватало переключателя, а не механизма.
+   *
+   *  Копию убрали целиком, а не дописали в неё недостающие ряды: два слепка
+   *  одного раздела расходятся на первой же правке — этот разошёлся за неделю.
+   *  Теперь раздел рисует тот же код, что и приложение, а под-экраны
+   *  «Кастомизация», «Вкладки сайдбара» и «Кнопки полосы плеера» открываются
+   *  из него (все три — чистые поля профиля, браузеру по силам целиком). */
+  const appearancePane =
+    sub === "customize" ? <CustomizeSub /> : sub === "nav" ? <NavSub /> : sub === "bar" ? <BarSub /> : <AppearancePane />;
+
 
   /** «Воспроизведение». До 2026-08-02 здесь был ОДИН ряд — эквалайзер, — хотя
    *  в приложении их пятнадцать. Разрыв закрыт не разметкой, а плеером:

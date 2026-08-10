@@ -34,6 +34,39 @@ body {
   margin: 0;
   overflow: hidden;
   background: var(--bg-0);
+  /* Резиновая прокрутка страницы целиком — не наша: внутри всё скроллит своя
+     зона. На iOS без этого весь каркас оттягивается пальцем от края экрана и
+     под ним видна голая подложка. */
+  overscroll-behavior: none;
+}
+
+/* ── ВЫСОТА ОКНА: почему не 100% и не inset: 0 ────────────────────────────
+   ⚠️ ЭТО ЛЕЧЕНИЕ ЖАЛОБЫ «на iPhone снизу много пустого места» (10.08).
+   `position: fixed; inset: 0` меряется НАЧАЛЬНЫМ СОДЕРЖАЩИМ БЛОКОМ, а он у
+   Safari равен БОЛЬШОМУ вьюпорту (100lvh) — экрану с УБРАННЫМИ панелями
+   браузера. Пока панели на месте, видно только svh, и низ каркаса вместе с
+   навигацией уезжает под них: на экране остаётся полоса фона высотой с
+   панель. У Chrome на Android начальный содержащий блок совпадает с видимой
+   областью, поэтому там дефект и не воспроизводился.
+
+   Лечим двумя слоями, оба обязательны:
+   1) `100dvh` — динамический вьюпорт, честная видимая высота. Один он не
+      закрывает вопрос: в iOS-PWA (standalone + viewport-fit=cover) dvh
+      округляется и на части версий отстаёт от факта на высоту home-indicator.
+   2) `--app-vh` — то же число, но замеренное живьём из JS по
+      `window.innerHeight` (AppShell.tsx → эффект высоты). Оно побеждает,
+      потому что стоит первым аргументом var(); нет JS — работает dvh; нет и
+      его — 100%.
+   Взято `innerHeight`, а НЕ `visualViewport.height`: второй сжимается вместе с
+   экранной клавиатурой, и каркас прыгал бы при вводе в поиске. */
+:root {
+  --app-h: var(--app-vh, 100dvh);
+}
+
+@supports not (height: 100dvh) {
+  :root {
+    --app-h: var(--app-vh, 100%);
+  }
 }
 
 a {
@@ -45,12 +78,19 @@ a {
   --z-nav: 30;
   --z-bar: 40;
   --z-overlay: 50;
+  --z-drawer: 60;
   --h-bottomnav: 60px;
-  --h-minibar: 60px;
+  --h-minibar: 62px;
   /* телефон-ландшафт: левый иконный рельс вместо нижней навигации,
      мини-бар ужат — иначе высоты 375px на контент не остаётся */
   --w-navrail: 64px;
   --h-minibar-compact: 48px;
+  /* Планшет: постоянный иконный рельс вместо полного сайдбара — 280px там
+     съедали треть строки, а список плейлистов открывается ящиком по бургеру. */
+  --w-railtablet: 76px;
+  /* Выдвижной ящик («бургер»): полный сайдбар поверх контента. Шире сайдбара
+     десктопа не делаем — внутри тот же список. */
+  --w-drawer: min(320px, 86vw);
 
   /* ── Безопасные зоны экрана ──────────────────────────────────────────
      На iPhone «Добавить на экран Домой» открывает нас в display-mode:
@@ -82,7 +122,11 @@ a {
 
 .shell {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Не `inset: 0` — разбор в шапке файла, раздел «Высота окна». */
+  height: var(--app-h);
   background: var(--bg-0);
   overflow: hidden;
   font-family: var(--font-ui);
@@ -324,9 +368,15 @@ a {
 
 /* ── Мобильный мини-бар + нижняя навигация ── */
 
+/* ⚠️ ВСЕ ПЛАВАЮЩИЕ СЛОИ ОБОЛОЧКИ — absolute, А НЕ fixed (10.08).
+   fixed меряется вьюпортом, и на iOS вьюпорт больше видимой области (разбор в
+   шапке файла): нижняя навигация и мини-бар уезжали под панели браузера, а на
+   экране оставалась полоса фона. absolute внутри .shell (он сам fixed) даёт им
+   ровно ту высоту, которую мы намеряли, — низ каркаса и низ экрана совпадают
+   по построению, а не по совпадению. */
 .minibar {
   display: none;
-  position: fixed;
+  position: absolute;
   left: var(--sp-2);
   right: var(--sp-2);
   bottom: calc(var(--h-bottomnav) + var(--safe-bottom) + var(--sp-2) * 2);
@@ -359,7 +409,7 @@ a {
 
 .bottomnav {
   display: none;
-  position: fixed;
+  position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
@@ -380,28 +430,50 @@ a {
   grid-auto-columns: 1fr;
 }
 
-.bottomnav a {
+/* Пункт нижней навигации. `button` — наравне со ссылкой: пятый пункт «Ещё»
+   открывает ящик, а не ведёт по адресу, и ссылкой быть не вправе (у неё нет
+   цели, а скринридер обещал бы переход). */
+.bottomnav a,
+.bottomnav button {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
+  min-width: 0;
   min-height: 44px;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  font-family: var(--font-ui);
   text-decoration: none;
   color: var(--text-3);
-  font-size: 10.5px;
+  /* 11px, а не 10.5: пунктов стало пять вместо шести (78px против 65px на
+     iPhone 393pt), и подпись наконец помещается в честный размер. */
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
   transition: color var(--dur-state) var(--ease-standard);
 }
 
-.bottomnav a.active {
+.bottomnav a > span,
+.bottomnav button > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bottomnav a.active,
+.bottomnav button.active {
   color: var(--accent-text);
 }
 
 /* ── Мобильный now-playing (полноэкранный) ── */
 
 .np-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: var(--z-overlay);
   display: flex;
@@ -513,12 +585,129 @@ a {
    объявлен нужный класс (у десктопа его никогда не было). Тач-таргеты ≥44px
    и auto-fill-сетка переехали туда же. */
 
-/* ── Брейкпоинты ── */
+/* ══ ИКОННЫЙ РЕЛЬС ПЛАНШЕТА ══════════════════════════════════════════════
+   Живёт в ТОЙ ЖЕ ячейке сетки, что сайдбар десктопа (обёртка .zone.sidebar),
+   и подменяет его содержимое из AppShell по режиму раскладки. Так колонок в
+   сетке всегда столько же, сколько ячеек, и переключение режима не двигает
+   контент вбок — оно меняет только ширину первой колонки.
+   Почему рельс, а не полный сайдбар: 280px на планшете 768 — это 36 % строки,
+   и полкам главной оставалось меньше двух плиток. Список плейлистов никуда не
+   делся, он открывается бургером в шапке рельса тем же ящиком, что на
+   телефоне. */
+.navrail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 100%;
+  padding: var(--sp-2) 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
 
-@media (max-width: 1199px) {
+.navrail__burger {
+  margin-bottom: var(--sp-2);
+}
+
+.navrail a,
+.navrail button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 60px;
+  /* 56 — тач-минимум 44 плюс подпись; ниже неё глиф и подпись слипаются. */
+  min-height: 56px;
+  padding: 0 2px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    color var(--dur-state) var(--ease-standard),
+    background var(--dur-state) var(--ease-standard);
+}
+
+.navrail a > span,
+.navrail button > span {
+  /* Подпись рельса — одна строка: «Медиатека» на 60px не переносится, и
+     двухстрочный пункт ломал бы ритм колонки. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .navrail a:hover,
+  .navrail button:hover {
+    background: var(--surface-2);
+    color: var(--text-2);
+  }
+}
+
+.navrail a.active {
+  color: var(--accent-text);
+  background: var(--surface-3);
+}
+
+/* ══ ВЫДВИЖНОЙ ЯЩИК (БУРГЕР) ═════════════════════════════════════════════
+   Один и тот же ящик на телефоне и планшете, внутри — ОБЩИЙ сайдбар
+   @muza/app/shell/Sidebar, тот же, что на десктопе. Это не украшение: до
+   10.08 на телефоне список плейлистов был недостижим вовсе — сайдбар
+   прятался, а нижняя навигация про плейлисты не знает. Ящик возвращает
+   телефону всё, что умеет большая раскладка, не отнимая у контента ширину.
+
+   Слой и время — общая механика .muza-layer (animations.css): поза объявлена
+   здесь, потому что «из какого края выезжает» знает только разметка. */
+.drawer-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-drawer);
+  border: none;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+
+.drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: calc(var(--z-drawer) + 1);
+  display: flex;
+  width: calc(var(--w-drawer) + var(--safe-left));
+  box-sizing: border-box;
+  padding: calc(var(--safe-top) + var(--sp-2)) var(--sp-2) calc(var(--safe-bottom) + var(--sp-2))
+    calc(var(--safe-left) + var(--sp-2));
+  background: var(--glass-deep);
+  backdrop-filter: blur(var(--blur-glass));
+  --layer-pose: translateX(-100%);
+}
+
+/* ── Брейкпоинты ──
+   ⚠️ ЧИСЛА ОБЯЗАНЫ СОВПАДАТЬ с BP_TABLET / BP_DESKTOP / BP_SHORT из
+   packages/app/src/lib/useLayoutMode.ts: CSS и JS решают ОДИН вопрос («какая
+   сейчас раскладка»), и разъехавшись, они дадут состояние, которого нет ни в
+   одном режиме — например, иконный рельс из JS рядом с телефонной сеткой из
+   CSS. Совпадение сторожит тест apps/web/src/breakpoints.test.ts: он читает
+   этот файл и константы и падает, если тронули только одну сторону. */
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  /* Планшет: рельс + контент. NP-панели нет — её ширина (340px) на 1024
+     оставляла контенту меньше половины строки. */
   .shell-grid,
   .shell-grid.with-np {
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: var(--w-railtablet) 1fr;
   }
 
   /* !important — не украшение: панель «Сейчас играет» теперь общий экран из
@@ -529,15 +718,45 @@ a {
   .np-panel {
     display: none !important;
   }
+
+  /* Обёртка рельса своих полей не носит — их несёт сам .navrail, иначе
+     иконки сдвинулись бы от центра колонки. */
+  .zone.sidebar {
+    padding: 0;
+  }
+
+  /* Полоса плеера на планшете. Десктопные колонки (200/300/200 + зазоры и
+     поля) требуют ~796px вьюпорта — на iPad 768 они не влезают: правый
+     кластер наезжал на транспорт. Правая колонка не жмётся (тумблер NP +
+     громкость со слайдером 110px), середина упругая, транспорт цел. */
+  .playerbar {
+    /* Правой колонке хватает 160, а не 196: тумблера «Сейчас играет» на
+       планшете нет вовсе (панели тут не бывает — см. AppShell → npAllowed),
+       и освободившееся уходит названию трека слева. При 196 ему доставалось
+       112px, и «Ничего не играет» обрезалось уже в пустом состоянии. */
+    grid-template-columns: minmax(150px, 1fr) minmax(0, 1.8fr) minmax(160px, 1fr);
+    gap: var(--sp-3);
+    padding: calc(var(--h-progress, 4px) + 4px) var(--sp-4) 0;
+  }
 }
 
-/* Телефонная раскладка. Не просто «узко»: планшет-портрет (700–899px,
-   iPad 768 / iPad mini 744) сюда НЕ попадает — по ширине там помещается
-   десктопная раскладка с сайдбаром (ветка ≤1199px выше), прятать её в одну
-   колонку было бы расточительно. Ландшафт 700–899px (телефон на боку или
-   низкое окно) остаётся телефонным: десктопному плеербару нужно ~796px,
-   а низкие вьюпорты перекроет ландшафтная ветка ниже. */
-@media (max-width: 699px), (max-width: 899px) and (orientation: landscape) {
+/* ══ ТЕЛЕФОН (<768px, любая ориентация) ═════════════════════════════════
+   Порог поднят с 699 до 768 (10.08). Прежняя граница отдавала планшету-
+   портрету (iPad mini 744, iPad 768) ДЕСКТОПНУЮ раскладку с сайдбаром 240px:
+   контенту оставалось ~480px, полки главной шли в полторы плитки, а ряд
+   настройки «заголовок + контрол» сжимался до столбика по одному слову.
+   Теперь всё, что уже планшета, — одна колонка.
+
+   Нижняя навигация — пять пунктов вместо шести, последний бургер: шесть
+   подписей на 393px давали 65px на пункт, и «Библиотека» с «Настройками» жили
+   на грани обрезки. Что не влезло (плейлисты, статистика, настройки, аккаунт)
+   уехало в ящик — и плейлисты там появились ВПЕРВЫЕ: на телефоне до 10.08
+   открыть их было физически негде.
+
+   Бургер внизу, а не в шапке экрана: телефон держат одной рукой, а верхний
+   левый угол экрана высотой 852pt — самая недостижимая точка. Навигация
+   обязана жить там, где палец. */
+@media (max-width: 767px) {
   .shell-grid,
   .shell-grid.with-np {
     grid-template-columns: 1fr;
@@ -545,8 +764,8 @@ a {
        контент начинался на 8px от верха ЭКРАНА (а не от полосы статуса) и
        уезжал под Dynamic Island. Боковые нужны в ландшафте: там чёлка съедает
        край, а не верх. */
-    padding: calc(var(--safe-top) + var(--sp-2)) calc(var(--safe-right) + var(--sp-2)) 0
-      calc(var(--safe-left) + var(--sp-2));
+    padding: calc(var(--safe-top) + var(--sp-2)) calc(var(--safe-right) + var(--sp-1)) 0
+      calc(var(--safe-left) + var(--sp-1));
     padding-bottom: calc(var(--h-minibar) + var(--h-bottomnav) + var(--safe-bottom) + var(--sp-2) * 4);
   }
 
@@ -554,12 +773,32 @@ a {
     display: none;
   }
 
-  .main {
-    padding: var(--sp-4);
+  /* Панель «Сейчас играет» на телефоне не бывает НИКОГДА: её роль играет
+     полноэкранный now-playing по тапу в мини-бар. !important — потому что
+     общий экран несёт display инлайном (см. ветку планшета выше). */
+  .np-panel,
+  .playerbar {
+    display: none !important;
   }
 
-  .playerbar {
-    display: none;
+  /* Поле контента — sp-3 (12px), а не sp-4: на 393px каждые 4px по каждому
+     краю это 8px строки, а строке трека их и не хватало (замер 10.08 —
+     названию доставался 51px). Ширина текста дороже воздуха по краям, пока
+     поле не меньше отступа между строками. */
+  .main {
+    padding: var(--sp-3) var(--sp-3) 0;
+    /* ⚠️ СТРАХОВКА ОТ ГОРИЗОНТАЛЬНОЙ ПРОКРУТКИ ВСЕГО ЭКРАНА.
+       У .main стоит `overflow-y: auto`, а по правилам CSS вторая ось при этом
+       перестаёт быть `visible` и становится `auto` — то есть ЛЮБОЙ элемент,
+       вылезший вправо хоть на пиксель, превращал весь экран в прокручиваемый
+       вбок (жалоба владельца 10.08; виновником была шапка статистики).
+       `clip`, а не `hidden`: hidden завёл бы второй скролл-контейнер, а clip
+       просто обрезает и не трогает прокрутку по вертикали.
+       Только на телефоне: на широких окнах наружу выходят подсказки кнопок
+       (Tooltip намеренно не порталится), и там обрезать нельзя.
+       Намеренные горизонтальные ленты — полки главной, чипы медиатеки, лента
+       разделов настроек — скроллят СЕБЯ и правилу не подчиняются. */
+    overflow-x: clip;
   }
 
   .minibar {
@@ -575,21 +814,7 @@ a {
   }
 
   .shelf {
-    grid-auto-columns: 132px;
-  }
-}
-
-/* ── Планшет-портрет (700–899px) ──
-   Раскладка уже десктопная (ветка ≤1199px), дожать надо одно: десктопные
-   колонки плеербара (200/300/200 + зазоры и паддинги) требуют ~796px
-   вьюпорта — на iPad 768 не влезают. Правая колонка не жмётся (NP-тумблер +
-   громкость со слайдером 110px — ей фикс-минимум), середина упругая,
-   транспорт цел. */
-@media (min-width: 700px) and (max-width: 899px) and (orientation: portrait) {
-  .playerbar {
-    grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr) minmax(196px, 1fr);
-    gap: var(--sp-3);
-    padding: var(--sp-3) var(--sp-4);
+    grid-auto-columns: 138px;
   }
 }
 
@@ -639,9 +864,15 @@ a {
 
   /* подпись под иконкой прячем размером шрифта: текстовый узел в <a> нечем
      таргетить селектором, а имя ссылки для скринридера так остаётся живым */
-  .bottomnav a {
+  .bottomnav a,
+  .bottomnav button {
     font-size: 0;
     gap: 0;
+  }
+
+  /* Ящик в ландшафте отступает от чёлки сбоку, а не сверху. */
+  .drawer {
+    width: calc(min(300px, 60vw) + var(--safe-left));
   }
 
   .minibar {

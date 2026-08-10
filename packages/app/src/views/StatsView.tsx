@@ -38,6 +38,7 @@ import { hourLabel } from "../lib/hourLabel";
 import { pickByOrder } from "../lib/dragEngine";
 import type { WarmRow } from "../lib/rowWarm";
 import { useLookReorder } from "../shell/lookReorder";
+import { useLayout } from "../shell/LayoutContext";
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
 
@@ -481,6 +482,7 @@ export function StatsView({
   rowProps?: WarmRow;
 }) {
   const { t, lang } = useT();
+  const { phone } = useLayout();
   const [period, setPeriod] = useState<StatsPeriod>(initialPeriod);
   const [state, setState] = useState<{
     status: "loading" | "live" | "error";
@@ -622,6 +624,7 @@ export function StatsView({
                   pauseLabel={t("player.pause")}
                   likeLabel={t("common.like")}
                   moreLabel={t("common.more")}
+                  compact={phone}
                   index={i + 1}
                   cover={entry.track.coverUrl ?? undefined}
                   title={entry.track.title}
@@ -834,16 +837,29 @@ export function StatsView({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: "var(--sp-5)",
-        padding: "var(--sp-6) var(--sp-5) 0",
+        gap: phone ? "var(--sp-4)" : "var(--sp-5)",
+        padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-5) 0",
       }}
     >
+      {/* На телефоне шапка — столбик: заголовок, под ним переключатель периода
+          во всю ширину. В ряду четыре вкладки («Неделя / Месяц / Год / Всё
+          время») и кнопка настройки блоков не оставляли заголовку места, а
+          сами упирались в край экрана. */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: "var(--sp-4)",
-          flexWrap: "wrap",
+          alignItems: phone ? "stretch" : "center",
+          flexDirection: phone ? "column" : "row",
+          gap: phone ? "var(--sp-3)" : "var(--sp-4)",
+          // ⚠️ В КОЛОНКЕ ПЕРЕНОС ОБЯЗАН БЫТЬ ВЫКЛЮЧЕН. У колоночного flex с
+          // `wrap` поперечный размер СТРОКИ считается по содержимому, а не по
+          // контейнеру: `stretch` растягивал детей до max-content самого
+          // широкого (переключатель периода — 407px) вместо доступных 353, и
+          // шапка вылезала за край. Это и была единственная настоящая
+          // горизонтальная прокрутка на телефоне (замер 10.08: .main 385 →
+          // содержимое 423). В ряду перенос по-прежнему нужен — там он
+          // спасает шапку на среднем окне.
+          flexWrap: phone ? "nowrap" : "wrap",
           paddingBottom: "var(--sp-4)",
           borderBottom: "1px solid var(--hairline)",
         }}
@@ -853,9 +869,9 @@ export function StatsView({
         <h1
           style={{
             margin: 0,
-            flex: 1,
+            flex: phone ? "none" : 1,
             fontWeight: 700,
-            fontSize: "var(--fs-h1)",
+            fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)",
             letterSpacing: "var(--ls-h1)",
             color: "var(--text-1)",
             lineHeight: "var(--lh-tight)",
@@ -864,20 +880,25 @@ export function StatsView({
           {t("views.stats.title")}
         </h1>
         {canSearch ? (
-          <>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
             {/* тонкий индикатор обновления — контент при этом остаётся на месте.
                 Слот ФИКСИРОВАННОЙ ширины: появление спиннера не сдвигает табы
                 (сдвиг шапки на каждую смену периода читался как «дёргание»). */}
             <span aria-hidden style={{ width: 16, height: 16, flex: "none", display: "grid", placeItems: "center" }}>
               {state.status === "loading" && d ? <Spinner size={16} color="var(--text-3)" /> : null}
             </span>
-            <Tabs items={periodTabs} value={period} onChange={(k: string) => setPeriod(k as StatsPeriod)} />
+            {/* Переключатель периода на телефоне занимает всю оставшуюся
+                строку: четыре вкладки в своей естественной ширине упирались
+                в край экрана, и «Всё время» обрезалось кромкой. */}
+            <div style={{ flex: phone ? 1 : "none", minWidth: 0, overflowX: "auto", scrollbarWidth: "none" }}>
+              <Tabs items={periodTabs} value={period} onChange={(k: string) => setPeriod(k as StatsPeriod)} />
+            </div>
             {/* Без внешнего <Tooltip>: IconButton сам тултипит label — обёртка
                 давала две подсказки разом (косяк волны 0.1.4). */}
             {onCustomize ? (
               <IconButton icon="settings-2" label={t("views.stats.customizeBlocksLabel")} onClick={onCustomize} />
             ) : null}
-          </>
+          </div>
         ) : null}
       </div>
 

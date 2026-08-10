@@ -9,7 +9,9 @@ import { ApiError } from "@muza/api-client";
 import { useT } from "@muza/app";
 import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
 import { DragLayer } from "@muza/app/shell/DragLayer";
-import { Sidebar, isFillableNavIcon, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
+import { useLayout } from "@muza/app/shell/LayoutContext";
+import { Sidebar, type SidebarPlaylist } from "@muza/app/shell/Sidebar";
+import { BottomNav, NavRail, ShellDrawer, type NavEntry } from "./ShellNav";
 import { getApi } from "../api";
 import { useLikes } from "../likes";
 import { usePlayer } from "../player";
@@ -74,6 +76,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useT();
+  const layout = useLayout();
+  /** Ящик («бургер»): один на телефон и планшет. Закрывается сам при смене
+   *  адреса — иначе после тапа по плейлисту он остался бы висеть поверх уже
+   *  открытого экрана. */
+  const [drawer, setDrawer] = useState(false);
   const [mobileNp, setMobileNp] = useState(false);
   /** Ссылки на «открыть/закрыть» держим СТАБИЛЬНЫМИ: MobileNowPlaying берёт
    *  onClose в зависимости сразу двух эффектов — слушателя Esc и «очередь
@@ -102,6 +109,45 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (ready && !session) router.replace("/login");
   }, [ready, session, router]);
+
+  // Ушли на другой экран — ящик закрылся. Тап по плейлисту внутри ящика иначе
+  // оставлял бы шторку поверх только что открытого списка.
+  useEffect(() => {
+    setDrawer(false);
+  }, [pathname]);
+
+  // Раскладка стала широкой (поворот планшета, растянутое окно) — ящику там
+  // нечего показывать: полный сайдбар уже стоит в сетке.
+  useEffect(() => {
+    if (layout.desktop) setDrawer(false);
+  }, [layout.desktop]);
+
+  /** ⚠️ ЖИВАЯ ВЫСОТА ОКНА — ЛЕЧЕНИЕ ЖАЛОБЫ «на iPhone снизу пустое место».
+   *  Разбор механизма — в globals.css, раздел «Высота окна»: у Safari
+   *  начальный содержащий блок равен экрану с УБРАННЫМИ панелями браузера, и
+   *  каркас на `inset: 0` оказывается выше видимой области. Здесь мы меряем
+   *  видимую высоту сами и кладём её в --app-vh; CSS предпочитает эту
+   *  переменную своим 100dvh.
+   *
+   *  Берётся `innerHeight`, а не `visualViewport.height`: второй сжимается
+   *  вместе с экранной клавиатурой, и весь каркас прыгал бы при вводе в
+   *  поиске. Слушаем ещё и `visualViewport.resize` — на iOS смена состояния
+   *  панелей браузера меняет innerHeight, но события `resize` у окна при этом
+   *  может не быть. */
+  useEffect(() => {
+    const apply = () => {
+      document.documentElement.style.setProperty("--app-vh", `${window.innerHeight}px`);
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", apply);
+    window.visualViewport?.addEventListener("resize", apply);
+    return () => {
+      window.removeEventListener("resize", apply);
+      window.removeEventListener("orientationchange", apply);
+      window.visualViewport?.removeEventListener("resize", apply);
+    };
+  }, []);
 
   /** Пункт «Админка» в панели — только если сервер подтвердил права. Спросить
    *  СЕРВЕР, а не смотреть на поле сессии: страница /admin и каждый её запрос
@@ -335,8 +381,74 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // вообще бывает», npVisible — «раскрыта прямо сейчас». Полоса плеера
   // получала сырую НАСТРОЙКУ prefs.npOpen, поэтому на /settings её кнопка
   // «Сейчас играет» горела нажатой и по нажатию не показывала ничего.
-  const npAllowed = pathname !== "/settings";
+  //
+  // ⚠️ Третье условие с 10.08 — РАЗМЕР. Панель занимает 340px, и на планшете
+  // (768–1199) она оставляла контенту меньше половины строки; на телефоне её
+  // роль и раньше играл полноэкранный now-playing. Раньше это решал только
+  // CSS (`display: none !important`), то есть узел строился и считался зря, а
+  // кнопка панели в полосе плеера горела нажатой, ничего не показывая, — ровно
+  // тот же дефект, что уже чинили для /settings.
+  const npAllowed = pathname !== "/settings" && layout.desktop;
   const npVisible = prefs.npOpen && npAllowed;
+
+  /** Пункты навигации узких раскладок. «Любимое» здесь ПУНКТ (в отличие от
+   *  сайдбара, где это особая первая строка блока плейлистов): в ящик за ним
+   *  ходить дороже, чем он того стоит, — это второй по частоте экран. */
+  const compactNav: NavEntry[] = [
+    { href: "/home", icon: "home", label: t("media.nav.home") },
+    { href: "/search", icon: "search", label: t("media.nav.search") },
+    { href: "/favorites", icon: "heart", label: t("media.nav.favorites") },
+    { href: "/library", icon: "library-big", label: t("media.nav.library") },
+  ];
+  // Планшетному рельсу вертикали хватает — статистика и настройки остаются на
+  // виду и не прячутся за бургер, как на телефоне.
+  const railNav: NavEntry[] = [
+    ...compactNav,
+    { href: "/stats", icon: "chart-line", label: t("media.nav.stats") },
+    { href: "/settings", icon: "settings", label: t("settings.title") },
+  ];
+
+  /** Сайдбар собирается ОДИН раз и встаёт либо в сетку (десктоп), либо в ящик
+   *  (телефон и планшет). Два места — но никогда одновременно: `layout` —
+   *  перечисление, и ветки взаимно исключены. Копия пропов здесь была бы
+   *  двадцатью строками, которые разъедутся на первой же новой возможности
+   *  панели. */
+  const sidebarNode = (
+    <Sidebar
+      logoSrc="/glyph.svg"
+      badge={<Badge>web</Badge>}
+      style={{ flex: 1, minHeight: 0 }}
+      nav={NAV_KEYS.map((n) => ({ key: n.href, icon: n.icon, label: t(`media.nav.${n.labelKey}`) }))}
+      activeNavKey={pathname}
+      onSelectNav={(href) => router.push(href)}
+      playlists={sidebarPlaylists}
+      favoritesCount={favorites.length}
+      favoritesActive={pathname === "/favorites"}
+      onOpenFavorites={() => router.push("/favorites")}
+      onCreatePlaylist={() => setCreateOpen(true)}
+      onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
+      onPlaylistMenu={(p, e) => menuApiRef.current?.openMenu(e, { kind: "playlist", id: p.id, name: p.name })}
+      onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
+      onDropTrackOnFavorites={dropOnFavorites}
+      onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
+      // externalDrop (мост к HTML5-перетаскиванию) здесь БЫЛ и снят
+      // 2026-08-03 вместе со своим единственным источником: списки веба
+      // переехали на общие экраны @muza/app и таскают строки родным
+      // pointer-слоем (DragLayer выше), как приложение. Мост без
+      // источника ничего не принимал — только обещал приём в разметке.
+      emptyHint={
+        <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", padding: "0 var(--sp-3)" }}>
+          {t("web.nav.playlistsEmptyHint")}
+        </span>
+      }
+      // Нет прав — пункта нет вовсе (не серого): панель рисует его
+      // ровно по наличию колбэка, как и в приложении.
+      onOpenAdmin={isAdmin ? () => router.push("/admin") : undefined}
+      adminActive={pathname === "/admin"}
+      onOpenSettings={() => router.push("/settings")}
+      settingsActive={pathname === "/settings"}
+    />
+  );
 
   return (
     // Э1: data-accent/тема теперь на общем ThemeRoot (providers.tsx), не здесь.
@@ -410,41 +522,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             (она общая и не вправе рассчитывать на чужие классы), а инлайн
             сильнее любого правила таблицы. Свои фон и отступы обёртка гасит —
             панель несёт их сама, иначе была бы двойная рамка. */}
+        {/* Одна ячейка — три содержимых. Десктоп получает полный сайдбар,
+            планшет — иконный рельс той же ячейкой (сетка меняет только ширину
+            колонки, контент вбок не прыгает), телефон — ничего: там ячейка
+            схлопнута медиа-веткой, а навигация живёт внизу. */}
         <div className="zone sidebar" style={{ padding: 0, background: "transparent" }}>
-          <Sidebar
-            logoSrc="/glyph.svg"
-            badge={<Badge>web</Badge>}
-            style={{ flex: 1, minHeight: 0 }}
-            nav={NAV_KEYS.map((n) => ({ key: n.href, icon: n.icon, label: t(`media.nav.${n.labelKey}`) }))}
-            activeNavKey={pathname}
-            onSelectNav={(href) => router.push(href)}
-            playlists={sidebarPlaylists}
-            favoritesCount={favorites.length}
-            favoritesActive={pathname === "/favorites"}
-            onOpenFavorites={() => router.push("/favorites")}
-            onCreatePlaylist={() => setCreateOpen(true)}
-            onOpenPlaylist={(id) => router.push(`/playlist?id=${id}`)}
-            onPlaylistMenu={(p, e) => menuApiRef.current?.openMenu(e, { kind: "playlist", id: p.id, name: p.name })}
-            onDropTrack={(playlistId, trackId) => void dropOnPlaylist(playlistId, trackId)}
-            onDropTrackOnFavorites={dropOnFavorites}
-            onReorderPlaylists={(id, to) => void reorderPlaylists(id, to)}
-            // externalDrop (мост к HTML5-перетаскиванию) здесь БЫЛ и снят
-            // 2026-08-03 вместе со своим единственным источником: списки веба
-            // переехали на общие экраны @muza/app и таскают строки родным
-            // pointer-слоем (DragLayer выше), как приложение. Мост без
-            // источника ничего не принимал — только обещал приём в разметке.
-            emptyHint={
-              <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-3)", padding: "0 var(--sp-3)" }}>
-                {t("web.nav.playlistsEmptyHint")}
-              </span>
-            }
-            // Нет прав — пункта нет вовсе (не серого): панель рисует его
-            // ровно по наличию колбэка, как и в приложении.
-            onOpenAdmin={isAdmin ? () => router.push("/admin") : undefined}
-            adminActive={pathname === "/admin"}
-            onOpenSettings={() => router.push("/settings")}
-            settingsActive={pathname === "/settings"}
-          />
+          {layout.desktop ? sidebarNode : null}
+          {layout.tablet ? (
+            <NavRail entries={railNav} pathname={pathname} menuOpen={drawer} onOpenMenu={() => setDrawer(true)} />
+          ) : null}
         </div>
 
         {/* Контент */}
@@ -472,27 +558,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         onExpand={() => setListening(true)}
       />
 
-      {/* Нижняя навигация (<900px): «Любимое» здесь остаётся пунктом —
-          сайдбара с FavoritesRow на телефоне нет */}
-      <nav className="bottomnav" aria-label={t("web.nav.bottomNavAria")}>
-        {[
-          { href: NAV_KEYS[0].href, icon: NAV_KEYS[0].icon, label: t(`media.nav.${NAV_KEYS[0].labelKey}`) },
-          { href: NAV_KEYS[1].href, icon: NAV_KEYS[1].icon, label: t(`media.nav.${NAV_KEYS[1].labelKey}`) },
-          { href: "/favorites", icon: "heart", label: t("media.nav.favorites") },
-          { href: NAV_KEYS[2].href, icon: NAV_KEYS[2].icon, label: t(`media.nav.${NAV_KEYS[2].labelKey}`) },
-          { href: NAV_KEYS[3].href, icon: NAV_KEYS[3].icon, label: t(`media.nav.${NAV_KEYS[3].labelKey}`) },
-          { href: "/settings", icon: "settings", label: t("settings.title") },
-        ].map((n) => (
-          <Link key={n.href} href={n.href} className={pathname === n.href ? "active" : undefined}>
-            {/* Заливка активного глифа — правило ОБЩЕЙ панели (isFillableNavIcon
-                из @muza/app/shell/Sidebar): lucide рисует штрихом, и заливка
-                годится только замкнутым силуэтам. Своя копия набора здесь была
-                третьей и ровно так и разъезжается. */}
-            <Icon name={n.icon} size={22} filled={pathname === n.href && isFillableNavIcon(n.icon)} />
-            {n.label}
-          </Link>
-        ))}
-      </nav>
+      {/* Нижняя навигация телефона: пять пунктов, пятый — бургер. Разбор
+          состава и почему бургер внизу — в шапке ShellNav.tsx. Узел стоит в
+          дереве всегда: показывает его медиа-ветка (.bottomnav), а не React —
+          так на смене раскладки не пересоздаётся поддерево. */}
+      <BottomNav entries={compactNav} pathname={pathname} menuOpen={drawer} onOpenMenu={() => setDrawer(true)} />
+
+      {/* Ящик — ТОЛЬКО в узких раскладках: на десктопе тот же сайдбар уже
+          стоит в сетке, и открыть ящик нечем (кнопки нет). Условие всё равно
+          явное — окно можно растянуть, пока ящик открыт. */}
+      <ShellDrawer open={drawer && !layout.desktop} onClose={() => setDrawer(false)}>
+        {!layout.desktop ? sidebarNode : null}
+      </ShellDrawer>
 
       <Dialog
         open={createOpen}

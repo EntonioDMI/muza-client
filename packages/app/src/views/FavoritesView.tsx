@@ -4,6 +4,7 @@ import type { MuzaApi, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
+import { useLayout } from "../shell/LayoutContext";
 import { useAltFileDrag } from "../platform";
 import { useT } from "../i18n";
 // Форма пропсов подготовки строки — общая (lib/rowWarm.ts): здесь она была
@@ -58,6 +59,7 @@ export function FavoritesView({
   warmRow?: WarmRow;
 }) {
   const { t, lang } = useT();
+  const { phone } = useLayout();
   const { dragSource } = useDrag();
   const altFileDrag = useAltFileDrag();
   const [server, setServer] = useState<Track[] | null>(null);
@@ -76,11 +78,17 @@ export function FavoritesView({
   const total = server?.length ?? 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)", padding: "var(--sp-6) var(--sp-6) 0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
-        <Icon name="heart" size={26} color="var(--accent-text)" filled />
-        <h1 style={{ margin: 0, fontSize: "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)" }}>{t("views.favorites.title")}</h1>
-        <span style={{ fontSize: "var(--fs-body)", color: "var(--text-3)", alignSelf: "flex-end", paddingBottom: 4 }}>
+    // Поле экрана на телефоне вдвое меньше: 24px с каждой стороны — это 48
+    // пикселей из 385 доступных, и уходили они у СТРОКИ ТРЕКА, которой ширины
+    // и не хватало. Воздух по краям дешевле текста ровно до тех пор, пока он
+    // не начинает его резать.
+    <div style={{ display: "flex", flexDirection: "column", gap: phone ? "var(--sp-4)" : "var(--sp-5)", padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-6) 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}>
+        <Icon name="heart" size={phone ? 22 : 26} color="var(--accent-text)" filled />
+        <h1 style={{ margin: 0, fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {t("views.favorites.title")}
+        </h1>
+        <span style={{ flex: "none", fontSize: phone ? "var(--fs-caption)" : "var(--fs-body)", color: "var(--text-3)", alignSelf: "flex-end", paddingBottom: 4 }}>
           {total > 0 ? t("views.favorites.trackCount", { count: total }) : ""}
         </span>
       </div>
@@ -104,6 +112,7 @@ export function FavoritesView({
           >
             <TrackRow
               {...trackRowL10n(t)}
+              compact={phone}
               index={i + 1}
               cover={tr.coverUrl}
               showCover={rowShow?.cover !== false}

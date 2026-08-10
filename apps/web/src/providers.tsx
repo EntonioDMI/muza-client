@@ -5,13 +5,16 @@ import { useRouter } from "next/navigation";
 import { LanguageProvider } from "@muza/app";
 import { comboFromEvent, isTypingTarget, matchAction, withDefaults } from "@muza/app/lib/hotkeys";
 import { PlatformProvider } from "@muza/app/platform";
+import { LayoutProvider } from "@muza/app/shell/LayoutContext";
+import { usePrefsSync } from "@muza/app/prefs/usePrefsSync";
 import { ThemeRoot } from "@muza/app/theme/ThemeRoot";
+import { getApi } from "./api";
 import { webPlatform } from "./platform/webAdapter";
 import { LikesProvider, useLikes } from "./likes";
 import { PlayerProvider, usePlayer, usePosition } from "./player";
 import { PlaylistsProvider } from "./playlists";
 import { PrefsProvider, usePrefs } from "./prefs";
-import { SessionProvider } from "./session";
+import { SessionProvider, useSession } from "./session";
 import { ToastProvider } from "./toast";
 
 /** Э1 веб-паритета: тема из prefs применяется общим ThemeRoot (@muza/app) —
@@ -52,6 +55,19 @@ function LocalizedTree({ children }: { children: React.ReactNode }) {
     document.documentElement.lang = prefs.language;
   }, [prefs.language]);
   return <LanguageProvider lang={prefs.language}>{children}</LanguageProvider>;
+}
+
+/** Один профиль на аккаунт, общий с приложением (разбор — @muza/app
+ *  prefs/sync.ts). Ничего не рисует: только держит согласование профиля с
+ *  сервером, пока страница открыта.
+ *
+ *  Анонимного режима в вебе не существует (без серверной сессии браузеру нечем
+ *  играть), поэтому признак входа — просто наличие сессии. */
+function PrefsSync() {
+  const { prefs, applyPrefs, loaded } = usePrefs();
+  const { session } = useSession();
+  usePrefsSync({ api: getApi(), signedIn: !!session, prefs, applyPrefs, ready: loaded });
+  return null;
 }
 
 /** Шаг перемотки стрелками — тот же, что у приложения по умолчанию
@@ -145,8 +161,22 @@ export function AppHotkeys() {
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <PlatformProvider adapter={webPlatform}>
+    {/* Режим раскладки — выше всего видимого, включая /login: экран входа
+        тоже обязан перестраиваться на телефоне. Живой он ТОЛЬКО здесь;
+        приложение Tauri провайдера не ставит и остаётся на «desktop», поэтому
+        общие экраны в нём ведут себя ровно как до 10.08 (см. шапку
+        packages/app/src/lib/useLayoutMode.ts). */}
+    <LayoutProvider>
     <SessionProvider>
       <PrefsProvider>
+        {/* Синхронизация настроек — ОТДЕЛЬНЫЙ невидимый узел, а не хук внутри
+            PrefsProvider. Ей нужны оба контекста разом (профиль и сессия), но
+            хранилище настроек не должно зависеть от входа: пока хук стоял в
+            провайдере, тот падал без SessionProvider, и 35 тестов плеера
+            перестали собираться. Место в дереве и есть способ выразить «нужны
+            оба» — без ослабления контракта useSession, который бросает
+            намеренно. */}
+        <PrefsSync />
         <ThemedTree>
           <LocalizedTree>
             <LikesProvider>
@@ -160,6 +190,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         </ThemedTree>
       </PrefsProvider>
     </SessionProvider>
+    </LayoutProvider>
     </PlatformProvider>
   );
 }

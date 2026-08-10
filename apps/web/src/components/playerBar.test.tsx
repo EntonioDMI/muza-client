@@ -39,6 +39,12 @@ vi.mock("../player", () => ({
   usePosition: () => ({ position: 0, duration: 200 }),
 }));
 vi.mock("../likes", () => ({ useLikes: () => ({ likedIds: new Set<string>(), toggle: () => undefined }) }));
+/** Настройки и тосты подменены по той же причине, что плеер: полосе от них
+ *  нужны ровно шаги скорости и способ показать «1.25×». Настоящий PrefsProvider
+ *  потянул бы localStorage и миграции профиля — к кнопке «Сейчас играет» это
+ *  отношения не имеет. */
+vi.mock("../prefs", () => ({ usePrefs: () => ({ prefs: { speedSteps: [1, 1.25, 1.5] }, set: () => undefined }) }));
+vi.mock("../toast", () => ({ useToast: () => () => undefined }));
 
 const { PlayerBar } = await import("./PlayerBar");
 const { translate, DEFAULT_LANG } = await import("@muza/app");

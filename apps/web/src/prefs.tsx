@@ -68,12 +68,20 @@ export type WebPrefs = Prefs;
 interface PrefsCtx {
   prefs: Prefs;
   set: (patch: Partial<Prefs>) => void;
+  /** Заменить профиль ЦЕЛИКОМ. Нужен синхронизации: приехавший с сервера
+   *  профиль — это не «правка нескольких полей», а другое состояние. */
+  applyPrefs: (p: Prefs) => void;
+  /** Профиль уже поднят с диска (localStorage читается после маунта). */
+  loaded: boolean;
 }
 
 const Ctx = createContext<PrefsCtx | null>(null);
 
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_WEB_PREFS);
+  /** Локальный профиль поднят с диска. До этого синхронизации нельзя давать
+   *  ход: она залила бы на сервер дефолты вместо настроек этого устройства. */
+  const [loaded, setLoaded] = useState(false);
 
   // localStorage читается после маунта (SSR-пререндер его не видит)
   useEffect(() => {
@@ -96,6 +104,8 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       setPrefs({ ...DEFAULT_WEB_PREFS, language: detectBrowserLanguage() });
     } catch {
       /* битые сохранения — дефолты */
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -107,7 +117,14 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  return <Ctx.Provider value={{ prefs, set }}>{children}</Ctx.Provider>;
+  /** Профиль приехал с сервера — кладём целиком и на диск тоже: следующий
+   *  запуск обязан открыться уже с ним, не дожидаясь сети. */
+  const applyPrefs = useCallback((next: Prefs) => {
+    savePrefs(next);
+    setPrefs(next);
+  }, []);
+
+  return <Ctx.Provider value={{ prefs, set, applyPrefs, loaded }}>{children}</Ctx.Provider>;
 }
 
 export function usePrefs(): PrefsCtx {
