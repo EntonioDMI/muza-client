@@ -63,6 +63,9 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "s
 # зафиксирована на уже разрешённой в дереве (tauri сама тянет getrandom 0.3.4),
 # доп. компиляции почти нет
 getrandom = "0.3"
+cpal = "0.16"
+symphonia = { version = "0.6.0", features = ["mkv", "isomp4", "aac", "mp3", "flac", "ogg", "vorbis", "pcm", "wav"] }
+symphonia-adapter-libopus = "0.3.0"
 
 # Системный прокси Windows для добычи (отчёт O, 22.07): sysproxy.rs, только
 # Windows-таргет. Версия 0.61 уже разрешена в дереве через tao/wry/tauri
