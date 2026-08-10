@@ -25,12 +25,10 @@
  *  сразу в обе программы. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { IconButton, SearchInput } from "@muza/ui";
 import type { MuzaApi } from "@muza/api-client";
 import { usePlatform } from "@muza/app/platform";
-import { paneStyle, SettingRow } from "@muza/app/views/settings/primitives";
-import { SETTINGS_PANE_ID, SETTINGS_TAB_KEYS, type SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
-import { SettingsHub } from "@muza/app/views/settings/SettingsHub";
+import { type SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
+import { SettingsScreen } from "@muza/app/views/settings/SettingsScreen";
 import {
   settingsCaps,
   SettingsProvider,
@@ -60,8 +58,7 @@ import { NavSub } from "@muza/app/views/settings/NavSub";
 import { SessionsSub } from "@muza/app/views/settings/SessionsSub";
 import { PrivacySub } from "@muza/app/views/settings/PrivacySub";
 import { DiagnosticsSub } from "@muza/app/views/settings/DiagnosticsSub";
-import { searchSettings, type SettingsSearchHit } from "@muza/app/lib/settingsIndex";
-import { useT, type TranslationKey } from "../i18n";
+import { useT } from "../i18n";
 import type { Prefs } from "../types";
 import glyph from "@muza/ui/assets/logo/glyph.svg";
 // Редизайн раскладки (колонки во всю высоту зоны, текучие ширины) — перекрывает
@@ -74,37 +71,41 @@ export interface SettingsIntent {
   nonce: number;
 }
 
-/** Содержимое раздела. Порядок объекта роли не играет — рельс держит свой
- *  канонический порядок (SETTINGS_TAB_KEYS). */
-const PANES: Record<SettingsTabKey, () => React.ReactElement> = {
-  account: AccountPane,
-  appearance: AppearancePane,
-  playback: PlaybackPane,
-  sources: SourcesPane,
-  lyrics: LyricsPane,
-  library: LibraryPane,
-  integrations: IntegrationsPane,
-  hotkeys: HotkeysPane,
-  extensions: ExtensionsPane,
-  system: SystemPane,
-};
+/** Содержимое разделов. Порядок объекта роли не играет — канонический держит
+ *  SETTINGS_TAB_KEYS внутри каркаса.
+ *
+ *  УЗЛЫ, А НЕ КОМПОНЕНТЫ: каркас принимает готовую разметку (тот же контракт,
+ *  что у веба). Элементы создаются на модуле один раз и ничего не стоят —
+ *  React не рисует то, что не вставлено в дерево. */
+const PANE_NODES = {
+  account: <AccountPane />,
+  appearance: <AppearancePane />,
+  playback: <PlaybackPane />,
+  sources: <SourcesPane />,
+  lyrics: <LyricsPane />,
+  library: <LibraryPane />,
+  integrations: <IntegrationsPane />,
+  hotkeys: <HotkeysPane />,
+  extensions: <ExtensionsPane />,
+  system: <SystemPane />,
+} satisfies Record<SettingsTabKey, React.ReactNode>;
 
-/** Содержимое под-экрана. */
-const SUBS: Record<SettingsSubKey, () => React.ReactElement> = {
-  customize: CustomizeSub,
-  equalizer: EqualizerSub,
-  outputs: OutputsSub,
-  discord: DiscordSub,
-  market: MarketSub,
-  data: DataSub,
-  stats: StatsSub,
-  licenses: LicensesSub,
-  bar: BarSub,
-  nav: NavSub,
-  sessions: SessionsSub,
-  privacy: PrivacySub,
-  stage0: DiagnosticsSub,
-};
+/** Содержимое под-экранов. Открытый под-экран подменяет раздел целиком. */
+const SUB_NODES = {
+  customize: <CustomizeSub />,
+  equalizer: <EqualizerSub />,
+  outputs: <OutputsSub />,
+  discord: <DiscordSub />,
+  market: <MarketSub />,
+  data: <DataSub />,
+  stats: <StatsSub />,
+  licenses: <LicensesSub />,
+  bar: <BarSub />,
+  nav: <NavSub />,
+  sessions: <SessionsSub />,
+  privacy: <PrivacySub />,
+  stage0: <DiagnosticsSub />,
+} satisfies Record<SettingsSubKey, React.ReactNode>;
 
 export function SettingsView({
   api,
@@ -178,54 +179,22 @@ export function SettingsView({
   if (paneKey !== initialPaneKey.current) switchedRef.current = true;
   const paneClass = switchedRef.current ? "muza-view" : undefined;
 
-  // Прокрутка живёт в самой панели (.muza-settings__pane — скроллер): при
-  // смене раздела возвращаем её к началу, иначе скролл прошлого раздела
-  // протекает в следующий.
-  const paneScrollRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (paneScrollRef.current) paneScrollRef.current.scrollTop = 0;
-  }, [paneKey]);
-
-  // ── Поиск по настройкам ───────────────────────────────────────────
-  const [searchQ, setSearchQ] = useState("");
-  // Название ряда, к которому надо прокрутить и подсветить после перехода из
-  // результатов. Ставится вместе с setTab/setSub — эффект ниже срабатывает
-  // уже ПОСЛЕ рендера целевой панели.
-  const [flashTitle, setFlashTitle] = useState<string | null>(null);
-  useEffect(() => {
-    if (!flashTitle) return;
-    setFlashTitle(null);
-    const row = paneScrollRef.current?.querySelector<HTMLElement>(`[data-rowtitle="${CSS.escape(flashTitle)}"]`);
-    // Ряда может не быть: он спрятан за выключенным переключателем или
-    // свёрнутым «Настроить» — тогда просто открыли нужный раздел.
-    if (!row) return;
-    row.scrollIntoView?.({ block: "center" });
-    row.classList.add("muza-settings-row--flash");
-    // Таймер без уборки нарочно: setFlashTitle(null) выше перезапускает
-    // эффект, и уборка сняла бы класс мгновенно, не дав подсветке пожить.
-    setTimeout(() => row.classList.remove("muza-settings-row--flash"), 2000);
-  }, [flashTitle]);
-  const goToHit = (hit: SettingsSearchHit) => {
-    setSearchQ("");
-    setSub(hit.sub as SettingsSubKey | null);
-    setTab(hit.tab as SettingsTabKey);
-    setFlashTitle(hit.title);
-  };
-  const searchHits = searchQ.trim() ? searchSettings(searchQ, (key) => t(key as TranslationKey), caps) : [];
-
-  // null на обоих — человек на входе, показываем сетку карточек.
-  const Pane = sub ? SUBS[sub] : tab ? PANES[tab] : null;
-  // Назад: из под-экрана — в его раздел, из раздела — на вход. У под-экранов
-  // своя шапка с возвратом (SubHeader), поэтому вторую кнопку им не рисуем.
-  const showBack = !!tab && !sub;
+  // ⚠️ ПОИСК, ПОДСВЕТКА НАЙДЕННОГО РЯДА, ВОЗВРАТ ПРОКРУТКИ, КНОПКА «НАЗАД» И
+  // ВЫБОР ПАНЕЛИ ЖИВУТ В ОБЩЕМ КАРКАСЕ (@muza/app SettingsScreen). Здесь они
+  // были своей копией — ровно тем вторым способом собрать один экран, из-за
+  // которого редизайн 04.08 доехал только до приложения, а веб остался с
+  // рельсом разделов (жалоба владельца 11.08 «в веб-версии интерфейс до сих
+  // пор старый»). Копии больше нет.
 
   return (
-    // Вся геометрия (высота во всю зону, текучие колонки, потолки ширины) —
-    // в SettingsView.layout.css; базовый каркас и схлопывание рельса — в
-    // app.css. Класс muza-settings — container query по ширине панели
-    // настроек (не по окну: боковые зоны человек тянет руками).
-    <div className="muza-settings">
-      <SettingsProvider
+    // ⚠️ СВОЕЙ ОБЁРТКИ .muza-settings ЗДЕСЬ БОЛЬШЕ НЕТ: корень приносит общий
+    // каркас (SettingsScreen), и второй такой же div давал бы вложенные
+    // контейнеры запросов, а селекторы SettingsView.layout.css с комбинатором
+    // `>` переставали бы попадать. Геометрия приложения (высота во всю зону,
+    // потолки ширины) как жила в SettingsView.layout.css, так и живёт —
+    // она цепляется за тот же класс, кто бы его ни нарисовал.
+    // SettingsProvider своей разметки не добавляет.
+    <SettingsProvider
         prefs={prefs}
         setPrefs={setPrefs}
         api={api}
@@ -248,67 +217,26 @@ export function SettingsView({
         }}
         paneClass={paneClass}
       >
-        {/* Навигация слева вместо горизонтальных вкладок: список не зависит от
-            длины подписей, поэтому раскладка не перестраивается при смене
-            языка. Заголовок «Настройки» — внутри SettingsNav, шапкой плашки. */}
-        <div className="muza-settings__cols">
-          {/* Одна колонка: рельс разделов убран, его роль исполняет сетка
-              карточек на входе. Под-экран рисуется сюда же вместо содержимого
-              раздела, назад — кнопкой в его шапке. */}
-          <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="region" aria-label={t("settings.title")}>
-            {/* Шапка экрана — та же анатомия, что у Медиатеки: заголовок и
-                первичное действие на одной линии. Поиск живёт здесь на всех
-                уровнях: непустой запрос подменяет содержимое списком найденных
-                рядов и уводит прямо в ряд, минуя и сетку, и раздел. */}
-            <div className="muza-settings__head">
-              {showBack ? (
-                <IconButton
-                  icon="arrow-left"
-                  size="sm"
-                  label={t("settings.hub.back")}
-                  onClick={() => setTab(null)}
-                />
-              ) : null}
-              <h1 className="muza-settings__title">
-                {tab && !sub ? t(`settings.tabs.${tab}` as TranslationKey) : t("settings.title")}
-              </h1>
-              <SearchInput
-                value={searchQ}
-                onChange={setSearchQ}
-                placeholder={t("settings.search.placeholder")}
-                style={{ maxWidth: 340, flex: 1 }}
-              />
-            </div>
-            {searchQ.trim() ? (
-              <div key="search-results" style={paneStyle}>
-                {searchHits.length === 0 ? (
-                  <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.search.empty")}</div>
-                ) : (
-                  searchHits.map((hit) => (
-                    <SettingRow
-                      key={`${hit.tab}·${hit.sub ?? ""}·${hit.titleKey}`}
-                      title={hit.title}
-                      hint={t(`settings.tabs.${hit.tab}` as TranslationKey)}
-                      chevron
-                      onClick={() => goToHit(hit)}
-                    ></SettingRow>
-                  ))
-                )}
-              </div>
-            ) : Pane ? (
-              <Pane key={paneKey} />
-            ) : (
-              <SettingsHub
-                tabs={SETTINGS_TAB_KEYS}
-                onOpen={(next) => {
-                  setSub(null);
-                  setTab(next);
-                }}
-              />
-            )}
-          </div>
-        </div>
-      </SettingsProvider>
-    </div>
+        {/* ОДНА КОМПОЗИЦИЯ НА ОБЕ ПРОГРАММЫ. Здесь лежала своя разметка
+            каркаса — колонки, шапка с «назад» и поиском, сетка карточек,
+            результаты поиска — повторявшая @muza/app SettingsScreen «один в
+            один», как и обещала шапка этого файла. Обещание исполнено
+            2026-08-11: каркас научился под-экранам и управляемому разделу, и
+            файл схлопнулся до вызова.
+
+            Раздел и под-экран остаются ЗДЕСЬ состоянием: в настройки
+            проваливают снаружи (кнопка эквалайзера в полосе плеера), а
+            заявку исполняет эффект выше. Каркас в этом случае управляемый —
+            он только просит сменить раздел. */}
+        <SettingsScreen
+          panes={PANE_NODES}
+          subPanes={SUB_NODES}
+          caps={[...caps]}
+          tab={tab}
+          onTabChange={setTab}
+          sub={sub}
+          onSubChange={setSub}
+        />
+    </SettingsProvider>
   );
 }

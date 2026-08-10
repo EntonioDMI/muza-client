@@ -125,15 +125,23 @@ function HotkeysReferencePane() {
 
 export function SettingsScreen({
   panes,
+  subPanes,
   caps,
   rows,
   subs,
   sub,
   onSubChange,
+  tab: tabProp,
+  onTabChange,
   initialTab,
 }: {
-  /** Содержимое разделов. Раздела нет в объекте — нет и пункта в рельсе. */
+  /** Содержимое разделов. Раздела нет в объекте — нет и карточки на входе. */
   panes: Partial<Record<SettingsTabKey, ReactNode>>;
+  /** Содержимое под-экранов. Открытый под-экран рисуется ВМЕСТО раздела — он
+   *  не вложен в него, а подменяет его целиком (выход — своей шапкой,
+   *  SubHeader). Не передан — каркас под-экраны не рисует, и площадка
+   *  показывает их сама внутри своего узла раздела. */
+  subPanes?: Partial<Record<SettingsSubKey, ReactNode>>;
   /** Умения площадки — ими же фильтруется поиск по настройкам. */
   caps?: readonly SettingsCapability[];
   /** ОПИСЬ РЯДОВ: ключ индекса (titleKey) → где площадка этот ряд рисует
@@ -162,9 +170,26 @@ export function SettingsScreen({
    *  результата поиска и при смене раздела. Не передан — каркас под-экранами не
    *  распоряжается, и результат из под-экрана открывает только раздел. */
   onSubChange?: (sub: SettingsSubKey | null) => void;
+  /** УПРАВЛЯЕМЫЙ раздел: `null` — вход (сетка карточек). Передан — состояние
+   *  держит площадка, и каркас только просит его сменить через onTabChange.
+   *  Приложению это нужно, потому что раздел открывают ИЗВНЕ экрана: кнопка
+   *  эквалайзера в полосе плеера проваливает сразу в под-экран вместе с его
+   *  разделом. Не передан — каркас держит раздел сам (так живёт веб). */
+  tab?: SettingsTabKey | null;
+  onTabChange?: (tab: SettingsTabKey | null) => void;
+  /** Начальный раздел для НЕуправляемого режима. Не задан — вход, то есть
+   *  сетка карточек. */
   initialTab?: SettingsTabKey;
 }) {
   const { t } = useT();
+  /** Под-экраны, в которые поиск вправе увести. Площадка либо перечисляет их
+   *  явно (`subs` — так делает веб: часть под-экранов он рисует сам внутри
+   *  раздела), либо отдаёт их содержимое каркасу (`subPanes`), и тогда список
+   *  выводится из него — второй перечень тех же ключей разъехался бы. */
+  const openableSubs = useMemo<readonly string[]>(
+    () => subs ?? (subPanes ? Object.keys(subPanes) : []),
+    [subs, subPanes],
+  );
   // Разделы, которые каркас умеет нарисовать сам, если площадка не передала
   // свой (сейчас такой один — «Горячие клавиши», см. HotkeysReferencePane).
   // Дальше по файлу площадочные и встроенные узлы неразличимы: и рельс, и
@@ -178,8 +203,18 @@ export function SettingsScreen({
   // в приложении пятым, а в браузере первым (так и было до этой волны).
   const tabs = useMemo(() => SETTINGS_TAB_KEYS.filter((key) => shownPanes[key] !== undefined), [shownPanes]);
   /** null — ВХОД в настройки: сетка карточек разделов (SettingsHub), а не
-   *  раздел. Так же устроено в приложении (apps/desktop SettingsView). */
-  const [tab, setTab] = useState<SettingsTabKey | null>(() => initialTab ?? null);
+   *  раздел.
+   *
+   *  Раздел бывает УПРАВЛЯЕМЫМ (проп `tab` — так делает приложение, потому что
+   *  в настройки проваливают снаружи) и собственным (веб). Обе ветки ходят
+   *  через один `setTab`, поэтому остальной файл про разницу не знает. */
+  const [tabInner, setTabInner] = useState<SettingsTabKey | null>(() => initialTab ?? null);
+  const controlled = tabProp !== undefined;
+  const tab = controlled ? tabProp : tabInner;
+  const setTab = (next: SettingsTabKey | null) => {
+    onTabChange?.(next);
+    if (!controlled) setTabInner(next);
+  };
   // Список разделов у площадки не вечен: раздел держится на умении, а умения
   // выводятся из портов и появляются/исчезают на ходу (розетка подменяется,
   // initialTab приходит от площадки). Выбранный раздел, которого больше нет,
@@ -273,7 +308,7 @@ export function SettingsScreen({
   const isReachable = (hit: SettingsSearchHit) => {
     const place = rowPlace(hit);
     if (place === undefined) return false;
-    return shownPanes[hit.tab as SettingsTabKey] !== undefined && (place === null || (subs ?? []).includes(place));
+    return shownPanes[hit.tab as SettingsTabKey] !== undefined && (place === null || openableSubs.includes(place));
   };
 
   // Переход из результата ОТКРЫВАЕТ и под-экран, а не только раздел: человек
@@ -349,7 +384,15 @@ export function SettingsScreen({
                внутреннее состояние прошлого раздела в следующий не протекает.
                tab === null — вход: сетка карточек вместо раздела. */
             <Fragment key={paneKey}>
-              {tab ? shownPanes[tab] : <SettingsHub tabs={tabs} onOpen={goToTab} />}
+              {/* Открытый под-экран подменяет раздел целиком, а не вкладывается
+                  в него: выход даёт его собственная шапка (SubHeader).
+                  Площадка может не передавать subPanes вовсе — тогда она
+                  рисует под-экраны сама внутри узла раздела. */}
+              {sub && subPanes?.[sub]
+                ? subPanes[sub]
+                : tab
+                  ? shownPanes[tab]
+                  : <SettingsHub tabs={tabs} onOpen={goToTab} />}
             </Fragment>
           )}
         </div>
