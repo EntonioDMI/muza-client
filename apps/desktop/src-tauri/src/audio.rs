@@ -60,8 +60,12 @@ struct Shared {
     stop: AtomicBool,
     /// Сколько кадров отдано устройству — из этого считается позиция.
     frames_out: AtomicU64,
-    device_rate: u32,
-    device_channels: u16,
+    /// Частота и каналы ТЕКУЩЕГО устройства вывода. Атомики, потому что
+    /// устройство может смениться на ходу (человек переключил вывод в
+    /// Windows), и декодер обязан это заметить: под новую частоту нужен новый
+    /// ресемплер.
+    device_rate: AtomicU32,
+    device_channels: AtomicU32,
     /// Громкость (биты f32), уже по перцептивной кривой — её считает
     /// вызывающий, формула общая с прежним движком.
     ///
@@ -109,8 +113,8 @@ impl NativeAudio {
             paused: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             frames_out: AtomicU64::new(0),
-            device_rate: config.sample_rate().0,
-            device_channels: config.channels(),
+            device_rate: AtomicU32::new(config.sample_rate().0),
+            device_channels: AtomicU32::new(config.channels() as u32),
             volume: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
             fade_in_left: AtomicU64::new(0),
             seek_to: Mutex::new(None),
@@ -132,24 +136,48 @@ impl NativeAudio {
 
         // Стрим cpal тоже в своём потоке: он !Send, а колбэк должен пережить
         // возврат из этой функции.
+        //
+        // ⚠️ ВНЕШНИЙ ЦИКЛ — ПРО СМЕНУ УСТРОЙСТВА ВЫВОДА. cpal открывает
+        // КОНКРЕТНОЕ устройство и держит его: когда человек переключает вывод
+        // в Windows или выдёргивает наушники, поток продолжает играть в
+        // прежнее, и звук не пропадает там, где обязан (жалоба владельца
+        // 10.08 — до нативного движка это работало, потому что переключение
+        // за нас делал Chromium). Следим сами и переоткрываем вывод; буфер и
+        // позиция при этом сохраняются, декодер даже не замечает.
         let stream_shared = Arc::clone(&shared);
         std::thread::Builder::new()
             .name("muza-output".into())
             .spawn(move || {
-                // Отдельный клон для колбэка: он забирает владение, а самому
-                // потоку ссылка нужна дальше — держать стрим живым.
-                let cb = Arc::clone(&stream_shared);
-                // Живёт между вызовами колбэка: от неё ведётся плавный переход
-                // громкости, иначе каждый буфер начинался бы со скачка.
-                // Стартуем с УЖЕ ЗАДАННОЙ громкости, а не с единицы — иначе
-                // первый буфер трека едет с максимума вниз.
-                let mut current_gain = f32::from_bits(cb.volume.load(Ordering::Relaxed));
-                // 20 мс нарастания: на слух неразличимо, а щелчок от старта с
-                // ненулевого уровня убирает целиком.
-                let fade_total = (cb.device_rate as u64 / 50).max(1);
-                cb.fade_in_left.store(fade_total, Ordering::Relaxed);
-                let stream = device.build_output_stream(
-                    &config.into(),
+                let host = cpal::default_host();
+                let mut device = device;
+                let mut config = config;
+                loop {
+                    if stream_shared.stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let open_on = device.name().unwrap_or_default();
+                    let rate = config.sample_rate().0;
+                    let channels = config.channels() as usize;
+                    // Декодер читает это каждый пакет: у нового устройства
+                    // может быть другая частота, и ресемплер придётся собрать
+                    // заново.
+                    stream_shared.device_rate.store(rate, Ordering::Relaxed);
+                    stream_shared.device_channels.store(channels as u32, Ordering::Relaxed);
+
+                    // Отдельный клон для колбэка: он забирает владение, а
+                    // самому потоку ссылка нужна дальше.
+                    let cb = Arc::clone(&stream_shared);
+                    // Живёт между вызовами колбэка: от неё ведётся плавный
+                    // переход громкости, иначе каждый буфер начинался бы со
+                    // скачка. Стартуем с УЖЕ ЗАДАННОЙ громкости, а не с
+                    // единицы — иначе первый буфер едет с максимума вниз.
+                    let mut current_gain = f32::from_bits(cb.volume.load(Ordering::Relaxed));
+                    // 20 мс нарастания: на слух неразличимо, а щелчок от
+                    // старта с ненулевого уровня убирает целиком.
+                    let fade_total = (rate as u64 / 50).max(1);
+                    cb.fade_in_left.store(fade_total, Ordering::Relaxed);
+                    let stream = device.build_output_stream(
+                        &config.clone().into(),
                     move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         // Поток реального времени: блокировку держим считанные
                         // микросекунды и забираем данные пачкой, а не по
@@ -160,7 +188,6 @@ impl NativeAudio {
                             return;
                         }
                         let target = f32::from_bits(cb.volume.load(Ordering::Relaxed));
-                        let channels = cb.device_channels.max(1) as usize;
                         let mut pcm = cb.pcm.lock().unwrap();
                         let ready = out.len().min(pcm.len());
                         // Громкость доводим до нового значения ЗА БУФЕР, а не
@@ -197,21 +224,40 @@ impl NativeAudio {
                         let played = out.len() as u64 / channels as u64;
                         cb.frames_out.fetch_add(played, Ordering::Relaxed);
                     },
-                    |e| eprintln!("[audio] поток вывода: {e}"),
-                    None,
-                );
-                match stream {
-                    Ok(stream) => {
-                        if let Err(e) = stream.play() {
-                            eprintln!("[audio] старт вывода: {e}");
+                        |e| eprintln!("[audio] поток вывода: {e}"),
+                        None,
+                    );
+                    let stream = match stream {
+                        Ok(stream) => stream,
+                        Err(e) => {
+                            eprintln!("[audio] не открылся вывод: {e}");
                             return;
                         }
-                        // Держим стрим живым, пока не попросят остановиться.
-                        while !stream_shared.stop.load(Ordering::Relaxed) {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+                    };
+                    if let Err(e) = stream.play() {
+                        eprintln!("[audio] старт вывода: {e}");
+                        return;
+                    }
+
+                    // Держим стрим живым, пока не попросят остановиться или
+                    // пока человек не переключит устройство по умолчанию.
+                    loop {
+                        if stream_shared.stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        let Some(now) = host.default_output_device() else {
+                            continue; // устройств не осталось — ждём появления
+                        };
+                        if now.name().unwrap_or_default() == open_on {
+                            continue;
+                        }
+                        if let Ok(cfg) = now.default_output_config() {
+                            device = now;
+                            config = cfg;
+                            break; // стрим дропнется — прежнее устройство отпустим
                         }
                     }
-                    Err(e) => eprintln!("[audio] не открылся вывод: {e}"),
                 }
             })
             .map_err(|e| format!("поток вывода: {e}"))?;
@@ -225,7 +271,7 @@ impl NativeAudio {
 
     pub fn position(&self) -> f64 {
         let frames = self.shared.frames_out.load(Ordering::Relaxed) as f64;
-        frames / self.shared.device_rate.max(1) as f64
+        frames / self.shared.device_rate.load(Ordering::Relaxed).max(1) as f64
     }
 
     /// Громкость 0..1 (кривую считает вызывающий — она общая с прежним движком).
@@ -244,7 +290,8 @@ impl NativeAudio {
         let sec = sec.max(0.0);
         *self.shared.seek_to.lock().unwrap() = Some(sec);
         self.shared.pcm.lock().unwrap().clear();
-        let frames = (sec * self.shared.device_rate as f64) as u64;
+        let rate = self.shared.device_rate.load(Ordering::Relaxed);
+        let frames = (sec * rate as f64) as u64;
         self.shared.frames_out.store(frames, Ordering::Relaxed);
     }
 
@@ -294,15 +341,28 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
         .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("кодек не поддержан: {e}"))?;
 
-    let out_rate = shared.device_rate;
-    let out_channels = shared.device_channels as usize;
-    let capacity = (out_rate as f32 * BUFFER_SECONDS) as usize * out_channels;
+    // Параметры устройства перечитываются каждый пакет: человек может
+    // переключить вывод на ходу, и тогда нужен новый ресемплер.
+    let mut out_rate = shared.device_rate.load(Ordering::Relaxed);
+    let mut out_channels = shared.device_channels.load(Ordering::Relaxed) as usize;
+    let mut capacity = (out_rate as f32 * BUFFER_SECONDS) as usize * out_channels;
     // Ресемплер создаётся лениво: частота источника известна только из первого
     // декодированного пакета, а не из заголовка (у некоторых контейнеров её
     // там просто нет).
     let mut resampler: Option<Resampler> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
+        // Устройство могли переключить — тогда у него другая частота, и
+        // ресемплер, собранный под прежнюю, гнал бы музыку не с той скоростью.
+        let now_rate = shared.device_rate.load(Ordering::Relaxed);
+        let now_channels = shared.device_channels.load(Ordering::Relaxed) as usize;
+        if now_rate != out_rate || now_channels != out_channels {
+            out_rate = now_rate;
+            out_channels = now_channels;
+            capacity = (out_rate as f32 * BUFFER_SECONDS) as usize * out_channels;
+            resampler = None;
+        }
+
         // Перемотка: сносим всё, что уже насчитано вперёд, иначе после прыжка
         // ещё полторы секунды играл бы старый кусок.
         let requested = shared.seek_to.lock().unwrap().take();
