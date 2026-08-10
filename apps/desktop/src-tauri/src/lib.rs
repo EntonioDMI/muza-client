@@ -101,6 +101,12 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            audio::native_play,
+            audio::native_set_paused,
+            audio::native_seek,
+            audio::native_set_volume,
+            audio::native_status,
+            audio::native_stop,
             engine::recipe_apply,
             engine::recipe_current,
             engine::engine_resolve,

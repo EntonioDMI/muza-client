@@ -29,9 +29,10 @@ use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, TrackType};
+use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
+use symphonia::core::units::Time;
 
 /// Сколько секунд звука держим готовыми. Меньше — риск подхрипываний на
 /// загруженной машине, больше — задержка реакции на паузу и перемотку.
@@ -61,6 +62,16 @@ struct Shared {
     frames_out: AtomicU64,
     device_rate: u32,
     device_channels: u16,
+    /// Громкость 0..1, уже по перцептивной кривой (её считает вызывающий —
+    /// формула общая с прежним движком, чтобы ползунок вёл себя как раньше).
+    volume: Mutex<f32>,
+    /// Запрошенная перемотка, секунды. Исполняет поток декодера: только он
+    /// владеет читателем формата.
+    seek_to: Mutex<Option<f64>>,
+    /// Декодер дошёл до конца файла. Трек считается сыгранным не здесь, а
+    /// когда опустеет буфер — иначе конец объявлялся бы на полторы секунды
+    /// раньше, чем человек его слышит.
+    drained: AtomicBool,
 }
 
 pub struct NativeAudio {
@@ -85,6 +96,9 @@ impl NativeAudio {
             frames_out: AtomicU64::new(0),
             device_rate: config.sample_rate().0,
             device_channels: config.channels(),
+            volume: Mutex::new(1.0),
+            seek_to: Mutex::new(None),
+            drained: AtomicBool::new(false),
         });
 
         // Декодер живёт в своём потоке: он спит, когда буфер полон, и не имеет
@@ -113,9 +127,14 @@ impl NativeAudio {
                     &config.into(),
                     move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         let paused = cb.paused.load(Ordering::Relaxed);
+                        let gain = *cb.volume.lock().unwrap();
                         let mut pcm = cb.pcm.lock().unwrap();
                         for slot in out.iter_mut() {
-                            *slot = if paused { 0.0 } else { pcm.pop_front().unwrap_or(0.0) };
+                            *slot = if paused {
+                                0.0
+                            } else {
+                                pcm.pop_front().unwrap_or(0.0) * gain
+                            };
                         }
                         if !paused {
                             let frames = out.len() as u64 / cb.device_channels.max(1) as u64;
@@ -151,6 +170,23 @@ impl NativeAudio {
     pub fn position(&self) -> f64 {
         let frames = self.shared.frames_out.load(Ordering::Relaxed) as f64;
         frames / self.shared.device_rate.max(1) as f64
+    }
+
+    /// Громкость 0..1 (кривую считает вызывающий — она общая с прежним движком).
+    pub fn set_volume(&self, gain: f32) {
+        *self.shared.volume.lock().unwrap() = gain.clamp(0.0, 4.0);
+    }
+
+    /// Перемотка исполняется потоком декодера — только он владеет читателем.
+    pub fn seek(&self, sec: f64) {
+        *self.shared.seek_to.lock().unwrap() = Some(sec.max(0.0));
+    }
+
+    /// Трек доигран: декодер дошёл до конца И буфер опустел. Второе условие
+    /// обязательно — иначе конец объявлялся бы за полторы секунды до того, как
+    /// человек его услышит, и следующий трек наезжал бы на хвост текущего.
+    pub fn ended(&self) -> bool {
+        self.shared.drained.load(Ordering::Relaxed) && self.shared.pcm.lock().unwrap().is_empty()
     }
 
     pub fn stop(&self) {
@@ -201,9 +237,30 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
     let mut resampler: Option<Resampler> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
+        // Перемотка: сносим всё, что уже насчитано вперёд, иначе после прыжка
+        // ещё полторы секунды играл бы старый кусок.
+        let requested = shared.seek_to.lock().unwrap().take();
+        if let Some(sec) = requested {
+            let time = Time::from_millis_u64((sec * 1000.0) as u64);
+            let target = SeekTo::Time { time, track_id: Some(track_id) };
+            if let Err(e) = format.seek(SeekMode::Accurate, target) {
+                eprintln!("[audio] перемотка не удалась: {e}");
+            }
+            decoder.reset();
+            shared.pcm.lock().unwrap().clear();
+            shared.frames_out.store((sec * out_rate as f64) as u64, Ordering::Relaxed);
+            shared.drained.store(false, Ordering::Relaxed);
+            // Ресемплер копит кадры — его недосчитанный хвост принадлежит
+            // прежней позиции и щёлкнул бы на стыке.
+            resampler = None;
+        }
+
         let packet = match format.next_packet() {
             Ok(Some(p)) => p,
-            Ok(None) => break, // файл кончился
+            Ok(None) => {
+                shared.drained.store(true, Ordering::Relaxed);
+                break; // файл кончился
+            }
             Err(e) => return Err(format!("чтение пакета: {e}")),
         };
         if packet.track_id != track_id {
@@ -255,6 +312,69 @@ fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ── Команды для фронта ───────────────────────────────────────────────
+//
+// Движок один на приложение: слот пока тоже один (второй придёт с кроссфейдом).
+// Новый play глушит прежний через Drop — вывод останавливается сам.
+
+static ENGINE: Mutex<Option<NativeAudio>> = Mutex::new(None);
+
+/// Что плееру нужно знать каждый тик. Позиция и конец трека спрашиваются
+/// вместе: фронт и так опрашивает позицию, отдельные события были бы лишним
+/// каналом с собственными гонками.
+#[derive(serde::Serialize)]
+pub struct NativeStatus {
+    position: f64,
+    ended: bool,
+    playing: bool,
+}
+
+#[tauri::command]
+pub fn native_play(path: String, volume: f32) -> Result<(), String> {
+    let audio = NativeAudio::play(Path::new(&path))?;
+    audio.set_volume(volume);
+    *ENGINE.lock().unwrap() = Some(audio);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn native_set_paused(paused: bool) {
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_paused(paused);
+    }
+}
+
+#[tauri::command]
+pub fn native_seek(sec: f64) {
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.seek(sec);
+    }
+}
+
+#[tauri::command]
+pub fn native_set_volume(gain: f32) {
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_volume(gain);
+    }
+}
+
+#[tauri::command]
+pub fn native_status() -> NativeStatus {
+    match ENGINE.lock().unwrap().as_ref() {
+        Some(audio) => NativeStatus {
+            position: audio.position(),
+            ended: audio.ended(),
+            playing: true,
+        },
+        None => NativeStatus { position: 0.0, ended: false, playing: false },
+    }
+}
+
+#[tauri::command]
+pub fn native_stop() {
+    *ENGINE.lock().unwrap() = None; // Drop останавливает вывод и декодер
 }
 
 /// Пересчёт частоты дискретизации под устройство.

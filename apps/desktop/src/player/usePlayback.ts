@@ -19,6 +19,10 @@ import { applySourcePolicy } from "../lib/sources";
 import { localResolve } from "../lib/localFiles";
 import { resumeStore } from "../lib/resumeStore";
 import { AudioEngine, type OutputRoute } from "./audioEngine";
+// Гибрид: файлы из кэша играют из процесса приложения (иначе «захват аудио
+// приложения» окно «Муза» не слышит), поток — прежним движком. Подробности и
+// список временных потерь — в шапке nativeEngine.ts.
+import { HybridAudioEngine } from "./nativeEngine";
 import {
   deviceAccessUnlocked,
   listInputDevices,
@@ -237,10 +241,10 @@ export function usePlayback({
   // сверяется с этим, чтобы не звать resume() на пустом слоте движка.
   const startedIdRef = useRef<string | null>(null);
 
-  const engineRef = useRef<AudioEngine | null>(null);
+  const engineRef = useRef<HybridAudioEngine | null>(null);
   const engine = () => {
     if (!engineRef.current) {
-      engineRef.current = new AudioEngine({
+      engineRef.current = new HybridAudioEngine({
         onTime: (sec) => {
           const s = stateRef.current;
           if (!s.track) return;
