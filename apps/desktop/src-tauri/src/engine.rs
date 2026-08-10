@@ -1634,6 +1634,61 @@ impl LiveStream {
     }
 }
 
+/// Собрать `LiveStream` вручную — только для тестов нативного движка: реестр
+/// живых закачек наполняет добыча, а чтение растущего файла надо проверять без
+/// неё. Возвращает ещё и «писателя», которым тест изображает ход закачки.
+#[cfg(test)]
+pub(crate) fn live_stream_for_test(
+    part: PathBuf,
+    final_path: PathBuf,
+) -> (LiveStream, TestStreamWriter) {
+    let (tx, rx) = tokio::sync::watch::channel(StreamProgress {
+        written: 0,
+        total: 0,
+        finalized: false,
+        failed: false,
+    });
+    (LiveStream { part, final_path, progress: rx }, TestStreamWriter { tx })
+}
+
+#[cfg(test)]
+pub(crate) struct TestStreamWriter {
+    tx: tokio::sync::watch::Sender<StreamProgress>,
+}
+
+#[cfg(test)]
+impl TestStreamWriter {
+    /// Закачка дописала до `bytes` и продолжается.
+    pub(crate) fn wrote(&self, bytes: u64) {
+        let _ = self.tx.send(StreamProgress {
+            written: bytes,
+            total: 0,
+            finalized: false,
+            failed: false,
+        });
+    }
+
+    /// Закачка завершилась: файл целиком на диске.
+    pub(crate) fn finish(&self, bytes: u64) {
+        let _ = self.tx.send(StreamProgress {
+            written: bytes,
+            total: bytes,
+            finalized: true,
+            failed: false,
+        });
+    }
+
+    /// Закачка сорвалась — ждать нечего.
+    pub(crate) fn fail(&self) {
+        let _ = self.tx.send(StreamProgress {
+            written: 0,
+            total: 0,
+            finalized: false,
+            failed: true,
+        });
+    }
+}
+
 /// Найти живую закачку по паре «источник, идентификатор трека».
 pub fn live_stream(app: &AppHandle, ns: &str, id: &str) -> Option<LiveStream> {
     let state = app.state::<EngineState>();

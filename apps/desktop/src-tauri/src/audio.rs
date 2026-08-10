@@ -43,6 +43,24 @@ const MIN_DB: f32 = -100.0;
 const MAX_DB: f32 = -30.0;
 const SMOOTHING: f32 = 0.7;
 
+/// Множитель кроссфейда в точке `pos` из `len` кадров.
+///
+/// Кривые равномощные (sin/cos): линейные дают провал −3 дБ на стыке разных
+/// треков, потому что суммарная мощность в середине проседает. Вынесено из
+/// колбэка отдельной функцией, чтобы равномощность можно было проверить.
+fn xfade_gain(pos: u64, len: u64, fade_in: bool) -> f32 {
+    if len == 0 {
+        return 1.0;
+    }
+    let p = (pos as f32 / len as f32).min(1.0);
+    let angle = p * std::f32::consts::FRAC_PI_2;
+    if fade_in {
+        angle.sin()
+    } else {
+        angle.cos()
+    }
+}
+
 /// Сколько секунд звука держим готовыми. Меньше — риск подхрипываний на
 /// загруженной машине, больше — задержка реакции на паузу и перемотку.
 const BUFFER_SECONDS: f32 = 1.5;
@@ -335,20 +353,7 @@ impl NativeAudio {
                             } else {
                                 1.0
                             };
-                            // Кроссфейд равномощными кривыми (sin/cos), как в
-                            // прежнем движке: линейные дают провал −3 дБ на
-                            // стыке, потому что сумма мощностей проседает.
-                            let xfade = if xlen == 0 {
-                                1.0
-                            } else {
-                                let p = (xpos as f32 / xlen as f32).min(1.0);
-                                let angle = p * std::f32::consts::FRAC_PI_2;
-                                if xin {
-                                    angle.sin()
-                                } else {
-                                    angle.cos()
-                                }
-                            };
+                            let xfade = xfade_gain(xpos, xlen, xin);
                             *slot = sample * gain * fade * xfade;
                             if (i + 1) % channels == 0 {
                                 gain += step;
@@ -1199,6 +1204,130 @@ pub fn native_scope() -> NativeScope {
 #[tauri::command]
 pub fn native_stop() {
     *ENGINE.lock().unwrap() = None; // Drop останавливает вывод и декодер
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    /// Равномощность кроссфейда: сумма квадратов встречных кривых обязана
+    /// держаться около единицы. Линейные кривые дают в середине провал −3 дБ —
+    /// именно он слышится «дырой» между треками.
+    #[test]
+    fn crossfade_keeps_power_constant() {
+        let len = 1000u64;
+        for pos in (0..=len).step_by(50) {
+            let fade_in = xfade_gain(pos, len, true);
+            let fade_out = xfade_gain(pos, len, false);
+            let power = fade_in * fade_in + fade_out * fade_out;
+            assert!(
+                (power - 1.0).abs() < 0.001,
+                "на {pos}/{len} мощность {power}, а должна быть около 1"
+            );
+        }
+    }
+
+    /// Границы: приходящий начинается с тишины и доходит до полной громкости,
+    /// уходящий — наоборот. Перепутанные концы дали бы щелчок на стыке.
+    #[test]
+    fn crossfade_endpoints_are_exact() {
+        assert!(xfade_gain(0, 100, true).abs() < 0.001);
+        assert!((xfade_gain(100, 100, true) - 1.0).abs() < 0.001);
+        assert!((xfade_gain(0, 100, false) - 1.0).abs() < 0.001);
+        assert!(xfade_gain(100, 100, false).abs() < 0.001);
+        // Нулевая длина — фейда нет вовсе, звук идёт как есть.
+        assert!((xfade_gain(0, 0, true) - 1.0).abs() < 0.001);
+    }
+
+    /// Ресемплер обязан отдавать примерно столько кадров, сколько требует
+    /// соотношение частот: ошибка здесь звучит как неверная скорость трека.
+    #[test]
+    fn resampler_output_matches_ratio() {
+        let mut resampler = Resampler::new(44100, 48000, 2).expect("ресемплер не собрался");
+        let frames_in = 44100; // ровно секунда источника
+        let input: Vec<f32> = (0..frames_in * 2).map(|i| (i as f32 * 0.001).sin()).collect();
+        let out = resampler.push(&input);
+        let frames_out = out.len() / 2;
+        // Допуск — на кадры, оставшиеся во внутреннем окне ресемплера.
+        assert!(
+            (frames_out as i64 - 48000).abs() < 2048,
+            "на секунду 44.1 кГц получили {frames_out} кадров вместо ~48000"
+        );
+    }
+
+    fn temp_file(name: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("muza-test-{name}"));
+        path
+    }
+
+    /// Растущий файл: читаем записанное, у границы ЖДЁМ новых байт вместо
+    /// конца файла. Без ожидания декодер решил бы, что трек кончился на первой
+    /// же секунде.
+    #[test]
+    fn growing_source_waits_for_more_bytes() {
+        let part = temp_file("growing.part");
+        let final_path = temp_file("growing.webm");
+        let mut file = File::create(&part).expect("файл не создался");
+        file.write_all(&[1u8; 16]).unwrap();
+        file.flush().unwrap();
+
+        let (live, writer) = crate::engine::live_stream_for_test(part.clone(), final_path);
+        writer.wrote(16);
+        let mut source = GrowingSource::open(live).expect("источник не открылся");
+
+        let mut buf = [0u8; 16];
+        assert_eq!(source.read(&mut buf).unwrap(), 16, "первые байты не прочитались");
+
+        // Дописываем из другого потока — чтение обязано разблокироваться само.
+        let writer_thread = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let mut more = std::fs::OpenOptions::new().append(true).open(&part).unwrap();
+            more.write_all(&[2u8; 8]).unwrap();
+            more.flush().unwrap();
+            writer.finish(24);
+        });
+
+        let mut tail = [0u8; 8];
+        let read = source.read(&mut tail).unwrap();
+        writer_thread.join().unwrap();
+        assert_eq!(read, 8, "дописанные байты не дождались");
+        assert_eq!(tail, [2u8; 8], "прочитали не то, что дописали");
+
+        // Файл закончен — дальше честный конец, а не вечное ожидание.
+        assert_eq!(source.read(&mut tail).unwrap(), 0, "после завершения должен быть конец");
+    }
+
+    /// Сорванная закачка не должна подвешивать декодер навсегда.
+    #[test]
+    fn growing_source_gives_up_when_download_fails() {
+        let part = temp_file("failed.part");
+        File::create(&part).unwrap().write_all(&[7u8; 4]).unwrap();
+        let (live, writer) = crate::engine::live_stream_for_test(part, temp_file("failed.webm"));
+        writer.wrote(4);
+        let mut source = GrowingSource::open(live).unwrap();
+
+        let mut buf = [0u8; 4];
+        assert_eq!(source.read(&mut buf).unwrap(), 4);
+        writer.fail();
+        assert!(source.read(&mut buf).is_err(), "после срыва ожидался отказ, а не зависание");
+    }
+
+    /// Перемотка внутри уже скачанного куска не должна ничего ждать.
+    #[test]
+    fn growing_source_seeks_inside_written_part() {
+        let part = temp_file("seek.part");
+        File::create(&part).unwrap().write_all(&[0, 1, 2, 3, 4, 5, 6, 7]).unwrap();
+        let (live, writer) = crate::engine::live_stream_for_test(part, temp_file("seek.webm"));
+        writer.finish(8);
+        let mut source = GrowingSource::open(live).unwrap();
+
+        source.seek(SeekFrom::Start(4)).unwrap();
+        let mut buf = [0u8; 4];
+        source.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, [4, 5, 6, 7], "перемотка привела не туда");
+    }
 }
 
 /// Источник поверх ЕЩЁ КАЧАЮЩЕГОСЯ файла.

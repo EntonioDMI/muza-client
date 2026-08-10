@@ -1,4 +1,4 @@
-/** Гибридный движок: звук из процесса приложения там, где это возможно.
+﻿/** Гибридный движок: звук из процесса приложения там, где это возможно.
  *
  *  ЗАЧЕМ. Пока звук рендерит WebView2, «захват аудио приложения» (OBS и всё на
  *  том же Windows API) окно «Муза» не слышит: обход дерева процессов
@@ -73,14 +73,12 @@ class NativeAnalyser {
         this.stop();
         return;
       }
-      void invoke<{ freq: number[]; wave: number[] }>("native_scope")
-        .then((scope) => {
-          this.freq = new Uint8Array(scope.freq);
-          this.wave = new Uint8Array(scope.wave);
-        })
-        .catch(() => {
-          /* движок мог остановиться между кадрами */
-        });
+      void call<{ freq: number[]; wave: number[] }>("native_scope").then((scope) => {
+        // Пусто — движок остановился между кадрами; оставляем прошлую картинку.
+        if (!scope) return;
+        this.freq = new Uint8Array(scope.freq);
+        this.wave = new Uint8Array(scope.wave);
+      });
     }, 33); // ~30 кадров в секунду: чаще глаз не различает
   }
 
@@ -102,6 +100,33 @@ class NativeAnalyser {
     this.ensurePolling();
     target.set(this.wave.subarray(0, target.length));
   }
+}
+
+/** Вызов команды Rust, который не роняет движок.
+ *
+ *  Команда может не ответить по трём причинам: окно закрывается, движок уже
+ *  остановлен, или мы вообще не в Tauri (тесты, веб). Ни одна из них не должна
+ *  прерывать воспроизведение, поэтому результат всегда промис, а отказ
+ *  превращается в undefined. `Promise.resolve` здесь обязателен: без него на
+ *  подменённом `invoke`, который возвращает не промис, падал бы сам вызов. */
+function call<T>(command: string, args?: Record<string, unknown>): Promise<T | undefined> {
+  try {
+    return Promise.resolve(invoke<T>(command, args)).catch(() => undefined);
+  } catch {
+    return Promise.resolve(undefined);
+  }
+}
+
+/** Список устройств браузера — или null, если его в этой среде нет.
+ *
+ *  Нужен, чтобы сопоставить выбранное устройство с именем, по которому его
+ *  знает Rust. В тестах и до выдачи доступа к устройствам `mediaDevices`
+ *  отсутствует, и обращение к нему роняло бы движок прямо в конструкторе:
+ *  usePlayback настраивает микрофон и маршруты сразу при создании. */
+function deviceList(): Promise<MediaDeviceInfo[]> | null {
+  const devices = globalThis.navigator?.mediaDevices;
+  if (typeof devices?.enumerateDevices !== "function") return null;
+  return devices.enumerateDevices();
 }
 
 /** Ключ живой закачки из URL потока (`muza-stream.localhost/<ns>/<id>`).
@@ -159,9 +184,10 @@ export class HybridAudioEngine {
     this.stopPolling();
     this.endedSent = false;
     this.poll = setInterval(() => {
-      void invoke<NativeStatus>("native_status")
+      void call<NativeStatus>("native_status")
         .then((status) => {
-          if (!status.playing) return;
+          // Пусто — команда не ответила (окно закрывается, движок остановлен).
+          if (!status?.playing) return;
           this.lastPosition = status.position;
           this.cb.onTime(status.position);
           if (status.ended && !this.endedSent) {
@@ -183,7 +209,7 @@ export class HybridAudioEngine {
   }
 
   private async stopNative(): Promise<void> {
-    await invoke("native_stop").catch(() => {});
+    await call("native_stop");
     this.stopPolling();
     this.nativeAnalyser.stop();
     this.native = false;
@@ -197,7 +223,7 @@ export class HybridAudioEngine {
       // жива. Не нашлась — отдаём прежнему движку, как раньше.
       const stream = streamKeyFromUrl(url);
       if (stream !== null) {
-        const started = await invoke<boolean>("native_play_stream", {
+        const started = await call<boolean>("native_play_stream", {
           ns: stream.ns,
           id: stream.id,
           volume: this.gain(),
@@ -208,7 +234,7 @@ export class HybridAudioEngine {
           this.native = true;
           this.lastPosition = 0;
           if (this.eqBands.length > 0) {
-            void invoke("native_set_eq", { on: this.eqOn, bands: this.eqBands }).catch(() => {});
+            void call("native_set_eq", { on: this.eqOn, bands: this.eqBands });
           }
           this.startPolling();
           this.cb.onPlaying?.();
@@ -225,10 +251,10 @@ export class HybridAudioEngine {
     this.web.stop();
     this.native = true;
     this.lastPosition = 0;
-    await invoke("native_play", { path, volume: this.gain(), crossfadeSec });
+    await call("native_play", { path, volume: this.gain(), crossfadeSec });
     // Движок только что родился и про настройки не знает — доносим их.
     if (this.eqBands.length > 0) {
-      void invoke("native_set_eq", { on: this.eqOn, bands: this.eqBands }).catch(() => {});
+      void call("native_set_eq", { on: this.eqOn, bands: this.eqBands });
     }
     this.startPolling();
     this.cb.onPlaying?.();
@@ -240,14 +266,14 @@ export class HybridAudioEngine {
   }
 
   pause(): void {
-    if (this.native) void invoke("native_set_paused", { paused: true }).catch(() => {});
+    if (this.native) void call("native_set_paused", { paused: true });
     else this.web.pause();
   }
 
   async resume(): Promise<boolean> {
     if (!this.native) return this.web.resume();
     try {
-      await invoke("native_set_paused", { paused: false });
+      await call("native_set_paused", { paused: false });
       return true;
     } catch {
       return false;
@@ -259,13 +285,17 @@ export class HybridAudioEngine {
     this.web.stop();
   }
 
-  seek(sec: number, keepCrossfade = false): void {
+  seek(sec: number, keepCrossfade?: boolean): void {
     if (this.native) {
       this.lastPosition = Math.max(0, sec);
-      void invoke("native_seek", { sec: Math.max(0, sec) }).catch(() => {});
-    } else {
-      this.web.seek(sec, keepCrossfade);
+      void call("native_seek", { sec: Math.max(0, sec) });
+      return;
     }
+    // Второй аргумент прокидываем ТОЛЬКО если его задали: прежний движок
+    // отличает «перемотка без уточнений» от явного keepCrossfade, и лишний
+    // параметр менял бы поведение стыка.
+    if (keepCrossfade === undefined) this.web.seek(sec);
+    else this.web.seek(sec, keepCrossfade);
   }
 
   position(): number {
@@ -275,7 +305,7 @@ export class HybridAudioEngine {
   setVolume(vol: number): void {
     this.volume = vol;
     this.web.setVolume(vol);
-    if (this.native) void invoke("native_set_volume", { gain: this.gain() }).catch(() => {});
+    if (this.native) void call("native_set_volume", { gain: this.gain() });
   }
 
   setSpeed(speed: number): void {
@@ -283,14 +313,14 @@ export class HybridAudioEngine {
     // Нативно тон не едет: время растягивает фазовый вокодер, а не пересчёт
     // частоты. Именно поэтому звучит как запись в другом темпе, а не как
     // ускоренная плёнка.
-    void invoke("native_set_speed", { speed }).catch(() => {});
+    void call("native_set_speed", { speed });
   }
 
   setEq(on: boolean, bands: number[]): void {
     this.eqOn = on;
     this.eqBands = bands;
     this.web.setEq(on, bands);
-    if (this.native) void invoke("native_set_eq", { on, bands }).catch(() => {});
+    if (this.native) void call("native_set_eq", { on, bands });
   }
 
   setOutputs(routes: OutputRoute[]): void {
@@ -300,8 +330,9 @@ export class HybridAudioEngine {
     // которых в системе не существует, а cpal перечисляет устройства по именам.
     // Точного соответствия между двумя перечислениями в Windows нет, поэтому
     // сверка идёт по вхождению подстроки уже на стороне Rust.
-    void navigator.mediaDevices
-      .enumerateDevices()
+    const listing = deviceList();
+    if (listing === null) return;
+    void listing
       .then((devices) => {
         const named = routes
           .map((route) => ({
@@ -310,7 +341,7 @@ export class HybridAudioEngine {
             mixMic: route.mixMic === true,
           }))
           .filter((route) => route.name.length > 0);
-        return invoke("native_set_outputs", { routes: named });
+        return call("native_set_outputs", { routes: named });
       })
       .catch(() => {
         /* доступ к списку устройств ещё не выдан — придёт со следующей правкой */
@@ -320,13 +351,14 @@ export class HybridAudioEngine {
   setMicConfig(cfg: MicConfig): void {
     this.web.setMicConfig(cfg);
     // null в устройстве — системный микрофон по умолчанию; Rust это понимает.
-    void navigator.mediaDevices
-      .enumerateDevices()
+    const listing = deviceList();
+    if (listing === null) return;
+    void listing
       .then((devices) => {
         const name = cfg.deviceId
           ? (devices.find((d) => d.deviceId === cfg.deviceId)?.label ?? null)
           : null;
-        return invoke("native_set_mic", { name, gain: volCurve(cfg.gain) });
+        return call("native_set_mic", { name, gain: volCurve(cfg.gain) });
       })
       .catch(() => {
         /* список устройств ещё не доступен — догоним следующей правкой */
