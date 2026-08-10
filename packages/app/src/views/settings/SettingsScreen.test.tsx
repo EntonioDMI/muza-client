@@ -78,7 +78,7 @@ describe("SettingsScreen — поиск", () => {
   it("описи нет — каркас верит индексу целиком (площадка рисует всё)", () => {
     // Так живёт приложение: у него есть каждый раздел и каждый ряд, и поиск
     // обязан работать без единого списка от площадки.
-    render(<SettingsScreen panes={{ appearance: <div /> }} />);
+    render(<SettingsScreen panes={{ appearance: <div /> }} initialTab="appearance" />);
     search(GLASS_ROW);
     expect(screen.queryByText(NOTHING_FOUND)).toBeNull();
   });
@@ -106,7 +106,9 @@ describe("SettingsScreen — переход из результата", () => {
     fireEvent.click(screen.getByText(EXPORT_ROW));
     // Раньше человек попадал в «Аккаунт» и искал выгрузку дальше руками.
     expect(onSubChange).toHaveBeenCalledWith("privacy");
-    expect(screen.getByRole("tab", { name: ACCOUNT_TAB }).getAttribute("aria-selected")).toBe("true");
+    // Рельса с вкладками больше нет (вход — сетка карточек), поэтому «в каком
+    // мы разделе» читается по заголовку экрана: он показывает имя раздела.
+    expect(screen.getByRole("heading", { name: ACCOUNT_TAB })).toBeTruthy();
   });
 
   it("ряд прямо в разделе закрывает открытый под-экран", () => {
@@ -117,12 +119,12 @@ describe("SettingsScreen — переход из результата", () => {
     expect(onSubChange).toHaveBeenCalledWith(null);
   });
 
-  it("смена раздела в рельсе закрывает под-экран", () => {
-    const onSubChange = vi.fn();
-    renderScreen({ onSubChange, sub: "privacy", initialTab: "account" });
-    fireEvent.click(screen.getByRole("tab", { name: APPEARANCE_TAB }));
-    expect(onSubChange).toHaveBeenCalledWith(null);
-  });
+  // ⚠️ ЗДЕСЬ БЫЛ ТЕСТ «смена раздела в рельсе закрывает под-экран». Снят
+  // 2026-08-11 вместе с рельсом: разделы больше не стоят рядом, и одним
+  // кликом из под-экрана одного раздела в другой не попасть — выход из
+  // под-экрана даёт его собственная шапка. Сам инвариант (переход в раздел
+  // закрывает под-экран) живёт в goToTab и проверяется выше, на переходе из
+  // результата поиска.
 });
 
 describe("paneRows — опись раздела, приехавшего готовым", () => {
@@ -143,8 +145,7 @@ describe("paneRows — опись раздела, приехавшего гот�
 
 describe("SettingsScreen — горячие клавиши", () => {
   it("раздел появляется сам, когда площадка не передала свой", () => {
-    renderScreen();
-    fireEvent.click(screen.getByRole("tab", { name: translate(DEFAULT_LANG, "settings.tabs.hotkeys") }));
+    renderScreen({ initialTab: "hotkeys" });
     expect(screen.getByText(translate(DEFAULT_LANG, "media.hotkeys.actions.playPause"))).toBeTruthy();
     expect(screen.getByText("Space")).toBeTruthy();
   });
@@ -153,9 +154,9 @@ describe("SettingsScreen — горячие клавиши", () => {
     render(
       <SettingsScreen
         panes={{ appearance: <SettingRow title={THEME_ROW} />, hotkeys: <SettingRow title="Свой раздел клавиш" /> }}
+        initialTab="hotkeys"
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: translate(DEFAULT_LANG, "settings.tabs.hotkeys") }));
     expect(screen.getByText("Свой раздел клавиш")).toBeTruthy();
     expect(screen.queryByText("Space")).toBeNull();
   });

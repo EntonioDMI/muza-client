@@ -187,7 +187,10 @@ export function useSettingsScreen(): SettingsScreenCtx {
  *  источника (обычное поле настроек). Они дописываются здесь константой —
  *  площадка, которой они не нужны, передаёт свой список руками. */
 export function settingsCaps(platform: PlatformAdapter): SettingsCapability[] {
-  const caps: SettingsCapability[] = ["themeMarket", "customFont", "sourcePicker"];
+  // lookEdit здесь же, среди «есть у обеих площадок»: порта у него нет — это
+  // не умение железа, а наличие слоя правки вида в самой программе. Веб
+  // снимает его руками (apps/web settings/page.tsx), как и themeMarket.
+  const caps: SettingsCapability[] = ["themeMarket", "customFont", "sourcePicker", "lookEdit"];
   if (platform.localFiles) caps.push("localFiles");
   if (platform.storedMedia) caps.push("offlineCache");
   if (platform.system?.setAutostart) caps.push("autostart");

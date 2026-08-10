@@ -47,7 +47,15 @@ export type SettingsCapability =
   /** Вывод звука на несколько устройств и подмешивание голоса. */
   | "audioOutputs"
   /** Статус «слушает Muza» в Discord. */
-  | "discord";
+  | "discord"
+  /** Режим правки вида (Ctrl+E): плитки двигаются и меняют размер прямо на
+   *  экране. Живёт только в приложении — слой ручек, стек отмены и захват
+   *  клавиш это отдельная машинерия, и в браузер её не переносили (решение
+   *  владельца 11.08: «Ctrl+E мы не будем делать на проде именно в
+   *  веб-браузере, потому что это слишком колоссальная работа»).
+   *  Без умения исчезает ряд-подсказка с клавишами: рассказывать про
+   *  сочетание, которого на этой площадке нет, — обещание пустоты. */
+  | "lookEdit";
 
 export interface SettingsIndexEntry {
   /** Ключ таба из SETTINGS_TAB_KEYS (экран настроек). */
@@ -120,7 +128,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
     "расположение",
     "drag",
     "reorder",
-  ]),
+  ], { needs: "lookEdit" }),
   e("appearance", "customize", "settings.customize.glass.panelBlur", ["блюр", "размытие", "blur"]),
   e("appearance", "customize", "settings.customize.glass.bgBlur", ["размытие фона", "blur"]),
   e("appearance", "customize", "settings.customize.glass.zones", ["зоны", "стекло"]),

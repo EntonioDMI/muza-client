@@ -70,8 +70,8 @@ function renderedRowTitles(): Set<string> {
 }
 
 describe("settingsCaps — умения выводятся из портов", () => {
-  it("пустая розетка: только те три умения, что есть у любой площадки", () => {
-    expect(settingsCaps({}).sort()).toEqual(["customFont", "sourcePicker", "themeMarket"]);
+  it("пустая розетка: только те умения, что есть у любой площадки", () => {
+    expect(settingsCaps({}).sort()).toEqual(["customFont", "lookEdit", "sourcePicker", "themeMarket"]);
   });
 
   it("каждый порт добавляет своё умение", () => {

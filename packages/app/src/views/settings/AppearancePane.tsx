@@ -22,7 +22,7 @@ const CUSTOM = "custom";
 
 export function AppearancePane() {
   const { t } = useT();
-  const { prefs, set, paneClass, openSub } = useSettingsScreen();
+  const { prefs, set, paneClass, openSub, caps } = useSettingsScreen();
   const presets = appearancePresets(t);
   const layout = currentWindowLayout(prefs);
   // ТУМБЛЕР ФОНА = «фон включён», а не «фон из обложки». Раньше он стоял
@@ -172,12 +172,18 @@ export function AppearancePane() {
           делать». Сочетание клавиш без единого упоминания в интерфейсе — это
           возможность, которой нет: узнать о ней неоткуда. Ряд ничего не
           переключает, он объясняет и показывает клавиши. */}
-      <SettingRow title={t("settings.appearance.lookEdit.title")} hint={t("settings.appearance.lookEdit.hint")}>
-        <span style={{ display: "flex", gap: 4 }}>
-          <Kbd>Ctrl</Kbd>
-          <Kbd>E</Kbd>
-        </span>
-      </SettingRow>
+      {/* Нет умения — нет ряда (правило площадки). В браузере режима правки
+          вида не существует: слой ручек, стек отмены и захват клавиш в веб не
+          переносили (решение владельца 11.08). Рассказывать там про Ctrl+E
+          значило бы обещать пустоту. */}
+      {caps.has("lookEdit") ? (
+        <SettingRow title={t("settings.appearance.lookEdit.title")} hint={t("settings.appearance.lookEdit.hint")}>
+          <span style={{ display: "flex", gap: 4 }}>
+            <Kbd>Ctrl</Kbd>
+            <Kbd>E</Kbd>
+          </span>
+        </SettingRow>
+      ) : null}
     </div>
   );
 }

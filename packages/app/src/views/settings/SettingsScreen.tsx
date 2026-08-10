@@ -66,12 +66,15 @@
  *  на первой же правке. */
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Kbd, SearchInput } from "@muza/ui";
+import { IconButton, Kbd, SearchInput } from "@muza/ui";
 import { useT, type TranslationKey } from "../../i18n";
 import { DEFAULT_HOTKEYS, formatCombo, hotkeyActionLabel, HOTKEY_ACTIONS } from "../../lib/hotkeys";
 import { searchSettings, type SettingsCapability, type SettingsSearchHit } from "../../lib/settingsIndex";
 import { SettingRow, SettingsPane } from "./primitives";
-import { navItemId, SETTINGS_PANE_ID, SETTINGS_TAB_KEYS, SettingsNav, type SettingsTabKey } from "./SettingsNav";
+// SettingsNav (рельс разделов) здесь больше не рисуется — из модуля берутся
+// только ключи и id панели; сам вход в настройки это сетка карточек.
+import { SETTINGS_PANE_ID, SETTINGS_TAB_KEYS, type SettingsTabKey } from "./SettingsNav";
+import { SettingsHub } from "./SettingsHub";
 import type { SettingsSubKey } from "./settingsContext";
 import "./settingsShell.css";
 
@@ -174,19 +177,21 @@ export function SettingsScreen({
   // только «есть/нет», а не «где» — иначе один и тот же «Внешний вид» стоял бы
   // в приложении пятым, а в браузере первым (так и было до этой волны).
   const tabs = useMemo(() => SETTINGS_TAB_KEYS.filter((key) => shownPanes[key] !== undefined), [shownPanes]);
-  const [tab, setTab] = useState<SettingsTabKey>(() => initialTab ?? tabs[0] ?? "appearance");
+  /** null — ВХОД в настройки: сетка карточек разделов (SettingsHub), а не
+   *  раздел. Так же устроено в приложении (apps/desktop SettingsView). */
+  const [tab, setTab] = useState<SettingsTabKey | null>(() => initialTab ?? null);
   // Список разделов у площадки не вечен: раздел держится на умении, а умения
   // выводятся из портов и появляются/исчезают на ходу (розетка подменяется,
   // initialTab приходит от площадки). Выбранный раздел, которого больше нет,
-  // рисовал пустую панель, и в рельсе при этом не подсвечивалось ничего —
-  // выхода из этого состояния на экране не было. Возвращаемся к первому.
+  // рисовал пустую панель, и выхода из этого состояния на экране не было.
+  // Возвращаемся ко входу — к сетке карточек: она показывает то, что есть.
   useEffect(() => {
-    if (tabs.length > 0 && !tabs.includes(tab)) setTab(tabs[0]);
+    if (tab !== null && tabs.length > 0 && !tabs.includes(tab)) setTab(null);
   }, [tabs, tab]);
 
   // Ключ показанного: под-экран рисуется ВМЕСТО рядов раздела, поэтому для
   // прокрутки и пересоздания содержимого он такая же смена панели, как раздел.
-  const paneKey = sub ?? tab;
+  const paneKey = sub ?? tab ?? "hub";
 
   // Прокрутка при смене панели возвращается к началу, иначе скролл прошлого
   // раздела протекает в следующий.
@@ -219,6 +224,11 @@ export function SettingsScreen({
     onSubChange?.(null);
     setTab(next);
   };
+
+  /** Кнопка «назад» — только в разделе БЕЗ под-экрана: у под-экрана свой выход
+   *  в его шапке (SubHeader), и две стрелки подряд означали бы два разных
+   *  «назад» рядом. Так же в приложении (SettingsView → showBack). */
+  const showBack = !!tab && !sub;
 
   const [searchQ, setSearchQ] = useState("");
   // Название ряда, к которому надо прокрутить и подсветить после перехода из
@@ -286,16 +296,27 @@ export function SettingsScreen({
 
   return (
     <div className="muza-settings">
+      {/* ОДНА КОЛОНКА: рельса разделов больше нет, его роль исполняет сетка
+          карточек на входе (SettingsHub) — редизайн 04.08, «мне не нравится,
+          что два одинаковых сайдбара стоят рядом». Под-экран рисуется сюда же
+          вместо содержимого раздела, назад — кнопкой в шапке.
+          ⚠️ До 2026-08-11 здесь стоял <SettingsNav>: приложение переехало на
+          карточки ещё 04.08, а этот экран (его рисует только веб) остался с
+          рельсом — отсюда «в веб-версии интерфейс до сих пор старый». */}
       <div className="muza-settings__cols">
-        <SettingsNav value={tab} onChange={goToTab} tabs={tabs} />
-        <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="tabpanel" aria-labelledby={navItemId(tab)}>
-          {/* Поиск — первый элемент панели: живёт над содержимым любого
-              раздела. Непустой запрос подменяет содержимое списком найденных
-              рядов; клик по результату ведёт в раздел с подсветкой ряда. */}
+        <div ref={paneScrollRef} className="muza-settings__pane" id={SETTINGS_PANE_ID} role="region" aria-label={t("settings.title")}>
           {/* Шапка экрана — та же анатомия, что у Медиатеки: заголовок и
-              первичное действие на одной линии (редизайн 04.08). */}
+              первичное действие на одной линии (редизайн 04.08). Поиск живёт
+              здесь на ВСЕХ уровнях: непустой запрос подменяет содержимое
+              списком найденных рядов и уводит прямо в ряд, минуя и сетку, и
+              раздел. */}
           <div className="muza-settings__head">
-            <h1 className="muza-settings__title">{t("settings.title")}</h1>
+            {showBack ? (
+              <IconButton icon="arrow-left" size="sm" label={t("settings.hub.back")} onClick={() => setTab(null)} />
+            ) : null}
+            <h1 className="muza-settings__title">
+              {tab && !sub ? t(`settings.tabs.${tab}` as TranslationKey) : t("settings.title")}
+            </h1>
             <SearchInput
               value={searchQ}
               onChange={setSearchQ}
@@ -325,8 +346,11 @@ export function SettingsScreen({
             /* Узел раздела вставляется КАК ЕСТЬ — поле у него своё (контракт в
                шапке файла). Ключ несёт Fragment: в разметку он не добавляет
                ничего, но смена раздела по-прежнему пересоздаёт поддерево —
-               внутреннее состояние прошлого раздела в следующий не протекает. */
-            <Fragment key={paneKey}>{shownPanes[tab]}</Fragment>
+               внутреннее состояние прошлого раздела в следующий не протекает.
+               tab === null — вход: сетка карточек вместо раздела. */
+            <Fragment key={paneKey}>
+              {tab ? shownPanes[tab] : <SettingsHub tabs={tabs} onOpen={goToTab} />}
+            </Fragment>
           )}
         </div>
       </div>
