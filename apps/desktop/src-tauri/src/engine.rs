@@ -1598,6 +1598,54 @@ struct StreamProgress {
     failed: bool,
 }
 
+/// Доступ к живой закачке для нативного аудио-движка.
+///
+/// Движок читает растущий `.part` напрямую, вместо того чтобы ходить за теми
+/// же байтами по HTTP через `muza-stream`: та петля существует ради `<audio>`
+/// в WebView2, которому нужен именно сетевой источник. Нативному читателю она
+/// не нужна — он открывает файл.
+pub struct LiveStream {
+    /// Растущий файл. После завершения закачки переименовывается в final_path,
+    /// но уже открытый дескриптор остаётся валидным.
+    pub part: PathBuf,
+    pub final_path: PathBuf,
+    progress: tokio::sync::watch::Receiver<StreamProgress>,
+}
+
+impl LiveStream {
+    /// Сколько байт уже на диске.
+    pub fn written(&self) -> u64 {
+        self.progress.borrow().written
+    }
+
+    /// Ожидаемый размер целиком; 0 — пока неизвестен.
+    pub fn total(&self) -> u64 {
+        self.progress.borrow().total
+    }
+
+    /// Закачка дошла до конца и файл стал полноценным кэшем.
+    pub fn finalized(&self) -> bool {
+        self.progress.borrow().finalized
+    }
+
+    /// Закачка сорвалась — ждать новых байт бессмысленно.
+    pub fn failed(&self) -> bool {
+        self.progress.borrow().failed
+    }
+}
+
+/// Найти живую закачку по паре «источник, идентификатор трека».
+pub fn live_stream(app: &AppHandle, ns: &str, id: &str) -> Option<LiveStream> {
+    let state = app.state::<EngineState>();
+    let streams = state.streams.lock().ok()?;
+    let handle = streams.get(&(ns.to_string(), id.to_string()))?;
+    Some(LiveStream {
+        part: handle.part.clone(),
+        final_path: handle.final_path.clone(),
+        progress: handle.progress.clone(),
+    })
+}
+
 /// Живой стрим в реестре EngineState.streams: пути + канал прогресса.
 #[derive(Clone)]
 struct StreamHandle {

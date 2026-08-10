@@ -7,16 +7,15 @@
  *  Нативный вывод это чинит: те же замеры дали 0.087 на mp3 и 0.370 на Opus.
  *  Разбор — docs/notes/2026-08-10-обс-не-видит-звук-музы.md.
  *
- *  ПОЧЕМУ ГИБРИД, А НЕ ЗАМЕНА. Нативный движок читает файл с диска, а трек,
- *  которого ещё нет в кэше, играет с первых килобайт через muza-stream — там
- *  файла целиком не существует. Поэтому: есть файл на диске — играем нативно,
- *  иначе отдаём прежнему движку. Гибрид схлопнется, когда Rust научится
- *  играть растущий файл.
+ *  ЧТО ИДЁТ НАТИВНО. Файлы из кэша и ЕЩЁ КАЧАЮЩИЕСЯ треки: Rust читает
+ *  растущий `.part` напрямую и ждёт байты, вместо того чтобы ходить за ними по
+ *  HTTP через muza-stream (та петля нужна только элементу `<audio>`).
+ *  Прежний движок остаётся запасным путём: чужие https-источники, режим без
+ *  Web Audio и случай, когда живой закачки уже нет в реестре.
  *
- *  ⚠️ ЧТО ПОКА ТЕРЯЕТСЯ НА НАТИВНОМ ПУТИ: только скорость воспроизведения с
- *  сохранением тона (нужен WSOLA) — там движок молча остаётся на 1x. Всё
- *  остальное перенесено: эквалайзер, преамп и лимитер (dsp.rs), кроссфейд,
- *  вывод на несколько устройств, подмешивание голоса, визуализатор.
+ *  Вся обработка перенесена: эквалайзер, преамп и лимитер (dsp.rs), кроссфейд,
+ *  вывод на несколько устройств, подмешивание голоса, визуализатор и скорость
+ *  с сохранением тона.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { AudioEngine, type EngineCallbacks, type MicConfig, type OutputRoute } from "./audioEngine";
@@ -105,6 +104,21 @@ class NativeAnalyser {
   }
 }
 
+/** Ключ живой закачки из URL потока (`muza-stream.localhost/<ns>/<id>`).
+ *  По нему Rust находит растущий файл и читает его напрямую, минуя HTTP —
+ *  та петля существует только ради элемента `<audio>` в WebView2. */
+export function streamKeyFromUrl(url: string): { ns: string; id: string } | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "muza-stream.localhost") return null;
+    const [ns, id] = parsed.pathname.replace(/^\//, "").split("/");
+    if (!ns || !id) return null;
+    return { ns: decodeURIComponent(ns), id: decodeURIComponent(id) };
+  } catch {
+    return null;
+  }
+}
+
 interface NativeStatus {
   position: number;
   ended: boolean;
@@ -179,8 +193,30 @@ export class HybridAudioEngine {
     const path = assetUrlToPath(url);
     this.norm = norm;
     if (path === null) {
-      // Поток или чужой источник — прежний движок; нативный глушим, иначе два
-      // трека звучали бы одновременно.
+      // Ещё качающийся трек: Rust умеет читать растущий файл, если закачка
+      // жива. Не нашлась — отдаём прежнему движку, как раньше.
+      const stream = streamKeyFromUrl(url);
+      if (stream !== null) {
+        const started = await invoke<boolean>("native_play_stream", {
+          ns: stream.ns,
+          id: stream.id,
+          volume: this.gain(),
+          crossfadeSec,
+        }).catch(() => false);
+        if (started) {
+          this.web.stop();
+          this.native = true;
+          this.lastPosition = 0;
+          if (this.eqBands.length > 0) {
+            void invoke("native_set_eq", { on: this.eqOn, bands: this.eqBands }).catch(() => {});
+          }
+          this.startPolling();
+          this.cb.onPlaying?.();
+          return;
+        }
+      }
+      // Чужой источник или закачки уже нет — прежний движок; нативный глушим,
+      // иначе два трека звучали бы одновременно.
       if (this.native) await this.stopNative();
       return this.web.play(url, norm, crossfadeSec);
     }

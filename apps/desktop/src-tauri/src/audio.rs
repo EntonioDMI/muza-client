@@ -163,6 +163,50 @@ impl NativeAudio {
     /// вывода, начатый с чужой громкости, отдаёт первый буфер на ней — при
     /// тихом ползунке это удар в уши на старте каждого трека.
     pub fn play(path: &Path, gain: f32) -> Result<Self, String> {
+        let path = path.to_path_buf();
+        Self::start(
+            move || {
+                let file = File::open(&path).map_err(|e| format!("открыть файл: {e}"))?;
+                let mss = MediaSourceStream::new(Box::new(file), Default::default());
+                let mut hint = Hint::new();
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    hint.with_extension(ext);
+                }
+                Ok((mss, hint))
+            },
+            gain,
+        )
+    }
+
+    /// Играть трек, который ЕЩЁ КАЧАЕТСЯ: читаем растущий файл напрямую, без
+    /// HTTP-петли через muza-stream — та нужна только элементу `<audio>`.
+    pub fn play_stream(live: crate::engine::LiveStream, gain: f32) -> Result<Self, String> {
+        // Расширение достаём из имени `.part` (`<id>.<ext>.part`): демуксеру
+        // подсказка нужна, а угадывать по содержимому дороже.
+        let hint_ext = live
+            .part
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.rsplit('.').next())
+            .map(|s| s.to_string());
+        Self::start(
+            move || {
+                let source = GrowingSource::open(live)?;
+                let mss = MediaSourceStream::new(Box::new(source), Default::default());
+                let mut hint = Hint::new();
+                if let Some(ext) = hint_ext {
+                    hint.with_extension(&ext);
+                }
+                Ok((mss, hint))
+            },
+            gain,
+        )
+    }
+
+    fn start<F>(make_source: F, gain: f32) -> Result<Self, String>
+    where
+        F: FnOnce() -> Result<(MediaSourceStream<'static>, Hint), String> + Send + 'static,
+    {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -198,13 +242,15 @@ impl NativeAudio {
         // Декодер живёт в своём потоке: он спит, когда буфер полон, и не имеет
         // права блокировать колбэк вывода — тот реального времени.
         let decoder_shared = Arc::clone(&shared);
-        let path = path.to_path_buf();
         std::thread::Builder::new()
             .name("muza-decode".into())
-            .spawn(move || {
-                if let Err(e) = decode_loop(&path, &decoder_shared) {
-                    eprintln!("[audio] декодирование оборвалось: {e}");
+            .spawn(move || match make_source() {
+                Ok((mss, hint)) => {
+                    if let Err(e) = decode_loop(mss, hint, &decoder_shared) {
+                        eprintln!("[audio] декодирование оборвалось: {e}");
+                    }
                 }
+                Err(e) => eprintln!("[audio] источник не открылся: {e}"),
             })
             .map_err(|e| format!("поток декодера: {e}"))?;
 
@@ -538,14 +584,11 @@ impl Drop for NativeAudio {
 
 /// Декод файла до конца: symphonia отдаёт кадры, мы приводим их к частоте и
 /// числу каналов устройства и складываем в общий буфер.
-fn decode_loop(path: &Path, shared: &Arc<Shared>) -> Result<(), String> {
-    let file = File::open(path).map_err(|e| format!("открыть файл: {e}"))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-
+fn decode_loop(
+    mss: MediaSourceStream<'static>,
+    hint: Hint,
+    shared: &Arc<Shared>,
+) -> Result<(), String> {
     let mut format = symphonia::default::get_probe()
         .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| format!("формат не распознан: {e}"))?;
@@ -988,6 +1031,44 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
     Ok(())
 }
 
+/// Играть ещё качающийся трек. Возвращает false, если живой закачки с таким
+/// ключом нет — фронт тогда отдаёт трек прежнему движку, как раньше.
+#[tauri::command]
+pub fn native_play_stream(
+    app: tauri::AppHandle,
+    ns: String,
+    id: String,
+    volume: f32,
+    crossfade_sec: f64,
+) -> Result<bool, String> {
+    let Some(live) = crate::engine::live_stream(&app, &ns, &id) else {
+        return Ok(false);
+    };
+    let fade = crossfade_sec.max(0.0);
+    let previous = ENGINE.lock().unwrap().take();
+    if let Some(old) = previous {
+        if fade > 0.0 {
+            old.start_crossfade(false, fade);
+            let hold_ms = (fade * 1000.0) as u64 + 100;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+                drop(old);
+            });
+        } else {
+            old.set_volume(0.0);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            drop(old);
+        }
+    }
+    let audio = NativeAudio::play_stream(live, volume)?;
+    if fade > 0.0 {
+        audio.start_crossfade(true, fade);
+    }
+    apply_saved_routing(&audio);
+    *ENGINE.lock().unwrap() = Some(audio);
+    Ok(true)
+}
+
 #[tauri::command]
 pub fn native_set_speed(speed: f32) {
     *SPEED.lock().unwrap() = speed;
@@ -1118,6 +1199,105 @@ pub fn native_scope() -> NativeScope {
 #[tauri::command]
 pub fn native_stop() {
     *ENGINE.lock().unwrap() = None; // Drop останавливает вывод и декодер
+}
+
+/// Источник поверх ЕЩЁ КАЧАЮЩЕГОСЯ файла.
+///
+/// Трек, которого нет в кэше, начинает играть с первых килобайт: закачка пишет
+/// `.part`, а мы читаем его следом. Дошли до конца записанного — ждём, пока
+/// придут новые байты, вместо того чтобы объявлять конец файла. Без этого
+/// декодер решил бы, что трек кончился на первой же секунде.
+struct GrowingSource {
+    file: File,
+    pos: u64,
+    live: crate::engine::LiveStream,
+}
+
+impl GrowingSource {
+    fn open(live: crate::engine::LiveStream) -> Result<Self, String> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true);
+        // ⚠️ Windows: без разрешения на удаление наш открытый дескриптор не даст
+        // закачке переименовать .part в готовый файл, и она сорвётся на самом
+        // финише. С этим флагом rename проходит, а дескриптор остаётся живым.
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            opts.share_mode(0x7); // READ | WRITE | DELETE
+        }
+        let file = opts
+            .open(&live.part)
+            .or_else(|_| opts.open(&live.final_path))
+            .map_err(|e| format!("открыть растущий файл: {e}"))?;
+        Ok(Self { file, pos: 0, live })
+    }
+
+    /// Дождаться, пока на диске окажется байт `offset`. Возвращает false, если
+    /// ждать больше нечего: файл дописан или закачка сорвалась.
+    fn wait_for(&self, offset: u64) -> bool {
+        loop {
+            if self.live.written() > offset {
+                return true;
+            }
+            if self.live.finalized() || self.live.failed() {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+}
+
+impl std::io::Read for GrowingSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if !self.wait_for(self.pos) && !self.live.finalized() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "закачка сорвалась",
+            ));
+        }
+        // Не заглядываем дальше записанного: за границей лежит не тишина, а
+        // ничто, и декодер принял бы это за конец потока.
+        let available = self.live.written().saturating_sub(self.pos) as usize;
+        let want = if self.live.finalized() {
+            buf.len()
+        } else {
+            buf.len().min(available)
+        };
+        if want == 0 {
+            return Ok(0);
+        }
+        let read = self.file.read(&mut buf[..want])?;
+        self.pos += read as u64;
+        Ok(read)
+    }
+}
+
+impl std::io::Seek for GrowingSource {
+    fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        // Перемотка вперёд по ещё не скачанному — ждём, пока байты приедут.
+        if let std::io::SeekFrom::Start(target) = from {
+            self.wait_for(target);
+        }
+        self.pos = self.file.seek(from)?;
+        Ok(self.pos)
+    }
+}
+
+impl symphonia::core::io::MediaSource for GrowingSource {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        let total = self.live.total();
+        // Пока размер неизвестен, честнее сказать «не знаю»: соврав, мы
+        // заставили бы демуксер искать конец там, где его ещё нет.
+        if total > 0 {
+            Some(total)
+        } else {
+            None
+        }
+    }
 }
 
 /// Пересчёт частоты дискретизации под устройство.

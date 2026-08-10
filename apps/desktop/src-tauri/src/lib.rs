@@ -58,17 +58,6 @@ pub fn run() {
         .setup(|app| {
             // Последний доверенный рецепт из оффлайн-кэша (подпись перепроверяется)
             engine::init(app.handle());
-            // ВРЕМЕННО (задача 1, перенос звука в свой процесс): проверка
-            // гейта — MUZA_NATIVE_AUDIO=<путь к файлу> играет его нативно,
-            // мимо WebView2. Нужно, чтобы «захват аудио приложения» увидел
-            // звук у PID окна. Убрать, когда движок подключат к плееру.
-            if let Ok(path) = std::env::var("MUZA_NATIVE_AUDIO") {
-                match audio::NativeAudio::play(std::path::Path::new(&path), 1.0) {
-                    // Держим живым до конца процесса: Drop остановил бы вывод.
-                    Ok(handle) => std::mem::forget(handle),
-                    Err(e) => eprintln!("[audio] проверка гейта не удалась: {e}"),
-                }
-            }
             // Реестр локальных файлов + asset-scope для живых путей
             local::init(app.handle());
             // Уборка брошенного стейджинга плагинов (закрыли окно согласия,
@@ -111,6 +100,7 @@ pub fn run() {
             audio::native_set_mic,
             audio::native_scope,
             audio::native_set_speed,
+            audio::native_play_stream,
             audio::native_status,
             audio::native_stop,
             engine::recipe_apply,
