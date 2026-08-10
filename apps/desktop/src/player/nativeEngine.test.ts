@@ -5,7 +5,37 @@
  *  Ошибка здесь не падает и не логируется — трек просто тихо уходит не туда, и
  *  заметить это можно только в OBS. Поэтому проверяем разбор отдельно. */
 import { describe, expect, it } from "vitest";
-import { assetUrlToPath, streamKeyFromUrl } from "./nativeEngine";
+import { assetUrlToPath, NativeAnalyser, streamKeyFromUrl } from "./nativeEngine";
+
+/** Регресс 10.08: подменный анализатор реализовывал только методы, а
+ *  визуализатор берёт ещё и `context.sampleRate` — чтобы разложить полосы по
+ *  частотам. Компонент падал на этом чтении, и режим прослушивания не
+ *  открывался вовсе. Тест сторожит ВСЮ поверхность, которой пользуются
+ *  Visualizer.tsx и ListeningMode.tsx. */
+describe("подменный анализатор повторяет поверхность AnalyserNode", () => {
+  it("отдаёт размер окна, число полос и частоту дискретизации", () => {
+    const analyser = new NativeAnalyser();
+
+    expect(analyser.fftSize).toBe(2048);
+    expect(analyser.frequencyBinCount).toBe(1024);
+    // Без этого поля падает весь режим прослушивания.
+    expect(analyser.context.sampleRate).toBeGreaterThan(0);
+  });
+
+  it("заполняет переданные массивы, не требуя живого движка", () => {
+    const analyser = new NativeAnalyser();
+    const freq = new Uint8Array(analyser.frequencyBinCount);
+    const wave = new Uint8Array(analyser.fftSize);
+
+    analyser.getByteFrequencyData(freq);
+    analyser.getByteTimeDomainData(wave);
+    analyser.stop();
+
+    expect(freq).toHaveLength(1024);
+    // Тишина в форме волны — это середина шкалы, а не ноль.
+    expect(wave.every((v) => v === 128)).toBe(true);
+  });
+});
 
 describe("assetUrlToPath", () => {
   it("достаёт путь из адреса, которым Tauri отдаёт файл кэша", () => {

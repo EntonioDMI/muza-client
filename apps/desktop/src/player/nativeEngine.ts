@@ -56,9 +56,18 @@ export function assetUrlToPath(url: string): string | null {
  *  Опрос ленивый: он заводится при первом обращении и глохнет через секунду
  *  после последнего. Визуализатор закрыт — преобразование Фурье не считается
  *  вообще, а открыт он далеко не всегда. */
-class NativeAnalyser {
+export class NativeAnalyser {
   readonly fftSize = 2048;
   readonly frequencyBinCount = 1024;
+  /** Визуализатор берёт частоту дискретизации ОТСЮДА, чтобы разложить полосы
+   *  по частотам: `analyser.context.sampleRate`. У Web Audio её давал
+   *  AudioContext; здесь её присылает Rust вместе со спектром.
+   *
+   *  ⚠️ Пропустив это поле, я уронил режим прослушивания целиком: компонент
+   *  падал на чтении sampleRate, и экран не открывался вовсе (жалоба владельца
+   *  10.08). Подменяя чужой объект, мало реализовать методы — нужны и поля, к
+   *  которым обращаются потребители. */
+  readonly context = { sampleRate: 48000 };
   private freq = new Uint8Array(1024);
   private wave = new Uint8Array(2048).fill(128);
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -73,11 +82,12 @@ class NativeAnalyser {
         this.stop();
         return;
       }
-      void call<{ freq: number[]; wave: number[] }>("native_scope").then((scope) => {
+      void call<{ freq: number[]; wave: number[]; rate: number }>("native_scope").then((scope) => {
         // Пусто — движок остановился между кадрами; оставляем прошлую картинку.
         if (!scope) return;
         this.freq = new Uint8Array(scope.freq);
         this.wave = new Uint8Array(scope.wave);
+        if (scope.rate > 0) this.context.sampleRate = scope.rate;
       });
     }, 33); // ~30 кадров в секунду: чаще глаз не различает
   }

@@ -1146,11 +1146,19 @@ pub fn native_set_eq(on: bool, bands: Vec<f32>) {
 pub struct NativeScope {
     freq: Vec<u8>,
     wave: Vec<u8>,
+    /// Частота дискретизации вывода. Визуализатор раскладывает полосы по
+    /// частотам и без неё промахнётся: у AnalyserNode она бралась из
+    /// AudioContext, здесь её неоткуда взять, кроме как отсюда.
+    rate: u32,
 }
 
 #[tauri::command]
 pub fn native_scope() -> NativeScope {
-    let empty = NativeScope { freq: vec![0; FFT_SIZE / 2], wave: vec![128; FFT_SIZE] };
+    let empty = NativeScope {
+        freq: vec![0; FFT_SIZE / 2],
+        wave: vec![128; FFT_SIZE],
+        rate: 48_000,
+    };
     let guard = ENGINE.lock().unwrap();
     let Some(audio) = guard.as_ref() else {
         return empty;
@@ -1198,7 +1206,7 @@ pub fn native_scope() -> NativeScope {
             (normalized.clamp(0.0, 1.0) * 255.0) as u8
         })
         .collect();
-    NativeScope { freq, wave }
+    NativeScope { freq, wave, rate: audio.shared.device_rate.load(Ordering::Relaxed) }
 }
 
 #[tauri::command]
