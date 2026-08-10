@@ -11,6 +11,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# Зависимости оптимизируем даже в отладочной сборке. Нативный аудио-движок
+# декодирует и ресемплит в реальном времени: в debug symphonia, rubato и
+# libopus не успевают за выводом, и звук в dev-режиме хрипит и заикается
+# (жалоба владельца 10.08). Наш собственный код остаётся неоптимизированным —
+# отладка не страдает, а пересборка зависимостей разовая.
+[profile.dev.package."*"]
+opt-level = 3
+
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 serde = { version = "1", features = ["derive"] }

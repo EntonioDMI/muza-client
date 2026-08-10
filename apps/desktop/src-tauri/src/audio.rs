@@ -20,7 +20,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -62,9 +62,15 @@ struct Shared {
     frames_out: AtomicU64,
     device_rate: u32,
     device_channels: u16,
-    /// Громкость 0..1, уже по перцептивной кривой (её считает вызывающий —
-    /// формула общая с прежним движком, чтобы ползунок вёл себя как раньше).
-    volume: Mutex<f32>,
+    /// Громкость (биты f32), уже по перцептивной кривой — её считает
+    /// вызывающий, формула общая с прежним движком.
+    ///
+    /// ⚠️ Именно атомик, а не Mutex. Ползунок шлёт значение десятки раз в
+    /// секунду, и колбэк вывода не имеет права ни ждать блокировку, ни
+    /// подставлять что-то своё, когда её не удалось взять: первая версия при
+    /// неудачном try_lock брала 1.0, и каждое движение ползунка давало скачок
+    /// громкости до максимума — те самые хрипы (жалоба владельца 10.08).
+    volume: AtomicU32,
     /// Запрошенная перемотка, секунды. Исполняет поток декодера: только он
     /// владеет читателем формата.
     seek_to: Mutex<Option<f64>>,
@@ -96,7 +102,7 @@ impl NativeAudio {
             frames_out: AtomicU64::new(0),
             device_rate: config.sample_rate().0,
             device_channels: config.channels(),
-            volume: Mutex::new(1.0),
+            volume: AtomicU32::new(1.0f32.to_bits()),
             seek_to: Mutex::new(None),
             drained: AtomicBool::new(false),
         });
@@ -123,23 +129,48 @@ impl NativeAudio {
                 // Отдельный клон для колбэка: он забирает владение, а самому
                 // потоку ссылка нужна дальше — держать стрим живым.
                 let cb = Arc::clone(&stream_shared);
+                // Живёт между вызовами колбэка: от неё ведётся плавный переход
+                // громкости, иначе каждый буфер начинался бы со скачка.
+                let mut current_gain = 1.0f32;
                 let stream = device.build_output_stream(
                     &config.into(),
                     move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        let paused = cb.paused.load(Ordering::Relaxed);
-                        let gain = *cb.volume.lock().unwrap();
+                        // Поток реального времени: блокировку держим считанные
+                        // микросекунды и забираем данные пачкой, а не по
+                        // сэмплу — пер-сэмпловый pop_front под локом давал
+                        // хрипы и щелчки.
+                        if cb.paused.load(Ordering::Relaxed) {
+                            out.fill(0.0);
+                            return;
+                        }
+                        let target = f32::from_bits(cb.volume.load(Ordering::Relaxed));
+                        let channels = cb.device_channels.max(1) as usize;
                         let mut pcm = cb.pcm.lock().unwrap();
-                        for slot in out.iter_mut() {
-                            *slot = if paused {
-                                0.0
-                            } else {
-                                pcm.pop_front().unwrap_or(0.0) * gain
-                            };
+                        let ready = out.len().min(pcm.len());
+                        // Громкость доводим до нового значения ЗА БУФЕР, а не
+                        // ступенькой на его границе: мгновенный скачок уровня
+                        // слышен щелчком, и на движении ползунка щелчки идут
+                        // очередью. Прежний движок получал это даром от
+                        // GainNode, здесь считаем сами.
+                        let frames = (ready / channels).max(1);
+                        let step = (target - current_gain) / frames as f32;
+                        let mut gain = current_gain;
+                        for (i, (slot, sample)) in
+                            out.iter_mut().zip(pcm.drain(..ready)).enumerate()
+                        {
+                            *slot = sample * gain;
+                            if (i + 1) % channels == 0 {
+                                gain += step;
+                            }
                         }
-                        if !paused {
-                            let frames = out.len() as u64 / cb.device_channels.max(1) as u64;
-                            cb.frames_out.fetch_add(frames, Ordering::Relaxed);
-                        }
+                        current_gain = target;
+                        drop(pcm);
+                        // Буфер не успел наполниться — тишина лучше мусора.
+                        out[ready..].fill(0.0);
+                        // Пауза сюда не доходит — выше ранний возврат, и часы
+                        // позиции на паузе честно стоят.
+                        let played = out.len() as u64 / channels as u64;
+                        cb.frames_out.fetch_add(played, Ordering::Relaxed);
                     },
                     |e| eprintln!("[audio] поток вывода: {e}"),
                     None,
@@ -174,12 +205,22 @@ impl NativeAudio {
 
     /// Громкость 0..1 (кривую считает вызывающий — она общая с прежним движком).
     pub fn set_volume(&self, gain: f32) {
-        *self.shared.volume.lock().unwrap() = gain.clamp(0.0, 4.0);
+        self.shared.volume.store(gain.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Перемотка исполняется потоком декодера — только он владеет читателем.
+    ///
+    /// Но буфер чистим ПРЯМО ЗДЕСЬ, не дожидаясь его: во-первых, в нём лежит
+    /// до полутора секунд звука со старой позиции, и без очистки человек
+    /// слышал бы прежнее место ещё секунду после прыжка; во-вторых, декодер
+    /// почти всегда спит в ожидании свободного места и до проверки запроса
+    /// доходит только проснувшись — освобождая буфер, мы его и будим.
     pub fn seek(&self, sec: f64) {
-        *self.shared.seek_to.lock().unwrap() = Some(sec.max(0.0));
+        let sec = sec.max(0.0);
+        *self.shared.seek_to.lock().unwrap() = Some(sec);
+        self.shared.pcm.lock().unwrap().clear();
+        let frames = (sec * self.shared.device_rate as f64) as u64;
+        self.shared.frames_out.store(frames, Ordering::Relaxed);
     }
 
     /// Трек доигран: декодер дошёл до конца И буфер опустел. Второе условие
