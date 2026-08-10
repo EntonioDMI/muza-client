@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Badge, Button, Cover, Dialog, Icon, SearchInput } from "@muza/ui";
+import { Badge, Button, Cover, Dialog, SearchInput } from "@muza/ui";
 import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
 import { ApiError } from "@muza/api-client";
 import { useT } from "@muza/app";
@@ -548,7 +548,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* «Сейчас играет» (≥1200px, автооткрытие при старте трека) */}
         {npVisible ? <NowPlayingPanel onClose={() => set({ npOpen: false })} /> : null}
+
       </div>
+
+      {/* ЯЗЫЧОК ЗАКРЫТОЙ ПАНЕЛИ — единственный её след на экране.
+          Повторяет приложение (App.tsx, тот же ключ подписи и та же
+          геометрия): закрывает панель крестик в её шапке, возвращает —
+          язычок у правой кромки. Без него закрытая панель не оставляла ни
+          одного видимого следа: вернуть её можно было только кнопкой в
+          полосе плеера, среди девяти других, — то есть вспомнив, где она.
+          Заявка владельца 11.08.
+
+          ⚠️ СТОИТ ВНЕ СЕТКИ, прямым ребёнком .shell. Абсолютный потомок
+          СЕТКИ считает `right: 0` от своей ЯЧЕЙКИ, а не от сетки: без явного
+          места авторазмещение отдавало язычку первую колонку — колонку
+          сайдбара, и правый край вставал на 262px при окне 1680 (замер).
+          Прижимать его к кромке ОКНА и правильнее по смыслу: так же сделано
+          в приложении. */}
+      {npAllowed && !npVisible ? (
+        // ⚠️ БЕЗ <Tooltip>: его обёртка позиционирована, и абсолютный язычок
+        // начинал считать `right: 0` от НЕЁ — правый край вставал в 0 вместо
+        // кромки окна (замер). Доступное имя у кнопки своё, а сам язычок —
+        // жест «потяни», он объясняется формой, а не подписью.
+        <button type="button" className="np-tab" aria-label={t("nowPlaying.reopen")} onClick={() => set({ npOpen: true })} />
+      ) : null}
 
       <PlayerBar
         npOpen={npVisible}
