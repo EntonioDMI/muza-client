@@ -14,6 +14,8 @@ export type {
   AudioDeviceInfo,
   AudioDevicesPort,
   DiagnosticsPort,
+  DiscordOutcomeInfo,
+  DiscordStage,
   DiscordStatusPort,
   DragOutPort,
   EngineHealth,

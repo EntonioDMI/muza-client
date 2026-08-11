@@ -528,6 +528,21 @@ export const en = {
           hint: "A \"Listening to Muza\" status appears in your Discord profile. Discord needs to be running.",
           hintNoAppId: "Doesn't work yet — a setting on our side is missing. Your choice is saved and will start working on its own once we add it.",
         },
+        // See the Russian dictionary for why these exist: every wording answers
+        // "what happened and what do I do now", not "how it works inside".
+        check: {
+          title: "Check the connection",
+          hint: "Sends a test status right now and shows what Discord replied.",
+          action: "Check",
+          checking: "Checking...",
+          ok: "The status reached Discord. If friends can't see it, turn on \"Display current activity\" in Discord.",
+          okWithButton: "The status and the button reached Discord. You won't see your own button, Discord shows it to other people only.",
+          off: "Not set up on our side. Your choice is saved and will start working on its own.",
+          noDiscord: "Discord isn't answering. Check that it's running and that both apps run as the same Windows user.",
+          noClient: "Couldn't reach Discord. Restarting the app usually helps.",
+          rejected: "Discord refused to show the status. Usually it's the button address, it has to open in a browser.",
+          detail: "Discord replied: {message}",
+        },
         whatToShow: "What to show",
         cover: { title: "Track cover", hint: "The playing track's cover shows next to the status.", ariaLabel: "Cover" },
         progress: {

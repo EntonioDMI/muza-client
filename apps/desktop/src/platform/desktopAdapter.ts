@@ -35,7 +35,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { save } from "@tauri-apps/plugin-dialog";
 import { checkForUpdate, updaterAvailable } from "../lib/updater";
-import { rpcAvailable } from "../lib/discord";
+import { discordLastOutcome, rpcAvailable, testDiscordActivity } from "../lib/discord";
 import { miniHide, miniShow } from "../lib/miniBridge";
 import { deviceAccessDenied, listInputDevices, listOutputDevices } from "../player/outputDevices";
 import { getStartLog, getStartSummary, getStartTsv, subscribeStartLog } from "../player/startTelemetry";
@@ -136,7 +136,11 @@ export function createDesktopPlatform(): PlatformAdapter {
             startSummary: getStartSummary,
           },
           // Готова ли связка с Discord (идентификатор зашит в сборку моста).
-          discordStatus: { configured: rpcAvailable },
+          discordStatus: {
+            configured: rpcAvailable,
+            lastOutcome: discordLastOutcome,
+            test: testDiscordActivity,
+          },
           // Расширения. Экран согласия, права и стейджинг — уже существующий
           // рантайм; здесь только сопоставление «порт → готовая функция».
           plugins: {

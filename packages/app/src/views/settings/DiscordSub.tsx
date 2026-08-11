@@ -11,11 +11,12 @@
  *  предпросмотр которой врёт, хуже настройки без предпросмотра. */
 
 import { useEffect, useState } from "react";
-import { Switch } from "@muza/ui";
+import { Button, Switch } from "@muza/ui";
+import type { DiscordOutcomeInfo } from "../../platform";
 import { useT } from "../../i18n";
 import { discordCoverUrl, formatTemplate, isValidButtonUrl } from "../../lib/discord";
 import { fmtTime } from "../../lib/format";
-import { GroupTitle, paneStyle, SettingInput, SettingRow, SubHeader } from "./primitives";
+import { GroupTitle, paneStyle, RowValue, SettingInput, SettingRow, SubHeader } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
 
 export function DiscordSub() {
@@ -30,6 +31,33 @@ export function DiscordSub() {
     if (!statusPort) return;
     void statusPort.configured().then(setConfigured);
   }, [statusPort]);
+
+  // Итог связи с Discord. Открыли экран — показываем последний известный (его
+  // помнит мост), нажали «Проверить» — свежий.
+  const [outcome, setOutcome] = useState<DiscordOutcomeInfo | null>(() => statusPort?.lastOutcome?.() ?? null);
+  const [checking, setChecking] = useState(false);
+  const runCheck = () => {
+    if (!statusPort?.test || checking) return;
+    setChecking(true);
+    void statusPort
+      .test({
+        label: btnShown ? prefs.discordBtnLabel : null,
+        url: btnShown ? prefs.discordBtnUrl : null,
+      })
+      .then(setOutcome)
+      .finally(() => setChecking(false));
+  };
+  /** Что сказать человеку по итогу. Успех разводит два случая: кнопку он не
+   *  увидит даже когда всё сработало — Discord показывает её только другим, и
+   *  без этой строки «проверка прошла, а кнопки нет» читается как поломка. */
+  const outcomeText = (o: DiscordOutcomeInfo): string => {
+    const base = "settings.integrations.discord.check" as const;
+    if (o.ok) return t(`${base}.${btnShown ? "okWithButton" : "ok"}`);
+    if (o.stage === "no_discord") return t(`${base}.noDiscord`);
+    if (o.stage === "rejected") return t(`${base}.rejected`);
+    if (o.stage === "off") return t(`${base}.off`);
+    return t(`${base}.noClient`);
+  };
 
   const vars = nowPlaying
     ? { track: nowPlaying.title, artist: nowPlaying.artist, album: nowPlaying.album }
@@ -54,6 +82,25 @@ export function DiscordSub() {
       >
         <Switch checked={prefs.discordRpcOn} onChange={(discordRpcOn: boolean) => set({ discordRpcOn })} label={t("settings.integrations.discord.enable.ariaLabel")} />
       </SettingRow>
+      {/* Проверка связи. Без неё отказ выглядел как отсутствие статуса, и
+          жалоба «не работает вообще» не поддавалась разбору: и человек, и мы
+          переключали тумблеры вслепую (жалоба 5 из семи, 12.08). */}
+      {statusPort?.test ? (
+        <SettingRow
+          title={t("settings.integrations.discord.check.title")}
+          hint={outcome ? outcomeText(outcome) : t("settings.integrations.discord.check.hint")}
+        >
+          <Button variant="ghost" onClick={runCheck} disabled={checking}>
+            {checking ? t("settings.integrations.discord.check.checking") : t("settings.integrations.discord.check.action")}
+          </Button>
+        </SettingRow>
+      ) : null}
+      {/* Слова самого Discord — отдельной строкой и только когда они есть.
+          Человеку хватает подсказки выше; эта строка нужна, когда он присылает
+          нам снимок экрана. */}
+      {outcome?.message && !outcome.ok ? (
+        <RowValue>{t("settings.integrations.discord.check.detail", { message: outcome.message })}</RowValue>
+      ) : null}
       <GroupTitle>{t("settings.integrations.discord.whatToShow")}</GroupTitle>
       <SettingRow title={t("settings.integrations.discord.cover.title")} hint={t("settings.integrations.discord.cover.hint")}>
         <Switch checked={prefs.discordShowCover} onChange={(discordShowCover: boolean) => set({ discordShowCover })} label={t("settings.integrations.discord.cover.ariaLabel")} />

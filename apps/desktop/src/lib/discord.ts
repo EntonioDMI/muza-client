@@ -23,10 +23,38 @@ export interface DiscordActivity {
  *  Ре-экспорт: потребители (App.tsx, discord.test.ts) импортов не меняли. */
 export { discordCoverUrl, formatTemplate, isValidButtonUrl } from "@muza/app/lib/discord";
 
-export async function updateDiscordActivity(a: DiscordActivity): Promise<boolean> {
-  if (!isTauri()) return false;
+/** Чем кончилась попытка показать активность. Зеркало RpcOutcome из rpc.rs.
+ *
+ *  ⚠️ Раньше здесь был `boolean`, и пять разных исходов приходили неотличимо.
+ *  Именно поэтому жалоба «у меня Discord не работает вообще» (5 из семи,
+ *  12.08) не поддавалась разбору: у нас не было НИ ОДНОГО способа узнать, что
+ *  именно не сложилось у человека. */
+export interface DiscordOutcome {
+  ok: boolean;
+  /** Где оборвалось: "off" — сборка без application id; "no_client" — клиент
+   *  IPC не создался; "no_discord" — Discord не отвечает (не запущен, запущен
+   *  от другого пользователя, версия из Microsoft Store с изолированным
+   *  каналом); "rejected" — Discord отклонил активность; "ok" — показана. */
+  stage: "off" | "no_client" | "no_discord" | "rejected" | "ok";
+  /** Что сказали система или Discord; null — сказать нечего. */
+  message: string | null;
+}
+
+const NOT_DESKTOP: DiscordOutcome = { ok: false, stage: "off", message: null };
+
+/** Итог последней попытки — чтобы настройки могли его показать, не дёргая
+ *  Discord заново. Живёт в модуле: активность шлёт App, а показывает экран
+ *  настроек, и городить ради одного поля общее состояние незачем. */
+let lastOutcome: DiscordOutcome | null = null;
+
+export function discordLastOutcome(): DiscordOutcome | null {
+  return lastOutcome;
+}
+
+export async function updateDiscordActivity(a: DiscordActivity): Promise<DiscordOutcome> {
+  if (!isTauri()) return NOT_DESKTOP;
   try {
-    return await invoke<boolean>("rpc_update", {
+    lastOutcome = await invoke<DiscordOutcome>("rpc_update", {
       payload: {
         details: a.details,
         state: a.state,
@@ -40,9 +68,39 @@ export async function updateDiscordActivity(a: DiscordActivity): Promise<boolean
         button_url: a.buttonUrl,
       },
     });
-  } catch {
-    return false;
+    return lastOutcome;
+  } catch (e) {
+    // Сама команда не доехала — это уже не «Discord не запущен», а поломка
+    // моста; путать их нельзя, иначе диагностика будет врать.
+    lastOutcome = {
+      ok: false,
+      stage: "no_client",
+      message: e instanceof Error ? e.message : String(e),
+    };
+    return lastOutcome;
   }
+}
+
+/** Проба связи для кнопки «Проверить подключение» в настройках.
+ *
+ *  Шлёт НАСТОЯЩУЮ активность, а не пингует канал: у Discord подключение и приём
+ *  активности — разные шаги, и отклонить он может именно второй. Кнопка идёт с
+ *  теми же значениями, что стоят у человека, — иначе проверка проверяла бы не
+ *  то, на что он жалуется (пункт 2 из семи: «кастомная кнопка не работает»). */
+export async function testDiscordActivity(button: {
+  label: string | null;
+  url: string | null;
+}): Promise<DiscordOutcome> {
+  const now = Math.floor(Date.now() / 1000);
+  return updateDiscordActivity({
+    details: "Muza",
+    state: "Проверка подключения",
+    coverUrl: null,
+    startTs: now,
+    endTs: null,
+    buttonLabel: button.label,
+    buttonUrl: button.url,
+  });
 }
 
 export async function clearDiscordActivity(): Promise<void> {

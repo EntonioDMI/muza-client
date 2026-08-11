@@ -50,21 +50,56 @@ pub struct RpcPayload {
     pub button_url: Option<String>,
 }
 
-/// Обновить активность. Возвращает false, если Discord недоступен/не настроен —
-/// это штатный случай, не ошибка.
+/// Чем кончилась попытка показать активность.
+///
+/// ⚠️ ДО 12.08 ЗДЕСЬ БЫЛ ГОЛЫЙ `bool` НА ПЯТЬ РАЗНЫХ ИСХОДОВ: пустой
+/// application id, клиент не создался, Discord не запущен, Discord отклонил
+/// активность, всё хорошо. Наружу они приходили неотличимо, а текст ошибки от
+/// самого Discord (кривой адрес кнопки, слишком длинная подпись, отклонённая
+/// активность) выбрасывался. Из-за этого жалоба «у меня RPC не работает вообще»
+/// (5 из семи) не поддавалась разбору в принципе: и человек, и мы переключали
+/// тумблеры вслепую. `stage` говорит, ГДЕ оборвалось, `message` — что сказала
+/// система.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct RpcOutcome {
+    pub ok: bool,
+    /// Машинная метка шага: "off" | "no_client" | "no_discord" | "rejected" | "ok".
+    /// Текст для человека собирает фронт — переводы живут там.
+    pub stage: &'static str,
+    /// Что сказали система или Discord. Пусто — сказать нечего.
+    pub message: Option<String>,
+}
+
+impl RpcOutcome {
+    fn fail(stage: &'static str, message: impl Into<String>) -> Self {
+        Self { ok: false, stage, message: Some(message.into()) }
+    }
+    fn done() -> Self {
+        Self { ok: true, stage: "ok", message: None }
+    }
+}
+
+/// Обновить активность. Отказ — штатный случай (Discord может быть не запущен),
+/// но теперь он ИМЕНОВАННЫЙ: см. RpcOutcome.
 #[tauri::command]
-pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
+pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> RpcOutcome {
     let id = client_id();
     if id.is_empty() {
-        return false;
+        return RpcOutcome::fail("off", "application id не задан при сборке");
     }
     let mut guard = state.client.lock().unwrap();
     if guard.is_none() {
-        let Ok(mut client) = DiscordIpcClient::new(id) else {
-            return false;
+        let mut client = match DiscordIpcClient::new(id) {
+            Ok(client) => client,
+            Err(e) => return RpcOutcome::fail("no_client", e.to_string()),
         };
-        if client.connect().is_err() {
-            return false; // Discord не запущен — попробуем в следующий раз
+        if let Err(e) = client.connect() {
+            // Discord не запущен, запущен от другого пользователя, стоит из
+            // Microsoft Store (там он живёт в изолированном контейнере, и
+            // именованный канал \\?\pipe\discord-ipc-N из обычного процесса
+            // недостижим) — здесь всё это выглядит одинаково, поэтому важен
+            // текст: без него разбирать нечего.
+            return RpcOutcome::fail("no_discord", e.to_string());
         }
         *guard = Some(client);
     }
@@ -119,13 +154,16 @@ pub fn rpc_update(state: State<'_, RpcState>, payload: RpcPayload) -> bool {
         act = act.buttons(buttons);
     }
 
-    if client.set_activity(act).is_err() {
-        // соединение умерло (Discord перезапустили) — сбросим, переподключимся потом
+    if let Err(e) = client.set_activity(act) {
+        // соединение умерло (Discord перезапустили) — сбросим, переподключимся
+        // потом. Текст сохраняем: сюда же приходит и содержательный отказ
+        // самого Discord — например, отклонённый адрес кнопки.
+        let message = e.to_string();
         let _ = client.close();
         *guard = None;
-        return false;
+        return RpcOutcome::fail("rejected", message);
     }
-    true
+    RpcOutcome::done()
 }
 
 /// Убрать активность (пауза/выключение в настройках/выход).

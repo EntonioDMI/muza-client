@@ -149,6 +149,11 @@ export function App() {
   );
 }
 
+/** Как часто повторять попытку показать статус в Discord, пока она не удалась.
+ *  Двадцать секунд: человек, запустивший Discord после приложения, не должен
+ *  гадать, работает ли статус, — но и долбить недоступный канал незачем. */
+const DISCORD_RETRY_MS = 20_000;
+
 function AppRoot() {
   const apiBaseUrl = useMemo(
     () =>
@@ -1177,20 +1182,41 @@ function Player({
       return;
     }
     const vars = { track: track.title, artist: track.artist, album: track.album };
+    // ⚠️ ПОВТОРНАЯ ПОПЫТКА (12.08). Зависимости этого эффекта — смена трека,
+    // пауза и настройки. То есть Discord, запущенный ПОСЛЕ приложения, не
+    // подхватывался до следующей смены трека: человек включал Discord, статуса
+    // не видел и решал, что «не работает вообще» (жалоба 5 из семи).
+    // Соединение поднимается лениво на первом же rpc_update, так что достаточно
+    // просто повторять отправку, пока она не удастся.
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const send = () => {
     // Позиция — точная, на момент отправки активности: Discord показывает
     // ЧУЖИМ людям время трека, и снимок последнего рендера врал бы им
     // (третий из трёх сценариев в шапке positionStore.ts).
-    const startTs = Math.floor(Date.now() / 1000 - posStore.get());
-    void updateDiscordActivity({
-      details: formatTemplate(prefs.discordLine1, vars) || track.title,
-      state: formatTemplate(prefs.discordLine2, vars) || track.artist,
-      coverUrl: prefs.discordShowCover ? discordCoverUrl(rawCover) : null,
-      startTs,
-      // start+end = нативная прогресс-линия Discord; длительности нет (0) — не врём
-      endTs: prefs.discordProgressOn && track.duration > 0 ? startTs + Math.round(track.duration) : null,
-      buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
-      buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
-    });
+      const startTs = Math.floor(Date.now() / 1000 - posStore.get());
+      void updateDiscordActivity({
+        details: formatTemplate(prefs.discordLine1, vars) || track.title,
+        state: formatTemplate(prefs.discordLine2, vars) || track.artist,
+        coverUrl: prefs.discordShowCover ? discordCoverUrl(rawCover) : null,
+        startTs,
+        // start+end = нативная прогресс-линия Discord; длительности нет (0) — не врём
+        endTs: prefs.discordProgressOn && track.duration > 0 ? startTs + Math.round(track.duration) : null,
+        buttonLabel: prefs.discordBtnOn ? prefs.discordBtnLabel : null,
+        buttonUrl: prefs.discordBtnOn ? prefs.discordBtnUrl : null,
+      }).then((outcome) => {
+        // Получилось — повторять незачем: следующая отправка приедет со сменой
+        // трека. Не получилось — ждём Discord, он мог ещё не запуститься.
+        if (outcome.ok && timer !== null) {
+          clearInterval(timer);
+          timer = null;
+        }
+      });
+    };
+    send();
+    timer = setInterval(send, DISCORD_RETRY_MS);
+    return () => {
+      if (timer !== null) clearInterval(timer);
+    };
     // pos нарочно не в deps: активность шлём на смену трека/состояния, не каждый тик
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [

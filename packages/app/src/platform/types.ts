@@ -306,9 +306,30 @@ export interface DiagnosticsPort {
 }
 
 /** СТАТУС «СЛУШАЕТ MUZA» В DISCORD. */
+/** Где оборвалась связь с Discord. Машинные метки: текст для человека собирает
+ *  экран настроек, переводы живут там. */
+export type DiscordStage = "off" | "no_client" | "no_discord" | "rejected" | "ok";
+
+export interface DiscordOutcomeInfo {
+  ok: boolean;
+  stage: DiscordStage;
+  /** Что сказали система или Discord; null — сказать нечего. */
+  message: string | null;
+}
+
 export interface DiscordStatusPort {
   /** Готова ли связка с Discord (площадка знает свой идентификатор). */
   configured(): Promise<boolean>;
+  /** Чем кончилась последняя попытка показать активность; null — попыток не
+   *  было. Нужен, чтобы настройки могли сказать правду, не дёргая Discord. */
+  lastOutcome?(): DiscordOutcomeInfo | null;
+  /** Проба связи по кнопке «Проверить подключение».
+   *
+   *  ⚠️ Кнопка активности передаётся С ТЕМИ ЖЕ значениями, что стоят у
+   *  человека: у Discord подключение и приём активности — разные шаги, и
+   *  отклонить он может именно второй, из-за адреса кнопки. Проба без кнопки
+   *  проверяла бы не то, на что жалуются. */
+  test?(button: { label: string | null; url: string | null }): Promise<DiscordOutcomeInfo>;
 }
 
 /** Устройство звука в терминах экрана вывода. */
