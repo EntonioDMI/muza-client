@@ -135,6 +135,8 @@ export const THEME_EXCLUDED = [
   "tray",
   "closeToTray",
   "normalize",
+  // Характер растяжения темпа: это ЗВУК, а не оформление — тема его не носит.
+  "tempoWsola",
   "crossfade",
   "crossfadeSec",
   "gapless",

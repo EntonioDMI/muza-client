@@ -77,7 +77,7 @@ describe("loadPlayerState", () => {
   });
 
   it("сохранённое возвращается целиком", () => {
-    savePlayerState({ volume: 12, volumeBeforeMute: 77, muted: true, shuffle: true, repeat: "all", speed: 1.5 });
+    savePlayerState({ volume: 12, volumeBeforeMute: 77, muted: true, shuffle: true, repeat: "all", speed: 1.5, pitch: -2 });
     window.dispatchEvent(new Event("pagehide"));
     expect(loadPlayerState()).toEqual({
       volume: 12,
@@ -86,6 +86,9 @@ describe("loadPlayerState", () => {
       shuffle: true,
       repeat: "all",
       speed: 1.5,
+      // «Стретч» (11.08.2026): высота живёт в той же памяти, что и скорость —
+      // человек выставил −2 полутона и ждёт их же при следующем запуске.
+      pitch: -2,
     });
   });
 });

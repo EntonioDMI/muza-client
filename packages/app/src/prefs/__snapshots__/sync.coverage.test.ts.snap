@@ -123,6 +123,7 @@ exports[`что синхронизируется между устройства
   "streamQuality",
   "syncedLyrics",
   "telemetry",
+  "tempoWsola",
   "textDim",
   "theme",
   "tileSize",

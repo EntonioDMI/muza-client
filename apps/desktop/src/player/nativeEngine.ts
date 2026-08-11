@@ -197,13 +197,21 @@ export class HybridAudioEngine {
       void call<NativeStatus>("native_status")
         .then((status) => {
           // Пусто — команда не ответила (окно закрывается, движок остановлен).
-          if (!status?.playing) return;
-          this.lastPosition = status.position;
-          this.cb.onTime(status.position);
+          if (!status) return;
+          // ⚠️ КОНЕЦ ТРЕКА ПРОВЕРЯЕТСЯ ДО ГВАРДА `playing` (11.08.2026).
+          // Раньше `if (!status.playing) return;` стоял ПЕРЕД этой проверкой, и
+          // это мина: `playing` на стороне Rust означает всего лишь «движок
+          // существует». Стоит ему когда-нибудь начать значить правду — «звук
+          // идёт», — и конец трека перестанет доезжать вовсе, потому что на
+          // конце звук как раз не идёт. Конец важнее такта позиции: пропустив
+          // его, плеер молча встаёт навсегда.
           if (status.ended && !this.endedSent) {
             this.endedSent = true;
             this.cb.onEnded();
           }
+          if (!status.playing) return;
+          this.lastPosition = status.position;
+          this.cb.onTime(status.position);
         })
         .catch(() => {
           /* окно закрывается — команда может не ответить, это не сбой плеера */
@@ -298,6 +306,14 @@ export class HybridAudioEngine {
   seek(sec: number, keepCrossfade?: boolean): void {
     if (this.native) {
       this.lastPosition = Math.max(0, sec);
+      // ⚠️ ПЕРЕМОТКА УВОДИТ С КОНЦА — ЗАЩЁЛКУ СНИМАЕМ (11.08.2026).
+      // `endedSent` гасит повторную отправку конца, и сбрасывался он ТОЛЬКО в
+      // startPolling(), то есть при новом play(). Повтор трека play() не зовёт:
+      // он отматывает на ноль и снимает паузу. Значит второй конец того же
+      // трека не доехал бы никогда — повтор сработал бы РОВНО ОДИН РАЗ, а на
+      // втором круге трек домолчал бы до конца и встал. Отмотали — конец снова
+      // впереди, и о нём обязаны сообщить.
+      this.endedSent = false;
       void call("native_seek", { sec: Math.max(0, sec) });
       return;
     }
@@ -324,6 +340,34 @@ export class HybridAudioEngine {
     // частоты. Именно поэтому звучит как запись в другом темпе, а не как
     // ускоренная плёнка.
     void call("native_set_speed", { speed });
+  }
+
+  /** Высота тона в полутонах, НЕЗАВИСИМО от скорости («стретч»).
+   *
+   *  Пара к setSpeed и стоит рядом с ней намеренно: вместе они и есть то, что
+   *  прежний путь одной ручкой выразить не мог. Пересчёт частоты двигал время и
+   *  высоту сцепленно — медленнее значило ниже. Вокодер эту связь рвёт.
+   *
+   *  ⚠️ Веб-путь высоту НЕ УМЕЕТ: у <audio> есть только playbackRate, а он
+   *  тянет тон за собой. Молча делать вид, что получилось, нельзя — ручка
+   *  показывается по supportsPitch, и на веб-пути её просто нет. */
+  setPitch(semitones: number): void {
+    if (!this.native) return;
+    void call("native_set_pitch", { semitones });
+  }
+
+  /** Характер растяжения темпа: true — WSOLA (держит удары), false — фазовый
+   *  вокодер (гладок на тянущемся). Два РАЗНЫХ метода, а не «лучше/хуже»:
+   *  разбор — в шапке src-tauri/src/wsola.rs. На веб-пути выбора нет вовсе,
+   *  там темп меняет сам браузер. */
+  setTempoMode(wsola: boolean): void {
+    if (!this.native) return;
+    void call("native_set_tempo_mode", { wsola });
+  }
+
+  /** Умеет ли текущий путь двигать высоту отдельно от времени. */
+  get supportsPitch(): boolean {
+    return this.native;
   }
 
   setEq(on: boolean, bands: number[]): void {

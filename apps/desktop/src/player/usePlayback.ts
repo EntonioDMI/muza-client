@@ -139,6 +139,28 @@ export function usePlayback({
   // весь экран со строками треков, обе копии текста песни. Значение точное
   // всегда, подписываются на него только те узлы, которые его рисуют.
   const [posStore] = useState(() => createPositionStore(initialPos));
+  /** ⚠️ «ПРОДОЛЖИТЬ С МЕСТА» — ОДИН РАЗ ЗА ЗАПУСК, ТОЛЬКО ВОССТАНОВЛЕННОМУ ТРЕКУ.
+   *
+   *  Жалоба владельца 11.08: «слушаешь песню, на середине переключаешься на
+   *  другой трек, возвращаешься — и он продолжает с того места, а не с начала».
+   *
+   *  Причина: в startAt досик стоял БЕЗУСЛОВНО, на каждом старте любого трека,
+   *  у которого нашлась сохранённая позиция. А resumeStore помнит позиции сотен
+   *  треков (LRU на 300) — то есть любой повторный запуск песни в той же
+   *  сессии подхватывал прошлую секунду. Для песни это неверно: включил
+   *  заново — значит с начала. Возврат в приложение — другое дело, ради него
+   *  всё и делалось.
+   *
+   *  Здесь — намерение, а не срок: восстановлению подлежит РОВНО тот трек,
+   *  который App.tsx положил в очередь при запуске (initialPlaybackState), и
+   *  ровно один раз. Дальше в этой сессии карта позиций работает только на
+   *  ЗАПИСЬ — она нужна следующему запуску, а не текущему.
+   *
+   *  Автопереход очереди сюда не попадает по той же причине: он тоже «включил
+   *  заново», просто не рукой. */
+  const pendingResumeIdRef = useRef<string | null>(
+    initialPos > 0 && initialQueue.length > 0 ? (initialQueue[0]?.id ?? null) : null,
+  );
   /** ПАМЯТЬ ПЛЕЕРА МЕЖДУ ЗАПУСКАМИ (заказ владельца 05.08: «при перезаходе не
    *  сохраняются настройки громкости и некоторые другие элементы»). Читаем ОДИН
    *  раз ленивым инициализатором — обращение к localStorage на каждый рендер
@@ -147,6 +169,9 @@ export function usePlayback({
   const [saved] = useState(loadPlayerState);
   const [vol, setVolState] = useState(saved.volume);
   const [speed, setSpeed] = useState(saved.speed);
+  /** Высота тона в полутонах, независимо от скорости («стретч», 11.08.2026).
+   *  Соседка speed по смыслу, а не по расположению: разбор — playerState.ts. */
+  const [pitch, setPitchState] = useState(saved.pitch);
   const [repeat, setRepeat] = useState<RepeatMode>(saved.repeat);
   const [shuffle, setShuffle] = useState(saved.shuffle);
 
@@ -157,8 +182,10 @@ export function usePlayback({
    *  того, кто его поменял. Дорогой запись не бывает: playerState склеивает её
    *  окном 250мс (см. его шапку). */
   useEffect(() => {
-    savePlayerState({ volume: vol, speed, repeat, shuffle });
-  }, [vol, speed, repeat, shuffle]);
+    savePlayerState({ volume: vol, speed, pitch, repeat, shuffle });
+    // pitch в списке зависимостей ОБЯЗАН быть: без него высота уезжала бы на
+    // диск только попутно, вместе со следующей сменой громкости или скорости.
+  }, [vol, speed, pitch, repeat, shuffle]);
 
   // null — очередь пуста, «ничего не играет». Это НАСТОЯЩЕЕ состояние плеера, а
   // не край: раньше инвариант «трек есть всегда» держала демо-очередь-заглушка
@@ -168,8 +195,8 @@ export function usePlayback({
   // refs для колбэков движка/таймеров (без пересоздания и стейл-замыканий)
   // pos здесь нет намеренно: он живёт в posStore и точен всегда — дублировать
   // его снимком рендера значило бы завести второй, отстающий источник правды.
-  const stateRef = useRef({ queue, index, playing, repeat, shuffle, speed, track });
-  stateRef.current = { queue, index, playing, repeat, shuffle, speed, track };
+  const stateRef = useRef({ queue, index, playing, repeat, shuffle, speed, pitch, track });
+  stateRef.current = { queue, index, playing, repeat, shuffle, speed, pitch, track };
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   // Громкость держим и ref'ом: движок создаётся лениво, первым же треком, и в
@@ -328,6 +355,8 @@ export function usePlayback({
       engineRef.current.setEq(prefsRef.current.eqOn, prefsRef.current.eqBands);
       engineRef.current.setVolume(volRef.current);
       if (stateRef.current.speed !== 1) engineRef.current.setSpeed(stateRef.current.speed);
+      if (stateRef.current.pitch !== 0) engineRef.current.setPitch(stateRef.current.pitch);
+      if (prefsRef.current.tempoWsola) engineRef.current.setTempoMode(true);
     }
     return engineRef.current;
   };
@@ -531,7 +560,13 @@ export function usePlayback({
       pollGapless(); // T19 fast-follow: точный прицел на конец нового трека
       // «Продолжить с места»: если сохранена осмысленная позиция (не у начала
       // и не у конца) — досикиваем. Ручной старт с 0 через seek не трогаем.
-      if (prefsRef.current.resumePosition) {
+      // Досикиваем ТОЛЬКО восстановленный при запуске трек и только один раз —
+      // разбор у pendingResumeIdRef. Гасим указатель при любом старте, а не
+      // только при совпадении: первый же трек, запущенный не тем, чем сессия
+      // восстановилась, означает, что восстанавливать больше нечего.
+      const resumeThis = pendingResumeIdRef.current === t.id;
+      pendingResumeIdRef.current = null;
+      if (resumeThis && prefsRef.current.resumePosition) {
         const saved = resumeStore.get(t.id);
         if (saved > 5 && saved < t.duration - 10 && playSeqRef.current === seq) {
           // keepCrossfade: стык, который мы только что запустили выше, обрывать
@@ -869,6 +904,34 @@ export function usePlayback({
     return nextSpeed; // вызывающий показывает тост с новым значением
   };
 
+  /** ШАГИ ВЫСОТЫ кнопки в баре. Не настраиваются, в отличие от шагов скорости,
+   *  и это осознанно: у скорости пресеты — вкус (кто-то слушает лекции на
+   *  1.75×), а здесь это музыкальный интервал, и осмысленных значений ровно
+   *  столько. ±3 полутона покрывают и «slowed» (вниз), и «nightcore» (вверх);
+   *  дальше песня перестаёт быть собой раньше, чем вокодер перестаёт
+   *  справляться. Точное значение доступно через setPitch (и плагинам). */
+  const PITCH_STEPS = [0, -1, -2, -3, 1, 2, 3];
+
+  /** Клик по кнопке высоты: следующий шаг по кругу. Зеркалит cycleSpeed. */
+  const cyclePitch = (): number => {
+    const i = PITCH_STEPS.indexOf(stateRef.current.pitch);
+    return setPitch(PITCH_STEPS[(i + 1) % PITCH_STEPS.length]);
+  };
+
+  /** Высота тона в полутонах. Ноль — как записано; ±24 (две октавы) — предел,
+   *  зеркалящий кламп в Rust и в playerState.ts.
+   *
+   *  Отдельная ручка, а не режим: «замедлить и опустить тон» и «замедлить,
+   *  оставив тон» — два разных желания, и выбирать между ними человек должен
+   *  сам. Раньше выбора не было вовсе: пересчёт частоты делал только первое,
+   *  вокодер — только второе. */
+  const setPitch = (semitones: number): number => {
+    const clamped = Math.max(-24, Math.min(24, Math.round(semitones * 2) / 2));
+    setPitchState(clamped);
+    engineRef.current?.setPitch(clamped);
+    return clamped; // вызывающий показывает тост с новым значением
+  };
+
   const cycleRepeat = (): RepeatMode => {
     const next: RepeatMode = stateRef.current.repeat === "off" ? "all" : stateRef.current.repeat === "all" ? "one" : "off";
     setRepeat(next);
@@ -996,6 +1059,14 @@ export function usePlayback({
   useEffect(() => {
     engineRef.current?.setEq(prefs.eqOn, prefs.eqBands);
   }, [prefs.eqOn, prefs.eqBands]);
+
+  /** Характер растяжения темпа — по той же схеме, что эквалайзер: настройка
+   *  меняется на экране, движок узнаёт об этом эффектом. Переключение живое:
+   *  обработчик пересобирается на следующем же пакете, музыка не прерывается.
+   *  Разбор двух характеров — apps/desktop/src-tauri/src/wsola.rs. */
+  useEffect(() => {
+    engineRef.current?.setTempoMode(prefs.tempoWsola);
+  }, [prefs.tempoWsola]);
 
   // ── Вывод на устройства (2026-07-22): prefs.audioOutputs → движок ──
   const [outputDevices, setOutputDevices] = useState<OutputDeviceInfo[]>([]);
@@ -1157,6 +1228,7 @@ export function usePlayback({
       getPos: posStore.get,
       vol,
       speed,
+      pitch,
       repeat,
       shuffle,
       playContext,
@@ -1175,6 +1247,8 @@ export function usePlayback({
       moveInQueue,
       clearUpNext,
       clearAfter,
+      setPitch,
+      cyclePitch,
       // Плагины (T44)
       setRate,
       enqueue,

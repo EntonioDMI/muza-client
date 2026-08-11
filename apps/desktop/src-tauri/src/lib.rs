@@ -11,6 +11,9 @@ mod rpc;
 mod share;
 mod state_kv;
 mod sysproxy;
+/// Растяжение времени во временной области — второй характер темпа рядом с
+/// фазовым вокодером. Своя реализация по статье, разбор — в шапке модуля.
+mod wsola;
 mod tray;
 mod window_stage;
 mod window_visibility;
@@ -100,6 +103,8 @@ pub fn run() {
             audio::native_set_mic,
             audio::native_scope,
             audio::native_set_speed,
+            audio::native_set_pitch,
+            audio::native_set_tempo_mode,
             audio::native_play_stream,
             audio::native_status,
             audio::native_stop,

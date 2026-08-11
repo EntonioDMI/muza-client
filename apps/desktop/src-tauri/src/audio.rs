@@ -65,6 +65,14 @@ fn xfade_gain(pos: u64, len: u64, fade_in: bool) -> f32 {
 /// загруженной машине, больше — задержка реакции на паузу и перемотку.
 const BUFFER_SECONDS: f32 = 1.5;
 
+/// Предел тональности сдвига высоты: выше этой частоты вокодер тон не двигает.
+///
+/// Без предела опущенный трек звучит глухо (шипящие уезжают вниз вместе со
+/// всем), а поднятый — стеклянно. Восемь килогерц — рекомендация самой
+/// библиотеки: там кончается область, где ухо слышит ВЫСОТУ, и начинается та,
+/// где оно слышит ШУМ, а шум двигать незачем.
+const TONALITY_LIMIT_HZ: f32 = 8000.0;
+
 /// Реестр кодеков: штатные symphonia ПЛЮС Opus поверх libopus.
 ///
 /// Своими силами symphonia Opus не умеет, а он у нас основной формат — 312
@@ -105,6 +113,23 @@ struct Shared {
     /// Скорость воспроизведения (биты f32). Тон при этом не едет: время
     /// растягивает фазовый вокодер, а не пересчёт частоты.
     speed: AtomicU32,
+    /// Сдвиг высоты тона в полутонах, НЕЗАВИСИМО от скорости (биты f32).
+    ///
+    /// Это вторая половина «стретча» в смысле FL Studio: там время и высота —
+    /// две отдельные ручки, а у нас до 11.08.2026 была одна. Прежний путь
+    /// («замедление» пересчётом частоты) двигал их СЦЕПЛЕННО: медленнее — значит
+    /// ниже, и иначе никак. Фазовый вокодер эту связь рвёт, и её надо было
+    /// только вывести наружу.
+    ///
+    /// 0 — как записано. Плюс — выше, минус — ниже.
+    pitch: AtomicU32,
+    /// Характер растяжения темпа: false — фазовый вокодер, true — WSOLA.
+    ///
+    /// Два РАЗНЫХ по природе метода, а не «качество похуже/получше». Вокодер
+    /// гладок на тянущемся, WSOLA держит удары. Выбор за человеком — ровно как
+    /// в Music Speed Changer, где переключаются два обработчика (жалоба друга
+    /// владельца 11.08.2026: «звук не такой, как там»). Разбор — src/wsola.rs.
+    tempo_wsola: AtomicBool,
     /// Эквалайзер: включён и десять усилений полос в дБ (биты f32). Атомики —
     /// по той же причине, что и громкость: колбэк вывода не ждёт блокировок.
     eq_on: AtomicBool,
@@ -243,6 +268,8 @@ impl NativeAudio {
             volume: AtomicU32::new(gain.clamp(0.0, 4.0).to_bits()),
             fade_in_left: AtomicU64::new(0),
             speed: AtomicU32::new(1.0f32.to_bits()),
+            pitch: AtomicU32::new(0f32.to_bits()),
+            tempo_wsola: AtomicBool::new(false),
             eq_on: AtomicBool::new(false),
             eq_gains: std::array::from_fn(|_| AtomicU32::new(0f32.to_bits())),
             seek_to: Mutex::new(None),
@@ -503,7 +530,22 @@ impl NativeAudio {
             spawn_tap(&self.shared, Arc::clone(&tap));
             created.push(tap);
         }
-        let active = !created.is_empty();
+        // ⚠️ ФЛАГ СЧИТАЕТСЯ ПО ЗАПРОШЕННЫМ МАРШРУТАМ, А НЕ ПО СОЗДАННЫМ
+        // (11.08.2026, жалоба владельца «переставил вывод на устройство,
+        // которого нет, а музыка продолжила играть в наушниках»).
+        //
+        // Было `!created.is_empty()`. Устройство ищется и открывается ПОЗЖЕ, в
+        // потоке тапа (spawn_tap), и при неудаче тот просто пишет в stderr и
+        // выходит. Любой отказ — устройства нет в списке cpal, имя не сошлось,
+        // формат не открылся — оставлял флаг снятым, и системный выход
+        // продолжал звучать. То есть человек направлял звук в одно место, а
+        // слышал его в другом, без единого признака, что что-то не так.
+        //
+        // Инвариант прежнего движка звучит иначе: «есть маршруты — системный
+        // выход молчит». Он про НАМЕРЕНИЕ, а не про успех. Отказ обязан
+        // кончаться тишиной в выбранном устройстве — её видно и объяснимо, — а
+        // не звуком в том устройстве, которое человек только что отключил.
+        let active = !routes.is_empty();
         *self.shared.taps.lock().unwrap() = created;
         self.shared.taps_active.store(active, Ordering::Relaxed);
     }
@@ -511,6 +553,20 @@ impl NativeAudio {
     /// Скорость воспроизведения. 1.0 — как записано.
     pub fn set_speed(&self, speed: f32) {
         self.shared.speed.store(speed.clamp(0.25, 4.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Высота тона в полутонах, независимо от скорости. Разбор — у поля `pitch`.
+    ///
+    /// Границы ±24 (две октавы) взяты не из библиотеки, а из смысла: дальше
+    /// фазовый вокодер перестаёт звучать музыкой при любых настройках, и ручка
+    /// с бесполезным ходом хуже, чем ручка без него.
+    /// Характер темпа: true — WSOLA (держит удары), false — вокодер (гладок).
+    pub fn set_tempo_mode(&self, wsola: bool) {
+        self.shared.tempo_wsola.store(wsola, Ordering::Relaxed);
+    }
+
+    pub fn set_pitch(&self, semitones: f32) {
+        self.shared.pitch.store(semitones.clamp(-24.0, 24.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Микрофон для подмешивания. `None` в имени — системный по умолчанию.
@@ -625,6 +681,12 @@ fn decode_loop(
     // обычном прослушивании оно не должно ни стоить такта, ни добавлять
     // задержку, а окно разложения её неизбежно вносит.
     let mut stretcher: Option<signalsmith_stretch::Stretch> = None;
+    // Какая высота уже донесена до вокодера (биты f32). None — вокодера нет
+    // или его пересобрали: настройки родились заново и их надо донести снова.
+    let mut applied_pitch: Option<u32> = None;
+    // Второй характер темпа. Живёт рядом с вокодером и никогда не работает
+    // одновременно с ним: у каждого куска ровно один обработчик.
+    let mut wsola: Option<crate::wsola::Wsola> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Устройство могли переключить — тогда у него другая частота, и
@@ -637,8 +699,11 @@ fn decode_loop(
             capacity = (out_rate as f32 * BUFFER_SECONDS) as usize * out_channels;
             resampler = None;
             // Вокодер настроен на прежнюю частоту и число каналов — собираем
-            // заново вместе с ресемплером.
+            // заново вместе с ресемплером. Настройки высоты рождаются вместе с
+            // ним по умолчанию, поэтому их придётся донести снова.
             stretcher = None;
+            applied_pitch = None;
+            wsola = None;
         }
 
         // Перемотка: сносим всё, что уже насчитано вперёд, иначе после прыжка
@@ -662,8 +727,35 @@ fn decode_loop(
         let packet = match format.next_packet() {
             Ok(Some(p)) => p,
             Ok(None) => {
+                // ⚠️ ФАЙЛ КОНЧИЛСЯ — НО ПОТОК ДЕКОДЕРА НЕ УМИРАЕТ (11.08.2026).
+                //
+                // Здесь стоял `break`, и это ломало повтор трека намертво
+                // (жалоба владельца: «после репита трек мёртвый, как ни
+                // пролистывай — играть не будет»). Разбор:
+                //
+                // Перемотка обслуживается В ГОЛОВЕ ЭТОГО ЖЕ ЦИКЛА — только
+                // здешний поток владеет читателем. Выйдя по `break`, поток
+                // умирал, и `seek()` дальше клал запрос в `seek_to`, который
+                // ЧИТАТЬ УЖЕ БЫЛО НЕКОМУ. Буфер при этом чистился, `drained`
+                // оставался true, и трек замолкал навсегда. А `frames_out`
+                // сбрасывался в ноль и продолжал тикать из потока вывода —
+                // отсюда «прогресс идёт, но звука нет».
+                //
+                // Оживал трек только новым `native_play` (новый поток) — ровно
+                // то, что владелец описал как «нужно зайти и нажать на трек».
+                //
+                // Теперь поток паркуется и продолжает ждать перемотку, пока
+                // движок жив. Пришла — `continue` уводит в голову цикла, где
+                // seek-блок отматывает читатель и сбрасывает `drained`.
                 shared.drained.store(true, Ordering::Relaxed);
-                break; // файл кончился
+                while !shared.stop.load(Ordering::Relaxed)
+                    && shared.seek_to.lock().unwrap().is_none()
+                {
+                    // 50 мс: перемотка после конца — жест руками, доли секунды
+                    // здесь незаметны, а спящий поток не стоит процессору ничего.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                continue;
             }
             Err(e) => return Err(format!("чтение пакета: {e}")),
         };
@@ -704,13 +796,66 @@ fn decode_loop(
         // заново сшивает фазы — удары не размазываются, высота не едет. Это
         // не пересчёт частоты: тот сдвинул бы тон, как у прежнего движка.
         let speed = f32::from_bits(shared.speed.load(Ordering::Relaxed));
-        let chunk = if (speed - 1.0).abs() < 0.001 {
+        let pitch = f32::from_bits(shared.pitch.load(Ordering::Relaxed));
+        let neutral = (speed - 1.0).abs() < 0.001 && pitch.abs() < 0.01;
+        // ВЫБОР ХАРАКТЕРА ТЕМПА. WSOLA берётся только когда высота не тронута:
+        // он по устройству не умеет двигать тон, и просить его об этом нечестно.
+        // Тронули высоту — работает вокодер, он умеет и то и другое разом.
+        let use_wsola = !neutral && pitch.abs() < 0.01 && shared.tempo_wsola.load(Ordering::Relaxed);
+        let chunk = if neutral {
             stretcher = None;
+            applied_pitch = None;
+            wsola = None;
             chunk
+        } else if use_wsola {
+            stretcher = None;
+            applied_pitch = None;
+            let w = wsola.get_or_insert_with(|| crate::wsola::Wsola::new(out_channels, out_rate));
+            w.set_speed(speed);
+            // Пусто — обработчик копит вход до полного окна склейки. Это не
+            // потеря: кадры выйдут со следующим пакетом.
+            w.push(&chunk)
         } else {
+            wsola = None;
             let stretch = stretcher.get_or_insert_with(|| {
                 signalsmith_stretch::Stretch::preset_default(out_channels as u32, out_rate)
             });
+            // Высоту доносим только на изменение: сеттеры дёргают внутренние
+            // таблицы вокодера, а сюда мы заходим на КАЖДЫЙ пакет.
+            if applied_pitch != Some(pitch.to_bits()) {
+                if pitch.abs() < 0.01 {
+                    // ⚠️ ВЫСОТУ НЕ ТРОГАЛИ — ЗНАЧИТ НЕ ТРОГАЕМ И ФОРМАНТЫ
+                    // (11.08.2026, жалоба: «при замедлении голос роботизируется,
+                    // появляется хрип, поёт как будто дед»).
+                    //
+                    // Это была моя же ошибка того же дня. Блок настройки стоял
+                    // без разбора: на первом пакете applied_pitch пуст, условие
+                    // истинно ВСЕГДА, и при чистом замедлении мы всё равно
+                    // включали анализ формант. А он не бесплатный: библиотека
+                    // оценивает спектральную огибающую голоса и накладывает её
+                    // заново. Ошибка оценки слышна ровно так, как описал
+                    // владелец — тембр «стареет» и появляется хрип. При нулевом
+                    // сдвиге компенсировать нечего, и вся эта ступень — чистый
+                    // вред.
+                    //
+                    // Сбрасываем в нейтраль явно, а не «просто не включаем»:
+                    // вокодер живёт между пакетами, и настройка от прошлого
+                    // ненулевого сдвига осталась бы висеть на нём.
+                    stretch.set_transpose_factor(1.0, None);
+                    stretch.set_formant_factor(1.0, false);
+                } else {
+                    // tonality_limit: выше этой частоты сдвиг не применяется, и
+                    // «воздух» с шипящими остаётся на месте. Без предела
+                    // сдвинутый вниз трек звучит глухо, а вверх — стеклянно;
+                    // 8 кГц — рекомендация библиотеки для музыки и речи.
+                    stretch.set_transpose_factor_semitones(pitch, Some(TONALITY_LIMIT_HZ));
+                    // Здесь форманты УМЕСТНЫ: при подъёме тона голос без них
+                    // становится бурундуком, при спуске — великаном. Именно это
+                    // отличает «стретч» от «ускорения плёнки».
+                    stretch.set_formant_factor(1.0, true);
+                }
+                applied_pitch = Some(pitch.to_bits());
+            }
             let in_frames = chunk.len() / out_channels.max(1);
             // Быстрее — выходных кадров меньше: то же время звучит короче.
             let out_frames = ((in_frames as f32) / speed).round() as usize;
@@ -961,6 +1106,10 @@ static ROUTES: Mutex<Vec<(String, f32, bool)>> = Mutex::new(Vec::new());
 static MIC_CONFIG: Mutex<Option<(Option<String>, f32)>> = Mutex::new(None);
 /// И скорость: человек выставил 1.25x — она обязана пережить следующую песню.
 static SPEED: Mutex<f32> = Mutex::new(1.0);
+/// Высота тона — по той же причине: движок живёт один трек, настройка — сессию.
+static PITCH: Mutex<f32> = Mutex::new(0.0);
+/// Характер темпа: false — вокодер, true — WSOLA. Тоже переживает смену трека.
+static TEMPO_WSOLA: Mutex<bool> = Mutex::new(false);
 
 #[derive(serde::Deserialize)]
 pub struct NativeRoute {
@@ -976,6 +1125,8 @@ pub struct NativeRoute {
 /// движок живёт один трек, а настройки — всю сессию.
 fn apply_saved_routing(audio: &NativeAudio) {
     audio.set_speed(*SPEED.lock().unwrap());
+    audio.set_pitch(*PITCH.lock().unwrap());
+    audio.set_tempo_mode(*TEMPO_WSOLA.lock().unwrap());
     audio.set_outputs(&ROUTES.lock().unwrap().clone());
     if let Some((name, gain)) = MIC_CONFIG.lock().unwrap().clone() {
         audio.set_mic(name, gain);
@@ -1079,6 +1230,29 @@ pub fn native_set_speed(speed: f32) {
     *SPEED.lock().unwrap() = speed;
     if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
         audio.set_speed(speed);
+    }
+}
+
+/// Высота тона в полутонах, НЕЗАВИСИМО от скорости («стретч»).
+///
+/// Пара к native_set_speed и живёт рядом с ней намеренно: вместе они и есть
+/// то, что в FL Studio одной ручкой не выражается — время и высота развязаны.
+#[tauri::command]
+pub fn native_set_pitch(semitones: f32) {
+    *PITCH.lock().unwrap() = semitones;
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_pitch(semitones);
+    }
+}
+
+/// Характер растяжения темпа: true — WSOLA (держит удары), false — фазовый
+/// вокодер (гладок на тянущемся). Два разных метода, а не «лучше/хуже» —
+/// разбор в шапке src/wsola.rs.
+#[tauri::command]
+pub fn native_set_tempo_mode(wsola: bool) {
+    *TEMPO_WSOLA.lock().unwrap() = wsola;
+    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+        audio.set_tempo_mode(wsola);
     }
 }
 
