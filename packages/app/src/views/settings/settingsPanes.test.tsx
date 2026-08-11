@@ -246,13 +246,25 @@ describe("Прочие разделы — ряды по умениям", () => {
     }
   });
 
-  it("«Расширения»: без установки файлом остаётся только витрина оформлений", () => {
+  /** ⚠️ Раздел «Расширения» держится ЦЕЛИКОМ на одном умении с 2026-08-11:
+   *  витрина оформлений уехала во «Внешний вид» (решение владельца), и без
+   *  порта плагинов показывать здесь стало нечего. Раньше ряд «Маркетплейс
+   *  тем» оставался — и тема, которая есть просто набор значений настроек,
+   *  была заперта в разделе, требующем Tauri. */
+  it("«Расширения»: без порта плагинов не остаётся ни одного ряда", () => {
     renderPane(ExtensionsPane, ["themeMarket"]);
     const rows = renderedRowTitles();
-    expect(rows.has(T("settings.extensions.installFromFile.title"))).toBe(false);
-    expect(rows.has(T("settings.extensions.pluginMarket.title"))).toBe(false);
-    expect(rows.has(T("settings.extensions.themeMarket.title"))).toBe(true);
+    expect(rows.size).toBe(0);
     // строка-указатель «визуализатор переехал» — часть блока расширений
     expect(screen.queryByText(T("settings.extensions.visualizerMoved.title"))).toBeNull();
+  });
+
+  it("«Расширения»: с портом плагинов остаётся витрина расширений, но не тем", () => {
+    renderPane(ExtensionsPane, ["plugins", "themeMarket"]);
+    const rows = renderedRowTitles();
+    expect(rows.has(T("settings.extensions.pluginMarket.title"))).toBe(true);
+    expect(rows.has(T("settings.extensions.installFromFile.title"))).toBe(true);
+    // Витрина оформлений живёт теперь в «Кастомизации» — здесь её быть не должно.
+    expect(rows.has(T("settings.customize.themes.marketRow.title"))).toBe(false);
   });
 });

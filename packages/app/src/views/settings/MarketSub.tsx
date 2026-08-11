@@ -3,6 +3,13 @@
  *  Приехало из apps/desktop/src/views/SettingsView.tsx (волна «настройки»,
  *  2026-08-02) без правок разметки.
  *
+ *  ГДЕ ВХОД (2026-08-11, решение владельца): «Внешний вид → Кастомизация →
+ *  Маркетплейс тем» — на ОБЕИХ площадках. Раньше домом витрины числились
+ *  «Расширения», и оформления были заперты вместе с плагинами в разделе,
+ *  которого у браузера нет вовсе. Вход из «Расширений» остался, но только за
+ *  половиной расширений («Маркетплейс расширений»). Дом в SUB_HOME_TAB —
+ *  теперь `appearance`.
+ *
  *  Две половины витрины устроены по-разному, и это осознанно:
  *   • оформления — просто данные, их ставит любая площадка (это набор
  *     значений настроек, ничего исполняемого);
@@ -362,23 +369,32 @@ export function MarketSub() {
       <div className={paneClass} style={paneStyle}>
         <SubHeader title={t("settings.market.title")} onBack={closeSub} />
         <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
-          <ChipGroup
-            items={[
-              { key: "all", label: t("settings.market.filter.all") },
-              { key: "themes", label: t("settings.market.filter.themes") },
-              { key: "plugins", label: t("settings.market.filter.plugins") },
-            ]}
-            value={marketFilter}
-            onChange={(k) => setMarketFilter(k as "all" | "themes" | "plugins")}
-          />
-          {serverSession && marketFilter !== "plugins" ? (
+          {/* ПЕРЕКЛЮЧАТЕЛЯ НЕТ ТАМ, ГДЕ ПЕРЕКЛЮЧАТЬ НЕ НА ЧТО. Половин у витрины
+              две, но расширения держатся на порте plugins: во вкладке браузера
+              их не поставить никогда. Раньше чипы стояли всегда, и «Расширения»
+              приводили к строчке «работает только в приложении» — то есть к
+              обещанию пустоты. Строка удалена вместе с чипом (2026-08-11). */}
+          {canPlugins ? (
+            <ChipGroup
+              items={[
+                { key: "all", label: t("settings.market.filter.all") },
+                { key: "themes", label: t("settings.market.filter.themes") },
+                { key: "plugins", label: t("settings.market.filter.plugins") },
+              ]}
+              value={marketFilter}
+              onChange={(k) => setMarketFilter(k as "all" | "themes" | "plugins")}
+            />
+          ) : null}
+          {serverSession && (!canPlugins || marketFilter !== "plugins") ? (
             <Button variant="secondary" icon="upload" onClick={openPublishTheme} style={{ marginLeft: "auto" }}>
               {t("settings.market.publishTheme")}
             </Button>
           ) : null}
         </div>
 
-        {marketFilter !== "plugins" ? (
+        {/* Без порта расширений витрина состоит из одних оформлений, каким бы
+            ни было значение фильтра: переключить его тут нечем. */}
+        {!canPlugins || marketFilter !== "plugins" ? (
           !serverSession ? (
             <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.themesNeedAccount")}</div>
           ) : marketThemes === null ? (
@@ -400,13 +416,11 @@ export function MarketSub() {
           )
         ) : null}
 
-        {marketFilter !== "themes" ? (
+        {canPlugins && marketFilter !== "themes" ? (
           <>
             {marketFilter === "all" ? <GroupTitle>{t("settings.market.filter.plugins")}</GroupTitle> : null}
             {!serverSession ? (
               <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.pluginsNeedAccount")}</div>
-            ) : !canPlugins ? (
-              <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.market.pluginsAppOnly")}</div>
             ) : marketPlugins === null ? (
               <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{t("common.loading")}</div>
             ) : marketPlugins.length === 0 ? (

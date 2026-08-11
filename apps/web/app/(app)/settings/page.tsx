@@ -17,6 +17,7 @@ import { PrivacySub } from "@muza/app/views/settings/PrivacySub";
 import { StatsSub } from "@muza/app/views/settings/StatsSub";
 import { LicensesSub } from "@muza/app/views/settings/LicensesSub";
 import { EqualizerSub } from "@muza/app/views/settings/EqualizerSub";
+import { MarketSub } from "@muza/app/views/settings/MarketSub";
 import { PlaybackPane } from "@muza/app/views/settings/PlaybackPane";
 import { SourcesPane } from "@muza/app/views/settings/SourcesPane";
 import { LyricsPane } from "@muza/app/views/settings/LyricsPane";
@@ -103,12 +104,14 @@ export default function SettingsPage() {
    *  клавишами: рассказывать про сочетание, которого здесь нет, — обещание
    *  пустоты. Сетка карточек при этом работает, просто не перетаскивается.
    *
-   *  `themeMarket` — витрину браузер потянул бы, она серверная, но живёт она в
-   *  под-экране `market`, а его дом по SUB_HOME_TAB — раздел «Расширения»,
-   *  которого у веба нет вовсе (плагины требуют Tauri). Ряд «Готовые
-   *  оформления» в «Кастомизации» вёл бы в отсутствующий раздел, и возвращаться
-   *  из него было бы некуда. Витрина тем в браузере — отдельная работа: ей
-   *  нужен свой дом среди разделов веба.
+   *  ⚠️ `themeMarket` ЗДЕСЬ БОЛЬШЕ НЕТ (2026-08-11). Умение снималось не
+   *  из-за браузера — витрина серверная и работала бы, — а из-за АДРЕСА:
+   *  под-экран `market` числился за «Расширениями», которых у веба нет вовсе
+   *  (плагины требуют Tauri), и ряд вёл бы в отсутствующий раздел. Решение
+   *  владельца: перенести витрину оформлений во «Внешний вид» на ОБЕИХ
+   *  площадках — дом в SUB_HOME_TAB теперь `appearance`, второй вход из
+   *  «Расширений» удалён. Тема — это набор значений настроек, ей незачем
+   *  зависеть от того, умеет ли площадка исполнять чужой код.
    *
    *  `sourcePicker` — политика источников и три переключателя площадок. Ими
    *  распоряжается ДОБЫЧА НА УСТРОЙСТВЕ: приложение получает от сервера список
@@ -127,7 +130,7 @@ export default function SettingsPage() {
    *
    *  Правило одно на все случаи: нет умения — нет ряда, не серого и не
    *  «только в приложении». По нему же в вебе нет «Устройств вывода». */
-  const SKIP_IN_BROWSER = new Set(["themeMarket", "lookEdit", "sourcePicker", "sleepTimer", "streamQuality", "videoTrack"]);
+  const SKIP_IN_BROWSER = new Set(["lookEdit", "sourcePicker", "sleepTimer", "streamQuality", "videoTrack"]);
   const caps = useMemo(() => settingsCaps(platform).filter((c) => !SKIP_IN_BROWSER.has(c)), [platform]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Тот же список множеством — его спрашивают сами ряды через контекст экрана
    *  (`caps.has("discord")` в «Интеграциях»). Отдельный memo нужен, чтобы новый
@@ -272,6 +275,9 @@ export default function SettingsPage() {
     // их за строкой «Эквалайзер · Ровный». Разными были не полосы — их рисует
     // один и тот же EqualizerControls, — а МЕСТО; теперь и оно одно.
     equalizer: <EqualizerSub />,
+    // Витрина оформлений (2026-08-11). Половина расширений внутри неё сама
+    // исчезает без порта plugins — в браузере это экран про одни оформления.
+    market: <MarketSub />,
     sessions: <SessionsSub />,
     data: <DataSub />,
     privacy: <PrivacySub />,

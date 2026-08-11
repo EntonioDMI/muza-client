@@ -312,7 +312,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("extensions", null, "settings.extensions.installed", ["плагины", "установленные", "plugins"], { needs: "plugins" }),
   e("extensions", null, "settings.extensions.errorLog", ["ошибки плагинов", "журнал"], { needs: "plugins" }),
   e("extensions", null, "settings.extensions.pluginMarket", ["маркетплейс", "плагины"], { needs: "plugins" }),
-  e("extensions", null, "settings.extensions.themeMarket", ["маркетплейс", "темы"], { needs: "themeMarket" }),
+  // ⚠️ Запись «Маркетплейс тем» здесь удалена 2026-08-11: ряд переехал во
+  // «Внешний вид → Кастомизация» (единственный дом витрины оформлений теперь
+  // там, и он есть у обеих площадок). Ищется он записью
+  // settings.customize.themes.marketRow выше — с теми же синонимами.
   // ── Система ───────────────────────────────────────────────────────────
   e("system", null, "settings.system.autostart", ["автозапуск", "старт с windows", "autostart"], { needs: "autostart" }),
   e("system", null, "settings.system.tray", ["трей", "область уведомлений", "tray"], { needs: "tray" }),

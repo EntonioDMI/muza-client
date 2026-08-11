@@ -102,9 +102,13 @@ export function ExtensionsPane() {
           <SettingRow title={t("settings.extensions.pluginMarket.title")} hint={t("settings.extensions.pluginMarket.hint")} onClick={() => openMarket("plugins")} chevron></SettingRow>
         </>
       ) : null}
-      {caps.has("themeMarket") ? (
-        <SettingRow title={t("settings.extensions.themeMarket.title")} hint={t("settings.extensions.themeMarket.hint")} onClick={() => openMarket("themes")} chevron></SettingRow>
-      ) : null}
+      {/* ⚠️ ЗДЕСЬ БЫЛ ВТОРОЙ ВХОД В ВИТРИНУ — «Маркетплейс тем». Удалён
+          2026-08-11 (решение владельца): у оформлений теперь один дом,
+          «Внешний вид → Кастомизация → Маркетплейс тем», и он есть на обеих
+          площадках. Пока вход был здесь, тема — просто набор значений
+          настроек — оказывалась заперта в разделе, который требует Tauri.
+          Два входа в один экран к тому же ничем не отличались: оба открывали
+          витрину с фильтром «оформления». */}
     </div>
   );
 }

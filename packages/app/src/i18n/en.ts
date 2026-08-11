@@ -77,7 +77,8 @@ export const en = {
       appearance: "Theme, accent, corners, glass and everything about the look",
       lyrics: "Synced lyrics, karaoke and line meaning",
       hotkeys: "Which keys do what",
-      extensions: "Plugins, themes and the market",
+      // Тем здесь больше нет — витрина оформлений переехала во «Внешний вид».
+      extensions: "Plugins and the extension market",
       back: "All settings",
       and: " and ",
       parts: {
@@ -603,7 +604,8 @@ export const en = {
       themesNeedAccount: "The theme marketplace is available after signing in — an anonymous account only lives on this device.",
       themesEmpty: "Nothing here yet. Build a look in Customize and be the first — \"Publish theme\".",
       pluginsNeedAccount: "The plugin marketplace is available after signing in — an anonymous account only lives on this device.",
-      pluginsAppOnly: "Installing plugins only works in the app (not in the browser).",
+      // ⚠️ Строка pluginsAppOnly удалена 2026-08-11 вместе с чипом
+      // «Расширения» — см. ru.ts.
       pluginsEmpty: "Nothing here yet. Build a plugin using PLUGINS.md and be the first to publish.",
       installsCount: "{n} installs",
       hasCss: "includes CSS",
@@ -914,7 +916,8 @@ export const en = {
       errorsGroup: "Full access errors",
       errorLog: { title: "Error log", hint: "{n} entr(ies) — errors from full-access plugins.", clear: "Clear" },
       pluginMarket: { title: "Plugin marketplace", hint: "A catalog of ready-made plugins — installed in one click." },
-      themeMarket: { title: "Theme marketplace", hint: "Install other people's themes, or publish your own." },
+      // ⚠️ Ключ themeMarket удалён 2026-08-11: ряд переехал в «Кастомизацию»
+      // (settings.customize.themes.marketRow) — см. ru.ts.
       pluginInstalled: "Plugin \"{name}\" installed",
       pluginRemoved: "Plugin \"{name}\" removed",
       installDialog: {
