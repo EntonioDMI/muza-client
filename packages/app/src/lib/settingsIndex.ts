@@ -42,7 +42,13 @@ export type SettingsCapability =
   | "themeMarket"
   /** Свой файл шрифта. */
   | "customFont"
-  /** Выбор, откуда брать звук. */
+  /** Выбор, откуда брать звук: политика источников и переключатели площадок.
+   *  Держится не на настройке, а на том, КТО добывает поток. Приложение
+   *  выбирает источник на устройстве (apps/desktop/src/lib/sources.ts:
+   *  applySourcePolicy фильтрует и сортирует список ПЕРЕД добычей), а браузер
+   *  получает готовый подписанный адрес от сервера (`getStreamUrl(trackId)` —
+   *  ни политики, ни списка провайдеров в запросе нет). Поэтому в вебе эти
+   *  ряды не «пока не сделаны»: менять ими нечего. */
   | "sourcePicker"
   /** Вывод звука на несколько устройств и подмешивание голоса. */
   | "audioOutputs"
@@ -55,7 +61,18 @@ export type SettingsCapability =
    *  веб-браузере, потому что это слишком колоссальная работа»).
    *  Без умения исчезает ряд-подсказка с клавишами: рассказывать про
    *  сочетание, которого на этой площадке нет, — обещание пустоты. */
-  | "lookEdit";
+  | "lookEdit"
+  /** Таймер сна. Настройка задаёт ШАГИ таймера, а сам таймер — кнопка-луна в
+   *  полосе плеера (apps/desktop/src/App.tsx: перебор «выкл → минуты → до
+   *  конца трека»). Кнопки нет — ряд настраивал бы то, чего не включить. */
+  | "sleepTimer"
+  /** «Эконом» — качество потока. Выбирает движок добычи на устройстве
+   *  (usePlayback/useWarmer передают prefs.streamQuality в engine_stream_start);
+   *  у сетевого адреса, который отдаёт сервер вебу, такой ручки нет. */
+  | "streamQuality"
+  /** Видео-дорожка вместо обложки в «Сейчас играет». Дорожку добывает движок
+   *  приложения — страница получает от сервера только звук. */
+  | "videoTrack";
 
 export interface SettingsIndexEntry {
   /** Ключ таба из SETTINGS_TAB_KEYS (экран настроек). */
@@ -243,12 +260,12 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("playback", null, "settings.playback.recs.novelty", ["новизна", "рекомендации"]),
   e("playback", null, "settings.playback.recs.repeats", ["повторы", "рекомендации"]),
   e("playback", null, "settings.playback.resumePosition", ["продолжить", "позиция", "resume"]),
-  e("playback", null, "settings.playback.streamQuality", ["качество", "трафик", "quality"]),
+  e("playback", null, "settings.playback.streamQuality", ["качество", "трафик", "quality"], { needs: "streamQuality" }),
   e("playback", null, "settings.playback.queuePrep", ["очередь", "подготовка", "заранее", "трафик", "queue", "warm"]),
   e("playback", null, "settings.playback.queuePrep.warm", ["наготове", "очередь", "треков вперёд", "warm"]),
   e("playback", null, "settings.playback.queuePrep.preload", ["следующий трек", "заранее", "preload"]),
   e("playback", null, "settings.playback.seekStep", ["перемотка", "шаг", "стрелки", "секунды", "seek"]),
-  e("playback", null, "settings.playback.sleepTimer", ["таймер сна", "sleep", "луна"]),
+  e("playback", null, "settings.playback.sleepTimer", ["таймер сна", "sleep", "луна"], { needs: "sleepTimer" }),
   // ── Источники ─────────────────────────────────────────────────────────
   e("sources", null, "settings.sources.policy", ["источники", "soundcloud", "youtube", "откуда"], { needs: "sourcePicker" }),
   e("sources", null, "settings.sources.searchScope", ["поиск", "каталог", "где искать"]),
@@ -259,7 +276,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("lyrics", null, "settings.lyrics.synced", ["синхронный текст", "караоке", "lyrics"]),
   e("lyrics", null, "settings.lyrics.autoScroll", ["автоскролл", "прокрутка текста"]),
   e("lyrics", null, "settings.lyrics.endNote", ["нотка", "конец текста"]),
-  e("lyrics", null, "settings.lyrics.videoNowPlaying", ["видео", "клип", "обложка", "video"]),
+  e("lyrics", null, "settings.lyrics.videoNowPlaying", ["видео", "клип", "обложка", "video"], { needs: "videoTrack" }),
   e("lyrics", null, "settings.lyrics.karaokeSize", ["караоке", "размер строки"]),
   e("lyrics", null, "settings.lyrics.karaokeLines", ["строки", "сколько строк", "караоке", "lines"]),
   e("lyrics", null, "settings.lyrics.panelLines", ["строки", "сколько строк", "панель", "сейчас играет", "lines"]),

@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ChipGroup, Switch } from "@muza/ui";
-import { useT } from "@muza/app";
 import { usePlatform } from "@muza/app/platform";
 import { SettingsScreen } from "@muza/app/views/settings/SettingsScreen";
 import { AccountPane } from "@muza/app/views/settings/AccountPane";
@@ -18,142 +16,69 @@ import { DataSub } from "@muza/app/views/settings/DataSub";
 import { PrivacySub } from "@muza/app/views/settings/PrivacySub";
 import { StatsSub } from "@muza/app/views/settings/StatsSub";
 import { LicensesSub } from "@muza/app/views/settings/LicensesSub";
-/** Профили эквалайзера берутся ОТТУДА ЖЕ, откуда их рисуют чипы: копия в
- *  apps/web/src/audioFx.ts совпадала цифра в цифру, но два списка в двух
- *  файлах разъезжаются на первой же правке — а значение prefs.eqPreset
- *  персистентно и общее с приложением. */
-import { EqualizerControls, EQ_PRESETS } from "@muza/app/views/settings/EqualizerSub";
-import { RecsTuning } from "@muza/app/views/settings/PlaybackPane";
+import { EqualizerSub } from "@muza/app/views/settings/EqualizerSub";
+import { PlaybackPane } from "@muza/app/views/settings/PlaybackPane";
+import { SourcesPane } from "@muza/app/views/settings/SourcesPane";
+import { LyricsPane } from "@muza/app/views/settings/LyricsPane";
 import { paneRows, SettingsProvider, settingsCaps, type SettingsSubKey } from "@muza/app/views/settings/settingsContext";
 import type { SettingsTabKey } from "@muza/app/views/settings/SettingsNav";
-import {
-  GroupTitle,
-  LiveSlider,
-  PresetRow,
-  RowValue,
-  SettingRow,
-  SettingsPane,
-  StepsEditor,
-} from "@muza/app/views/settings/primitives";
-import { matchPreset, PRESETS_WARM } from "@muza/app/prefs/presets";
-import { DEFAULT_PREFS } from "@muza/app/prefs/types";
 import { getApi } from "../../../src/api";
-import { usePlayer } from "../../../src/player";
-import { usePrefs, type WebPrefs } from "../../../src/prefs";
+import { usePrefs } from "../../../src/prefs";
 import { useSession } from "../../../src/session";
 import { useToast } from "../../../src/toast";
 import { useRouter } from "next/navigation";
 
-/** Настройки веба (волна веб-паритета «настройки», 2026-08-02).
+/** Настройки веба (волна веб-паритета «настройки», 2026-08-02; своей разметки
+ *  разделов здесь не осталось с 2026-08-11).
  *
- *  Каркас, рельс разделов, ряды-плашки и поиск по настройкам — ОБЩИЕ с
- *  приложением (@muza/app/views/settings): до этой волны у веба был свой
- *  экран со своим Row, своим списком категорий и без поиска — он уже
- *  разъехался с приложением (другие отступы, другой порядок разделов, свои
- *  ползунки). Теперь одна и та же настройка выглядит одинаково в обеих
- *  программах, потому что рисует её один и тот же код.
+ *  Страница ничего не рисует сама — она СВЯЗЫВАЕТ: отдаёт общему каркасу
+ *  (@muza/app/views/settings) настройки браузера, сервер, сессию, тосты и
+ *  список умений площадки, а разделы и под-экраны приезжают готовыми
+ *  компонентами оттуда же, откуда их берёт приложение.
+ *
+ *  ⚠️ ЭТО И ЕСТЬ ГЛАВНЫЙ ВЫВОД 10–11.08. Пока раздел был написан дважды, он
+ *  расходился молча и всегда в одну сторону: правку получало приложение, а
+ *  веб оставался в прошлом. Так за два дня набралось четыре дефекта подряд
+ *  (рельс настроек, кнопки полосы плеера, mediaSession.playbackState, язычок
+ *  панели). Последние три копии — «Воспроизведение», «Источники», «Тексты» —
+ *  удалены 11.08. НОВЫЙ РЯД СЮДА НЕ ДОПИСЫВАЕТСЯ: он пишется в общий раздел и
+ *  при необходимости закрывается умением.
  *
  *  ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Разделы и ряды, которых во вкладке браузера не
  *  бывает, ОТСУТСТВУЮТ — не серые, не «только в приложении»: значок у часов,
  *  запуск вместе с системой, обновление программы, журнал «почему включалось
- *  долго», расширения, музыка с диска. Их нет ни в рельсе, ни в результатах
- *  поиска: умения площадки страница НЕ пишет руками, а спрашивает у розетки
- *  (settingsCaps(platform) в теле страницы) — того, чего браузер не умеет, в
- *  розетке просто нет.
+ *  долго», расширения, музыка с диска. Их нет ни в сетке карточек, ни в
+ *  результатах поиска: умения площадки страница НЕ пишет руками, а спрашивает
+ *  у розетки (settingsCaps(platform) в теле страницы) — того, чего браузер не
+ *  умеет, в розетке просто нет. Исключения — умения без порта, они снимаются
+ *  списком SKIP_IN_BROWSER ниже.
  *
  *  ⚠️ Ряд появляется здесь только тогда, когда он РАБОТАЕТ. Переключатель,
  *  который никуда не приезжает, хуже отсутствующего: человек считает, что
  *  настроил. По этому правилу «Тексты песен» появились только вместе с тем,
  *  что панель текста веба научилась читать настройки (src/components/
- *  LyricsPanel.tsx), и в них НЕТ ряда «Видео вместо обложки»: видео-дорожку
- *  добывает движок приложения, страница так не умеет. Поиск такого ряда тоже
- *  не найдёт — каркас настроек показывает результат, только если ряд есть в
- *  ОПИСИ страницы (`WEB_OWN_ROWS` ниже + `paneRows` в теле — они собираются в
- *  проп `rows` каркаса). */
+ *  LyricsPanel.tsx). Поиск такого ряда тоже не найдёт — каркас показывает
+ *  результат, только если ряд есть в ОПИСИ страницы (`rows` в теле, целиком
+ *  собранная из paneRows). */
 
-/** ОПИСЬ РЯДОВ, КОТОРЫЕ СТРАНИЦА РИСУЕТ СВОЕЙ РАЗМЕТКОЙ: «ключ индекса → где
- *  ряд нарисован». Значение везде null — под-экранов страница не рисует ни
- *  одного, все эти ряды лежат прямо в разделе.
+/** ⚠️ ЗДЕСЬ БЫЛА ОПИСЬ WEB_OWN_ROWS — «ключ индекса → где ряд нарисован» для
+ *  разделов, которые страница рисовала своей разметкой. Удалена 2026-08-11
+ *  вместе с последними тремя такими разделами: своей разметки не осталось, и
+ *  всю опись теперь отдаёт paneRows() — та же функция, что читает индекс
+ *  поиска. Список рядом с чужим компонентом разъехался бы с ним на первой же
+ *  правке, поэтому его и нет.
  *
- *  Зачем опись вообще. Каркас настроек не читает разметку (он не может: четыре
- *  раздела приезжают сюда готовыми компонентами, их ряды лежат внутри) — он
- *  верит этому списку. Ключа нет в списке → результата поиска нет, даже если
- *  ряд на экране есть; поэтому список положительный, а не «чего у меня нет»:
- *  забытый ключ прячет существующий ряд (человек найдёт его глазами), а
- *  забытая строчка в списке отсутствующих привела бы в пустоту.
- *
- *  МЕСТО — часть описи, а не справка из индекса, потому что страница
- *  раскладывает ряды ИНАЧЕ: «Шрифт текста», «Размытие панелей» и «Приглушение
- *  текста» индекс числит в под-экране «Кастомизация», а страница рисует их
- *  прямо во «Внешнем виде» — и переход из результата обязан вести туда, где ряд
- *  на самом деле. То же с «Включить» эквалайзера.
- *
- *  ⚠️ Здесь перечислены ТОЛЬКО ряды собранных на странице разделов (оформление,
- *  воспроизведение, источники, тексты). Разделы, приехавшие готовыми
- *  компонентами, свою опись отдают сами — paneRows() в `rows` (тело страницы):
- *  список рядом с чужим компонентом разъехался бы с ним на первой же правке.
- *
- *  Ряды без записи в индексе («Панель Сейчас играет», «Скорость», «Перевод»)
- *  сюда не идут — поиск про них не знает вовсе. */
-const WEB_OWN_ROWS: Readonly<Record<string, SettingsSubKey | null>> = {
-  // «Внешний вид» здесь БОЛЬШЕ НЕТ (2026-08-10): раздел приезжает готовым
-  // компонентом, и опись за него отдаёт paneRows("appearance") в теле
-  // страницы — как у остальных общих разделов. Девять ключей, лежавших тут,
-  // описывали самописную копию раздела и вместе с ней удалены.
-  // Воспроизведение
-  "settings.playback.crossfade.title": null,
-  "settings.playback.crossfade.duration.title": null,
-  "settings.playback.gapless.title": null,
-  "settings.equalizer.enable.title": null,
-  "settings.playback.speedSteps.title": null,
-  "settings.playback.radioEndless.title": null,
-  "settings.playback.recs.title": null,
-  "settings.playback.recs.novelty.title": null,
-  "settings.playback.recs.repeats.title": null,
-  "settings.playback.resumePosition.title": null,
-  "settings.playback.queuePrep.title": null,
-  "settings.playback.queuePrep.warm.title": null,
-  "settings.playback.queuePrep.preload.title": null,
-  // Источники
-  "settings.sources.searchGrouping.title": null,
-  // Тексты песен
-  "settings.lyrics.synced.title": null,
-  "settings.lyrics.autoScroll.title": null,
-  "settings.lyrics.endNote.title": null,
-  "settings.lyrics.karaokeSize.title": null,
-  "settings.lyrics.karaokeLines.title": null,
-  "settings.lyrics.panelLines.title": null,
-  "settings.lyrics.meaningMode.title": null,
-};
-
-/** ⚠️ ЗДЕСЬ БЫЛ СПИСОК WEB_SUBS — перечень под-экранов, которые страница
- *  умеет открыть. Удалён 2026-08-11: под-экраны переехали в карту `subPanes`
- *  (тело страницы), и каркас выводит список из неё. Два перечня одних и тех же
- *  ключей рядом — это разъезд, ждущий своего часа. */
-
-/** ⚠️ Здесь лежали ТРИ КОПИИ чисел приложения — пресеты оформления, потолок
- *  размытия, границы приглушения текста и список шрифтов. Все они обслуживали
- *  самописный «Внешний вид» и удалены вместе с ним 2026-08-10: общий раздел
- *  берёт те же значения из своего источника (appearancePresets.ts, themeVars),
- *  и второго списка тех же чисел в дереве больше нет.
- *
- *  Размер караоке-строки, px: те же 36..72, что у ползунка в приложении
- *  (@muza/app/views/settings/LyricsPane.tsx). Раздел «Тексты» страница пока
- *  рисует своей разметкой, поэтому пара границ ещё нужна. */
-const KARAOKE_SIZE_MIN = 36;
-const KARAOKE_SIZE_MAX = 72;
+ *  ⚠️ ЗДЕСЬ ЖЕ БЫЛ СПИСОК WEB_SUBS — перечень открываемых под-экранов. Удалён
+ *  2026-08-11: под-экраны переехали в карту `subPanes` (тело страницы), и
+ *  каркас выводит список из неё. */
 
 
 export default function SettingsPage() {
   const { prefs, set } = usePrefs();
   const { session, logout } = useSession();
   const router = useRouter();
-  const { t } = useT();
   const platform = usePlatform();
   const notify = useToast();
-  /** Скорость воспроизведения — состояние плеера, а не профиля настроек:
-   *  ряд «Скорость» ниже управляет тем, что звучит прямо сейчас. */
-  const player = usePlayer();
 
   /** УМЕНИЯ ПЛОЩАДКИ — ВЫЧИСЛЯЮТСЯ ИЗ РОЗЕТКИ, а не пишутся здесь списком.
    *
@@ -185,9 +110,24 @@ export default function SettingsPage() {
    *  из него было бы некуда. Витрина тем в браузере — отдельная работа: ей
    *  нужен свой дом среди разделов веба.
    *
-   *  Правило одно на оба случая: нет умения — нет ряда, не серого и не
+   *  `sourcePicker` — политика источников и три переключателя площадок. Ими
+   *  распоряжается ДОБЫЧА НА УСТРОЙСТВЕ: приложение получает от сервера список
+   *  источников и само решает, какой брать (apps/desktop/src/lib/sources.ts —
+   *  applySourcePolicy). Браузер добычи не ведёт вовсе: он просит у сервера
+   *  готовый подписанный адрес (`getStreamUrl(trackId)`), и ни политики, ни
+   *  списка провайдеров в этом запросе нет. То есть здесь это не «пока не
+   *  подключено» — менять этими рядами нечего.
+   *
+   *  `sleepTimer` — ряд задаёт ШАГИ таймера, а запускает таймер кнопка-луна в
+   *  полосе плеера; в вебе её нет.
+   *
+   *  `streamQuality` («Эконом») и `videoTrack` (видео вместо обложки) — оба
+   *  исполняет движок добычи на устройстве. Страница получает от сервера один
+   *  готовый звуковой поток: ни качество выбрать, ни видео-дорожку взять.
+   *
+   *  Правило одно на все случаи: нет умения — нет ряда, не серого и не
    *  «только в приложении». По нему же в вебе нет «Устройств вывода». */
-  const SKIP_IN_BROWSER = new Set(["themeMarket", "lookEdit"]);
+  const SKIP_IN_BROWSER = new Set(["themeMarket", "lookEdit", "sourcePicker", "sleepTimer", "streamQuality", "videoTrack"]);
   const caps = useMemo(() => settingsCaps(platform).filter((c) => !SKIP_IN_BROWSER.has(c)), [platform]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Тот же список множеством — его спрашивают сами ряды через контекст экрана
    *  (`caps.has("discord")` в «Интеграциях»). Отдельный memo нужен, чтобы новый
@@ -196,11 +136,15 @@ export default function SettingsPage() {
 
   /** ПОЛНАЯ ОПИСЬ РЯДОВ СТРАНИЦЫ для поиска: что нарисовано и где.
    *
-   *  Пять разделов приезжают сюда готовыми компонентами (@muza/app) и рисуют
-   *  ровно то, что знает индекс, — их опись берётся из того же индекса
-   *  функцией `paneRows`, иначе список рядом с чужим компонентом разъехался бы
-   *  с ним на первой же правке. Умения передаются той же переменной, что и
-   *  самим компонентам: раздел покажет ровно те ряды, которые попали в опись.
+   *  Все восемь разделов приезжают сюда готовыми компонентами (@muza/app) и
+   *  рисуют ровно то, что знает индекс, — поэтому опись берётся из того же
+   *  индекса функцией `paneRows`, а руками здесь не пишется НИ ОДНОГО ключа.
+   *  Умения передаются той же переменной, что и самим компонентам: раздел
+   *  покажет ровно те ряды, которые попали в опись, и наоборот.
+   *
+   *  ⚠️ До 2026-08-11 к этому списку примешивалась опись WEB_OWN_ROWS — ряды,
+   *  написанные разметкой прямо на странице. Её больше нет: своей разметки
+   *  разделов у веба не осталось.
    *
    *  «Горячие клавиши» страница не рисует вовсе — раздел-справочник каркас
    *  собирает сам, но ряд-указатель в индексе есть, и он достижим. */
@@ -208,11 +152,13 @@ export default function SettingsPage() {
     () => ({
       ...paneRows("account", caps),
       ...paneRows("appearance", caps),
+      ...paneRows("playback", caps),
+      ...paneRows("sources", caps),
+      ...paneRows("lyrics", caps),
       ...paneRows("library", caps),
       ...paneRows("integrations", caps),
       ...paneRows("system", caps),
       ...paneRows("hotkeys", caps),
-      ...WEB_OWN_ROWS,
     }),
     [caps],
   );
@@ -232,19 +178,6 @@ export default function SettingsPage() {
   const onLogout = useCallback(() => {
     void logout().then(() => router.replace("/login"));
   }, [logout, router]);
-
-  const applyEqPreset = (name: string) => {
-    const bands = EQ_PRESETS[name];
-    set(bands ? { eqPreset: name, eqBands: bands } : { eqPreset: name });
-  };
-
-  const setBand = (i: number, v: number) => {
-    const bands = [...prefs.eqBands];
-    bands[i] = Math.round(v);
-    // Значение — персистентный ключ prefs.eqPreset (см. EQ_PRESETS в EqualizerSub),
-    // сознательно не переведён, как и в приложении.
-    set({ eqBands: bands, eqPreset: "Свой" });
-  };
 
   /** «Аккаунт» и его под-экраны — ТЕ ЖЕ файлы, что рисует приложение
    *  (@muza/app/views/settings/AccountPane и SessionsSub/DataSub/PrivacySub),
@@ -333,6 +266,12 @@ export default function SettingsPage() {
     customize: <CustomizeSub />,
     nav: <NavSub />,
     bar: <BarSub />,
+    // Эквалайзер стал под-экраном 2026-08-11 — вместе с переходом на общий
+    // раздел «Воспроизведение». Раньше веб рисовал десять фейдеров прямо в
+    // разделе (под-экранов у его каркаса тогда не было), а приложение прятало
+    // их за строкой «Эквалайзер · Ровный». Разными были не полосы — их рисует
+    // один и тот же EqualizerControls, — а МЕСТО; теперь и оно одно.
+    equalizer: <EqualizerSub />,
     sessions: <SessionsSub />,
     data: <DataSub />,
     privacy: <PrivacySub />,
@@ -341,228 +280,33 @@ export default function SettingsPage() {
   };
 
 
-  /** «Воспроизведение». До 2026-08-02 здесь был ОДИН ряд — эквалайзер, — хотя
-   *  в приложении их пятнадцать. Разрыв закрыт не разметкой, а плеером:
-   *  сначала вкладка научилась делать (apps/web/src/player.tsx — два слота,
-   *  кроссфейд равной мощности, переход без паузы, выравнивание громкости,
-   *  скорость с сохранением тона, продолжение с места, бесконечное радио,
-   *  подготовка очереди), и только потом здесь появились ряды.
+  /** ТРИ ПОСЛЕДНИЕ КОПИИ УДАЛЕНЫ 2026-08-11 — «Воспроизведение», «Источники»,
+   *  «Тексты песен» рисует тот же код, что и приложение.
    *
-   *  ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ (правило шапки файла — ряд без применения хуже
-   *  отсутствующего):
-   *   - «Устройства вывода» — умение audioOutputs, которого у страницы нет;
-   *   - «Качество звука» — «Эконом» выбирает движок добычи на устройстве, у
-   *     сетевого адреса потока такой ручки нет;
-   *   - «Шаг перемотки» — шаг стрелок задан слушателем клавиш веба
-   *     (src/providers.tsx), настройку он пока не спрашивает;
-   *   - «Таймер сна» — кнопки-луны в полосе плеера веба не существует. */
-  const playbackPane = (
-    <SettingsPane>
-      <GroupTitle>{t("settings.playback.transitionsGroup")}</GroupTitle>
-      <SettingRow title={t("settings.playback.crossfade.title")} hint={t("settings.playback.crossfade.hint")}>
-        <Switch checked={prefs.crossfade} onChange={(crossfade: boolean) => set({ crossfade })} label={t("settings.playback.crossfade.title")} />
-      </SettingRow>
-      {/* Длительность имеет смысл только при включённом плавном переходе —
-          прячем ползунок целиком, а не гасим (правило приложения). */}
-      {prefs.crossfade ? (
-        <SettingRow title={t("settings.playback.crossfade.duration.title")} hint={t("settings.playback.crossfade.duration.hint")}>
-          <LiveSlider
-            value={prefs.crossfadeSec - 1}
-            max={11}
-            label={t("settings.playback.crossfade.duration.title")}
-            suffix={t("settings.playback.crossfade.duration.seconds", { n: prefs.crossfadeSec })}
-            onChange={(v) => set({ crossfadeSec: 1 + Math.round(v) })}
-          />
-        </SettingRow>
-      ) : null}
-      <SettingRow
-        title={t("settings.playback.gapless.title")}
-        hint={prefs.crossfade ? t("settings.playback.gapless.hintCrossfadeOn") : t("settings.playback.gapless.hint")}
-      >
-        <Switch checked={prefs.gapless} onChange={(gapless: boolean) => set({ gapless })} label={t("settings.playback.gapless.title")} />
-      </SettingRow>
-      <GroupTitle>{t("settings.playback.soundGroup")}</GroupTitle>
-      <SettingRow title={t("settings.equalizer.enable.title")} hint={t("settings.equalizer.enable.hint")}>
-        <Switch checked={prefs.eqOn} onChange={(eqOn: boolean) => set({ eqOn })} label={t("settings.equalizer.enable.title")} />
-      </SettingRow>
-      {/* Эквалайзер в вебе — прямо в разделе, а не отдельным под-экраном:
-          под-экранов у этого каркаса пока нет, а прятать десять фейдеров за
-          лишним переходом ради симметрии — хуже, чем показать их сразу.
-          РИСУЕТ ЕГО ОБЩИЙ КОД (@muza/app/views/settings/EqualizerSub) — чипы
-          профилей, панель полос со шкалой дБ и сброс те же, что в под-экране
-          приложения. Своя копия ряда фейдеров жила здесь до волны 8 и успела
-          разъехаться: полосы вдвое короче, без панели, без цифр дБ, без
-          сброса и с латинской «1k» вместо словарной «1к». */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
-        <EqualizerControls bands={prefs.eqBands} preset={prefs.eqPreset} disabled={!prefs.eqOn} onPreset={applyEqPreset} onBand={setBand} />
-      </div>
-      {/* «Выравнивание громкости» ряда ЗДЕСЬ НЕТ, хотя плеер веба его уже умеет
-          (apps/web/src/audioFx.ts: normFactor приводит трек к −14 LUFS). Не
-          хватает не умения, а данных: замер громкости трека сервер пока никому
-          не отдаёт — поле `loudness` всегда пустое (muza-server, catalog/dto.ts
-          отдаёт loudnessLufs, а заполнять его некому). Множитель выходит 1, и
-          тумблер не менял бы ни одного децибела. Появится замер — вернуть ряд
-          сюда одной строкой, плеер к нему готов. */}
-      {/* Скорость — САМА настройка, а не только её шаги: кнопки «1×» в полосе
-          плеера веба нет, и без этого ряда переключать скорость было бы нечем
-          (а «Шаги скорости» ниже настраивали бы пустоту). Значение живёт в
-          плеере и не сохраняется между заходами — как кнопка в приложении. */}
-      <SettingRow title={t("player.speedTooltip")} hint={t("web.settings.speed.hint")}>
-        <ChipGroup
-          items={prefs.speedSteps.map((v) => ({ key: String(v), label: `${v}×` }))}
-          value={String(player.speed)}
-          onChange={(k: string) => player.setSpeed(Number(k))}
-        />
-      </SettingRow>
-      {/* Подсказка своя, а не общая settings.playback.speedSteps.hint: та
-          говорит про кнопку «1×» в плеере, которой у веба нет. */}
-      <SettingRow title={t("settings.playback.speedSteps.title")} hint={t("web.settings.speedSteps.hint")}>
-        <StepsEditor
-          values={prefs.speedSteps}
-          onApply={(speedSteps) => set({ speedSteps })}
-          min={0.25}
-          max={4}
-          maxCount={8}
-          fallback={DEFAULT_PREFS.speedSteps}
-          suffix="×"
-        />
-      </SettingRow>
-      <GroupTitle>{t("settings.playback.queueGroup")}</GroupTitle>
-      <SettingRow title={t("settings.playback.radioEndless.title")} hint={t("settings.playback.radioEndless.hint")}>
-        <Switch checked={prefs.radioEndless} onChange={(radioEndless: boolean) => set({ radioEndless })} label={t("settings.playback.radioEndless.title")} />
-      </SettingRow>
-      <GroupTitle>{t("settings.playback.recsGroup")}</GroupTitle>
-      {/* Те же два ползунка, что в приложении, и тем же файлом: подбор музыки
-          делает сервер, и настройка у него одна на все устройства человека. */}
-      <RecsTuning />
-      <SettingRow title={t("settings.playback.resumePosition.title")} hint={t("settings.playback.resumePosition.hint")}>
-        <Switch
-          checked={prefs.resumePosition}
-          onChange={(resumePosition: boolean) => set({ resumePosition })}
-          label={t("settings.playback.resumePosition.ariaLabel")}
-        />
-      </SettingRow>
-      <GroupTitle>{t("settings.playback.streamGroup")}</GroupTitle>
-      {/* Подготовка очереди — одной строкой пресетов, точные числа под
-          «Настроить» (конвенция приложения). */}
-      <PresetRow
-        title={t("settings.playback.queuePrep.title")}
-        hint={t("settings.playback.queuePrep.hint")}
-        chips={[
-          { key: "eco", label: t("settings.playback.queuePrep.presets.eco") },
-          { key: "normal", label: t("settings.playback.queuePrep.presets.normal") },
-          { key: "max", label: t("settings.playback.queuePrep.presets.max") },
-        ]}
-        active={matchPreset(PRESETS_WARM, prefs)}
-        onPick={(k) => set(PRESETS_WARM[k])}
-      >
-        <SettingRow title={t("settings.playback.queuePrep.warm.title")} hint={t("settings.playback.queuePrep.warm.hint")}>
-          <LiveSlider
-            value={prefs.warmAhead}
-            max={30}
-            label={t("settings.playback.queuePrep.warm.title")}
-            suffix={t("settings.playback.units.tracks", { n: prefs.warmAhead })}
-            onChange={(v) => set({ warmAhead: Math.round(v) })}
-          />
-        </SettingRow>
-        <SettingRow title={t("settings.playback.queuePrep.preload.title")} hint={t("settings.playback.queuePrep.preload.hint")}>
-          <LiveSlider
-            value={prefs.preloadAheadSec - 5}
-            max={55}
-            label={t("settings.playback.queuePrep.preload.title")}
-            suffix={t("settings.playback.units.seconds", { n: prefs.preloadAheadSec })}
-            onChange={(v) => set({ preloadAheadSec: 5 + Math.round(v) })}
-          />
-        </SettingRow>
-      </PresetRow>
-    </SettingsPane>
-  );
-
-  const sourcesPane = (
-    <SettingsPane>
-      <GroupTitle>{t("settings.sources.searchGroup")}</GroupTitle>
-      <SettingRow title={t("settings.sources.searchGrouping.title")} hint={t("settings.sources.searchGrouping.hint")}>
-        <Switch
-          checked={prefs.searchGrouping}
-          onChange={(searchGrouping: boolean) => set({ searchGrouping })}
-          label={t("settings.sources.searchGrouping.title")}
-        />
-      </SettingRow>
-    </SettingsPane>
-  );
-
-  /** «Тексты песен». Ряды — те же, что в приложении (@muza/app/views/settings/
-   *  LyricsPane.tsx), кроме «Видео вместо обложки»: см. шапку файла. Копия, а
-   *  не переиспользование того файла, — по той же причине, что у соседних
-   *  разделов: LyricsPane читает контекст экрана настроек (SettingsProvider с
-   *  портами площадки), а страница веба ведёт настройки своим usePrefs. */
-  const lyricsPane = (
-    <SettingsPane>
-      <GroupTitle>{t("settings.lyrics.displayGroup")}</GroupTitle>
-      <SettingRow title={t("settings.lyrics.synced.title")} hint={t("settings.lyrics.synced.hint")}>
-        <Switch checked={prefs.syncedLyrics} onChange={(syncedLyrics: boolean) => set({ syncedLyrics })} label={t("settings.lyrics.synced.title")} />
-      </SettingRow>
-      <SettingRow title={t("settings.lyrics.autoScroll.title")} hint={t("settings.lyrics.autoScroll.hint")}>
-        <Switch checked={prefs.lyricsAutoScroll} onChange={(lyricsAutoScroll: boolean) => set({ lyricsAutoScroll })} label={t("settings.lyrics.autoScroll.title")} />
-      </SettingRow>
-      <SettingRow title={t("settings.lyrics.endNote.title")} hint={t("settings.lyrics.endNote.hint")}>
-        <Switch checked={prefs.lyricsEndNote} onChange={(lyricsEndNote: boolean) => set({ lyricsEndNote })} label={t("settings.lyrics.endNote.title")} />
-      </SettingRow>
-      <SettingRow title={t("settings.lyrics.karaokeSize.title")} hint={t("settings.lyrics.karaokeSize.hint")}>
-        <LiveSlider
-          value={prefs.karaokeSize - KARAOKE_SIZE_MIN}
-          max={KARAOKE_SIZE_MAX - KARAOKE_SIZE_MIN}
-          label={t("settings.lyrics.karaokeSize.title")}
-          suffix={`${prefs.karaokeSize} px`}
-          onChange={(v) => set({ karaokeSize: KARAOKE_SIZE_MIN + Math.round(v) })}
-        />
-      </SettingRow>
-      {/* Окно караоке симметрично (активная ±N), поэтому число строк всегда
-          нечётное: ползунок ходит по 3,5,7,9,11 — шаг 2 от тройки. */}
-      <SettingRow title={t("settings.lyrics.karaokeLines.title")} hint={t("settings.lyrics.karaokeLines.hint")}>
-        <LiveSlider
-          value={(prefs.karaokeLines - 3) / 2}
-          max={4}
-          label={t("settings.lyrics.karaokeLines.title")}
-          suffix={t("settings.lyrics.linesSuffix", { count: prefs.karaokeLines })}
-          onChange={(v) => set({ karaokeLines: 3 + Math.round(v) * 2 })}
-        />
-      </SettingRow>
-      {/* 0 — «Авто»: размер строки диктует общий «Размер текста». Дальше
-          4..14 — размер подбирается под число строк. */}
-      <SettingRow title={t("settings.lyrics.panelLines.title")} hint={t("settings.lyrics.panelLines.hint")}>
-        <LiveSlider
-          value={prefs.lyricsPanelLines === 0 ? 0 : prefs.lyricsPanelLines - 3}
-          max={11}
-          label={t("settings.lyrics.panelLines.title")}
-          suffix={
-            prefs.lyricsPanelLines === 0
-              ? t("settings.lyrics.panelLines.auto")
-              : t("settings.lyrics.linesSuffix", { count: prefs.lyricsPanelLines })
-          }
-          onChange={(v) => {
-            const n = Math.round(v);
-            set({ lyricsPanelLines: n === 0 ? 0 : n + 3 });
-          }}
-        />
-      </SettingRow>
-      <GroupTitle>{t("settings.lyrics.understandingGroup")}</GroupTitle>
-      {/* «Скоро», а не «Выкл»: рядом с невключаемой функцией «Выкл»
-          подразумевал несуществующий переключатель. */}
-      <SettingRow title={t("settings.lyrics.translation.title")} hint={t("settings.lyrics.translation.hint")}>
-        <RowValue>{t("settings.lyrics.translation.soon")}</RowValue>
-      </SettingRow>
-      <SettingRow title={t("settings.lyrics.meaningMode.title")} hint={t("settings.lyrics.meaningMode.hint")}>
-        <Switch checked={prefs.meaningMode} onChange={(meaningMode: boolean) => set({ meaningMode })} label={t("settings.lyrics.meaningMode.title")} />
-      </SettingRow>
-    </SettingsPane>
-  );
+   *  Здесь лежало ~200 строк разметки, и она отставала на восемь рядов:
+   *  выравнивание громкости, шаг перемотки (+ точная подстройка), политика
+   *  источников, охват поиска, мгновенный поиск. Часть из них веб УМЕЛ всё
+   *  это время — не хватало не механизма, а органа управления (та же история,
+   *  что с «Раскладкой окна» 10.08).
+   *
+   *  Что при этом ушло у веба и почему — ровно четыре ряда, все закрыты
+   *  умениями в SKIP_IN_BROWSER выше: «Устройства вывода» (audioOutputs),
+   *  «Качество звука» (streamQuality), «Таймер сна» (sleepTimer), «Видео
+   *  вместо обложки» (videoTrack) плюс источники (sourcePicker).
+   *
+   *  Отдельно — «Скорость». У веба был СВОЙ ряд с чипами скорости, потому что
+   *  кнопки «1×» в его полосе плеера не существовало. 11.08 кнопка появилась
+   *  (src/components/PlayerBar.tsx: cycleSpeed), и ряд стал вторым способом
+   *  делать то же самое — вместе с двумя своими подсказками в словарях.
+   *  Остались общие «Шаги скорости», как в приложении. */
+  const playbackPane = <PlaybackPane />;
+  const sourcesPane = <SourcesPane />;
+  const lyricsPane = <LyricsPane />;
 
   return (
-    /* Связующая ткань разделов, приехавших из приложения целиком: они берут
-       отсюда настройки, сервер, кто вошёл, тосты и умения площадки. Разделы,
-       собранные прямо на странице (оформление, звук, тексты), провайдер не
-       трогают — они и дальше зовут `set` напрямую. */
+    /* Связующая ткань ВСЕХ разделов: они берут отсюда настройки, сервер, кто
+       вошёл, тосты и умения площадки. Своей разметки у страницы больше нет —
+       ни один раздел мимо провайдера не идёт. */
     <SettingsProvider
       prefs={prefs}
       // Провайдер отдаёт рядам точечный `set(patch)`, а сам просит целый

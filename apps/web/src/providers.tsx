@@ -70,10 +70,11 @@ function PrefsSync() {
   return null;
 }
 
-/** Шаг перемотки стрелками — тот же, что у приложения по умолчанию
- *  (apps/desktop DEFAULT_PREFS.seekStepSec). В вебе настройки клавиш пока нет,
- *  поэтому и биндинги берутся дефолтные: withDefaults() без сохранённых. */
-const SEEK_STEP_SEC = 5;
+/** Сочетания клавиш — дефолтные: переназначения в вебе пока нет, поэтому
+ *  withDefaults() без сохранённых. А вот ШАГ перемотки берётся из настроек
+ *  (`prefs.seekStepSec`, ряд «Шаг перемотки» в «Воспроизведении») — до
+ *  2026-08-11 здесь стояла зашитая пятёрка, и ряда в вебе не было вовсе:
+ *  переключатель, который никуда не приезжает, хуже отсутствующего. */
 const WEB_HOTKEYS = withDefaults();
 
 /** Горячие клавиши веба: тот же модуль, что у приложения (@muza/app), тот же
@@ -96,6 +97,7 @@ export function AppHotkeys() {
   const { position, duration } = usePosition();
   const likes = useLikes();
   const router = useRouter();
+  const { prefs } = usePrefs();
 
   // Слушатель ставится один раз на маунт, актуальные значения — через ref
   // (иначе замыкание держало бы позицию и очередь на момент подписки).
@@ -119,10 +121,10 @@ export function AppHotkeys() {
         player.prev();
         break;
       case "seekFwd":
-        if (player.current) player.seek(Math.min(position + SEEK_STEP_SEC, duration || player.current.durationSec));
+        if (player.current) player.seek(Math.min(position + prefs.seekStepSec, duration || player.current.durationSec));
         break;
       case "seekBack":
-        if (player.current) player.seek(Math.max(position - SEEK_STEP_SEC, 0));
+        if (player.current) player.seek(Math.max(position - prefs.seekStepSec, 0));
         break;
       case "mute":
         player.toggleMute();

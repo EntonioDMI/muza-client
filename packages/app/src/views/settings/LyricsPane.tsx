@@ -3,13 +3,11 @@
  *  Приехало из apps/desktop/src/views/SettingsView.tsx (волна «настройки»,
  *  2026-08-02) без правок разметки.
  *
- *  ГДЕ ЭТОТ РАЗДЕЛ В БРАУЗЕРЕ. Своей копией в apps/web/app/(app)/settings/
- *  page.tsx (`lyricsPane`) — как у соседних разделов: этот файл читает
- *  контекст экрана настроек (SettingsProvider с портами площадки), а страница
- *  веба ведёт настройки своим usePrefs. Копия отличается ровно одним рядом:
- *  «Видео вместо обложки» в браузере ОТСУТСТВУЕТ (не серое) — видео-дорожку
- *  добывает движок приложения, страница так не умеет. Правишь ряды здесь —
- *  загляни туда: остальные восемь обязаны совпадать. */
+ *  ⚠️ ОДИН РАЗДЕЛ НА ОБЕ ПРОГРАММЫ с 2026-08-11. До этого у веба была своя
+ *  копия, отличавшаяся ровно одним рядом, — и «ровно один» держался ровно до
+ *  первой правки: копия, которая обязана совпадать, разъезжается сама (так за
+ *  неделю разошёлся «Внешний вид»). Единственный площадочный ряд — «Видео
+ *  вместо обложки» — закрыт умением `videoTrack`. */
 
 import { Switch } from "@muza/ui";
 import { useT } from "../../i18n";
@@ -18,7 +16,7 @@ import { useSettingsScreen } from "./settingsContext";
 
 export function LyricsPane() {
   const { t } = useT();
-  const { prefs, set, paneClass } = useSettingsScreen();
+  const { prefs, set, caps, paneClass } = useSettingsScreen();
   return (
     <div className={paneClass} style={paneStyle}>
       <GroupTitle>{t("settings.lyrics.displayGroup")}</GroupTitle>
@@ -31,13 +29,17 @@ export function LyricsPane() {
       <SettingRow title={t("settings.lyrics.endNote.title")} hint={t("settings.lyrics.endNote.hint")}>
         <Switch checked={prefs.lyricsEndNote} onChange={(lyricsEndNote: boolean) => set({ lyricsEndNote })} label={t("settings.lyrics.endNote.title")} />
       </SettingRow>
-      <SettingRow title={t("settings.lyrics.videoNowPlaying.title")} hint={t("settings.lyrics.videoNowPlaying.hint")}>
-        <Switch
-          checked={prefs.videoNowPlaying}
-          onChange={(videoNowPlaying: boolean) => set({ videoNowPlaying })}
-          label={t("settings.lyrics.videoNowPlaying.title")}
-        />
-      </SettingRow>
+      {/* Видео-дорожку добывает движок на устройстве; площадке, которой сервер
+          отдаёт только звук, показывать вместо обложки нечего. */}
+      {caps.has("videoTrack") ? (
+        <SettingRow title={t("settings.lyrics.videoNowPlaying.title")} hint={t("settings.lyrics.videoNowPlaying.hint")}>
+          <Switch
+            checked={prefs.videoNowPlaying}
+            onChange={(videoNowPlaying: boolean) => set({ videoNowPlaying })}
+            label={t("settings.lyrics.videoNowPlaying.title")}
+          />
+        </SettingRow>
+      ) : null}
       <SettingRow title={t("settings.lyrics.karaokeSize.title")} hint={t("settings.lyrics.karaokeSize.hint")}>
         <LiveSlider
           value={prefs.karaokeSize - 36}

@@ -6,7 +6,15 @@
  *  Три переключателя площадок связаны правилом «последний не выключается»:
  *  выключить все три значит остаться без звука вообще, поэтому единственный
  *  оставшийся включённым переключатель гаснет. Это не «нет умения», а защита
- *  от тупика — потому и disabled, а не отсутствие ряда. */
+ *  от тупика — потому и disabled, а не отсутствие ряда.
+ *
+ *  ⚠️ ОДИН РАЗДЕЛ НА ОБЕ ПРОГРАММЫ с 2026-08-11 (до этого веб рисовал свою
+ *  копию с ОДНИМ рядом из шести). Что чем закрыто:
+ *   - политика и три переключателя площадок — умение `sourcePicker`: их
+ *     исполняет добыча на устройстве, у веба поток приходит от сервера;
+ *   - «Прямые ссылки и файлы» — `localFiles`;
+ *   - охват поиска, мгновенный поиск и группировка — есть у обеих: их читает
+ *     общий экран поиска (views/SearchView) на любой площадке. */
 
 import { Switch, Tabs } from "@muza/ui";
 import { useT } from "../../i18n";
@@ -31,31 +39,42 @@ export function SourcesPane() {
           />
         </SettingRow>
       ) : null}
-      <GroupTitle>{t("settings.sources.priorityGroup")}</GroupTitle>
-      <SettingRow title="YouTube / YT Music" hint={t("settings.sources.youtube.hint")}>
-        <Switch
-          checked={prefs.sourcesEnabled.youtube}
-          disabled={prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.bandcamp}
-          onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, youtube: on } })}
-          label="YouTube / YT Music"
-        />
-      </SettingRow>
-      <SettingRow title="SoundCloud" hint={t("settings.sources.soundcloud.hint")}>
-        <Switch
-          checked={prefs.sourcesEnabled.soundcloud}
-          disabled={prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.bandcamp}
-          onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, soundcloud: on } })}
-          label="SoundCloud"
-        />
-      </SettingRow>
-      <SettingRow title="Bandcamp" hint={t("settings.sources.bandcamp.hint")}>
-        <Switch
-          checked={prefs.sourcesEnabled.bandcamp}
-          disabled={prefs.sourcesEnabled.bandcamp && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud}
-          onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, bandcamp: on } })}
-          label="Bandcamp"
-        />
-      </SettingRow>
+      {/* Переключатели площадок — ЧАСТЬ ТОГО ЖЕ УМЕНИЯ, что и политика выше, и
+          исчезают вместе с ней: и то и другое читает ОДНА функция на устройстве
+          (applySourcePolicy) — она фильтрует и сортирует список источников
+          перед добычей. Там, где поток добывает не программа, а сервер
+          (браузер: getStreamUrl отдаёт готовый подписанный адрес и про
+          источники ничего не спрашивает), три тумблера были бы переключателями
+          в никуда — а такой хуже отсутствующего. */}
+      {caps.has("sourcePicker") ? (
+        <>
+          <GroupTitle>{t("settings.sources.priorityGroup")}</GroupTitle>
+          <SettingRow title="YouTube / YT Music" hint={t("settings.sources.youtube.hint")}>
+            <Switch
+              checked={prefs.sourcesEnabled.youtube}
+              disabled={prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.bandcamp}
+              onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, youtube: on } })}
+              label="YouTube / YT Music"
+            />
+          </SettingRow>
+          <SettingRow title="SoundCloud" hint={t("settings.sources.soundcloud.hint")}>
+            <Switch
+              checked={prefs.sourcesEnabled.soundcloud}
+              disabled={prefs.sourcesEnabled.soundcloud && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.bandcamp}
+              onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, soundcloud: on } })}
+              label="SoundCloud"
+            />
+          </SettingRow>
+          <SettingRow title="Bandcamp" hint={t("settings.sources.bandcamp.hint")}>
+            <Switch
+              checked={prefs.sourcesEnabled.bandcamp}
+              disabled={prefs.sourcesEnabled.bandcamp && !prefs.sourcesEnabled.youtube && !prefs.sourcesEnabled.soundcloud}
+              onChange={(on: boolean) => set({ sourcesEnabled: { ...prefs.sourcesEnabled, bandcamp: on } })}
+              label="Bandcamp"
+            />
+          </SettingRow>
+        </>
+      ) : null}
       <GroupTitle>{t("settings.sources.searchGroup")}</GroupTitle>
       <SettingRow title={t("settings.sources.searchScope.title")} hint={t("settings.sources.searchScope.hint")}>
         <Tabs

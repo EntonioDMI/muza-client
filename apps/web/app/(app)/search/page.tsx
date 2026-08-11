@@ -66,6 +66,11 @@ export default function SearchPage() {
       {/* .shared-screen гасит отступ зоны: общий экран приносит свои поля,
           как в приложении, где <main> голый (globals.css) */}
       <div className="shared-screen">
+      {/* ⚠️ Настройки поиска доезжают сюда ВСЕ ТРИ (2026-08-11). Раньше была
+          одна — группировка, — и «Где искать» с «Мгновенным поиском» в
+          настройках веба отсутствовали ровно поэтому: экран их не спрашивал, и
+          ряды нечему было менять. Правило работает в обе стороны — ряд
+          появляется только вместе с потребителем. */}
       <SearchView
         api={getApi()}
         // аноним сюда не попадает (шелл уводит на /login), но экран honest:
@@ -77,6 +82,8 @@ export default function SearchPage() {
         playing={playing}
         likes={[...likedIds]}
         searchGrouping={prefs.searchGrouping}
+        searchScope={prefs.searchScope}
+        instantSearch={prefs.instantSearch}
         onPlayCatalog={(tracks, id) =>
           playContext(
             tracks,

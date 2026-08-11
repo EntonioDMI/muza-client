@@ -182,15 +182,31 @@ export function useSettingsScreen(): SettingsScreenCtx {
  *  строка индекса спрашивают ОДИН И ТОТ ЖЕ список, а он выведен из того, что
  *  площадка реально умеет, а не написан руками в двух местах.
  *
- *  Три умения портов не имеют и есть у обеих площадок: витрина оформлений
- *  (сервер), свой файл шрифта (<input type="file"> + localStorage) и выбор
- *  источника (обычное поле настроек). Они дописываются здесь константой —
- *  площадка, которой они не нужны, передаёт свой список руками. */
+ *  Часть умений порта не имеет вовсе — они держатся не на железе, а на том,
+ *  есть ли в самой программе то, чем ряд управляет. Два таких общие обеим
+ *  площадкам (витрина оформлений — сервер; свой файл шрифта — <input
+ *  type="file"> + localStorage), остальные пять есть только у приложения.
+ *  Все они дописываются здесь константой — площадка, которой они не нужны,
+ *  передаёт свой список руками. */
 export function settingsCaps(platform: PlatformAdapter): SettingsCapability[] {
-  // lookEdit здесь же, среди «есть у обеих площадок»: порта у него нет — это
-  // не умение железа, а наличие слоя правки вида в самой программе. Веб
-  // снимает его руками (apps/web settings/page.tsx), как и themeMarket.
-  const caps: SettingsCapability[] = ["themeMarket", "customFont", "sourcePicker", "lookEdit"];
+  // ⚠️ Четыре последних умения порта НЕ имеют и площадкам не общи: это не
+  // железо, а наличие в самой программе того, чем ряд управляет —
+  //   lookEdit    — слой правки вида (Ctrl+E);
+  //   sleepTimer  — кнопка-луна в полосе плеера;
+  //   streamQuality, videoTrack — движок добычи на устройстве.
+  // Порта под них нет нарочно: розетка описывает, ЧЕМ ряд делает своё дело, а
+  // здесь дело делает код самой программы. Поэтому они стоят константой, а
+  // площадка, у которой их нет, снимает их руками — так и предусмотрено
+  // контрактом ниже (apps/web settings/page.tsx → SKIP_IN_BROWSER).
+  const caps: SettingsCapability[] = [
+    "themeMarket",
+    "customFont",
+    "sourcePicker",
+    "lookEdit",
+    "sleepTimer",
+    "streamQuality",
+    "videoTrack",
+  ];
   if (platform.localFiles) caps.push("localFiles");
   if (platform.storedMedia) caps.push("offlineCache");
   if (platform.system?.setAutostart) caps.push("autostart");

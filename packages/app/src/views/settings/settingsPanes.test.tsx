@@ -22,6 +22,8 @@ import { settingsCaps, SettingsProvider } from "./settingsContext";
 import { SystemPane } from "./SystemPane";
 import { LibraryPane } from "./LibraryPane";
 import { PlaybackPane } from "./PlaybackPane";
+import { SourcesPane } from "./SourcesPane";
+import { LyricsPane } from "./LyricsPane";
 import { ExtensionsPane } from "./ExtensionsPane";
 
 afterEach(cleanup);
@@ -70,8 +72,20 @@ function renderedRowTitles(): Set<string> {
 }
 
 describe("settingsCaps — умения выводятся из портов", () => {
-  it("пустая розетка: только те умения, что есть у любой площадки", () => {
-    expect(settingsCaps({}).sort()).toEqual(["customFont", "lookEdit", "sourcePicker", "themeMarket"]);
+  it("пустая розетка: остаются только умения без порта", () => {
+    // Порта у них нет не по недосмотру: розетка описывает, ЧЕМ ряд делает своё
+    // дело, а этими рядами распоряжается код самой программы (слой правки
+    // вида, кнопка-луна, движок добычи, выбор источника). Площадка, у которой
+    // их нет, снимает их руками — так делает веб (SKIP_IN_BROWSER).
+    expect(settingsCaps({}).sort()).toEqual([
+      "customFont",
+      "lookEdit",
+      "sleepTimer",
+      "sourcePicker",
+      "streamQuality",
+      "themeMarket",
+      "videoTrack",
+    ]);
   });
 
   it("каждый порт добавляет своё умение", () => {
@@ -147,6 +161,64 @@ describe("Прочие разделы — ряды по умениям", () => {
     cleanup();
     renderPane(PlaybackPane, ["audioOutputs"]);
     expect(renderedRowTitles().has(T("settings.playback.outputs.rowTitle"))).toBe(true);
+  });
+
+  /** Сведение трёх последних копий 2026-08-11: разделы «Воспроизведение»,
+   *  «Источники» и «Тексты» стали общими, а площадочные ряды закрылись
+   *  умениями. Сторож нужен именно на ЭТИ три: их отсутствие в браузере — не
+   *  «пока не сделали», а «делать нечем», и вернуть ряд без потребителя проще
+   *  всего именно здесь. */
+  it("«Воспроизведение»: качество потока и шаги таймера сна — тоже умения", () => {
+    renderPane(PlaybackPane, []);
+    let rows = renderedRowTitles();
+    expect(rows.has(T("settings.playback.streamQuality.title"))).toBe(false);
+    expect(rows.has(T("settings.playback.sleepTimer.title"))).toBe(false);
+    // Ряды, которые умеет ЛЮБАЯ площадка, на месте и без единого умения:
+    // именно их вебу и не хватало, пока он рисовал свою копию раздела.
+    expect(rows.has(T("settings.playback.normalize.title"))).toBe(true);
+    expect(rows.has(T("settings.playback.seekStep.title"))).toBe(true);
+    cleanup();
+    renderPane(PlaybackPane, ["streamQuality", "sleepTimer"]);
+    rows = renderedRowTitles();
+    expect(rows.has(T("settings.playback.streamQuality.title"))).toBe(true);
+    expect(rows.has(T("settings.playback.sleepTimer.title"))).toBe(true);
+  });
+
+  it("«Источники»: политика И три площадки держатся на одном умении", () => {
+    // Их исполняет одна функция на устройстве (applySourcePolicy). Разъехаться
+    // им нельзя: политика без переключателей (или наоборот) — это ряд, который
+    // ничего не меняет.
+    renderPane(SourcesPane, []);
+    let rows = renderedRowTitles();
+    expect(rows.has(T("settings.sources.policy.title"))).toBe(false);
+    expect(rows.has("SoundCloud")).toBe(false);
+    expect(rows.has("Bandcamp")).toBe(false);
+    // Поиск от добычи не зависит — эти три ряда есть на любой площадке.
+    expect(rows.has(T("settings.sources.searchScope.title"))).toBe(true);
+    expect(rows.has(T("settings.sources.instantSearch.title"))).toBe(true);
+    cleanup();
+    renderPane(SourcesPane, ["sourcePicker"]);
+    rows = renderedRowTitles();
+    expect(rows.has(T("settings.sources.policy.title"))).toBe(true);
+    expect(rows.has("SoundCloud")).toBe(true);
+  });
+
+  it("«Тексты песен»: видео вместо обложки — умение движка добычи", () => {
+    renderPane(LyricsPane, []);
+    expect(renderedRowTitles().has(T("settings.lyrics.videoNowPlaying.title"))).toBe(false);
+    cleanup();
+    renderPane(LyricsPane, ["videoTrack"]);
+    expect(renderedRowTitles().has(T("settings.lyrics.videoNowPlaying.title"))).toBe(true);
+  });
+
+  it("поиск согласен с экраном и в этих трёх разделах", () => {
+    // Тот же сторож, что у «Системы», но для новых умений: ряд, которого
+    // площадка не рисует, не должен находиться поиском.
+    for (const cap of ["streamQuality", "sleepTimer", "videoTrack", "sourcePicker"] as SettingsCapability[]) {
+      const gated = SETTINGS_INDEX.filter((e) => e.needs === cap);
+      expect(gated.length).toBeGreaterThan(0);
+      for (const entry of gated) expect(searchSettings(T(entry.titleKey), T, [])).toEqual([]);
+    }
   });
 
   it("«Расширения»: без установки файлом остаётся только витрина оформлений", () => {

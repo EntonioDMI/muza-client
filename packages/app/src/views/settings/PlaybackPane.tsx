@@ -4,6 +4,13 @@
  *  Приехало из apps/desktop/src/views/SettingsView.tsx (волна «настройки»,
  *  2026-08-02) без правок разметки.
  *
+ *  ⚠️ ОДИН РАЗДЕЛ НА ОБЕ ПРОГРАММЫ с 2026-08-11. До этого у веба была своя
+ *  разметка этого раздела, и она отстала на восемь рядов (ни выравнивания
+ *  громкости, ни шага перемотки). Копия удалена, площадочные ряды закрыты
+ *  умениями: `audioOutputs` (устройства вывода), `streamQuality` («Эконом»),
+ *  `sleepTimer` (шаги таймера сна). Правишь ряды — правь здесь; во второй файл
+ *  идти больше некуда, и это единственный способ не разъехаться снова.
+ *
  *  Здесь дважды применена конвенция «пресеты поверх обычных полей»: строка
  *  чипов задаёт понятный набор («Экономно» / «Обычно» / «Максимум»), а точные
  *  ползунки прячутся под стрелкой «Настроить». Активный чип НЕ хранится
@@ -201,16 +208,21 @@ export function PlaybackPane() {
         />
       </SettingRow>
       <GroupTitle>{t("settings.playback.streamGroup")}</GroupTitle>
-      <SettingRow title={t("settings.playback.streamQuality.title")} hint={t("settings.playback.streamQuality.hint")}>
-        <Tabs
-          items={[
-            { key: "auto", label: t("settings.playback.streamQuality.auto") },
-            { key: "econom", label: t("settings.playback.streamQuality.econom") },
-          ]}
-          value={prefs.streamQuality}
-          onChange={(k: string) => set({ streamQuality: k as Prefs["streamQuality"] })}
-        />
-      </SettingRow>
+      {/* «Эконом» выбирает движок добычи НА УСТРОЙСТВЕ (usePlayback и useWarmer
+          передают это поле в engine_stream_start). Площадке, которой сервер
+          отдаёт готовый адрес потока, менять им нечего — ряда нет вовсе. */}
+      {caps.has("streamQuality") ? (
+        <SettingRow title={t("settings.playback.streamQuality.title")} hint={t("settings.playback.streamQuality.hint")}>
+          <Tabs
+            items={[
+              { key: "auto", label: t("settings.playback.streamQuality.auto") },
+              { key: "econom", label: t("settings.playback.streamQuality.econom") },
+            ]}
+            value={prefs.streamQuality}
+            onChange={(k: string) => set({ streamQuality: k as Prefs["streamQuality"] })}
+          />
+        </SettingRow>
+      ) : null}
       {/* Подготовка очереди — одной строкой пресетов, точные числа под
           «Настроить». */}
       <PresetRow
@@ -265,17 +277,21 @@ export function PlaybackPane() {
           />
         </SettingRow>
       </PresetRow>
-      <SettingRow title={t("settings.playback.sleepTimer.title")} hint={t("settings.playback.sleepTimer.hint")}>
-        <StepsEditor
-          values={prefs.sleepPresets}
-          onApply={(sleepPresets) => set({ sleepPresets: sleepPresets.map(Math.round) })}
-          min={1}
-          max={600}
-          maxCount={6}
-          fallback={DEFAULT_PREFS.sleepPresets}
-          suffix={t("settings.playback.sleepTimer.minSuffix")}
-        />
-      </SettingRow>
+      {/* Ряд настраивает ШАГИ таймера, а включает таймер кнопка-луна в полосе
+          плеера. Нет кнопки — ряд настраивал бы то, чего не запустить. */}
+      {caps.has("sleepTimer") ? (
+        <SettingRow title={t("settings.playback.sleepTimer.title")} hint={t("settings.playback.sleepTimer.hint")}>
+          <StepsEditor
+            values={prefs.sleepPresets}
+            onApply={(sleepPresets) => set({ sleepPresets: sleepPresets.map(Math.round) })}
+            min={1}
+            max={600}
+            maxCount={6}
+            fallback={DEFAULT_PREFS.sleepPresets}
+            suffix={t("settings.playback.sleepTimer.minSuffix")}
+          />
+        </SettingRow>
+      ) : null}
     </div>
   );
 }

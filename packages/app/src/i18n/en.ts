@@ -1697,11 +1697,9 @@ export const en = {
         title: "\"Now Playing\" panel",
         hint: "On a wide screen the panel with the cover and lyrics opens by itself when a track starts.",
       },
-      // Своя подсказка, а не общая: кнопки «1×» в полосе плеера веба нет —
-      // скорость переключается прямо здесь, и после перезагрузки страницы
-      // возвращается к обычной.
-      speed: { hint: "The music plays faster or slower, and voices stay normal. Back to 1× when you open the site again." },
-      speedSteps: { hint: "These are the values shown next to \"Playback speed\" above. List your own steps comma-separated, from 0.25 to 4." },
+      // ⚠️ Пара speed.hint / speedSteps.hint удалена 2026-08-11 вместе со
+      // своим рядом «Скорость»: в полосе плеера веба появилась кнопка «1×»,
+      // и раздел стал общим с приложением (обоснование — ru.ts).
     },
     desktopOnly: {
       defaultHint: "Works in the Windows app",
