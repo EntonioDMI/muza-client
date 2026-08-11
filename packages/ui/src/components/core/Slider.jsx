@@ -278,7 +278,7 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
                 color: "var(--text-1)",
                 fontFamily: "var(--font-ui)",
                 fontSize: "var(--fs-caption)",
-                fontWeight: 600,
+                fontWeight: 400,
                 fontVariantNumeric: "tabular-nums",
                 whiteSpace: "nowrap",
                 pointerEvents: "none",

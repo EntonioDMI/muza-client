@@ -130,7 +130,7 @@ export function MobileNowPlaying({ open, onClose }: { open: boolean; onClose: ()
             style={{
               fontFamily: "var(--font-ui)",
               fontSize: 19,
-              fontWeight: 700,
+              fontWeight: 400,
               color: "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",

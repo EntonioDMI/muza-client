@@ -232,7 +232,7 @@ export function useWebTrackMenu(
                   color: "var(--text-1)",
                   fontFamily: "var(--font-ui)",
                   fontSize: "var(--fs-body)",
-                  fontWeight: 500,
+                  fontWeight: 400,
                   textAlign: "left",
                   cursor: "pointer",
                 }}

@@ -143,6 +143,16 @@ export function PlaybackPane() {
   return (
     <div className={paneClass} style={paneStyle}>
       <GroupTitle>{t("settings.playback.transitionsGroup")}</GroupTitle>
+      {/* Характер темпа стоит ПЕРЕД кроссфейдом: оба про то, как звучит стык,
+          но этот меняет сам звук растянутого трека, а кроссфейд — только
+          переход между треками. Разбор — src-tauri/src/wsola.rs. */}
+      <SettingRow title={t("settings.playback.tempoMode.title")} hint={t("settings.playback.tempoMode.hint")}>
+        <Switch
+          checked={prefs.tempoWsola}
+          onChange={(v: boolean) => set({ tempoWsola: v })}
+          label={t("settings.playback.tempoMode.title")}
+        />
+      </SettingRow>
       <SettingRow title={t("settings.playback.crossfade.title")} hint={t("settings.playback.crossfade.hint")}>
         <Switch checked={prefs.crossfade} onChange={(v: boolean) => set({ crossfade: v })} label={t("settings.playback.crossfade.title")} />
       </SettingRow>

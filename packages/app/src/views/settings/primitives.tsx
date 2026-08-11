@@ -141,7 +141,7 @@ export function SettingRow({
     >
       <div className="muza-setting-row__text" style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
-          <div style={{ fontSize: "var(--fs-body)", fontWeight: 500, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
+          <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: danger ? "var(--danger)" : "var(--text-1)" }}>{title}</div>
           {titleExtra}
         </div>
         {hint ? <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.45 }}>{hint}</div> : null}
@@ -400,7 +400,7 @@ export function HotkeyRow({
           color: capturing ? "var(--accent-text)" : conflict ? "var(--danger)" : "var(--text-1)",
           fontFamily: "var(--font-ui)",
           fontSize: "var(--fs-caption)",
-          fontWeight: 600,
+          fontWeight: 400,
           fontVariantNumeric: "tabular-nums",
           cursor: "pointer",
           outline: conflict ? "1px solid var(--danger)" : "none",
@@ -550,7 +550,7 @@ export function SubHeader({ title, onBack }: { title: string; onBack: () => void
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
       <IconButton icon="arrow-left" label={t("common.back")} onClick={onBack} />
-      <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>{title}</h2>
+      <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-1)" }}>{title}</h2>
     </div>
   );
 }
@@ -628,7 +628,7 @@ export function PresetTile({
         <span style={{ width: 24, height: 30, borderRadius: r, background: "var(--surface-4)", display: "block", transition: "border-radius var(--dur-state-move) var(--ease-in-out)" }}></span>
       </span>
       <span>
-        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{name}</span>
+        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>{name}</span>
         <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>{hint}</span>
       </span>
     </button>

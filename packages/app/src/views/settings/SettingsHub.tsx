@@ -364,7 +364,7 @@ export function SettingsHub({
               style={tall ? { marginTop: "auto" } : undefined}
             />
             <span style={{ minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: "var(--fs-strong)", fontWeight: 600 }}>
+              <span style={{ display: "block", fontSize: "var(--fs-strong)", fontWeight: 400 }}>
                 {t(`settings.tabs.${key}` as TranslationKey)}
               </span>
               <span

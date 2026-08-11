@@ -12,7 +12,7 @@ export function Kbd({ children, style }) {
         background: "var(--surface-3)",
         color: "var(--text-1)",
         fontSize: "var(--fs-caption)",
-        fontWeight: 600,
+        fontWeight: 400,
         fontFamily: "var(--font-ui)",
         lineHeight: 1.4,
         whiteSpace: "nowrap",

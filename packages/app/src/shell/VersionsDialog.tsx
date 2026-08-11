@@ -160,7 +160,7 @@ export function VersionsDialog({
                 color={s.isChosen ? "var(--accent-text)" : "var(--text-2)"}
               />
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 600 }}>
+                <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 400 }}>
                   {providerLabel(s.provider, lang)}
                 </span>
                 <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>

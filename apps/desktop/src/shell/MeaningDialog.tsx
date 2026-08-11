@@ -36,7 +36,7 @@ export function MeaningDialog({
               borderRadius: "var(--r-md)",
               background: "var(--accent-soft)",
               color: "var(--accent-text)",
-              fontWeight: 600,
+              fontWeight: 400,
               lineHeight: 1.5,
             }}
           >

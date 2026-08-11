@@ -276,7 +276,7 @@ export function HomeFeed({
             margin: 0,
             flex: phone ? "none" : 1,
             minWidth: 0,
-            fontWeight: 700,
+            fontWeight: 600,
             fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)",
             letterSpacing: "var(--ls-h1)",
             color: "var(--text-1)",
@@ -342,7 +342,7 @@ export function HomeFeed({
               // а не сырые 34px и не display-шрифт (правило одного
               // display-момента, редизайн 04.08).
               fontSize: "var(--fs-num)",
-              fontWeight: 700,
+              fontWeight: 600,
               letterSpacing: "var(--ls-num)",
               fontVariantNumeric: "tabular-nums",
               lineHeight: 1,
@@ -353,7 +353,7 @@ export function HomeFeed({
             {season.year}
           </span>
           <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 700, color: "var(--text-1)" }}>
+            <span style={{ display: "block", fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>
               {t("views.home.wrappedBanner.title", { year: season.year })}
             </span>
             <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>

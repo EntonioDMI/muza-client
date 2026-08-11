@@ -75,7 +75,7 @@ export function SearchGroupCard({
                 style={{
                   fontFamily: "var(--font-ui)",
                   fontSize: "var(--fs-caption)",
-                  fontWeight: 600,
+                  fontWeight: 400,
                   color: "var(--text-3)",
                   padding: "var(--sp-1) 0 0 var(--sp-2)",
                 }}

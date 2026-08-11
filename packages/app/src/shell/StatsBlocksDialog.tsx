@@ -71,7 +71,7 @@ function Row({ title, hint, children }: { title: string; hint: string; children:
       }}
     >
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{title}</div>
+        <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>{title}</div>
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", marginTop: 2 }}>{hint}</div>
       </div>
       {children}

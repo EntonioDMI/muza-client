@@ -13,7 +13,7 @@ export function Badge({ children, tone = "accent", style }) {
         color: tone === "accent" ? "var(--accent-text)" : "var(--text-2)",
         fontFamily: "var(--font-ui)",
         fontSize: 10,
-        fontWeight: 700,
+        fontWeight: 600,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
         lineHeight: 1.6,

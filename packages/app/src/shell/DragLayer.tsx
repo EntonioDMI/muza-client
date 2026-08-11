@@ -291,7 +291,7 @@ function DragPreview({ state }: { state: DragState }) {
         </span>
       )}
       <span style={{ minWidth: 0 }}>
-        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span style={{ display: "block", fontFamily: "var(--font-ui)", fontSize: "var(--fs-caption)", fontWeight: 400, color: "var(--text-1)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {state.payload.title}
         </span>
         {state.payload.artist ? (

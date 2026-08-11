@@ -520,7 +520,7 @@ export function LibraryView({
             следующую строку должны ОНИ, а не буквы заголовка. С minWidth: 0
             «Твоя медиатека» ужималось до 82px из нужных 150 и наезжало на
             первую кнопку (замер 10.08 на планшете и ноутбуке). */}
-        <h1 style={{ margin: 0, fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)", fontWeight: 700, color: "var(--text-1)", flex: 1 }}>
+        <h1 style={{ margin: 0, fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)", fontWeight: 600, color: "var(--text-1)", flex: 1 }}>
           {t("views.library.title")}
         </h1>
         {canSearch && !phone ? (

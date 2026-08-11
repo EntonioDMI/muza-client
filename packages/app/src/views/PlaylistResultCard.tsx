@@ -99,7 +99,7 @@ export function PlaylistResultCard({
         <div
           style={{
             fontSize: "var(--fs-title)",
-            fontWeight: 700,
+            fontWeight: 600,
             color: "var(--text-1)",
             whiteSpace: "nowrap",
             overflow: "hidden",

@@ -81,7 +81,7 @@ export function ViewCrash({ onRetry, message }: { onRetry: () => void; message: 
         fontFamily: "var(--font-ui, 'Golos Text', sans-serif)",
       }}
     >
-      <div style={{ fontSize: "var(--fs-h3, 20px)", fontWeight: 600 }}>{copy.viewTitle}</div>
+      <div style={{ fontSize: "var(--fs-h3, 20px)", fontWeight: 400 }}>{copy.viewTitle}</div>
       <div style={{ fontSize: "var(--fs-body, 14px)", lineHeight: 1.6, color: "var(--text-2, #b9b7b2)", maxWidth: 420 }}>
         {copy.viewHint}
       </div>
@@ -97,7 +97,7 @@ export function ViewCrash({ onRetry, message }: { onRetry: () => void; message: 
           color: "var(--accent-contrast, #fff)",
           fontFamily: "inherit",
           fontSize: "var(--fs-body, 14px)",
-          fontWeight: 600,
+          fontWeight: 400,
           cursor: "pointer",
         }}
       >
@@ -255,7 +255,7 @@ export class ErrorBoundary extends Component<Props, { broken: boolean; message: 
             color: "var(--accent-contrast, #fff)",
             fontFamily: "inherit",
             fontSize: "var(--fs-body, 14px)",
-            fontWeight: 600,
+            fontWeight: 400,
             cursor: "pointer",
           }}
         >

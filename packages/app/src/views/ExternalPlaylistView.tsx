@@ -125,7 +125,7 @@ export function ExternalPlaylistView({
             style={{
               margin: 0,
               fontSize: "var(--fs-h1)",
-              fontWeight: 700,
+              fontWeight: 600,
               color: "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",

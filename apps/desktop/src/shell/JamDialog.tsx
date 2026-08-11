@@ -95,7 +95,7 @@ export function JamDialog({
                   style={{
                     flex: 1,
                     fontSize: 26,
-                    fontWeight: 700,
+                    fontWeight: 400,
                     letterSpacing: "0.22em",
                     color: "var(--text-1)",
                     background: "var(--surface-3)",

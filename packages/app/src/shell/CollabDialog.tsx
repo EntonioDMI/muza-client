@@ -166,7 +166,7 @@ export function CollabDialog({
                     style={{
                       flex: 1,
                       fontSize: 24,
-                      fontWeight: 700,
+                      fontWeight: 400,
                       letterSpacing: "0.18em",
                       color: "var(--text-1)",
                       background: "var(--surface-3)",

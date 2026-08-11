@@ -47,7 +47,7 @@ function StepPlate({
           style={{
             display: "block",
             fontSize: "var(--fs-body)",
-            fontWeight: 600,
+            fontWeight: 400,
             color: active ? "var(--accent-text)" : "var(--text-1)",
           }}
         >

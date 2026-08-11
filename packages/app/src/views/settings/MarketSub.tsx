@@ -82,7 +82,7 @@ function MarketThemeCard({
         }}
       ></div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{theme.name}</div>
+        <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>{theme.name}</div>
         <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>
           {theme.author} · {t("settings.market.installsCount", { n: theme.installs })}
           {hasCss ? ` · ${t("settings.market.hasCss")}` : ""}
@@ -141,7 +141,7 @@ function MarketPluginCard({
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>{item.name}</span>
+          <span style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>{item.name}</span>
           {item.fullAccess ? (
             <Badge tone="accent" style={{ background: "color-mix(in srgb, var(--danger) 22%, transparent)", color: "var(--danger)" }}>
               {t("settings.extensions.fullAccessBadge")}

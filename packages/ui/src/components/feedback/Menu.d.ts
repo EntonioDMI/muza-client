@@ -17,6 +17,23 @@ export interface MenuProps {
         hint?: string;
       }
     | { header: string }
+    /** Пункт-ползунок: в покое обычная строка, под курсором — шкала с заливкой
+     *  по значению. Для редких ручек (скорость, высота тона), которым не место
+     *  в самой полосе плеера. */
+    | {
+        slider: {
+          icon?: string;
+          label: string;
+          value: number;
+          min: number;
+          max: number;
+          /** Шаг квантования; по умолчанию 1. */
+          step?: number;
+          /** Подпись значения справа («1,25×», «+2»). */
+          format?: (v: number) => string;
+          onChange: (v: number) => void;
+        };
+      }
     | "-"
   >;
   /** Outside click + Escape. */

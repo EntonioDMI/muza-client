@@ -557,7 +557,7 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
                   }}
                 >
                   <Icon name="shield-alert" size={22} color="var(--danger)" />
-                  <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 600, lineHeight: 1.4 }}>
+                  <div style={{ fontSize: "var(--fs-body)", color: "var(--danger)", fontWeight: 400, lineHeight: 1.4 }}>
                     {t("settings.extensions.installDialog.fullAccessWarning", { author: staged.manifest.author })}
                   </div>
                 </div>
@@ -570,7 +570,7 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
               <div style={{ fontSize: "var(--fs-body)", color: "var(--text-2)" }}>{t("settings.extensions.installDialog.noPermissions")}</div>
             ) : (
               <>
-                <div style={{ fontSize: "var(--fs-body)", color: "var(--text-1)", fontWeight: 600 }}>{t("settings.extensions.installDialog.permissionsAsk")}</div>
+                <div style={{ fontSize: "var(--fs-body)", color: "var(--text-1)", fontWeight: 400 }}>{t("settings.extensions.installDialog.permissionsAsk")}</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
                   {staged.manifest.permissions.map((perm) => {
                     const info = PERMISSION_INFO[perm as PluginPermission];

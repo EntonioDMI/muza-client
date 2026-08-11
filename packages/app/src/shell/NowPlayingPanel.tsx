@@ -335,7 +335,7 @@ export function NowPlayingPanel({
           <div
             style={{
               fontSize: "var(--fs-strong)",
-              fontWeight: 600,
+              fontWeight: 400,
               color: "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",

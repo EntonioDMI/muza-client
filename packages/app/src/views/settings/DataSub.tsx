@@ -15,7 +15,7 @@ import { useSettingsScreen } from "./settingsContext";
 function DocBlock({ title, items }: { title: string; items: string[] }) {
   return (
     <div style={{ marginBottom: "var(--sp-4)" }}>
-      <div style={{ fontSize: "var(--fs-body)", fontWeight: 700, color: "var(--text-1)", marginBottom: "var(--sp-2)" }}>
+      <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)", marginBottom: "var(--sp-2)" }}>
         {title}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>

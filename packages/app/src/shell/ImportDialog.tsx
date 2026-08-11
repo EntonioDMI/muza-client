@@ -129,7 +129,7 @@ export function ImportDialog({
           <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
             <Icon name="list-music" size={22} color="var(--accent-text)" />
             <div>
-              <div style={{ fontSize: "var(--fs-body)", fontWeight: 700, color: "var(--text-1)" }}>
+              <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>
                 «{report.playlist.name}»
               </div>
               <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
@@ -139,7 +139,7 @@ export function ImportDialog({
           </div>
           {report.unmatched.length > 0 ? (
             <div>
-              <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-2)", marginBottom: "var(--sp-2)" }}>
+              <div style={{ fontSize: "var(--fs-caption)", fontWeight: 400, color: "var(--text-2)", marginBottom: "var(--sp-2)" }}>
                 {t("dialogs.importPlaylist.notFoundLabel")}
               </div>
               <div style={{ maxHeight: 180, overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 4 }}>
@@ -170,7 +170,7 @@ export function ImportDialog({
               <span
                 style={{
                   fontSize: "var(--fs-caption)",
-                  fontWeight: 600,
+                  fontWeight: 400,
                   color: "var(--text-1)",
                   overflow: "hidden",
                   textOverflow: "ellipsis",

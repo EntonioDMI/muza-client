@@ -226,7 +226,7 @@ export function PlayerBar({
                 display: "block",
                 fontFamily: "var(--font-ui)",
                 fontSize: "var(--fs-body)",
-                fontWeight: 600,
+                fontWeight: 400,
                 color: "var(--text-1)",
                 whiteSpace: "nowrap",
                 overflow: "hidden",

@@ -36,7 +36,7 @@ export function EmptyState({ icon = "music-2", title, hint, action, style }) {
         style={{
           fontFamily: "var(--font-ui)",
           fontSize: 17,
-          fontWeight: 700,
+          fontWeight: 400,
           color: "var(--text-1)",
           textWrap: "balance",
         }}

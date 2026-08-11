@@ -72,7 +72,7 @@ export const DEFAULT_STATS_BLOCKS: readonly StatsBlockKey[] = [
 const panelHead: React.CSSProperties = {
   margin: "0 0 var(--sp-4)",
   fontSize: "var(--fs-title)",
-  fontWeight: 700,
+  fontWeight: 600,
   color: "var(--text-1)",
 };
 
@@ -166,7 +166,7 @@ function BigStat({ value, label, meta, accent }: { value: string; label: string;
         style={{
           fontSize: "var(--fs-num)",
           letterSpacing: "var(--ls-num)",
-          fontWeight: 800,
+          fontWeight: 600,
           lineHeight: 1.1,
           color: accent ? "var(--accent-text)" : "var(--text-1)",
           fontVariantNumeric: "tabular-nums",
@@ -255,7 +255,7 @@ function Hero({ value, suffix, label, accent }: { value: string; suffix?: string
             // одна шкала с остальными цифрами, но заметно крупнее (04.08).
             fontSize: "calc(var(--fs-num) * 1.5)",
             letterSpacing: "var(--ls-num)",
-            fontWeight: 800,
+            fontWeight: 600,
             lineHeight: 1,
             color: accent ? "var(--accent-text)" : "var(--text-1)",
             fontVariantNumeric: "tabular-nums",
@@ -289,7 +289,7 @@ function StatRow({ label, value, accent }: { label: string; value: string; accen
       <span
         style={{
           fontSize: "var(--fs-title)",
-          fontWeight: 700,
+          fontWeight: 600,
           color: accent ? "var(--accent-text)" : "var(--text-1)",
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
@@ -386,7 +386,7 @@ function StatsEmpty({
             акценту можно было бы зацепиться, здесь ещё нет. */}
         <Icon name="sparkles" size={20} color="var(--accent-text)" />
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
-          <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
+          <h2 style={{ margin: 0, fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-1)" }}>
             {t("views.stats.empty.title")}
           </h2>
           <p style={{ margin: 0, fontSize: "var(--fs-body)", color: "var(--text-2)", lineHeight: 1.5 }}>
@@ -412,7 +412,7 @@ function StatsEmpty({
           >
             {blocks.map((key) => (
               <li key={key} style={{ flex: `1 1 ${NARROW_BLOCK_MIN - 60}px`, minWidth: 0 }}>
-                <div style={{ fontSize: "var(--fs-body)", fontWeight: 600, color: "var(--text-1)" }}>
+                <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>
                   {t(`media.statsBlocks.${key}.label`)}
                 </div>
                 <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.4, marginTop: 2 }}>
@@ -671,7 +671,7 @@ export function StatsView({
                       whiteSpace: "nowrap",
                       color: "var(--text-1)",
                       fontSize: "var(--fs-body)",
-                      fontWeight: i === 0 ? 600 : 400,
+                      fontWeight: 400,
                     }}
                   >
                     {a.artist}
@@ -739,7 +739,7 @@ export function StatsView({
                     </div>
                   </div>
                 ) : cur > 0 && cur === rec ? (
-                  <div style={{ marginTop: "var(--sp-4)", fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--accent-text)" }}>
+                  <div style={{ marginTop: "var(--sp-4)", fontSize: "var(--fs-caption)", fontWeight: 400, color: "var(--accent-text)" }}>
                     {t("views.stats.streaks.atRecord")}
                   </div>
                 ) : null}
@@ -870,7 +870,7 @@ export function StatsView({
           style={{
             margin: 0,
             flex: phone ? "none" : 1,
-            fontWeight: 700,
+            fontWeight: 600,
             fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)",
             letterSpacing: "var(--ls-h1)",
             color: "var(--text-1)",

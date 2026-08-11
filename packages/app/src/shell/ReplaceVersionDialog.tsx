@@ -195,7 +195,7 @@ export function ReplaceVersionDialog({
                     style={{
                       display: "block",
                       fontSize: "var(--fs-body)",
-                      fontWeight: 600,
+                      fontWeight: 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -215,7 +215,7 @@ export function ReplaceVersionDialog({
                   >
                     {tr.artist} · {meta}
                     {delta !== 0 ? (
-                      <span style={{ color: "var(--text-2)", fontWeight: 600 }}>
+                      <span style={{ color: "var(--text-2)", fontWeight: 400 }}>
                         {" "}({delta > 0 ? "+" : "−"}{Math.abs(delta)} {t("dialogs.replaceVersion.secondsShort")})
                       </span>
                     ) : null}

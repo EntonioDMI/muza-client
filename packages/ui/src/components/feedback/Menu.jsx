@@ -15,6 +15,136 @@ import { useLayerState } from "../../lib/useLayerState.js";
  *  Закрытие — delayed-unmount: панель остаётся в DOM, пока доигрывает уход.
  *  Механизм общий с диалогом и выпадашкой — lib/useLayerState.js + класс
  *  .muza-layer; здесь его нет ни строчки, только позиционирование и клавиши. */
+/** ПУНКТ-ПОЛЗУНОК: в покое — обычная строка меню, под курсором — шкала.
+ *
+ *  Зачем такой вид (заказ владельца 11.08.2026). Скорость и высота тона жили
+ *  кнопками в полосе плеера и циклили пресеты по клику. Два изъяна: место в
+ *  баре занимала ручка, которую крутят раз в месяц («зачем она в самом
+ *  плеере?»), и добираться до нужного значения приходилось многократными
+ *  нажатиями («менять неудобно»). Здесь и то и другое снято: ряд лежит в меню,
+ *  а значение берётся одним движением.
+ *
+ *  ПОЧЕМУ ЗАЛИВКА ЖИВЁТ ФОНОМ, А НЕ ОТДЕЛЬНОЙ ДОРОЖКОЙ. Дорожка под подписью
+ *  сделала бы ряд вдвое выше и выбила бы его из ритма меню. Заливка — это тот
+ *  же прямоугольник подсветки, только обрезанный по значению: в покое он не
+ *  виден вовсе (как у любого пункта), под курсором проявляется и сразу
+ *  показывает, где ты находишься. Ряд остаётся рядом меню.
+ *
+ *  ⚠️ Клавиатура обязана работать: стрелки двигают значение и НЕ должны уходить
+ *  в обход пунктов меню — иначе фокус убежит с ползунка на первом же шаге. */
+function MenuSlider({ icon, label, value, min, max, step = 1, format, onChange, hovered, onHover }) {
+  const trackRef = useRef(null);
+  const [drag, setDrag] = useState(false);
+  const span = max - min || 1;
+  const ratio = Math.max(0, Math.min(1, (value - min) / span));
+  const active = hovered || drag;
+
+  const quantize = (raw) => {
+    const snapped = Math.round(raw / step) * step;
+    // Хвост двоичной ошибки: шаг 0.5 на длинной протяжке иначе даёт 1.4999997.
+    const fixed = Math.round(snapped * 1000) / 1000;
+    return Math.max(min, Math.min(max, fixed));
+  };
+
+  const setFromEvent = (e) => {
+    const el = trackRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    onChange(quantize(min + p * span));
+  };
+
+  const onKeyDown = (e) => {
+    // Shift — крупный шаг: пройти две октавы по полутону иначе слишком долго.
+    const big = e.shiftKey ? 5 : 1;
+    let next = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") next = value + step * big;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") next = value - step * big;
+    else if (e.key === "Home") next = min;
+    else if (e.key === "End") next = max;
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation(); // обход пунктов меню стрелками не должен красть фокус
+    onChange(quantize(next));
+  };
+
+  return (
+    <div
+      ref={trackRef}
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={format ? format(value) : String(value)}
+      onKeyDown={onKeyDown}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDrag(true);
+        setFromEvent(e);
+      }}
+      onPointerMove={(e) => {
+        if (drag) setFromEvent(e);
+      }}
+      onPointerUp={(e) => {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        setDrag(false);
+      }}
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      onFocus={() => onHover(true)}
+      onBlur={() => onHover(false)}
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--sp-3)",
+        minHeight: 42,
+        padding: "var(--sp-2) var(--sp-3)",
+        borderRadius: "var(--r-xs)",
+        color: active ? "var(--text-1)" : "var(--text-2)",
+        fontFamily: "var(--font-ui)",
+        fontSize: "var(--fs-body)",
+        fontWeight: "var(--fw-medium)",
+        cursor: "ew-resize",
+        userSelect: "none",
+        touchAction: "none",
+        transition: "color var(--dur-state) var(--ease-standard)",
+      }}
+    >
+      {/* Заливка по значению. Под курсором — акцентом, в покое — обычной
+          подсветкой ряда: пункт не должен кричать, пока его не трогают. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: `${ratio * 100}%`,
+          borderRadius: "var(--r-xs)",
+          background: active ? "var(--accent-soft)" : "transparent",
+          transition: "background var(--dur-state) var(--ease-standard)",
+          pointerEvents: "none",
+        }}
+      ></div>
+      {icon ? <Icon name={icon} size={18} style={{ position: "relative" }} /> : null}
+      <span style={{ position: "relative" }}>{label}</span>
+      <span
+        style={{
+          position: "relative",
+          marginLeft: "auto",
+          paddingLeft: "var(--sp-3)",
+          fontSize: "var(--fs-caption)",
+          fontVariantNumeric: "tabular-nums",
+          color: active ? "var(--accent-text)" : "var(--text-3)",
+        }}
+      >
+        {format ? format(value) : value}
+      </span>
+    </div>
+  );
+}
+
 export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   const [hoverIdx, setHoverIdx] = useState(null);
   const panelRef = useRef(null);
@@ -169,7 +299,9 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
         }}
       >
         {items.map((it, i) =>
-          it === "-" ? (
+          it !== "-" && it.slider !== undefined ? (
+            <MenuSlider key={i} {...it.slider} hovered={hoverIdx === i} onHover={(on) => setHoverIdx(on ? i : null)} />
+          ) : it === "-" ? (
             <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--hairline)", margin: "var(--sp-1) var(--sp-2)" }}></div>
           ) : it.header !== undefined ? (
             <div

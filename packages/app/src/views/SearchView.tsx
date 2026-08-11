@@ -528,7 +528,7 @@ export function SearchView({
             margin: 0,
             flex: "none",
             fontSize: "var(--fs-h1)",
-            fontWeight: 700,
+            fontWeight: 600,
             letterSpacing: "var(--ls-h1)",
             lineHeight: "var(--lh-tight)",
             color: "var(--text-1)",
@@ -588,7 +588,7 @@ export function SearchView({
               />
             </div>
           ) : null}
-          <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 700, color: "var(--text-1)" }}>
+          <h2 style={{ margin: "0 0 var(--sp-3)", fontSize: "var(--fs-title)", fontWeight: 600, color: "var(--text-1)" }}>
             {t("views.search.results")}
           </h2>
           {error ? (

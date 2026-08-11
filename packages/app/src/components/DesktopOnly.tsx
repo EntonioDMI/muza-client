@@ -64,7 +64,7 @@ export function DesktopOnlyOverlay({ children, hint }: { children: ReactNode; hi
             maxWidth: 360,
           }}
         >
-          <span style={{ color: "var(--text-1)", fontSize: "var(--fs-body)", fontWeight: 600 }}>
+          <span style={{ color: "var(--text-1)", fontSize: "var(--fs-body)", fontWeight: 400 }}>
             {hint ?? t("web.desktopOnly.defaultHint")}
           </span>
           <a
@@ -80,7 +80,7 @@ export function DesktopOnlyOverlay({ children, hint }: { children: ReactNode; hi
               borderRadius: "var(--r-pill)",
               background: "var(--accent)",
               color: "var(--text-on-accent, #fff)",
-              fontWeight: 600,
+              fontWeight: 400,
               textDecoration: "none",
               whiteSpace: "nowrap",
             }}
@@ -111,7 +111,7 @@ export function DesktopOnly({ children, compact = false }: { children?: ReactNod
           background: "var(--accent-soft)",
           color: "var(--accent-text)",
           fontSize: "var(--fs-caption)",
-          fontWeight: 600,
+          fontWeight: 400,
           whiteSpace: "nowrap",
           textDecoration: "none",
         }}
@@ -148,7 +148,7 @@ export function DesktopOnly({ children, compact = false }: { children?: ReactNod
           borderRadius: "var(--r-pill)",
           background: "var(--accent)",
           color: "var(--text-on-accent, #fff)",
-          fontWeight: 600,
+          fontWeight: 400,
           textDecoration: "none",
           whiteSpace: "nowrap",
         }}

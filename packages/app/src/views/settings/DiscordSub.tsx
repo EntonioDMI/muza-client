@@ -100,7 +100,7 @@ export function DiscordSub() {
           maxWidth: 380,
         }}
       >
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-3)" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-3)" }}>
           {t(btnShown ? "settings.integrations.discord.preview.playingTo" : "settings.integrations.discord.preview.listeningTo")}
         </div>
         <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center" }}>
@@ -125,7 +125,7 @@ export function DiscordSub() {
             </div>
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: "var(--fs-caption)", fontWeight: 600, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: "var(--fs-caption)", fontWeight: 400, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {formatTemplate(prefs.discordLine1, vars) || t("settings.integrations.discord.preview.track")}
             </div>
             <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -156,7 +156,7 @@ export function DiscordSub() {
               alignItems: "center",
               justifyContent: "center",
               fontSize: "var(--fs-caption)",
-              fontWeight: 600,
+              fontWeight: 400,
               color: "var(--text-1)",
             }}
           >

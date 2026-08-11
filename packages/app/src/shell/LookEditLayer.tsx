@@ -243,7 +243,7 @@ export function LookEditLayer({
           background: "var(--accent)",
           color: "var(--text-on-accent)",
           fontSize: "var(--fs-caption)",
-          fontWeight: 600,
+          fontWeight: 400,
           pointerEvents: "none",
         }}
       >
@@ -309,7 +309,7 @@ export function LookEditLayer({
             WebkitBackdropFilter: "blur(var(--blur-glass))",
             color: "var(--text-1)",
             fontSize: "var(--fs-caption)",
-            fontWeight: 600,
+            fontWeight: 400,
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
             pointerEvents: "none",
