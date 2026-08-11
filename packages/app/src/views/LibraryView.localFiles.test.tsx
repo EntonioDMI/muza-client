@@ -32,7 +32,7 @@ function fakePort(over: Partial<LocalFilesPort> = {}): LocalFilesPort {
   return {
     list: () => Promise.resolve([entry()]),
     pickAndScan: () => Promise.resolve(null),
-    scanPaths: () => Promise.resolve([]),
+    scanPaths: () => Promise.resolve({ entries: [], found: 0, truncated: false }),
     resolvePath: () => Promise.resolve(null),
     forget: () => Promise.resolve(),
     serverIds: () => ({}),
@@ -43,21 +43,24 @@ function fakePort(over: Partial<LocalFilesPort> = {}): LocalFilesPort {
 
 const noop = () => undefined;
 
-function renderView(port?: LocalFilesPort) {
+function renderView(
+  port?: LocalFilesPort,
+  opts: { onNotify?: (text: string, icon?: string) => void; canSearch?: boolean } = {},
+) {
   return render(
     <PlatformProvider adapter={port ? { localFiles: port } : {}}>
       <TestMenuProvider>
         <DragLayer>
           <LibraryView
             api={{} as MuzaApi}
-            canSearch
+            canSearch={opts.canSearch ?? true}
             srvPlaylists={[]}
             currentId={null}
             playing={false}
             favoritesCount={0}
             onOpenFavorites={noop}
             onOpenPlaylist={noop}
-            onNotify={noop}
+            onNotify={opts.onNotify ?? noop}
           />
         </DragLayer>
       </TestMenuProvider>
@@ -91,5 +94,43 @@ describe("LibraryView — файлы с диска устройства", () => 
     screen.getByText("Local").click();
 
     await waitFor(() => expect(screen.getByText(/file not on this device/)).toBeTruthy());
+  });
+
+  /** РЕГРЕСС ЖАЛОБЫ 12.08 «локальная библиотека не работает».
+   *
+   *  Сканер отдавал просто массив, и три РАЗНЫХ исхода приходили одинаково
+   *  пустыми. Человек на все три видел «No audio files found» и шёл искать
+   *  музыку в другой папке — даже когда музыка была найдена, но не открылась.
+   *  Тесты сторожат, что каждый исход говорит своё. */
+  describe("итог скана: три исхода, а не один", () => {
+    async function pickFolder(result: Awaited<ReturnType<LocalFilesPort["pickAndScan"]>>) {
+      const notify = vi.fn();
+      renderView(fakePort({ pickAndScan: () => Promise.resolve(result) }), {
+        onNotify: notify,
+        canSearch: false, // регистрация на сервере к этой проверке отношения не имеет
+      });
+      screen.getByText("Local").click();
+      await waitFor(() => expect(screen.getByText("Add folder")).toBeTruthy());
+      screen.getByText("Add folder").click();
+      await waitFor(() => expect(notify).toHaveBeenCalled());
+      return String(notify.mock.calls[0][0]);
+    }
+
+    it("в папке правда нет музыки — так и говорим", async () => {
+      const text = await pickFolder({ entries: [], found: 0, truncated: false });
+      expect(text).toMatch(/No audio files found/);
+    });
+
+    it("файлы есть, но ни один не открылся — это ДРУГОЙ текст", async () => {
+      const text = await pickFolder({ entries: [], found: 7, truncated: false });
+      expect(text).toMatch(/none of them opened/);
+      expect(text).toContain("7");
+      expect(text).not.toMatch(/No audio files found/);
+    });
+
+    it("упёрлись в потолок — говорим, что взяли не всё", async () => {
+      const text = await pickFolder({ entries: [entry()], found: 1, truncated: true });
+      expect(text).toMatch(/There are more in that folder/);
+    });
   });
 });

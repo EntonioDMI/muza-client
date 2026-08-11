@@ -1373,13 +1373,26 @@ function Player({
   const handleFileDropRef = useRef<(paths: string[]) => Promise<void>>(async () => {});
   handleFileDropRef.current = async (paths: string[]) => {
     try {
-      const entries = await localScanPaths(paths);
+      const scanned = await localScanPaths(paths);
+      const entries = scanned.entries;
       if (entries.length === 0) {
-        showToast(t("toast.files.noneFound"), "x");
+        // «файлы есть, но не читаются» — не то же самое, что «музыки нет»:
+        // близнец разводки в LibraryView.addLocal
+        showToast(
+          scanned.found > 0
+            ? t("views.library.filesUnreadable", { count: scanned.found })
+            : t("toast.files.noneFound"),
+          "x",
+        );
         return;
       }
       if (canSearch) await registerLocalTracks(api, entries);
-      showToast(t("toast.files.added", { count: entries.length }), "folder-down");
+      showToast(
+        scanned.truncated
+          ? t("views.library.filesAddedPartial", { count: entries.length })
+          : t("toast.files.added", { count: entries.length }),
+        "folder-down",
+      );
       navigate("library");
     } catch (e) {
       showToast(e instanceof Error ? e.message : t("toast.files.addFailed"), "x");

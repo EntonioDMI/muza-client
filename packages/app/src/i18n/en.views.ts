@@ -123,6 +123,11 @@ export const viewsEn = {
     addFolder: "Add folder",
     noAudioFilesFound: "No audio files found",
     filesAdded: "Added: {count} file(s)",
+    // Three distinct scan outcomes that all showed up as "no audio files found"
+    // before 2026-08-12. What matters to the reader is what to do next: pick a
+    // different folder, convert the files, or add the rest in batches.
+    filesUnreadable: "Found {count} file(s), but none of them opened. Unsupported format, or the files are damaged.",
+    filesAddedPartial: "Added: {count} file(s). There are more in that folder, add the rest as separate folders.",
     addFilesFailed: "Couldn't add the files",
     localFilesHintLocal: "Files stay on this device — only the title and a fingerprint are sent to the server.",
     localFilesHintSynced:

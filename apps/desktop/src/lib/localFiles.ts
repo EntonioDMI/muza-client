@@ -18,6 +18,27 @@ export interface LocalEntry {
   available: boolean;
 }
 
+/** Итог скана: не только удачи. Зеркало LocalScanOut из src-tauri/src/local.rs
+ *  и LocalScanResult из @muza/app — три файла обязаны совпадать по полям. */
+export interface LocalScanResult {
+  entries: LocalEntry[];
+  /** Файлов нашёл обход (до чтения тегов); больше entries.length = столько-то
+   *  не открылись как аудио. */
+  found: number;
+  /** Обход упёрся в потолок — показанное не всё. */
+  truncated: boolean;
+}
+
+/** Расширения для фильтра системного диалога.
+ *
+ *  ⚠️ ЗЕРКАЛО AUDIO_EXT из src-tauri/src/local.rs, а тот — зеркало фич
+ *  symphonia в Cargo.toml. Разошлись — диалог покажет файл, который сканер
+ *  потом отбросит (или того хуже: примет, а движок не сыграет). До 12.08 здесь
+ *  стояли wma и ape, которых движок не декодирует вовсе. */
+const AUDIO_EXTENSIONS = [
+  "mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "webm", "mka",
+];
+
 const SERVER_IDS_KEY = "muza.localServerIds.v1";
 
 /** hash → серверный track_id (заполняется при регистрации на сервере). */
@@ -61,29 +82,29 @@ export async function localForget(hash: string): Promise<void> {
 
 /** Скан готового списка путей (drag-and-drop файлов/папок из проводника —
  *  та же механика, что у диалога, но без диалога). */
-export async function localScanPaths(paths: string[]): Promise<LocalEntry[]> {
-  if (paths.length === 0) return [];
-  return invoke<LocalEntry[]>("local_scan", { paths });
+export async function localScanPaths(paths: string[]): Promise<LocalScanResult> {
+  if (paths.length === 0) return { entries: [], found: 0, truncated: false };
+  return invoke<LocalScanResult>("local_scan", { paths });
 }
 
 /** Диалог выбора аудиофайлов/папки → скан (теги, хэш, реестр, asset-scope).
  *  null — пользователь передумал. `lang` — язык подписей диалога
  *  (потребитель, views/LibraryView.tsx, вне зоны этой правки — без lang
  *  дефолт EN, было RU). */
-export async function localPickAndScan(kind: "files" | "folder", lang: Lang = DEFAULT_LANG): Promise<LocalEntry[] | null> {
+export async function localPickAndScan(kind: "files" | "folder", lang: Lang = DEFAULT_LANG): Promise<LocalScanResult | null> {
   const picked = await open(
     kind === "files"
       ? {
           multiple: true,
           title: translate(lang, "media.localFiles.pickFilesTitle"),
-          filters: [{ name: translate(lang, "media.localFiles.audioFilterName"), extensions: ["mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "aiff", "ape", "webm"] }],
+          filters: [{ name: translate(lang, "media.localFiles.audioFilterName"), extensions: AUDIO_EXTENSIONS }],
         }
       : { directory: true, title: translate(lang, "media.localFiles.pickFolderTitle") },
   );
   if (!picked) return null;
   const paths = Array.isArray(picked) ? picked : [picked];
   if (paths.length === 0) return null;
-  return invoke<LocalEntry[]>("local_scan", { paths });
+  return invoke<LocalScanResult>("local_scan", { paths });
 }
 
 /** Зарегистрировать локальные записи на сервере (теги + хэш) — треки становятся

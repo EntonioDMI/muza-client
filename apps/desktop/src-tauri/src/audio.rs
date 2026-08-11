@@ -170,6 +170,13 @@ struct Shared {
     /// Есть живые маршруты — системный выход молчит: звук идёт только туда,
     /// куда человек его направил. Инвариант прежнего движка.
     taps_active: AtomicBool,
+    /// Почему декодер умер. До 12.08 эта строка уходила в `eprintln!` и не
+    /// доезжала НИКУДА: файл чужого формата или битый давал «успешный»
+    /// native_play, движок молчал, `drained` не выставлялся, конец трека не
+    /// приходил — плеер вставал навсегда, а на экране всё было хорошо.
+    /// Читает native_status, дальше фронт гасит нативный путь и падает на
+    /// прежний движок (nativeEngine.ts).
+    error: Mutex<Option<String>>,
 }
 
 /// Одно дополнительное устройство вывода.
@@ -206,14 +213,26 @@ impl NativeAudio {
     /// вывода, начатый с чужой громкости, отдаёт первый буфер на ней — при
     /// тихом ползунке это удар в уши на старте каждого трека.
     pub fn play(path: &Path, gain: f32) -> Result<Self, String> {
-        let path = path.to_path_buf();
+        // ⚠️ ФАЙЛ ОТКРЫВАЕМ ЗДЕСЬ, а не внутри потока декодера. Открытие — это
+        // единственная проверка, которую можно сделать ДО возврата из этой
+        // функции, и её результат обязан доехать до вызывающего: до 12.08
+        // File::open жил в замыкании, отказ уходил в `eprintln!`, а
+        // `native_play` отвечал `Ok` на несуществующий файл. Фронт к тому
+        // моменту уже заглушил прежний движок — получалась вечная тишина.
+        //
+        // Отказ формата так поймать нельзя (его видит только проба внутри
+        // decode_loop) — он приезжает позже через `shared.error`.
+        let file = File::open(path).map_err(|e| format!("открыть файл: {e}"))?;
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_string());
         Self::start(
             move || {
-                let file = File::open(&path).map_err(|e| format!("открыть файл: {e}"))?;
                 let mss = MediaSourceStream::new(Box::new(file), Default::default());
                 let mut hint = Hint::new();
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    hint.with_extension(ext);
+                if let Some(ext) = ext {
+                    hint.with_extension(&ext);
                 }
                 Ok((mss, hint))
             },
@@ -282,20 +301,33 @@ impl NativeAudio {
             scope: Mutex::new(VecDeque::new()),
             spectrum_prev: Mutex::new(Vec::new()),
             taps_active: AtomicBool::new(false),
+            error: Mutex::new(None),
         });
 
         // Декодер живёт в своём потоке: он спит, когда буфер полон, и не имеет
         // права блокировать колбэк вывода — тот реального времени.
+        // ⚠️ ОШИБКА ДЕКОДЕРА ОБЯЗАНА КУДА-ТО ПРИЕХАТЬ. До 12.08 обе ветки ниже
+        // писали в `eprintln!` — то есть в никуда: у собранного приложения
+        // консоли нет. Файл чужого формата или битый выглядел как удачный
+        // старт, звука не было, `drained` не выставлялся, конец трека не
+        // приходил, и плеер вставал насмерть с бегущей полоской. Теперь
+        // причина ложится в `shared.error`, откуда её забирает native_status.
         let decoder_shared = Arc::clone(&shared);
         std::thread::Builder::new()
             .name("muza-decode".into())
-            .spawn(move || match make_source() {
-                Ok((mss, hint)) => {
-                    if let Err(e) = decode_loop(mss, hint, &decoder_shared) {
-                        eprintln!("[audio] декодирование оборвалось: {e}");
-                    }
+            .spawn(move || {
+                let outcome = match make_source() {
+                    Ok((mss, hint)) => decode_loop(mss, hint, &decoder_shared)
+                        .map_err(|e| format!("декодирование оборвалось: {e}")),
+                    Err(e) => Err(format!("источник не открылся: {e}")),
+                };
+                if let Err(message) = outcome {
+                    eprintln!("[audio] {message}");
+                    *decoder_shared.error.lock().unwrap() = Some(message);
+                    // Иначе фронт ждал бы конца трека, которого не будет:
+                    // сторож замершего звука должен увидеть и конец, и причину.
+                    decoder_shared.drained.store(true, Ordering::Relaxed);
                 }
-                Err(e) => eprintln!("[audio] источник не открылся: {e}"),
             })
             .map_err(|e| format!("поток декодера: {e}"))?;
 
@@ -607,6 +639,11 @@ impl NativeAudio {
     /// Громкость 0..1 (кривую считает вызывающий — она общая с прежним движком).
     pub fn set_volume(&self, gain: f32) {
         self.shared.volume.store(gain.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Почему звука не будет; None — всё в порядке. Заполняет поток декодера.
+    pub fn error(&self) -> Option<String> {
+        self.shared.error.lock().unwrap().clone()
     }
 
     /// Перемотка исполняется потоком декодера — только он владеет читателем.
@@ -1141,6 +1178,13 @@ pub struct NativeStatus {
     position: f64,
     ended: bool,
     playing: bool,
+    /// Причина, по которой звука не будет: формат не поддерживается, файл
+    /// повреждён, поток оборвался. None — всё в порядке.
+    ///
+    /// ⚠️ Это поле — единственный канал, по которому «нативный путь умер»
+    /// доезжает до фронта. Без него отказ выглядел как играющий трек с
+    /// бегущей полоской и без звука (жалоба 12.08).
+    error: Option<String>,
 }
 
 #[tauri::command]
@@ -1292,8 +1336,9 @@ pub fn native_status() -> NativeStatus {
             position: audio.position(),
             ended: audio.ended(),
             playing: true,
+            error: audio.error(),
         },
-        None => NativeStatus { position: 0.0, ended: false, playing: false },
+        None => NativeStatus { position: 0.0, ended: false, playing: false, error: None },
     }
 }
 

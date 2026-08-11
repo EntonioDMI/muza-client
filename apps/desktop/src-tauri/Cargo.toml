@@ -72,7 +72,13 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "s
 # доп. компиляции почти нет
 getrandom = "0.3"
 cpal = "0.16"
-symphonia = { version = "0.6.0", features = ["mkv", "isomp4", "aac", "mp3", "flac", "ogg", "vorbis", "pcm", "wav"] }
+# ⚠️ Список фич ОБЯЗАН покрывать AUDIO_EXT из local.rs. Расходится — файл
+# добавляется в реестр (теги читает lofty, ей фичи symphonia не нужны) и молча
+# не играет: декодера нет. Так было с aiff и m4a-ALAC до 12.08.
+# `aiff` — формат (symphonia-format-riff), `alac` — кодек внутри isomp4/caf.
+# wma и ape не добавить: декодеров для них у symphonia нет вовсе (фича `ape` в
+# symphonia — это ЧТЕНИЕ ТЕГОВ APEv2, а не звук), поэтому их нет и в AUDIO_EXT.
+symphonia = { version = "0.6.0", features = ["mkv", "isomp4", "aac", "mp3", "flac", "ogg", "vorbis", "pcm", "wav", "aiff", "alac"] }
 symphonia-adapter-libopus = "0.3.0"
 rubato = "4.0.0"
 audioadapter-buffers = "4"

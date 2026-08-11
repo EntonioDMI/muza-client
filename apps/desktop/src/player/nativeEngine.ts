@@ -127,6 +127,24 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T | u
   }
 }
 
+/** Вызов команды, отказ которой ЗНАЧИМ. Возвращает null при успехе и причину
+ *  строкой при отказе.
+ *
+ *  ⚠️ ЗАЧЕМ ОТДЕЛЬНЫЙ ХЕЛПЕР. `call()` выше нарочно глотает всё подряд — он для
+ *  команд, чей провал не должен прерывать музыку (громкость, эквалайзер,
+ *  опрос позиции). Через него же до 12.08 шёл и `native_play`, а это команда
+ *  ровно обратной природы: она либо завела звук, либо нет. Её отказ уходил в
+ *  `undefined`, движок объявлял трек играющим — и получалась вечная тишина с
+ *  бегущей полоской. Команды «получилось или нет» обязаны звать ЭТО. */
+async function callStrict(command: string, args?: Record<string, unknown>): Promise<string | null> {
+  try {
+    await invoke(command, args);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e ?? "нет причины");
+  }
+}
+
 /** Список устройств браузера — или null, если его в этой среде нет.
  *
  *  Нужен, чтобы сопоставить выбранное устройство с именем, по которому его
@@ -158,6 +176,9 @@ interface NativeStatus {
   position: number;
   ended: boolean;
   playing: boolean;
+  /** Причина, по которой звука не будет (формат, битый файл, обрыв потока).
+   *  Заполняет поток декодера в Rust; null — всё в порядке. */
+  error: string | null;
 }
 
 export class HybridAudioEngine {
@@ -178,6 +199,13 @@ export class HybridAudioEngine {
   /** Последняя известная позиция нативного пути: команда асинхронна, а
    *  вызывающие position() ждут число немедленно. */
   private lastPosition = 0;
+  /** Что играет нативный путь прямо сейчас — чтобы было чем падать на прежний
+   *  движок, когда декодер умрёт уже после старта. */
+  private lastUrl: string | null = null;
+  private lastNorm = 1;
+  /** Отказ уже обработан: статус опрашивается 4 раза в секунду, и без защёлки
+   *  один мёртвый декодер устроил бы шквал повторных откатов. */
+  private failoverDone = false;
 
   constructor(
     private readonly cb: EngineCallbacks,
@@ -193,11 +221,30 @@ export class HybridAudioEngine {
   private startPolling(): void {
     this.stopPolling();
     this.endedSent = false;
+    this.failoverDone = false;
     this.poll = setInterval(() => {
       void call<NativeStatus>("native_status")
         .then((status) => {
           // Пусто — команда не ответила (окно закрывается, движок остановлен).
           if (!status) return;
+          // Декодер умер уже после старта: формат оказался чужим, файл битым
+          // или поток оборвался. Раньше эта причина существовала только в
+          // `eprintln!` — трек «играл» без звука до конца времён. Один раз на
+          // трек пробуем прежний движок; не вышло — говорим вслух.
+          if (status.error && !this.failoverDone) {
+            this.failoverDone = true;
+            const url = this.lastUrl;
+            const norm = this.lastNorm;
+            const message = status.error;
+            void this.stopNative().then(() => {
+              if (url === null) {
+                this.cb.onError(message);
+                return;
+              }
+              void this.web.play(url, norm, 0).catch(() => this.cb.onError(message));
+            });
+            return;
+          }
           // ⚠️ КОНЕЦ ТРЕКА ПРОВЕРЯЕТСЯ ДО ГВАРДА `playing` (11.08.2026).
           // Раньше `if (!status.playing) return;` стоял ПЕРЕД этой проверкой, и
           // это мина: `playing` на стороне Rust означает всего лишь «движок
@@ -251,6 +298,8 @@ export class HybridAudioEngine {
           this.web.stop();
           this.native = true;
           this.lastPosition = 0;
+          this.lastUrl = url;
+          this.lastNorm = norm;
           if (this.eqBands.length > 0) {
             void call("native_set_eq", { on: this.eqOn, bands: this.eqBands });
           }
@@ -264,12 +313,27 @@ export class HybridAudioEngine {
       if (this.native) await this.stopNative();
       return this.web.play(url, norm, crossfadeSec);
     }
-    // Файл на диске — играем из своего процесса. Прежний движок глушим по той
-    // же причине.
+    // Файл на диске — играем из своего процесса.
+    //
+    // ⚠️ ПОРЯДОК ЗДЕСЬ — ЭТО И ЕСТЬ ИСПРАВЛЕНИЕ (12.08). Раньше строки шли так:
+    // заглушить прежний движок → объявить `native = true` → и только потом
+    // позвать `native_play`, чей результат никто не смотрел. Отказ (файла нет,
+    // формат чужой, устройство занято) оставлял прежний движок выключенным, а
+    // плеер — уверенным, что музыка идёт: полоска бежала, конца трека не
+    // приходило никогда. Теперь сначала спрашиваем Rust, и прежний движок
+    // глушим ТОЛЬКО получив «завелось» — ровно как в ветке живой закачки выше.
+    const failure = await callStrict("native_play", { path, volume: this.gain(), crossfadeSec });
+    if (failure !== null) {
+      if (this.native) await this.stopNative();
+      // Файл на диске прежний движок сыграть умеет: WebView2 открывает
+      // asset-протокол сам. Пусть попробует он — тишина хуже любого движка.
+      return this.web.play(url, norm, crossfadeSec);
+    }
     this.web.stop();
     this.native = true;
     this.lastPosition = 0;
-    await call("native_play", { path, volume: this.gain(), crossfadeSec });
+    this.lastUrl = url;
+    this.lastNorm = norm;
     // Движок только что родился и про настройки не знает — доносим их.
     if (this.eqBands.length > 0) {
       void call("native_set_eq", { on: this.eqOn, bands: this.eqBands });

@@ -430,8 +430,17 @@ export function LibraryView({
     try {
       const scanned = await local.pickAndScan(kind);
       if (scanned === null) return; // передумал
-      if (scanned.length === 0) {
-        onNotify(t("views.library.noAudioFilesFound"), "x");
+      const entries = scanned.entries;
+      if (entries.length === 0) {
+        // Разводим «в папке нечего брать» и «файлы есть, но не читаются»:
+        // во втором случае человеку надо менять формат, а не папку, и старый
+        // общий тост уводил его искать музыку там, где она уже лежала.
+        onNotify(
+          scanned.found > 0
+            ? t("views.library.filesUnreadable", { count: scanned.found })
+            : t("views.library.noAudioFilesFound"),
+          "x",
+        );
         return;
       }
       // серверная сессия: регистрируем теги+хэш — треки попадают в общую
@@ -440,7 +449,7 @@ export function LibraryView({
       // устройство (близнец — registerLocalTracks в apps/desktop/src/lib/
       // localFiles.ts: тем же путём регистрируются файлы, брошенные в окно).
       if (canSearch) {
-        for (const entry of scanned) {
+        for (const entry of entries) {
           try {
             const track = await api.addLocalTrack({
               artist: entry.artist,
@@ -454,7 +463,12 @@ export function LibraryView({
           }
         }
       }
-      onNotify(t("views.library.filesAdded", { count: scanned.length }), "hard-drive");
+      onNotify(
+        scanned.truncated
+          ? t("views.library.filesAddedPartial", { count: entries.length })
+          : t("views.library.filesAdded", { count: entries.length }),
+        "hard-drive",
+      );
       await reloadLocals();
     } catch (e) {
       onNotify(e instanceof Error ? e.message : t("views.library.addFilesFailed"), "x");
