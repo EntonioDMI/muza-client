@@ -33,12 +33,19 @@ export const metadata: Metadata = {
 
 /** `viewportFit: "cover"` явно включает safe-area-inset-* в CSS (уже
  *  используются в globals.css) под чёлкой/home-indicator iPhone.
- *  `themeColor` — тёмный `--bg-0`, красит статус-бар/адресную строку. */
+ *  `themeColor` — тёмный `--bg-0`, красит статус-бар/адресную строку.
+ *
+ *  ⚠️ ЧИСЛО — КОПИЯ ТОКЕНА --bg-0 (packages/ui/src/tokens/colors.css), и
+ *  копией оно быть ОБЯЗАНО: meta-тег читает браузер до всякого CSS, var() тут
+ *  не работает. Значит копия молча расходится — и разошлась: токен уехал на
+ *  #0a0908, а здесь до 11.08.2026 стояло #121110. Панели браузера красились не
+ *  тем цветом, что окно приложения, и стык был виден на телефоне.
+ *  Меняешь --bg-0 — меняй и здесь. */
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#121110",
+  themeColor: "#0a0908",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
