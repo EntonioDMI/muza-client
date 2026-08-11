@@ -146,7 +146,16 @@ function NavItem({
         color: active ? "var(--text-1)" : "var(--nav-fg)",
         fontFamily: "var(--font-ui)",
         fontSize: "var(--fs-body)",
-        fontWeight: active ? "var(--fw-semibold)" : ("var(--fw-medium)" as never),
+        /* ⚠️ ВЕС ВКЛАДКИ НЕ МЕНЯЕТСЯ С СОСТОЯНИЕМ (11.08.2026, жалоба владельца
+           «жирный шрифт в сайдбаре нечёткий, а в настройках ложится идеально»).
+           Причина разницы — материал зоны: <aside> несёт backdrop-filter, и весь
+           её текст растрируется в отдельный композиторский слой; 600-й вес Golos
+           в нём замыливается, тогда как панель настроек фильтра не носит и тот же
+           вес там чистый. Плюс смена веса переверстывала подпись прямо под
+           курсором — вкладка «дёргалась» на переключении.
+           Активность отмечают ТРИ признака и без веса: переезжающая пилюля,
+           залитая акцентная иконка и подъём цвета до --text-1. */
+        fontWeight: "var(--fw-medium)" as never,
         cursor: "pointer",
         textAlign: "left",
         /* Фон и подпись — одним законом: раньше они разъезжались 150/220 мс. */
@@ -546,6 +555,85 @@ export interface SidebarUpdate {
   onInstall: () => void;
 }
 
+/** Строка обновления — ЕДИНСТВЕННОЕ цветное пятно в сайдбаре.
+ *
+ *  Что было не так (владелец, 11.08.2026: «не нравится абсолютно всё»):
+ *  мягкая подложка --accent-soft под подписью --accent-text красила фон и текст
+ *  ОДНИМ тоном с разницей в прозрачность — блок читался размытым пятном, а не
+ *  кнопкой, и вытягивал себя полужирным, который в этой зоне непригоден (см.
+ *  шапку NavItem: под backdrop-filter 600-й вес Golos замыливается). Ещё и
+ *  opacity гасила строку целиком, из-за чего «скачиваем» выглядело как
+ *  сломанная кнопка.
+ *
+ *  Что вместо: заметность даёт СПЛОШНОЙ акцент, а не вес и не размер. Подпись
+ *  идёт по --text-on-accent — токен ровно для контента поверх заливки, его
+ *  контраст замерян (tokens/colors.css), и обычного --fw-medium там хватает с
+ *  запасом. Ни тени, ни свечения, ни градиента — правило материала не нарушено
+ *  (tokens/effects.css), заметность взята одним цветом.
+ *
+ *  Геометрия — ровно вкладочная (NAV_H, --r-sm, --sp-4, иконка 20): строка
+ *  обязана читаться как ПУНКТ панели, вставший рядом с «Настройками», а не как
+ *  баннер, вклеенный снизу. Прежний блок был другой высоты, без иконки и с
+ *  собственными отступами — потому и выпадал из столбца.
+ *
+ *  Две фазы разведены СМЫСЛОМ, а не яркостью: пока идёт загрузка, строка тихая
+ *  (кликать нечего) и крутит ту же «занято»-иконку, что плеер при подготовке
+ *  трека; готовность — это МОМЕНТ, когда строка загорается акцентом. Переход
+ *  между ними и есть то, что ловит глаз. */
+function UpdateRow({ update }: { update: SidebarUpdate }) {
+  const { t } = useT();
+  const ready = update.phase === "ready";
+  return (
+    <button
+      type="button"
+      // Заливка и наведение — каналом CSS (.muza-update в
+      // @muza/ui/interactions.css); там же базовый transition, без которого
+      // .muza-press:active не смог бы сбить длительность нажатия.
+      className={ready ? "muza-update muza-press" : "muza-update"}
+      // Нажать можно только когда установщик уже на диске. Пока он качается,
+      // строка видна, но неактивна: человек знает, что обновление идёт, и не
+      // жмёт впустую.
+      disabled={!ready}
+      onClick={ready ? update.onInstall : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--sp-3)",
+        height: NAV_H,
+        width: "100%",
+        boxSizing: "border-box",
+        marginBottom: NAV_GAP,
+        padding: "0 var(--sp-4)",
+        border: "none",
+        borderRadius: "var(--r-sm)",
+        background: "var(--update-bg)",
+        color: ready ? "var(--text-on-accent)" : "var(--text-3)",
+        fontFamily: "var(--font-ui)",
+        fontSize: "var(--fs-body)",
+        fontWeight: "var(--fw-medium)" as never,
+        textAlign: "left",
+        cursor: ready ? "pointer" : "default",
+      }}
+    >
+      {ready ? (
+        <Icon name="circle-arrow-up" size={20} />
+      ) : (
+        // Тот же глиф и тот же класс, что у «готовлю трек» в полосе плеера:
+        // «занято» в приложении выглядит одинаково везде. Вращение снимается
+        // системным «меньше движения» (animations.css).
+        <span className="muza-spin-icon" style={{ display: "flex" }}>
+          <Icon name="loader-circle" size={20} />
+        </span>
+      )}
+      {/* Версия в подписи может быть какой угодно длины, а панель узкая:
+          строка обязана обрезаться, а не переноситься на второй ряд. */}
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {ready ? t("sidebar.update.ready", { version: update.version }) : t("sidebar.update.downloading")}
+      </span>
+    </button>
+  );
+}
+
 export function Sidebar({
   logoSrc,
   badge,
@@ -794,39 +882,7 @@ export function Sidebar({
       </div>
       <div style={{ marginTop: "auto" }}>
         {onOpenAdmin ? <NavItem icon="shield" label={t("sidebar.admin")} active={adminActive} onClick={onOpenAdmin} /> : null}
-        {update ? (
-          <button
-            type="button"
-            // Нажать можно только когда установщик уже на диске. Пока он
-            // качается, кнопка видна, но неактивна: человек знает, что
-            // обновление идёт, и не жмёт впустую.
-            disabled={update.phase !== "ready"}
-            onClick={update.phase === "ready" ? update.onInstall : undefined}
-            style={{
-              display: "block",
-              width: "100%",
-              marginBottom: "var(--sp-2)",
-              padding: "var(--sp-2) var(--sp-3)",
-              borderRadius: "var(--r-sm)",
-              border: "none",
-              textAlign: "left",
-              // Акцентная заливка: пункт обязан выделяться среди навигации,
-              // иначе обновление так и останется незамеченным.
-              background: "var(--accent-soft)",
-              color: "var(--accent-text)",
-              fontFamily: "var(--font-ui)",
-              fontSize: "var(--fs-body)",
-              fontWeight: "var(--fw-semibold)",
-              cursor: update.phase === "ready" ? "pointer" : "default",
-              opacity: update.phase === "ready" ? 1 : 0.72,
-              transition: "opacity var(--dur-state) var(--ease-standard)",
-            }}
-          >
-            {update.phase === "ready"
-              ? t("sidebar.update.ready", { version: update.version })
-              : t("sidebar.update.downloading")}
-          </button>
-        ) : null}
+        {update ? <UpdateRow update={update} /> : null}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <NavItem icon="settings" label={t("settings.title")} active={settingsActive} onClick={onOpenSettings} />
