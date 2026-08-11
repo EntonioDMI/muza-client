@@ -89,14 +89,26 @@ export function Shelf({ title, action = "Show all", onAction, prevLabel = "Back"
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", ...style }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 var(--sp-1)" }}>
+        {/* ⚠️ ПОДПИСЬ ПОЛКИ — ТИХИЙ КАПС, А НЕ 20px-ЗАГОЛОВОК (11.08.2026).
+            Здесь стоял --fs-title / --fw-bold / --text-1, а HomeFeed рисовал
+            свои секции 13px-капсом третьим тоном. На живом экране они вставали
+            ДРУГ ПОД ДРУГОМ: «Для тебя» читалось служебной подписью, а «В тренде»
+            прямо под ним — заголовком раздела, хотя это один смысловой уровень.
+            Ровно ту ступень иерархии, ради которой делали редизайн 04.08, и
+            ломала эта пара.
+
+            Голос теперь один на всё окно: «ПЛЕЙЛИСТЫ» в сайдбаре, «СЕЙЧАС
+            ИГРАЕТ» в панели, секции ленты и подписи полок. Разницу «витрина
+            против списка» несёт содержимое, а не кегль подписи. */}
         <h2
           style={{
             margin: 0,
             fontFamily: "var(--font-ui)",
-            fontSize: "var(--fs-title)",
-            fontWeight: "var(--fw-bold)",
-            color: "var(--text-1)",
-            letterSpacing: "-0.01em",
+            fontSize: "var(--fs-caption)",
+            fontWeight: "var(--fw-strong)",
+            color: "var(--text-3)",
+            letterSpacing: "var(--ls-caps)",
+            textTransform: "uppercase",
           }}
         >
           {title}

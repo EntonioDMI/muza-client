@@ -35,6 +35,10 @@ export interface FontChoice {
 const TAIL = '"Segoe UI", system-ui, sans-serif';
 
 export const FONT_CHOICES: FontChoice[] = [
+  /* Onest — значение по умолчанию с 11.08.2026 (было "golos"); почему сменили,
+     разобрано в шапке packages/ui/src/tokens/fonts.css. Golos остаётся в
+     списке: у кого он прижился, тот вернёт его одним щелчком. */
+  { key: "onest", label: "Onest", family: `"Onest", ${TAIL}` },
   { key: "golos", label: "Golos Text", family: `"Golos Text", ${TAIL}` },
   { key: "unbounded", label: "Unbounded", family: `"Unbounded", "Golos Text", ${TAIL}` },
   { key: "inter", label: "Inter", family: `"Inter", ${TAIL}` },
@@ -55,7 +59,8 @@ export const FONT_CHOICES: FontChoice[] = [
  *  Тема с ключом "custom" на машине без файла честно падает в Golos. */
 export const CUSTOM_FONT_CHOICE_KEY = "custom";
 
-/** family по ключу; неизвестный ключ (тема из будущей версии) — дефолт Golos. */
+/** family по ключу; неизвестный ключ (тема из будущей версии) — первый в
+ *  реестре, то есть текущий шрифт по умолчанию (с 11.08.2026 — Onest). */
 export function fontFamily(key: string): string {
   if (key === CUSTOM_FONT_CHOICE_KEY) {
     // без загруженного файла family не зарегистрирована — браузер сам

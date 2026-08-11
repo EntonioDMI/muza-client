@@ -486,7 +486,10 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
     // Шрифт и текст: family из реестра prefs/fonts.ts; заголовки и шкала
     // отступов — множителями. При дефолтах переменные не ставятся — работают
     // родные токены ДС.
-    ...(t.fontUi !== "golos" ? { "--font-ui": fontFamily(t.fontUi) } : {}),
+    // "onest" — шрифт по умолчанию с 11.08.2026 (было "golos"): на нём
+    // переменная НЕ ставится, работает родной токен ДС. Ключ обязан совпадать
+    // с DEFAULT_PREFS.fontUi и с первым элементом FONT_CHOICES.
+    ...(t.fontUi !== "onest" ? { "--font-ui": fontFamily(t.fontUi) } : {}),
     ...(t.fontDisplay !== "unbounded" ? { "--font-display": fontFamily(t.fontDisplay) } : {}),
     // ⚠️ Числа дублируют tokens/typography.css и правятся с ним ПАРОЙ: иначе
     // ползунок «Размер заголовков» вернёт дошкальный размер. --fs-greet равен

@@ -145,7 +145,15 @@ export function Tabs({ items, value, onChange, stretch = false, wrap = false, st
               color: selected ? "var(--text-1)" : "var(--text-2)",
               fontFamily: "var(--font-ui)",
               fontSize: "var(--fs-body)",
-              fontWeight: selected ? "var(--fw-semibold)" : "var(--fw-medium)",
+              /* ⚠️ ВЕС НЕ МЕНЯЕТСЯ С ВЫБОРОМ (11.08.2026). Здесь стоял
+                 `selected ? --fw-semibold : --fw-medium`, и это делало две
+                 плохие вещи разом: подпись перевёрстывалась прямо под курсором
+                 (сегмент «дёргался» на переключении) и тяжёлый вес мылился.
+                 Выбор и так отмечен ДВУМЯ признаками — переезжающей пилюлей и
+                 подъёмом цвета до --text-1; вес был третьим, лишним.
+                 После сведения шкалы к двум весам прыжок стал ещё больше
+                 (400 против 600), то есть дефект бы только усилился. */
+              fontWeight: "var(--fw-text)",
               lineHeight: 1,
               cursor: "pointer",
               /* Фон и цвет — ОДНИМ законом. Раньше они разъезжались (150 против

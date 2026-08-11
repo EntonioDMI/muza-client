@@ -2,6 +2,21 @@
    исходной дизайн-системы заменён, начертания те же).
    Golos Text — UI family (Cyrillic-first, designed in Russia).
    Unbounded — display family for brand moments (greeting, karaoke lyrics headliners). */
+/* Onest — ОСНОВНОЙ шрифт интерфейса с 11.08.2026 (был Golos Text).
+   Почему сменили. Golos нарисован «Паратайпом» для Госуслуг: технически он
+   безупречен, кириллица родная, но у русскоязычного человека тянет ассоциацию
+   с государственным порталом, и это ощущение приходит раньше осознания —
+   владелец описал его как «не нравится, но не могу объяснить почему».
+   Плюс замер: у Golos прыжок с 500 на 600 огромный и 600 заплывает, теряя
+   просветы; у Onest лестница весов ровная, а система теперь держит ровно два
+   веса (см. typography.css), и ровность лестницы стала важнее всего.
+   Onest тоже кириллица-first и на 8-10% уже — плотные списки дышат.
+   Golos никуда не делся: он остался в списке сменных ниже. */
+@import "@fontsource/onest/400.css";
+@import "@fontsource/onest/500.css";
+@import "@fontsource/onest/600.css";
+@import "@fontsource/onest/700.css";
+
 @import "@fontsource/golos-text/400.css";
 @import "@fontsource/golos-text/500.css";
 @import "@fontsource/golos-text/600.css";

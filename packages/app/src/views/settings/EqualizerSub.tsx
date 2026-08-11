@@ -74,7 +74,14 @@ function eqBandLabel(hz: number, t: (key: TranslationKey, params?: TParams) => s
 }
 
 /** Цифра дБ со знаком: «+5», «0», «−3» (типографский минус, как на шкале). */
-const dbText = (db: number) => (db > 0 ? `+${db}` : db < 0 ? `−${Math.abs(db)}` : "0");
+const dbText = (db: number) => {
+  // Десятая печатается ТОЛЬКО когда она ненулевая: «+5» вместо «+5.0».
+  // Иначе десять полос в нуле превратились бы в десять «0.0» — шум на ровном
+  // месте, а по умолчанию эквалайзер именно в нуле.
+  const n = Math.round(db * 10) / 10;
+  const body = Number.isInteger(n) ? String(Math.abs(n)) : Math.abs(n).toFixed(1);
+  return n > 0 ? `+${body}` : n < 0 ? `−${body}` : "0";
+};
 
 /** ОДНА ПОЛОСА. Тянется за всю колонку, а не за 24-пиксельную дорожку: цель
  *  шириной с колонку (≈70 px) — это то, ради чего фейдеры вообще ставят в ряд,
@@ -105,21 +112,31 @@ function BandFader({
     if (!el || disabled) return;
     const r = el.getBoundingClientRect();
     const p = Math.max(0, Math.min(1, (r.bottom - e.clientY) / r.height));
-    onChange(Math.round(EQ_MIN + p * (EQ_MAX - EQ_MIN)));
+    // ДЕСЯТЫЕ ДОЛИ дБ (11.08.2026, заказ владельца по мотивам Music Speed
+    // Changer). Целый шаг был крупноват: на узкой полосе разница между +4 и +5
+    // слышна, а попасть в «чуть-чуть» было нечем. Округление обязано остаться:
+    // сырое значение указателя дало бы +4.673829 в подписи и в сохранённых
+    // настройках.
+    onChange(Math.round((EQ_MIN + p * (EQ_MAX - EQ_MIN)) * 10) / 10);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
     let next: number | null = null;
-    if (e.key === "ArrowUp" || e.key === "ArrowRight") next = value + (e.shiftKey ? 3 : 1);
-    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") next = value - (e.shiftKey ? 3 : 1);
+    // Стрелка — десятая доля (точная доводка), Shift+стрелка — целый дБ
+    // (быстрый ход). Раньше было 1 и 3: мелкого шага не существовало вовсе.
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") next = value + (e.shiftKey ? 1 : 0.1);
+    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") next = value - (e.shiftKey ? 1 : 0.1);
     else if (e.key === "Home") next = EQ_MAX;
     else if (e.key === "End") next = EQ_MIN;
     else if (e.key === "0") next = 0;
     if (next === null) return;
     e.preventDefault();
     e.stopPropagation(); // глобальные хоткеи не должны дублировать шаг
-    onChange(Math.max(EQ_MIN, Math.min(EQ_MAX, next)));
+    // ⚠️ Округление до десятой ОБЯЗАТЕЛЬНО и здесь: шаг 0.1 копится двоичной
+    // ошибкой (0.1 + 0.2 = 0.30000000000000004), и через десяток нажатий в
+    // подписи и в сохранённых настройках оказался бы хвост из девяток.
+    onChange(Math.round(Math.max(EQ_MIN, Math.min(EQ_MAX, next)) * 10) / 10);
   };
 
   const p = pct(value);
@@ -187,7 +204,7 @@ function BandFader({
           height: CAP_H,
           lineHeight: `${CAP_H}px`,
           fontSize: "var(--fs-caption)",
-          fontWeight: value === 0 ? 400 : 600,
+          fontWeight: 400,
           fontVariantNumeric: "tabular-nums",
           color: value === 0 ? "var(--text-3)" : "var(--text-1)",
           transition: "color var(--dur-state) var(--ease-standard)",

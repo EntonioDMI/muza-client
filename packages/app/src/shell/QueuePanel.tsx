@@ -154,7 +154,7 @@ function QueueRow<T extends QueueTrack>({
             style={{
               display: "block",
               fontSize: "var(--fs-body)",
-              fontWeight: current ? 600 : 500,
+              fontWeight: 400,
               color: current ? "var(--accent-text)" : "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",
