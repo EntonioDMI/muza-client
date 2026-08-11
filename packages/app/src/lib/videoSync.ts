@@ -37,11 +37,51 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
  *  больше — заметно на губах в кадре. 0.35с с экстраполяцией достаточно. */
 const DRIFT_TOL_SEC = 0.35;
 
+/** Не чаще одной жёсткой перемотки в секунду.
+ *
+ *  ⚠️ ЭТО ЛЕЧЕНИЕ ЗАВИСАНИЯ ПАНЕЛИ (жалоба 12.08: «мини-плеер зависает
+ *  примерно через десять секунд после начала»). Кадр в панели — это УДАЛЁННЫЙ
+ *  googlevideo-URL, и каждая перемотка требует добуферизации. Цикл догона
+ *  крутится 60 раз в секунду; пока перемотка идёт, дрейф не уменьшается, и
+ *  следующий кадр присваивал currentTime заново — отменяя незавершённую
+ *  перемотку и начиная новую. Стоит сети один раз не успеть за реальным
+ *  временем, и выйти из этой петли уже нельзя: перемотка не завершается
+ *  НИКОГДА, кадр застывает навсегда, звук при этом идёт дальше.
+ *  Отсюда же и «примерно через десять секунд»: видео резолвится лениво
+ *  (useTrackVideo), и появляется оно через секунды после старта трека. */
+const SEEK_COOLDOWN_MS = 1000;
+
+/** Столько миллисекунд неподвижного кадра при идущем звуке — и мы признаём,
+ *  что видео не тянет. Ловит застревание НЕЗАВИСИМО от причины: буфер пуст,
+ *  адрес протух, декодер захлебнулся. Пять секунд — заведомо больше любой
+ *  штатной подгрузки и заведомо меньше, чем «человек смотрит на труп». */
+const FROZEN_LIMIT_MS = 5000;
+
+/** Кадру нужно не просто «что-то есть» (readyState 1), а возможность играть
+ *  ВПЕРЁД: HAVE_FUTURE_DATA. Перемотка в непрогруженное место — это ещё одна
+ *  добуферизация поверх той, что уже идёт. */
+const HAVE_FUTURE_DATA = 3;
+
 export function useVideoSync(
   videoRef: RefObject<HTMLVideoElement | null>,
-  opts: { url: string | null; pos: number; playing: boolean; speed: number },
+  opts: {
+    url: string | null;
+    pos: number;
+    playing: boolean;
+    speed: number;
+    /** Видео не тянет: кадр стоит, догон не помогает. Хозяин решает, что
+     *  делать — перерезолвить адрес или показать обложку. Панель ведёт сюда
+     *  тот же обработчик, что и onError элемента. */
+    onStuck?: () => void;
+  },
 ): void {
-  const { url, pos, playing, speed } = opts;
+  const { url, pos, playing, speed, onStuck } = opts;
+  const onStuckRef = useRef(onStuck);
+  onStuckRef.current = onStuck;
+  /** Момент последней жёсткой перемотки — троттл выше. */
+  const lastSeekRef = useRef(0);
+  /** Наблюдение за неподвижностью кадра: время кадра и когда оно менялось. */
+  const frozenRef = useRef({ at: 0, time: -1 });
   // тик pos + момент его прихода: база экстраполяции для rAF ниже.
   // Обновляется ТОЛЬКО на смене значения (мутация в рендере, приём ctxRef):
   // рендер без тика pos не должен сдвигать базу — est занижался бы на
@@ -92,18 +132,52 @@ export function useVideoSync(
     el.playbackRate = speed;
   }, [videoRef, url, speed]);
 
-  /** Одно сравнение «где видео» против «где аудио» с жёсткой перемоткой. */
-  const align = useCallback(() => {
+  /** Одно сравнение «где видео» против «где аудио» с жёсткой перемоткой.
+   *
+   *  Порядок проверок здесь — не стилистика, а условие невозвращения к
+   *  зависанию: сначала убеждаемся, что кадр вообще жив, потом — что прошлая
+   *  перемотка закончилась, и только потом трогаем время. */
+  const align = useCallback((force = false) => {
     const el = videoRef.current;
     if (!el) return;
+    const now = performance.now();
     const { pos: base, atMs } = posRef.current;
-    const est = playingRef.current
-      ? base + ((performance.now() - atMs) / 1000) * speedRef.current
-      : base;
-    // readyState 0 — src ещё не открылся, currentTime трогать рано
-    if (el.readyState > 0 && Math.abs(el.currentTime - est) > DRIFT_TOL_SEC) {
-      el.currentTime = Math.max(0, est);
+    const est = playingRef.current ? base + ((now - atMs) / 1000) * speedRef.current : base;
+
+    // РАЗОВОЕ ВЫРАВНИВАНИЕ после перемотки ползунком — это НЕ догон. Человек
+    // выразил намерение один раз, и ни троттл, ни готовность буфера к нему не
+    // относятся: ждать секунду после клика по полосе — это лаг, а не защита.
+    if (force) {
+      if (el.readyState > 0 && Math.abs(el.currentTime - est) > DRIFT_TOL_SEC) {
+        lastSeekRef.current = now;
+        el.currentTime = Math.max(0, est);
+      }
+      return;
     }
+
+    // 1. Кадр стоит, пока звук идёт. Это и есть наблюдаемое «зависло»: причина
+    //    неважна (пустой буфер, протухший адрес, захлебнувшийся декодер),
+    //    важен факт. Догон тут бессилен — зовём хозяина.
+    if (el.currentTime !== frozenRef.current.time) {
+      frozenRef.current = { at: now, time: el.currentTime };
+    } else if (playingRef.current && now - frozenRef.current.at > FROZEN_LIMIT_MS) {
+      frozenRef.current = { at: now, time: el.currentTime }; // отсчёт заново — иначе позовём каждый кадр
+      onStuckRef.current?.();
+      return;
+    }
+
+    // 2. Перемотка ещё в полёте. Присвоить currentTime сейчас — значит
+    //    ОТМЕНИТЬ её и начать новую; на 60 кадрах в секунду она не завершится
+    //    никогда. Ровно этой строки не хватало до 12.08.
+    if (el.seeking) return;
+    // 3. Играть вперёд нечем — перемотка только добавит подгрузки.
+    if (el.readyState < HAVE_FUTURE_DATA) return;
+
+    if (Math.abs(el.currentTime - est) <= DRIFT_TOL_SEC) return;
+    // 4. Троттл: одна жёсткая перемотка в секунду, а не шестьдесят.
+    if (now - lastSeekRef.current < SEEK_COOLDOWN_MS) return;
+    lastSeekRef.current = now;
+    el.currentTime = Math.max(0, est);
   }, [videoRef]);
 
   // Догон — 60 раз в секунду, но ТОЛЬКО пока идёт звук: на паузе часы аудио
@@ -127,6 +201,6 @@ export function useVideoSync(
   // кадры для этого не нужны.
   useEffect(() => {
     if (!videoRef.current || !url || playing) return;
-    align();
+    align(true);
   }, [videoRef, url, playing, pos, align]);
 }

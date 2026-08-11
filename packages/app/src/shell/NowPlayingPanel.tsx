@@ -182,7 +182,18 @@ export function NowPlayingPanel({
   // «Окна не видно» приходит сюда тем же входом, что и пауза: для хука это
   // одно и то же — снять кадр с видеодекодера (он стоит денег, даже когда
   // картинку физически некому показать) и не гнаться за часами аудио.
-  useVideoSync(videoRef, { url: videoUrl, pos, playing: playing && windowVisible, speed });
+  // onStuck ведём в ТОТ ЖЕ обработчик, что и onError элемента: «кадр застыл» и
+  // «кадр не открылся» лечатся одинаково — перерезолвом адреса, а на второй
+  // раз хук отдачи видео сдаётся и панель показывает обложку (useTrackVideo).
+  // Отдельная ветка не нужна, а без onStuck зависший кадр не лечился ВООБЩЕ:
+  // <video> в этом случае не поднимает ни одного события (жалоба 12.08).
+  useVideoSync(videoRef, {
+    url: videoUrl,
+    pos,
+    playing: playing && windowVisible,
+    speed,
+    onStuck: onVideoError,
+  });
   const zoneStyle: React.CSSProperties = {
     display: "flex",
     flexDirection: "column",

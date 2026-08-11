@@ -11,7 +11,7 @@ let rafCb: FrameRequestCallback | null = null;
 
 const fakeVideo = (over: Partial<HTMLVideoElement> = {}): HTMLVideoElement =>
   ({
-    readyState: 1,
+    readyState: 3,
     currentTime: 0,
     playbackRate: 1,
     paused: false,
@@ -132,6 +132,148 @@ describe("useVideoSync: дрейф-математика", () => {
     tick();
 
     expect(video.currentTime).toBe(0); // трогать currentTime рано — readyState 0
+  });
+});
+
+/** РЕГРЕСС 12.08: панель «Сейчас играет» зависала на кадре.
+ *
+ *  Жалоба владельца (3 из семи): «иногда мини-плеер зависает на определённом
+ *  моменте, примерно через десять секунд после начала». На скриншоте — не
+ *  обложка, а застывший кадр ВИДЕО.
+ *
+ *  Механизм самоподдерживающийся. Кадр в панели — удалённый googlevideo-URL,
+ *  любая перемотка требует добуферизации. Догон крутился 60 раз в секунду и НЕ
+ *  проверял, закончилась ли предыдущая перемотка: пока она шла, дрейф не
+ *  уменьшался, и следующий же кадр присваивал currentTime заново — отменяя
+ *  незавершённую перемотку и начиная новую. Стоило сети один раз не успеть за
+ *  реальным временем — и выйти из петли было уже нельзя.
+ *
+ *  «Примерно через десять секунд» объясняется ленивым резолвом видео
+ *  (useTrackVideo): кадр появляется через секунды после старта трека, и
+ *  зависать раньше ему просто нечем. */
+describe("useVideoSync: не устраивать шторм перемоток", () => {
+  it("перемотка ещё в полёте — currentTime не трогаем ВООБЩЕ", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    // seeking=true — браузер ещё догружает предыдущую цель.
+    const video = fakeVideo({ currentTime: 10, seeking: true });
+
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 10, playing: true, speed: 1 }));
+
+    now.mockReturnValue(1_000 + 5_000); // дрейф огромный
+    tick();
+
+    // Именно этой строки не хватало: присвоение здесь отменяло бы перемотку
+    // и запускало новую — на 60 кадрах в секунду навсегда.
+    expect(video.currentTime).toBe(10);
+  });
+
+  it("буфер не тянет вперёд (readyState 2) — перемотка только добавила бы подгрузки", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    const video = fakeVideo({ currentTime: 10, readyState: 2 });
+
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 10, playing: true, speed: 1 }));
+
+    now.mockReturnValue(1_000 + 5_000);
+    tick();
+
+    expect(video.currentTime).toBe(10);
+  });
+
+  it("троттл: подряд идущие кадры дают ОДНУ перемотку, а не шестьдесят", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(10_000);
+    const video = fakeVideo({ currentTime: 10 });
+
+    renderHook(() => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 10, playing: true, speed: 1 }));
+
+    now.mockReturnValue(10_000 + 1_000); // дрейф 1с — перематываем
+    tick();
+    expect(video.currentTime).toBeCloseTo(11);
+
+    // Следующие кадры внутри той же секунды: видео «не доехало», дрейф прежний.
+    video.currentTime = 10;
+    now.mockReturnValue(10_000 + 1_100);
+    tick();
+    now.mockReturnValue(10_000 + 1_500);
+    tick();
+    expect(video.currentTime).toBe(10); // ни одной новой перемотки
+
+    // Секунда прошла — коррекция снова разрешена.
+    now.mockReturnValue(10_000 + 2_100);
+    tick();
+    expect(video.currentTime).toBeCloseTo(12.1);
+  });
+
+  it("перемотка ползунком на паузе не ждёт троттла: это намерение, а не догон", () => {
+    vi.spyOn(performance, "now").mockReturnValue(20_000);
+    const video = fakeVideo({ currentTime: 10 });
+
+    const { rerender } = renderHook(
+      ({ pos }) => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos, playing: false, speed: 1 }),
+      { initialProps: { pos: 10 } },
+    );
+
+    rerender({ pos: 90 });
+    expect(video.currentTime).toBe(90);
+    // И сразу ещё раз — троттл к ручной перемотке отношения не имеет.
+    rerender({ pos: 150 });
+    expect(video.currentTime).toBe(150);
+  });
+});
+
+describe("useVideoSync: кадр застыл — зовём хозяина", () => {
+  it("звук идёт, кадр не двигается дольше пяти секунд — onStuck", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    // Ровно наблюдаемая картина зависания: перемотка не завершается,
+    // currentTime стоит на цели, звук при этом идёт.
+    const video = fakeVideo({ currentTime: 42, seeking: true });
+    const onStuck = vi.fn();
+
+    renderHook(() =>
+      useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 42, playing: true, speed: 1, onStuck }),
+    );
+
+    tick(); // первый кадр — запоминаем время кадра
+    expect(onStuck).not.toHaveBeenCalled();
+
+    now.mockReturnValue(1_000 + 6_000);
+    tick();
+
+    expect(onStuck).toHaveBeenCalledTimes(1);
+  });
+
+  it("кадр движется — не жалуемся, сколько бы ни шло время", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    const video = fakeVideo({ currentTime: 10 });
+    const onStuck = vi.fn();
+
+    renderHook(() =>
+      useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 10, playing: true, speed: 1, onStuck }),
+    );
+
+    for (let i = 1; i <= 10; i++) {
+      video.currentTime = 10 + i; // видео честно играет
+      now.mockReturnValue(1_000 + i * 1_000);
+      tick();
+    }
+
+    expect(onStuck).not.toHaveBeenCalled();
+  });
+
+  it("на паузе неподвижный кадр — это норма, а не поломка", () => {
+    const now = vi.spyOn(performance, "now").mockReturnValue(1_000);
+    const video = fakeVideo({ currentTime: 10 });
+    const onStuck = vi.fn();
+
+    // playing=false: rAF-цикла нет вовсе, но и разовое выравнивание не должно
+    // принять стоящий кадр за зависание.
+    const { rerender } = renderHook(
+      ({ pos }) => useVideoSync({ current: video }, { url: "http://x/a.mp4", pos, playing: false, speed: 1, onStuck }),
+      { initialProps: { pos: 10 } },
+    );
+    now.mockReturnValue(1_000 + 60_000);
+    rerender({ pos: 10 });
+
+    expect(onStuck).not.toHaveBeenCalled();
   });
 });
 
