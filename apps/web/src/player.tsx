@@ -13,7 +13,15 @@ import type { Track } from "@muza/api-client";
 import { useT } from "@muza/app";
 import { DEFAULT_PLAYER_STATE, loadPlayerState, PLAYER_STATE_KEY, savePlayerState } from "@muza/app/lib/playerState";
 import { getApi } from "./api";
-import { ensureChain, eqAttached, normFactor, setEqBands, setSlotLevel } from "./audioFx";
+import {
+  chainAsleep,
+  ensureChain,
+  eqAttached,
+  normFactor,
+  resumeChain,
+  setEqBands,
+  setSlotLevel,
+} from "./audioFx";
 import { usePrefs } from "./prefs";
 
 /** Веб-плеер (Stage 8): `<audio>` поверх серверного резолвера.
@@ -121,6 +129,9 @@ const GAPLESS_LEAD_SEC = 0.15;
 /** Шаг наблюдения за концом трека. timeupdate тикает ~4 Гц — для перехода
  *  без паузы это на порядок грубее нужного. */
 const TICK_MS = 40;
+/** Шаг сторожа немого звука. Две секунды — заметно быстрее, чем человек успеет
+ *  потянуться к кнопке, и достаточно редко, чтобы ничего не стоить. */
+const WATCHDOG_MS = 2000;
 /** Не чаще одного прогрева очереди в секунду: лавина запросов на длинном
  *  «сколько треков наготове» никому не помогает. */
 const WARM_GAP_MS = 1000;
@@ -504,6 +515,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       try {
         const url = await streamUrl(track.id);
         if (loadSeqRef.current !== seq) return; // старт уже не наш — молча уходим
+        // Сюда приходит и автопереход по концу трека (ended → setIndex), а он
+        // жестом не является — см. resumeChain в advanceWithFade.
+        resumeChain();
         const list = slots();
         const idle = list[1 - activeRef.current];
         let slot = list[activeRef.current];
@@ -589,6 +603,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const list = slots();
+      // Автопереход — не жест, и цепь Web Audio его не замечает: ensureChain
+      // зовут только тумблер эквалайзера и клик по треку. Уснувший контекст
+      // (смена устройства вывода, прерывание в Safari, выгрузка вкладки) даёт
+      // ровно жалобу 12.08 — полоска идёт, звука нет. Будим сами.
+      resumeChain();
       const inSlot = list[1 - activeRef.current];
       if (inSlot.url !== url) {
         inSlot.url = url;
@@ -727,6 +746,42 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const iv = setInterval(tick, TICK_MS);
     return () => clearInterval(iv);
   }, [playing, tick]);
+
+  /** СТОРОЖ НЕМОГО ЗВУКА (жалоба 12.08: «при автоматическом воспроизведении
+   *  следующего трека полоска прогресса идёт, но сам звук отсутствует;
+   *  помогает повторное нажатие на кнопку воспроизведения»).
+   *
+   *  У приложения такой сторож есть с 06.08 (usePlayback.ts), у веба не было
+   *  ни одного — и это главная причина, по которой жалоба живёт: элемент
+   *  честно играет и шлёт timeupdate, поэтому НИКТО в плеере не считает
+   *  происходящее поломкой. Наружу это не всплывает вообще: отказы play() на
+   *  автопереходе гасятся молча (advanceWithFade и loadTrack).
+   *
+   *  Сторож проверяет не звук (измерить его без цепи нечем), а ДВА инварианта,
+   *  нарушение которых и означает тишину при идущей полоске:
+   *   1) цепь Web Audio не спит — после createMediaElementSource весь звук
+   *      идёт через граф, и уснувший контекст глушит оба слота разом;
+   *   2) у активного слота ненулевой уровень — если фейд не доработал до
+   *      конца, слот остаётся с fade=0 и играет в тишину.
+   *  Оба чинятся на месте, ровно тем же, что делает повторное нажатие play. */
+  useEffect(() => {
+    if (!playing) return;
+    const iv = setInterval(() => {
+      const list = slotsRef.current;
+      if (list.length === 0) return;
+      const act = list[activeRef.current];
+      if (act.el.paused || !act.el.src) return; // не играем — стеречь нечего
+      if (chainAsleep()) resumeChain();
+      // Ноль посреди кроссфейда — норма: слот только вступает. Не мешаем.
+      if (fadeTimerRef.current !== null) return;
+      // Фейда нет, а слот не на полном уровне — значит кривая не доработала.
+      if (act.fade !== 1) act.fade = 1;
+      // Переустанавливаем уровень безусловно: операция идемпотентная, а
+      // проверять «не сбился ли гейн» дороже, чем просто выставить его.
+      applyLevel(act);
+    }, WATCHDOG_MS);
+    return () => clearInterval(iv);
+  }, [playing, applyLevel]);
 
   // позиция должна пережить закрытие вкладки — дописываем на выгрузке
   useEffect(() => {

@@ -139,3 +139,25 @@ export function setEqBands(bands: number[], on: boolean): void {
 export function eqAttached(): boolean {
   return gains.size > 0;
 }
+
+/** Спит ли цепь. true — контекст есть, но не в состоянии `running`, и тогда
+ *  МОЛЧАТ ОБА СЛОТА: после createMediaElementSource звук элемента идёт только
+ *  через граф, мимо колонок. Цепи нет вовсе — false: там уровень несёт
+ *  el.volume, и усыпить нечего. */
+export function chainAsleep(): boolean {
+  return ctx !== null && ctx.state !== "running";
+}
+
+/** Разбудить цепь.
+ *
+ *  ⚠️ ЗАЧЕМ ОТДЕЛЬНАЯ ФУНКЦИЯ, если resume() уже есть внутри ensureChain.
+ *  ensureChain зовут ровно два места, и оба — про ЖЕСТ человека: тумблер
+ *  эквалайзера и клик по треку. Автопереход на следующий трек жестом не
+ *  является и не звал НИКОГО — а контекст к этому моменту мог уснуть
+ *  (переключение устройства вывода, прерывание в Safari/iOS, выгрузка вкладки
+ *  из памяти). Получалась ровно жалоба 12.08: полоска идёт, звука нет, лечится
+ *  повторным нажатием play — то есть жестом, который наконец звал resume.
+ *  Разблокировка контексту уже не нужна: первый жест в сессии её выдал. */
+export function resumeChain(): void {
+  if (ctx && ctx.state !== "running") void ctx.resume().catch(() => undefined);
+}

@@ -540,6 +540,82 @@ describe("Переход без паузы", () => {
   });
 });
 
+/** РЕГРЕСС 12.08: «полоска идёт, звука нет».
+ *
+ *  Жалоба владельца (4 из семи): «в веб-версии при автоматическом
+ *  воспроизведении следующего трека полоска прогресса идёт, но сам звук
+ *  отсутствует; помогает повторное нажатие на кнопку воспроизведения».
+ *
+ *  Почему это не ловилось ничем: элемент честно играет и шлёт timeupdate, так
+ *  что для плеера всё в порядке — поломкой происходящее не считает НИКТО.
+ *  Отказы play() на автопереходе гасятся молча (advanceWithFade, loadTrack), а
+ *  сторожа мёртвого звука у веба не было ни одного (у приложения он с 06.08,
+ *  usePlayback.ts). Что именно обнулило звук — уснувший AudioContext или
+ *  недоработавшая кривая фейда, — в проде не различить, и сторож нарочно чинит
+ *  ОБА инварианта, а не угадывает причину.
+ *
+ *  Проверяем наблюдаемое: уровень активного слота вернулся сам, без участия
+ *  человека. */
+describe("Сторож немого звука", () => {
+  it("уровень активного слота обнулился на ходу — возвращается сам", async () => {
+    await mount({ crossfade: false, gapless: false, warmAhead: 0, preloadAheadSec: 0 });
+    await play([track("a"), track("b")], 0);
+    expect(slot(0).volume).toBeCloseTo(VOL, 3);
+
+    // Ровно наблюдаемая картина жалобы: элемент играет, полоска идёт, звука нет.
+    slot(0).volume = 0;
+    await tickTo(slot(0), 12);
+    expect(slot(0).volume).toBe(0); // сам по себе не чинится
+
+    await wait(2000); // шаг сторожа
+
+    expect(slot(0).volume).toBeCloseTo(VOL, 3);
+    expect(slot(0).paused).toBe(false); // и чинит уровень, а не перезапускает трек
+  });
+
+  it("немота человека сторож не отменяет", async () => {
+    await mount({ crossfade: false, gapless: false, warmAhead: 0, preloadAheadSec: 0 });
+    await play([track("a")], 0);
+
+    await act(async () => {
+      ctl.player.toggleMute();
+    });
+    expect(slot(0).volume).toBe(0);
+
+    await wait(4000);
+
+    // Сторож обязан отличать поломку от намерения.
+    expect(slot(0).volume).toBe(0);
+  });
+
+  it("в середине кроссфейда сторож молчит — там ноль это норма", async () => {
+    await mount({ crossfade: true, crossfadeSec: 6, warmAhead: 0, preloadAheadSec: 0 });
+    await play([track("a"), track("b")], 0);
+
+    await tickTo(slot(0), 195); // пошёл шестисекундный фейд
+    await wait(3000); // середина: оба слота по равной мощности
+
+    // Если бы сторож вмешался, вступающий слот прыгнул бы на полный уровень
+    // и стык щёлкнул бы.
+    expect(slot(1).volume).toBeCloseTo(VOL * Math.SQRT1_2, 2);
+    expect(slot(0).volume).toBeCloseTo(VOL * Math.SQRT1_2, 2);
+  });
+
+  it("на паузе сторож не работает", async () => {
+    await mount({ crossfade: false, gapless: false, warmAhead: 0, preloadAheadSec: 0 });
+    await play([track("a")], 0);
+
+    await act(async () => {
+      ctl.player.toggle(); // пауза
+    });
+    slot(0).volume = 0;
+
+    await wait(4000);
+
+    expect(slot(0).volume).toBe(0); // стеречь нечего — музыка не идёт
+  });
+});
+
 describe("Выравнивание громкости", () => {
   it("множитель трека умножает уровень слота", async () => {
     await mount({ normalize: true });
