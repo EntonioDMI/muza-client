@@ -1742,11 +1742,13 @@ export class HttpMuzaApi implements MuzaApi {
     kind?: string;
     appVersion?: string;
     limit?: number;
+    includeDev?: boolean;
   }): Promise<AdminErrors> {
     const params = new URLSearchParams({ days: String(opts?.days ?? 7) });
     if (opts?.kind) params.set("kind", opts.kind);
     if (opts?.appVersion) params.set("app_version", opts.appVersion);
     if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    if (opts?.includeDev) params.set("include_dev", "1");
     const e = await this.authedRequest<{
       days: number;
       limit?: number;
@@ -1785,10 +1787,15 @@ export class HttpMuzaApi implements MuzaApi {
     };
   }
 
-  async clearAdminErrors(opts?: { kind?: string; appVersion?: string }): Promise<{ deleted: number }> {
+  async clearAdminErrors(opts?: {
+    kind?: string;
+    appVersion?: string;
+    includeDev?: boolean;
+  }): Promise<{ deleted: number }> {
     const params = new URLSearchParams();
     if (opts?.kind) params.set("kind", opts.kind);
     if (opts?.appVersion) params.set("app_version", opts.appVersion);
+    if (opts?.includeDev) params.set("include_dev", "1");
     const q = params.toString();
     return this.authedRequest<{ deleted: number }>(`/admin/errors${q ? `?${q}` : ""}`, { method: "DELETE" });
   }

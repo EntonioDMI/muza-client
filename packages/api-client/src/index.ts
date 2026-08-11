@@ -373,9 +373,15 @@ export interface MuzaApi {
     kind?: string;
     appVersion?: string;
     limit?: number;
+    /** Показать сборки разработки (версия с суффиксом `-dev`). По умолчанию их
+     *  нет: клиент помечает dev-сборку сам, а вкладка про неё не знает, пока не
+     *  попросят. Разбор — docs/notes/2026-08-11-разбор-ошибок-на-проде.md. */
+    includeDev?: boolean;
   }): Promise<AdminErrors>;
-  /** Очистка ошибок под текущими фильтрами (без фильтров = все). Возврат — сколько удалено. */
-  clearAdminErrors(opts?: { kind?: string; appVersion?: string }): Promise<{ deleted: number }>;
+  /** Очистка ошибок под текущими фильтрами (без фильтров = все). Возврат — сколько удалено.
+   *  `includeDev` обязан совпадать с тем, что показывает вкладка: кнопка чистит
+   *  ровно видимое, а не заодно и скрытое. */
+  clearAdminErrors(opts?: { kind?: string; appVersion?: string; includeDev?: boolean }): Promise<{ deleted: number }>;
   /** Удаление одной группы ошибок по stackHash. */
   deleteAdminErrorGroup(stackHash: string): Promise<{ deleted: number }>;
 }

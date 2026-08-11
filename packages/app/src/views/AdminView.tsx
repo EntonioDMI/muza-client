@@ -78,10 +78,26 @@ const STAT_MIN_W = 150;
 const COL_NUM = 92;
 /** Число с длинной подписью: «Прослушиваний (30д)», «Скачиваний». */
 const COL_NUM_WIDE = 116;
-/** Дата вида «10.07, 03:00». */
-const COL_DATE = 104;
-/** Ник, автор, имя релиза — обрезается многоточием, длина некритична. */
-const COL_NAME = 104;
+/** Дата вида «10.07, 03:00».
+ *
+ *  ⚠️ ЗАМЕР, А НЕ ГЛАЗОМЕР (11.08.2026, жалоба владельца «данные обрезаются,
+ *  вижу только часть»). Было 104px — при полях ячейки 2×--sp-3 это 80px под
+ *  содержимое, тогда как сама строка «21.07, 12:34» в Golos Text 15px с
+ *  tabular-nums занимает 93.3px (замерено canvas.measureText по реальному
+ *  файлу шрифта). Колонка была уже своего содержимого НА ЛЮБОМ окне, и дата
+ *  обрезалась многоточием всегда, а не только на минимальном.
+ *
+ *  128px = 93.3 + 24 поля + 10 запаса. Запас нужен: длина строки фиксирована
+ *  (tabular-nums), но локаль может дать другой разделитель.
+ *
+ *  ⚠️ Растянуть колонку на широком окне НЕЛЬЗЯ: раскладка фиксированная, весь
+ *  излишек уходит единственной колонке БЕЗ ширины (ник, имя плейлиста). Поэтому
+ *  ширина обязана быть верной сама по себе, а не «дотянуться потом». */
+const COL_DATE = 128;
+/** Ник, автор, имя релиза — обрезается многоточием, длина некритична.
+ *  96, а не 104: 8px отданы дате в таблице публикаций, где сумма ближе всего
+ *  к потолку поля (сторож — AdminView.layout.test.tsx). */
+const COL_NAME = 96;
 /** Колонка действия строки: круглая кнопка (36px) плюс поля ячейки; ширина
  *  задана подписью шапки «Действие», а не кнопкой. */
 const COL_ACTION = 84;
@@ -1193,6 +1209,15 @@ export function UsersTab({ api }: { api: MuzaApi }) {
   );
 }
 
+/** Сборка разработки: клиент метит её суффиксом версии (useErrorTelemetry.ts).
+ *
+ *  Отдельного переключателя «показать разработку» НЕТ намеренно. Версии и так
+ *  стоят строкой фильтров («0.2.2 · 12», «0.2.2-dev · 41»), и выбор dev-версии
+ *  сам по себе значит «покажи разработку» — второй контрол про то же самое был
+ *  бы лишним вопросом. Пока выбрано «Все», вкладка говорит только про релизы:
+ *  ровно этого от неё и ждут (разбор — docs/notes/2026-08-11-разбор-ошибок-на-проде.md). */
+const isDevVersion = (v: string) => v.endsWith("-dev");
+
 /** Окно диапазона (кусок C): один контрол на вкладки «Рост» и «Ошибки». */
 function DaysTabs({ value, onChange, busy = false }: { value: number; onChange: (d: number) => void; busy?: boolean }) {
   const { t } = useT();
@@ -1433,10 +1458,17 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
         days,
         kind: kind === "all" ? undefined : kind,
         appVersion: appVersion === "all" ? undefined : appVersion,
+        includeDev: isDevVersion(appVersion),
       }),
     [api, days, kind, appVersion, reload],
   );
-  const filterArg = { kind: kind === "all" ? undefined : kind, appVersion: appVersion === "all" ? undefined : appVersion };
+  const filterArg = {
+    kind: kind === "all" ? undefined : kind,
+    appVersion: appVersion === "all" ? undefined : appVersion,
+    // «Очистить» чистит ровно то, что вкладка показывает: без этого кнопка на
+    // релизном виде снесла бы заодно невидимые dev-записи.
+    includeDev: isDevVersion(appVersion),
+  };
   const refresh = () => {
     setOpenHash(null);
     setConfirmClear(false);
@@ -1545,7 +1577,11 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
           {data.byKind.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
               <Tabs items={kindItems} value={kind} onChange={setKind} wrap />
-              {data.byApp.length > 1 ? (
+              {/* Одна версия — выбирать нечего, строка фильтра прячется. Но
+                  dev-сборка обязана быть видна ВСЕГДА, даже когда она в списке
+                  одна: иначе релизных ошибок нет, вкладка пуста, и открыть
+                  разработку нечем — тупик без объяснения. */}
+              {data.byApp.length > 1 || data.byApp.some((a) => isDevVersion(a.appVersion)) ? (
                 <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-2)" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Tabs items={appItems} value={appVersion} onChange={setAppVersion} wrap />
