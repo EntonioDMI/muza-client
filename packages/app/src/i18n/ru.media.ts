@@ -54,6 +54,7 @@ export const mediaRu: typeof mediaEn = {
     repeat: { label: "Повтор", hint: "Справа от транспорта" },
     sleep: { label: "Таймер сна", hint: "Луна: выкл → пресеты → конец трека" },
     speed: { label: "Скорость", hint: "Кнопка «1×», циклит шаги из настроек" },
+    pitch: { label: "Высота тона", hint: "Выше или ниже, не меняя скорость. Только в приложении" },
     equalizer: { label: "Эквалайзер", hint: "Открывает под-экран EQ" },
     lyrics: { label: "Текст", hint: "Панель «Сейчас играет»" },
     jam: { label: "Jam", hint: "Слушать вместе" },

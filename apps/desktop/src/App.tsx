@@ -1488,6 +1488,12 @@ function Player({
     const next = pb.cycleSpeed();
     showToast(t("player.speedToast", { speed: next }), "gauge");
   };
+  /** Высота тона («стретч»): та же механика, что у скорости, и тост тот же —
+   *  иконка кнопки не меняется, меняется только число на ней. */
+  const cyclePitchWithToast = () => {
+    const next = pb.cyclePitch();
+    showToast(t("player.pitchToast", { semitones: next > 0 ? `+${next}` : String(next) }), "gauge");
+  };
   const cycleRepeatWithToast = () => {
     const next = pb.cycleRepeat();
     showToast(next === "off" ? t("player.repeat.off") : next === "all" ? t("player.repeat.all") : t("player.repeat.one"), "repeat");
@@ -2857,6 +2863,10 @@ function Player({
         onRepeat={cycleRepeatWithToast}
         speed={pb.speed}
         onSpeed={cycleSpeedWithToast}
+        pitch={pb.pitch}
+        onPitch={cyclePitchWithToast}
+        onSetSpeed={pb.setRate}
+        onSetPitch={pb.setPitch}
         lyricsOn={lyricsOn}
         onLyrics={() => setLyricsOn(!lyricsOn)}
         queueOn={queueOn}
@@ -2940,7 +2950,7 @@ function Player({
             >
               <Icon name="folder-down" size={42} color="var(--accent-text)" />
             </span>
-            <span style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 700, color: "var(--text-1)" }}>
+            <span style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 600, color: "var(--text-1)" }}>
               {t("app.dropOverlay.title")}
             </span>
             <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-body)", color: "var(--text-2)" }}>
@@ -3334,7 +3344,7 @@ function PlaylistPickRow({
         color: "var(--text-1)",
         fontFamily: "var(--font-ui)",
         fontSize: "var(--fs-body)",
-        fontWeight: 600,
+        fontWeight: 400,
         cursor: "pointer",
         textAlign: "left",
         transition: "background var(--dur-state) var(--ease-standard)",

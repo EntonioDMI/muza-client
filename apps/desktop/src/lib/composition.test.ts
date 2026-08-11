@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeBarButtons, type BarButtonPref } from "./barButtons";
+import { BAR_BUTTON_KEYS, normalizeBarButtons, type BarButtonPref } from "./barButtons";
 import { normalizeNavItems, type NavItemPref } from "./navItems";
 
 describe("normalizeBarButtons", () => {
@@ -13,14 +13,18 @@ describe("normalizeBarButtons", () => {
     expect(out[0]).toEqual({ key: "queue", on: true });
     expect(out[1]).toEqual({ key: "shuffle", on: false });
     expect(out.some((b) => (b.key as string) === "чужое")).toBe(false);
-    // остальные ключи дописаны включёнными
-    expect(out).toHaveLength(10);
-    expect(out.slice(2).every((b) => b.on)).toBe(true);
+    // Остальные ключи дописаны включёнными — КРОМЕ тех, что по умолчанию
+    // выключены. Сейчас это высота тона: в баре она почти всегда показывала
+    // «0», её дом — ползунок в меню «Ещё» (11.08.2026, заказ владельца).
+    expect(out).toHaveLength(BAR_BUTTON_KEYS.length);
+    const appended = out.slice(2);
+    expect(appended.filter((b) => !b.on).map((b) => b.key)).toEqual(["pitch"]);
+    expect(appended.filter((b) => b.key !== "pitch").every((b) => b.on)).toBe(true);
   });
 
   it("пустое/битое → полный дефолт", () => {
-    expect(normalizeBarButtons([])).toHaveLength(10);
-    expect(normalizeBarButtons(undefined as unknown as BarButtonPref[])).toHaveLength(10);
+    expect(normalizeBarButtons([])).toHaveLength(BAR_BUTTON_KEYS.length);
+    expect(normalizeBarButtons(undefined as unknown as BarButtonPref[])).toHaveLength(BAR_BUTTON_KEYS.length);
   });
 });
 

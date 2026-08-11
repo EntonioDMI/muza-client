@@ -85,6 +85,7 @@ export const en = {
         crossfade: "crossfade",
         equalizer: "equalizer",
         speed: "speed",
+        pitch: "pitch",
         sleepTimer: "sleep timer",
         outputs: "audio output",
         sourceOrigin: "where tracks come from",
@@ -715,6 +716,10 @@ export const en = {
     // ── Воспроизведение ──────────────────────────────────────────────
     playback: {
       transitionsGroup: "Transitions",
+      tempoMode: {
+        title: "Punchy drums when speed changes",
+        hint: "A sped-up or slowed-down track keeps its drum attack. Sustained sounds — vocals, synths — get slightly less smooth. Off is the opposite.",
+      },
       crossfade: {
         title: "Crossfade",
         hint: "Tracks flow smoothly into one another.",
@@ -1298,6 +1303,9 @@ export const en = {
     speedTooltip: "Playback speed",
     speedAria: "Speed: {speed}",
     speedToast: "Speed: {speed}×",
+    pitchTooltip: "Pitch — without changing speed",
+    pitchAria: "Pitch: {semitones} semitones",
+    pitchToast: "Pitch: {semitones} st",
     listeningModeTooltip: "Listening mode",
     listeningModeTooltipDrag: "Listening mode · drag to the desktop",
     shuffle: "Shuffle",

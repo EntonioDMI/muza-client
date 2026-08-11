@@ -86,6 +86,7 @@ export const mediaEn = {
     repeat: { label: "Repeat", hint: "Right of the transport" },
     sleep: { label: "Sleep timer", hint: "Moon: off → presets → end of track" },
     speed: { label: "Speed", hint: '"1×" button; cycles the steps from settings' },
+    pitch: { label: "Pitch", hint: "Higher or lower without changing speed. Desktop only" },
     equalizer: { label: "Equalizer", hint: "Opens the EQ sub-screen" },
     lyrics: { label: "Lyrics", hint: '"Now Playing" panel' },
     jam: { label: "Jam", hint: "Listen together" },

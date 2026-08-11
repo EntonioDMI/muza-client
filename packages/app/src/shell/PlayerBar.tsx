@@ -97,7 +97,53 @@ function SpeedButton({ speed, onClick }: { speed: number; onClick: () => void })
           color: speed !== 1 ? "var(--accent-text)" : "var(--text-2)",
           fontFamily: "var(--font-ui)",
           fontSize: "var(--fs-caption)",
-          fontWeight: 600,
+          fontWeight: 400,
+          fontVariantNumeric: "tabular-nums",
+          cursor: "pointer",
+          transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
+          flex: "none",
+        }}
+      >
+        {label}
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Кнопка высоты тона — соседка SpeedButton и намеренно её близнец по виду.
+ *
+ *  Вместе они и есть то, что в FL Studio называется стретчем: время и высота
+ *  развязаны. Прежний путь (пересчёт частоты) двигал их сцепленно — медленнее
+ *  значило ниже, и выбора не было. Теперь «замедлить, оставив голос на месте» и
+ *  «опустить голос, не замедляя» — два разных жеста двумя разными кнопками.
+ *
+ *  Показывается ТОЛЬКО когда путь умеет высоту (нативный движок): на вебе
+ *  <audio> двигает высоту лишь вместе с темпом, и кнопка врала бы. */
+function PitchButton({ pitch, onClick }: { pitch: number; onClick: () => void }) {
+  const { t } = useT();
+  const [hover, setHover] = useState(false);
+  // Знак ставим явно: «2» и «+2» на кнопке читаются одинаково, а значат разное.
+  // Минус — типографский (U+2212): дефис на цифрах выглядит переносом.
+  const label = pitch === 0 ? "0" : pitch > 0 ? `+${pitch}` : `−${Math.abs(pitch)}`;
+  return (
+    <Tooltip label={t("player.pitchTooltip")}>
+      <button
+        type="button"
+        aria-label={t("player.pitchAria", { semitones: label })}
+        onClick={onClick}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          height: 28,
+          minWidth: 44,
+          padding: "0 var(--sp-2)",
+          border: "none",
+          borderRadius: "var(--r-pill)",
+          background: hover ? "var(--surface-3)" : pitch !== 0 ? "var(--surface-2)" : "transparent",
+          color: pitch !== 0 ? "var(--accent-text)" : "var(--text-2)",
+          fontFamily: "var(--font-ui)",
+          fontSize: "var(--fs-caption)",
+          fontWeight: 400,
           fontVariantNumeric: "tabular-nums",
           cursor: "pointer",
           transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
@@ -128,7 +174,11 @@ export function PlayerBar({
   repeat,
   onRepeat,
   speed = 1,
+  pitch = 0,
   onSpeed,
+  onPitch,
+  onSetSpeed,
+  onSetPitch,
   lyricsOn = false,
   onLyrics,
   queueOn = false,
@@ -182,6 +232,16 @@ export function PlayerBar({
   onRepeat: () => void;
   /** Множитель скорости; без кнопки скорости площадка её не меняет — 1. */
   speed?: number;
+  /** Высота тона в полутонах («стретч»). 0 — как записано. */
+  pitch?: number;
+  /** Не передан — путь не умеет высоту, и кнопки нет вовсе (веб). */
+  onPitch?: () => void;
+  /** ТОЧНОЕ значение скорости — для ползунка в меню «Ещё». Не передан —
+   *  в меню остаётся прежний пункт-кнопка, циклящий пресеты. */
+  onSetSpeed?: (v: number) => void;
+  /** ТОЧНОЕ значение высоты. Не передан — ряда высоты в меню нет вовсе
+   *  (веб-путь высоту не умеет). */
+  onSetPitch?: (v: number) => void;
   /** Нет обработчика — кнопки скорости в баре нет. */
   onSpeed?: () => void;
   lyricsOn?: boolean;
@@ -388,8 +448,42 @@ export function PlayerBar({
     !barOn("equalizer") && onEqualizer
       ? { icon: "sliders-vertical", label: t("settings.equalizer.title"), onClick: () => onEqualizer() }
       : null,
-    !barOn("speed") && onSpeed
-      ? { icon: "gauge", label: t("media.barButtons.speed.label"), onClick: () => onSpeed() }
+    // ⚠️ СКОРОСТЬ И ВЫСОТА — ПОЛЗУНКАМИ, А НЕ ПУНКТАМИ (11.08.2026, заказ
+    // владельца: «высоту менять неудобно, зачем она в самом плеере»).
+    // Пункт-кнопка циклил пресеты, и до нужного значения приходилось стучать
+    // по нему многократно. Ползунок берёт значение одним движением и при этом
+    // в покое выглядит обычной строкой меню — ряд не шумит.
+    !barOn("speed") && onSetSpeed
+      ? {
+          slider: {
+            icon: "gauge",
+            label: t("media.barButtons.speed.label"),
+            value: speed,
+            min: 0.25,
+            max: 2,
+            step: 0.05,
+            format: (v: number) => `${v.toFixed(2).replace(/0$/, "").replace(".", ",")}×`,
+            onChange: onSetSpeed,
+          },
+        }
+      : !barOn("speed") && onSpeed
+        ? { icon: "gauge", label: t("media.barButtons.speed.label"), onClick: () => onSpeed() }
+        : null,
+    // Высота живёт ТОЛЬКО здесь и только когда путь её умеет: в баре она почти
+    // всегда показывала «0» — место занимала, а сказать ей было нечего.
+    !barOn("pitch") && onSetPitch
+      ? {
+          slider: {
+            icon: "music-2",
+            label: t("media.barButtons.pitch.label"),
+            value: pitch,
+            min: -12,
+            max: 12,
+            step: 1,
+            format: (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(v)}` : "0"),
+            onChange: onSetPitch,
+          },
+        }
       : null,
     !barOn("sleep") && onSleep ? { icon: "moon", label: sleepLabel, onClick: () => onSleep() } : null,
     !barOn("jam") && onJam
@@ -486,7 +580,7 @@ export function PlayerBar({
             <div
               style={{
                 fontSize: "var(--fs-body)",
-                fontWeight: 600,
+                fontWeight: 400,
                 color: "var(--text-2)",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -572,7 +666,7 @@ export function PlayerBar({
           <div
             style={{
               fontSize: "var(--fs-body)",
-              fontWeight: 600,
+              fontWeight: 400,
               color: "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -694,6 +788,9 @@ export function PlayerBar({
               ) : null;
             case "speed":
               return onSpeed ? <SpeedButton key={key} speed={speed} onClick={onSpeed} /> : null;
+            // Кнопки нет там, где путь не умеет высоту: onPitch не передан — слот пуст.
+            case "pitch":
+              return onPitch ? <PitchButton key={key} pitch={pitch} onClick={onPitch} /> : null;
             case "equalizer":
               return onEqualizer ? (
                 <IconButton key={key} icon="sliders-vertical" size="sm" label={t("settings.equalizer.title")} onClick={onEqualizer} />

@@ -28,6 +28,9 @@ export const BAR_BUTTON_KEYS = [
   "repeat",
   "sleep",
   "speed",
+  // «Стретч» — высота тона отдельно от скорости (11.08.2026). Стоит сразу за
+  // скоростью намеренно: это её пара, а не самостоятельная функция.
+  "pitch",
   "equalizer",
   "lyrics",
   "jam",
@@ -50,6 +53,15 @@ export interface BarButtonPref {
  *  T44: `pluginKeys` — множество валидных плагинных ключей (плагин установлен
  *  и включён); плагинный ключ вне этого множества (плагин снят/выключен)
  *  выбрасывается, отсутствующий валидный плагинный — дописывается в конец. */
+/** Родные ключи, которые дописываются ВЫКЛЮЧЕННЫМИ.
+ *
+ *  По умолчанию новая кнопка приходит включённой — это верно для тех, что
+ *  человек ждёт увидеть. Но высота тона почти всегда показывает «0»: место в
+ *  баре занимает, а сказать ей нечего (заказ владельца 11.08.2026 — «зачем она
+ *  в самом плеере?»). Её дом — ползунок в меню «Ещё»; кнопка остаётся как
+ *  возможность для тех, кто крутит высоту постоянно. */
+const DEFAULT_OFF: ReadonlySet<string> = new Set(["pitch"]);
+
 export function normalizeBarButtons(saved: BarButtonPref[], pluginKeys: readonly string[] = []): BarButtonPref[] {
   const knownNative = new Set<string>(BAR_BUTTON_KEYS);
   const validPlugin = new Set<string>(pluginKeys);
@@ -62,7 +74,7 @@ export function normalizeBarButtons(saved: BarButtonPref[], pluginKeys: readonly
     out.push({ key: b.key, on: b.on });
   }
   for (const key of BAR_BUTTON_KEYS) {
-    if (!seen.has(key)) out.push({ key, on: true });
+    if (!seen.has(key)) out.push({ key, on: !DEFAULT_OFF.has(key) });
   }
   for (const key of validPlugin) {
     if (!seen.has(key)) out.push({ key, on: true });
@@ -75,6 +87,7 @@ export const BAR_BUTTON_META: Record<BarButtonKey, { label: string; hint: string
   repeat: { label: translate(DEFAULT_LANG, "media.barButtons.repeat.label"), hint: translate(DEFAULT_LANG, "media.barButtons.repeat.hint") },
   sleep: { label: translate(DEFAULT_LANG, "media.barButtons.sleep.label"), hint: translate(DEFAULT_LANG, "media.barButtons.sleep.hint") },
   speed: { label: translate(DEFAULT_LANG, "media.barButtons.speed.label"), hint: translate(DEFAULT_LANG, "media.barButtons.speed.hint") },
+  pitch: { label: translate(DEFAULT_LANG, "media.barButtons.pitch.label"), hint: translate(DEFAULT_LANG, "media.barButtons.pitch.hint") },
   equalizer: { label: translate(DEFAULT_LANG, "media.barButtons.equalizer.label"), hint: translate(DEFAULT_LANG, "media.barButtons.equalizer.hint") },
   lyrics: { label: translate(DEFAULT_LANG, "media.barButtons.lyrics.label"), hint: translate(DEFAULT_LANG, "media.barButtons.lyrics.hint") },
   jam: { label: translate(DEFAULT_LANG, "media.barButtons.jam.label"), hint: translate(DEFAULT_LANG, "media.barButtons.jam.hint") },
