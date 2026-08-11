@@ -71,17 +71,37 @@ export const en = {
     // настройки (SettingsHub.tsx). Отвечают на «что произойдёт», а не «как
     // устроено»: это подпись для человека, а не оглавление для разработчика.
     hub: {
+      // Пять разделов подписаны СПИСКОМ ЧАСТЕЙ (parts), а не цельной строкой:
+      // их состав зависит от площадки (см. HUB_PARTS в SettingsHub.tsx).
       account: "Sign-in, password, sessions and your data",
       appearance: "Theme, accent, corners, glass and everything about the look",
-      playback: "Crossfade, equalizer, speed, sleep timer, output",
-      sources: "Where tracks come from and how search behaves",
       lyrics: "Synced lyrics, karaoke and line meaning",
-      library: "Local files, downloads and offline",
-      integrations: "Discord, Last.fm, ListenBrainz, media keys",
       hotkeys: "Which keys do what",
       extensions: "Plugins, themes and the market",
-      system: "Autostart, tray, updates and mini player",
       back: "All settings",
+      and: " and ",
+      parts: {
+        crossfade: "crossfade",
+        equalizer: "equalizer",
+        speed: "speed",
+        sleepTimer: "sleep timer",
+        outputs: "audio output",
+        sourceOrigin: "where tracks come from",
+        searchBehavior: "how search behaves",
+        playlistImport: "playlist import",
+        stats: "stats",
+        localFiles: "local files",
+        offline: "downloads and offline",
+        discord: "Discord",
+        lastfm: "Last.fm",
+        listenbrainz: "ListenBrainz",
+        mediaKeys: "media keys",
+        autostart: "start with the system",
+        tray: "tray icon",
+        updates: "updates",
+        miniPlayer: "mini player",
+        about: "about the app",
+      },
     },
 
     // ── Аккаунт ──────────────────────────────────────────────────────

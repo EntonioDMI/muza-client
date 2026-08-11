@@ -24,6 +24,7 @@ import { LibraryPane } from "./LibraryPane";
 import { PlaybackPane } from "./PlaybackPane";
 import { SourcesPane } from "./SourcesPane";
 import { LyricsPane } from "./LyricsPane";
+import { SettingsHub } from "./SettingsHub";
 import { ExtensionsPane } from "./ExtensionsPane";
 
 afterEach(cleanup);
@@ -209,6 +210,30 @@ describe("Прочие разделы — ряды по умениям", () => {
     cleanup();
     renderPane(LyricsPane, ["videoTrack"]);
     expect(renderedRowTitles().has(T("settings.lyrics.videoNowPlaying.title"))).toBe(true);
+  });
+
+  /** Подпись карточки — единственное обещание раздела ДО клика, и до 11.08 она
+   *  была цельной строкой на все площадки: в браузере «Воспроизведение»
+   *  обещало таймер сна и вывод звука, «Система» — автозапуск и трей, а внутри
+   *  не было ни одного такого ряда. */
+  it("сетка карточек: подпись не обещает того, чего на площадке нет", () => {
+    renderPane(() => <SettingsHub tabs={["playback", "system"]} onOpen={() => undefined} />, []);
+    let text = document.body.textContent ?? "";
+    expect(text).not.toContain(T("settings.hub.parts.sleepTimer"));
+    expect(text).not.toContain(T("settings.hub.parts.outputs"));
+    expect(text).not.toContain(T("settings.hub.parts.autostart"));
+    // Части без умения остаются — иначе подпись схлопнулась бы в пустоту.
+    expect(text.toLowerCase()).toContain(T("settings.hub.parts.crossfade"));
+    cleanup();
+    renderPane(() => <SettingsHub tabs={["playback", "system"]} onOpen={() => undefined} />, [
+      "sleepTimer",
+      "audioOutputs",
+      "autostart",
+    ]);
+    text = document.body.textContent ?? "";
+    expect(text).toContain(T("settings.hub.parts.sleepTimer"));
+    expect(text).toContain(T("settings.hub.parts.outputs"));
+    expect(text).toContain(T("settings.hub.parts.autostart"));
   });
 
   it("поиск согласен с экраном и в этих трёх разделах", () => {

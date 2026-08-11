@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import { cssZoom, Icon } from "@muza/ui";
 import { useT, type TranslationKey } from "../../i18n";
 import { applyVisibleOrder, pickByOrder } from "../../lib/dragEngine";
+import type { SettingsCapability } from "../../lib/settingsIndex";
 import { useLookEdit, useLookReorder } from "../../shell/lookReorder";
 import { SETTINGS_TAB_ICONS, type SettingsTabKey } from "./SettingsNav";
 import {
@@ -38,6 +39,61 @@ import { useSettingsScreen } from "./settingsContext";
 /** Зазор сетки — тот же токен, что в разметке ниже; ручке ширины он нужен
  *  числом, чтобы считать, на сколько дорожек уехал курсор. */
 const GRID_GAP_VAR = "--sp-3";
+
+/** ПОДПИСЬ КАРТОЧКИ СОБИРАЕТСЯ ИЗ ЧАСТЕЙ, А НЕ ПИШЕТСЯ ЦЕЛЬНОЙ СТРОКОЙ (2026-08-11).
+ *
+ *  Подпись — единственное обещание, которое карточка даёт до клика: «внутри
+ *  вот это». Пока она была одной строкой на все площадки, обещание врало —
+ *  состав рядов зависит от умений. Замер в браузере: «Воспроизведение»
+ *  подписано «…таймер сна, вывод», «Медиатека» — «Локальные файлы, скачанное и
+ *  оффлайн», «Система» — «Автозапуск, трей, обновления и мини-плеер», а внутри
+ *  этих рядов нет НИ ОДНОГО (у «Системы» остаётся только «О программе»).
+ *
+ *  Второй строки «а для браузера вот такая подпись» здесь быть не может — это
+ *  ровно тот разъезд, ради устранения которого 11.08 удалили последние копии
+ *  разделов. Поэтому части перечислены ОДИН раз, и каждая помечена тем же
+ *  умением, что и её ряд: нет умения — часть не попадает в подпись.
+ *
+ *  Раздела нет в этой карте — подпись берётся строкой `settings.hub.<раздел>`:
+ *  так подписаны разделы, состав которых от площадки не зависит вовсе
+ *  («Аккаунт», «Внешний вид», «Тексты», «Клавиши», «Расширения»).
+ *
+ *  ⚠️ Первая часть КАЖДОГО списка обязана быть без умения, иначе на площадке
+ *  без него подпись схлопнется в пустоту. */
+const HUB_PARTS: Partial<Record<SettingsTabKey, readonly { key: string; needs?: SettingsCapability }[]>> = {
+  playback: [
+    { key: "settings.hub.parts.crossfade" },
+    { key: "settings.hub.parts.equalizer" },
+    { key: "settings.hub.parts.speed" },
+    { key: "settings.hub.parts.sleepTimer", needs: "sleepTimer" },
+    { key: "settings.hub.parts.outputs", needs: "audioOutputs" },
+  ],
+  sources: [
+    // Порядок обратный привычному нарочно: «как ведёт себя поиск» есть везде, а
+    // «откуда берутся треки» — только там, где программа сама добывает звук.
+    { key: "settings.hub.parts.searchBehavior" },
+    { key: "settings.hub.parts.sourceOrigin", needs: "sourcePicker" },
+  ],
+  library: [
+    { key: "settings.hub.parts.playlistImport" },
+    { key: "settings.hub.parts.stats" },
+    { key: "settings.hub.parts.localFiles", needs: "localFiles" },
+    { key: "settings.hub.parts.offline", needs: "offlineCache" },
+  ],
+  integrations: [
+    { key: "settings.hub.parts.lastfm" },
+    { key: "settings.hub.parts.listenbrainz" },
+    { key: "settings.hub.parts.mediaKeys" },
+    { key: "settings.hub.parts.discord", needs: "discord" },
+  ],
+  system: [
+    { key: "settings.hub.parts.about" },
+    { key: "settings.hub.parts.autostart", needs: "autostart" },
+    { key: "settings.hub.parts.tray", needs: "tray" },
+    { key: "settings.hub.parts.updates", needs: "updates" },
+    { key: "settings.hub.parts.miniPlayer", needs: "miniPlayer" },
+  ],
+};
 
 /** Сколько дорожек нарезала сетка ПРЯМО СЕЙЧАС и какой они ширины.
  *
@@ -96,8 +152,22 @@ export function SettingsHub({
   onOpen: (tab: SettingsTabKey) => void;
 }) {
   const { t } = useT();
-  const { prefs, set } = useSettingsScreen();
+  const { prefs, set, caps } = useSettingsScreen();
   const { active: lookEdit, pushUndo } = useLookEdit();
+
+  /** Подпись карточки: список частей, доступных ЭТОЙ площадке, либо цельная
+   *  строка раздела (см. HUB_PARTS). Последняя часть присоединяется связкой
+   *  («и» / «and»), первая буква поднимается здесь — части написаны строчными,
+   *  чтобы их можно было ставить в любом месте перечисления. */
+  const hubHint = (key: SettingsTabKey): string => {
+    const parts = HUB_PARTS[key];
+    if (!parts) return t(`settings.hub.${key}` as TranslationKey);
+    const shown = parts.filter((p) => !p.needs || caps.has(p.needs)).map((p) => t(p.key as TranslationKey));
+    if (shown.length === 0) return "";
+    const text =
+      shown.length === 1 ? shown[0] : `${shown.slice(0, -1).join(", ")}${t("settings.hub.and")}${shown[shown.length - 1]}`;
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  };
   const gridRef = useRef<HTMLDivElement | null>(null);
   const columns = useGridColumns(gridRef);
 
@@ -306,7 +376,7 @@ export function SettingsHub({
                   lineHeight: "var(--lh-ui)",
                 }}
               >
-                {t(`settings.hub.${key}` as TranslationKey)}
+                {hubHint(key as SettingsTabKey)}
               </span>
             </span>
             {/* РУЧКИ РАЗМЕРА — только в режиме правки. Ширина появляется лишь
