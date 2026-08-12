@@ -150,6 +150,56 @@ describe("NowPlayingPanel — видео замолкает, когда окна
       vi.restoreAllMocks();
     }
   });
+
+  /** ПЕРЕХОД «ВИДЕО → ТЕКСТ» ДЕРЖИТСЯ НА ТРЁХ ЧИСЛАХ, И ОНИ ОБЯЗАНЫ СХОДИТЬСЯ.
+   *
+   *  Жалоба владельца 12.08: «переход между видео и текстом совсем не плавный,
+   *  к тому же текст наложен прямо на пересечение». Замер живого окна (снимок
+   *  1×, колонка без текста) показал обрыв яркости 40.0 → 34.7 за ОДНУ строку
+   *  на нижней кромке блока при фоновом спаде 1.5 единицы на строку: у кромки
+   *  ещё шло растворение кадра и работал блюр, а строкой ниже не было ни того,
+   *  ни другого.
+   *
+   *  Лечится не «более плавной кривой», а пустым хвостом: маска кадра приходит
+   *  к нулю РАНЬШЕ низа блока, туда же опускается блюр, и в этот же хвост
+   *  поднимается текст. Разъедутся числа — вернётся ступенька либо текст
+   *  поверх живого кадра. Тест сверяет именно СВЯЗЬ чисел, а не их значения:
+   *  двигать переход можно, ломать договор — нет. */
+  it("растворение кадра, низ блюра и подъём текста сведены в одну точку", () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      const { getByTestId } = render(<NowPlayingPanel {...videoProps} playing />);
+      const box = getByTestId("np-video");
+      const video = box.querySelector("video")!;
+      const blur = box.querySelector("div")!;
+
+      // где маска кадра доходит до нуля
+      const fadeEnd = /transparent (\d+)%/.exec(video.style.maskImage)?.[1];
+      expect(fadeEnd).toBeTruthy();
+      const конецКадра = Number(fadeEnd);
+
+      // низ блюр-слоя стоит ровно там же
+      expect(blur.style.bottom).toBe(`${100 - конецКадра}%`);
+
+      // ...и его собственная маска гаснет на ОБОИХ концах: незатухший нижний
+      // конец и рисовал измеренную ступеньку
+      // (jsdom выбрасывает `to bottom` как значение по умолчанию — не ищем его)
+      expect(blur.style.maskImage).toMatch(/^linear-gradient\((to bottom, )?transparent 0%/);
+      expect(blur.style.maskImage).toMatch(/transparent 100%\)$/);
+
+      // текст поднят В хвост, но не глубже него (проценты вертикальных полей
+      // CSS считает от ШИРИНЫ, а кадр шире панели на два --pad-zone — значит
+      // строгого неравенства процентов достаточно, см. комментарий в панели)
+      const подъём = Number(/-(\d+)%/.exec(box.style.marginBottom)?.[1]);
+      expect(подъём).toBeGreaterThan(0);
+      expect(подъём).toBeLessThan(100 - конецКадра);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
 });
 
 describe("Визуализатор — кадры только когда он на сцене", () => {
