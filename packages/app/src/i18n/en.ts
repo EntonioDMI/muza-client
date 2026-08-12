@@ -1040,7 +1040,7 @@ export const en = {
           tauri: "Tauri (core and plugins)",
           vite: "Vite",
           typescript: "TypeScript",
-          lucide: "lucide (icons)",
+          hugeicons: "Hugeicons (icons)",
           golosText: "Golos Text (font)",
           unbounded: "Unbounded (font)",
           zod: "Zod",

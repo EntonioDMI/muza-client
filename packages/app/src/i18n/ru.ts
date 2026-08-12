@@ -1030,7 +1030,7 @@ export const ru: typeof en = {
           tauri: "Tauri (ядро и плагины)",
           vite: "Vite",
           typescript: "TypeScript",
-          lucide: "lucide (иконки)",
+          hugeicons: "Hugeicons (иконки)",
           golosText: "Golos Text (шрифт)",
           unbounded: "Unbounded (шрифт)",
           zod: "Zod",

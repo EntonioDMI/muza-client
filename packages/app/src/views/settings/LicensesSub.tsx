@@ -18,7 +18,7 @@ type LicenseId =
   | "tauri"
   | "vite"
   | "typescript"
-  | "lucide"
+  | "hugeicons"
   | "golosText"
   | "unbounded"
   | "zod"
@@ -34,7 +34,7 @@ const OSS_LICENSES: { id: LicenseId; license: string; url: string }[] = [
   { id: "tauri", license: "MIT / Apache-2.0", url: "https://tauri.app" },
   { id: "vite", license: "MIT", url: "https://vite.dev" },
   { id: "typescript", license: "Apache-2.0", url: "https://www.typescriptlang.org" },
-  { id: "lucide", license: "ISC", url: "https://lucide.dev" },
+  { id: "hugeicons", license: "MIT", url: "https://hugeicons.com" },
   { id: "golosText", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Golos+Text" },
   { id: "unbounded", license: "OFL-1.1", url: "https://fonts.google.com/specimen/Unbounded" },
   { id: "zod", license: "MIT", url: "https://zod.dev" },
