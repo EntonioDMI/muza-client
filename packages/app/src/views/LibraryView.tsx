@@ -78,7 +78,11 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
       <div
         style={{
           fontSize: "var(--fs-body)",
-          fontWeight: "var(--fw-semibold)",
+          /* ⚠️ БЕЗ ЖИРНОГО (12.08, жалоба владельца). Название плитки И ТАК
+             выделено — цветом `--text-1` на фоне серых подписей. Вес поверх
+             цвета ничего не добавлял: две «сильные» приметы на одном элементе
+             читаются не как акцент, а как шум. */
+          fontWeight: "var(--fw-text)",
           color: "var(--text-1)",
           lineHeight: "var(--lh-ui)",
           whiteSpace: "nowrap",
