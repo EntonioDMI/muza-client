@@ -47,10 +47,27 @@ export const ICONS = {
   locate: HI.FocusIcon,
 
   // ── плеер ──
+  //
+  // ⚠️ ЭТОТ БЛОК УЕХАЛ В ПРОД ПОЛУПУСТЫМ (найдено владельцем ПОСЛЕ релиза
+  // 0.2.4). Пауза, громкость и повтор приходят из ТЕРНАРНИКОВ —
+  // `playing ? "pause" : "play"`, `vol === 0 ? "volume-x" : …` — а первый обход
+  // кода искал только `name="строка"`. В таблицу попал `play` и не попал
+  // `pause`: кнопка превращалась в пустой квадрат ровно тогда, когда музыка
+  // играет. Сторож в Icon.test.jsx переписан на разбор ВСЕГО выражения.
   play: HI.PlayIcon,
+  pause: HI.PauseIcon,
   "skip-back": HI.Backward01Icon,
   "skip-forward": HI.Forward01Icon,
   shuffle: HI.ShuffleIcon,
+  repeat: HI.RepeatIcon,
+  "repeat-1": HI.RepeatOne01Icon,
+  "volume-x": HI.VolumeOffIcon,
+  "volume-1": HI.VolumeLowIcon,
+  "volume-2": HI.VolumeHighIcon,
+  "monitor-speaker": HI.MonitorSpeakerIcon,
+  headphones: HI.HeadphonesIcon,
+  mic: HI.Mic01Icon,
+  "mic-off": HI.MicOff01Icon,
   "refresh-cw": HI.RefreshIcon,
   "rotate-ccw": HI.ArrowTurnBackwardIcon,
   "rotate-cw": HI.ArrowTurnForwardIcon,
@@ -73,8 +90,11 @@ export const ICONS = {
   radio: HI.Radio01Icon,
   "radio-tower": HI.Radio02Icon,
   heart: HI.FavouriteIcon,
+  "heart-off": HI.HeartRemoveIcon,
   history: HI.HistoryIcon,
   home: HI.Home01Icon,
+  bookmark: HI.Bookmark01Icon,
+  crown: HI.CrownIcon,
 
   // ── действия ──
   check: HI.Tick02Icon,
@@ -133,6 +153,8 @@ export const ICONS = {
   "log-in": HI.Login01Icon,
   "log-out": HI.Logout01Icon,
   mail: HI.Mail01Icon,
+  "mail-check": HI.MailValidation01Icon,
+  "mail-x": HI.MailBlock01Icon,
   lock: HI.LockIcon,
   "key-round": HI.Key01Icon,
   // ⚠️ ЧЕТЫРЕ РАЗНЫХ СОСТОЯНИЯ — ЧЕТЫРЕ РАЗНЫЕ КАРТИНКИ. В первом заходе
@@ -145,7 +167,10 @@ export const ICONS = {
   "shield-check": HI.ShieldKeyIcon,
   "shield-alert": HI.ShieldBanIcon,
   "shield-off": HI.ShieldMinusIcon,
+  eye: HI.ViewIcon,
   "eye-off": HI.ViewOffIcon,
+  // Кнопка «развернуть/восстановить» в шапке окна (TitleBar).
+  square: HI.SquareIcon,
 
   // ── сеть и состояние ──
   globe: HI.GlobeIcon,
