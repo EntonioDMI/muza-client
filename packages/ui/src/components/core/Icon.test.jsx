@@ -54,6 +54,14 @@ function usedIconNames() {
         for (const m of src.matchAll(rx)) {
           for (const lit of m[1].matchAll(/"([a-z][a-z0-9]*(?:-[a-z0-9]+)*)"/g)) names.add(lit[1]);
         }
+        // ⚠️ КАРТЫ ИКОНОК: `SETTINGS_TAB_ICONS = { system: "monitor-cog", … }`.
+        // Слева стоит имя РАЗДЕЛА, а не слово `icon`, поэтому обход выше их не
+        // видит в принципе — три иконки настроек так и уехали в релиз 0.2.4 и
+        // нашлись только живым осмотром окна. Берём любой объект, в имени
+        // которого есть ICON, и вытаскиваем все значения-строки.
+        for (const map of src.matchAll(/\b[A-Z][A-Z0-9_]*ICONS?[A-Z0-9_]*\b[^={]*=\s*\{([^}]*)\}/g)) {
+          for (const lit of map[1].matchAll(/:\s*"([a-z][a-z0-9]*(?:-[a-z0-9]+)*)"/g)) names.add(lit[1]);
+        }
       }
     }
   };

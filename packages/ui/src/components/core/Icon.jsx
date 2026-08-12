@@ -144,6 +144,14 @@ export const ICONS = {
   languages: HI.TranslateIcon,
   "chart-line": HI.ChartLineData01Icon,
   puzzle: HI.PuzzleIcon,
+  // ⚠️ ТРИ ИКОНКИ РАЗДЕЛОВ НАСТРОЕК, найденные ЖИВЫМ ОСМОТРОМ ОКНА, а не
+  // тестом. Они лежат в карте `SETTINGS_TAB_ICONS` (SettingsNav.tsx) как
+  // `system: "monitor-cog"` — то есть слева стоит имя РАЗДЕЛА, а не слово
+  // `icon`, и обход по `icon=`/`name=` их не видел в принципе. Сторож научен
+  // читать и такие карты (любой объект с ICON в имени).
+  plug: HI.PlugSocketIcon,
+  keyboard: HI.KeyboardIcon,
+  "monitor-cog": HI.ComputerSettingsIcon,
 
   // ── аккаунт и доступ ──
   user: HI.UserIcon,
@@ -174,6 +182,11 @@ export const ICONS = {
 
   // ── сеть и состояние ──
   globe: HI.GlobeIcon,
+  // Значки источников в диалоге версий (VersionsDialog.tsx) — тоже карта вида
+  // `soundcloud: "cloud"`, найдены тем же усиленным сторожем.
+  cloud: HI.CloudIcon,
+  "disc-3": HI.DiscIcon,
+  "hard-drive": HI.Database02Icon,
   "cloud-off": HI.CloudOffIcon,
   server: HI.ServerStack01Icon,
   // Не UnavailableIcon: он рисуется тем же кругом с чертой, что и
