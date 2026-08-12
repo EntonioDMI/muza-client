@@ -16,6 +16,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
+import { QueryTestProvider } from "../lib/queryTestUtils";
 import { DragLayer } from "../shell/DragLayer";
 import { HomeFeed } from "./HomeFeed";
 
@@ -23,7 +24,14 @@ afterEach(cleanup);
 
 /** Слой переноса поднимают ОБА клиента выше страниц (App.tsx приложения,
  *  AppShell веба) — экран вправе на него рассчитывать, тест повторяет это. */
-const show = (ui: React.ReactElement) => render(<DragLayer>{ui}</DragLayer>);
+// Экран ходит на сервер через react-query — провайдер приносит тест
+// (в бою его ставят оболочки, см. lib/queryTestUtils.tsx).
+const show = (ui: React.ReactElement) =>
+  render(
+    <QueryTestProvider>
+      <DragLayer>{ui}</DragLayer>
+    </QueryTestProvider>,
+  );
 
 const track = (id: string, title: string): Track => ({
   id,

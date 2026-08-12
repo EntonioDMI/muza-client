@@ -13,6 +13,7 @@
     "./shell/*": "./src/shell/*.tsx",
     "./views/*": "./src/views/*.tsx",
     "./views/settings/*.css": "./src/views/settings/*.css",
+    "./lib/queryTestUtils": "./src/lib/queryTestUtils.tsx",
     "./lib/*": "./src/lib/*.ts",
     "./prefs/*": "./src/prefs/*.ts",
     "./theme/accent": "./src/theme/accent.ts",
@@ -34,7 +35,8 @@
   "dependencies": {
     "@muza/api-client": "workspace:*",
     "@muza/core": "workspace:*",
-    "@muza/ui": "workspace:*"
+    "@muza/ui": "workspace:*",
+    "@tanstack/react-query": "^5.101.4"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

@@ -17,6 +17,7 @@
     "@muza/app": "workspace:*",
     "@muza/core": "workspace:*",
     "@muza/ui": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",

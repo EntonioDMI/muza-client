@@ -13,16 +13,17 @@
     "@muza/app": "workspace:*",
     "@muza/core": "workspace:*",
     "@muza/ui": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
     "next": "^16.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
-    "@typescript/native": "npm:typescript@^7.0.2",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "jsdom": "^29.1.1",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "^4.1.10"

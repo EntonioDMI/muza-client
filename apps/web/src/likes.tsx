@@ -1,7 +1,9 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Track } from "@muza/api-client";
+import { QK } from "@muza/app/lib/queryClient";
 import { getApi } from "./api";
 import { useSession } from "./session";
 
@@ -22,23 +24,42 @@ export function LikesProvider({ children }: { children: React.ReactNode }) {
   const [favorites, setFavorites] = useState<Track[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
 
+  /** ⚠️ ОДИН ЗАПРОС ВМЕСТО ТРЁХ (12.08). Открытие «Любимого» стоило ТРИ полных
+   *  GET /me/favorites подряд: этот провайдер грузил список при появлении
+   *  сессии, страница дёргала refresh() в своём эффекте, а сам экран —
+   *  собственный запрос, потому что ссылка на массив лайков менялась. Все три
+   *  ходили за одним и тем же (до 500 треков с аннотациями).
+   *
+   *  Теперь список живёт под общим ключом QK.favorites: и провайдер, и экран
+   *  берут его оттуда, повторный вызов схлопывается в один поход в сеть.
+   *
+   *  Локальное состояние остаётся: оптимистичное переключение сердечка обязано
+   *  отвечать мгновенно и уметь откатываться, а кэш запроса — про то, что
+   *  сказал сервер. Смешивать эти две правды в одном месте нельзя. */
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: QK.favorites,
+    queryFn: () => getApi().getFavorites(),
+    enabled: !!session,
+    throwOnError: false,
+  });
+
   const refresh = useCallback(async () => {
-    try {
-      const list = await getApi().getFavorites();
-      setFavorites(list);
-      setLikedIds(new Set(list.map((t) => t.id)));
-    } catch {
-      /* сервер недоступен — оставляем что было */
-    }
-  }, []);
+    await queryClient.invalidateQueries({ queryKey: QK.favorites });
+  }, [queryClient]);
 
   useEffect(() => {
-    if (session) void refresh();
-    else {
+    if (!session) {
       setFavorites([]);
       setLikedIds(new Set());
+      return;
     }
-  }, [session, refresh]);
+    // Сервер недоступен — data не приедет, и мы оставляем что было (прежнее
+    // поведение молчаливого catch сохранено).
+    if (!data) return;
+    setFavorites(data);
+    setLikedIds(new Set(data.map((t) => t.id)));
+  }, [session, data]);
 
   const toggle = useCallback(
     (track: Track) => {

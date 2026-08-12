@@ -2,7 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { LanguageProvider } from "@muza/app";
+import { createQueryClient } from "@muza/app/lib/queryClient";
 import { comboFromEvent, isTypingTarget, matchAction, withDefaults } from "@muza/app/lib/hotkeys";
 import { PlatformProvider } from "@muza/app/platform";
 import { LayoutProvider } from "@muza/app/shell/LayoutContext";
@@ -160,8 +162,14 @@ export function AppHotkeys() {
  *  выше сессии и /login. Общий код из @muza/app спрашивает у неё умения
  *  площадки (usePlatform); чего браузер не умеет — того в вилке просто нет,
  *  и пункт/жест не появляется вовсе (см. src/platform/webAdapter.ts). */
+/** Клиент запросов ОДИН на вкладку и создаётся ВНЕ рендера: созданный внутри,
+ *  он пересоздавался бы на каждой перерисовке корня и терял бы весь кэш — то
+ *  есть не делал бы ровно того, ради чего заведён (lib/queryClient.ts). */
+const queryClient = createQueryClient();
+
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
+    <QueryClientProvider client={queryClient}>
     <PlatformProvider adapter={webPlatform}>
     {/* Режим раскладки — выше всего видимого, включая /login: экран входа
         тоже обязан перестраиваться на телефоне. Живой он ТОЛЬКО здесь;
@@ -194,5 +202,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     </SessionProvider>
     </LayoutProvider>
     </PlatformProvider>
+    </QueryClientProvider>
   );
 }

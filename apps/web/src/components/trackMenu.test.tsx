@@ -15,6 +15,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Track } from "@muza/api-client";
+import { QueryTestProvider } from "@muza/app/lib/queryTestUtils";
 import { buildMenuItems, type MenuAbilities } from "@muza/app/shell/ContextMenu";
 import type { ContextTarget } from "@muza/app/shell/ContextMenu";
 
@@ -62,7 +63,7 @@ function iconsFor(place: "search" | "favorites"): string[] {
     return null;
   }
   render(
-    <SessionProvider>
+    <QueryTestProvider><SessionProvider>
       <LikesProvider>
         <PlaylistsProvider>
           <ToastProvider>
@@ -70,7 +71,7 @@ function iconsFor(place: "search" | "favorites"): string[] {
           </ToastProvider>
         </PlaylistsProvider>
       </LikesProvider>
-    </SessionProvider>,
+    </SessionProvider></QueryTestProvider>,
   );
   const target: ContextTarget = { kind: "track", track: TRACK, place };
   return buildMenuItems(target, abilities!, t)
@@ -111,7 +112,7 @@ describe("меню трека веба", () => {
       return null;
     }
     render(
-      <SessionProvider>
+      <QueryTestProvider><SessionProvider>
         <LikesProvider>
           <PlaylistsProvider>
             <ToastProvider>
@@ -119,7 +120,7 @@ describe("меню трека веба", () => {
             </ToastProvider>
           </PlaylistsProvider>
         </LikesProvider>
-      </SessionProvider>,
+      </SessionProvider></QueryTestProvider>,
     );
     // SearchView/PlaylistView собирают свою панель по НАЛИЧИЮ этих полей
     expect(abilities!.addManyToPlaylist).toBeTypeOf("function");

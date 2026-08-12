@@ -19,12 +19,29 @@ export function setSnapshotScope(userId: string): void {
   }
 }
 
+/** ⚠️ ЗАПИСЬ ОТЛОЖЕНА НА ПРОСТОЙ (12.08). Здесь JSON.stringify списка на сотни
+ *  треков плюс localStorage.setItem — и то и другое СИНХРОННО и в главном
+ *  потоке. Звалось это ровно в момент, когда экран получил данные и собирается
+ *  рисоваться, то есть блокировало первый кадр там, где человек и так ждал
+ *  (жалоба «страницы начали загружаться медленнее»).
+ *
+ *  Снимок нужен, только когда сервер ляжет, — то есть в СЛЕДУЮЩИЙ раз. Успеть
+ *  до отрисовки ему не нужно совсем. requestIdleCallback есть не везде, поэтому
+ *  фолбэк на setTimeout(0): он всё равно уводит работу за пределы текущего
+ *  кадра. */
+const defer: (fn: () => void) => void =
+  typeof requestIdleCallback === "function"
+    ? (fn) => void requestIdleCallback(fn, { timeout: 2000 })
+    : (fn) => void setTimeout(fn, 0);
+
 function save<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(`${PREFIX}${scope}:${key}`, JSON.stringify(value));
-  } catch {
-    /* квота/приватный режим — снапшот просто не обновится */
-  }
+  defer(() => {
+    try {
+      localStorage.setItem(`${PREFIX}${scope}:${key}`, JSON.stringify(value));
+    } catch {
+      /* квота/приватный режим — снапшот просто не обновится */
+    }
+  });
 }
 
 function load<T>(key: string): T | null {

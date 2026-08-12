@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
+import { QK } from "../lib/queryClient";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
@@ -62,18 +64,55 @@ export function FavoritesView({
   const { phone } = useLayout();
   const { dragSource } = useDrag();
   const altFileDrag = useAltFileDrag();
-  const [server, setServer] = useState<Track[] | null>(null);
-
-  useEffect(() => {
-    if (!canSearch) return;
+  /** ⚠️ ДО 12.08 ЗДЕСЬ БЫЛ useEffect С `likes` В ЗАВИСИМОСТЯХ, и это значило
+   *  буквально следующее: КАЖДОЕ нажатие сердечка перезапрашивало ВЕСЬ список
+   *  избранного с сервера (до 500 треков плюс аннотации). Комментарий рядом
+   *  это узаконивал — «likes меняются лайками в интерфейсе, перечитываем
+   *  список», — но перечитывать ради снятия одной строки не нужно: список у
+   *  нас уже есть, а `likes` и так говорит, что в нём осталось живым.
+   *
+   *  Теперь запрос живёт по ключу QK.favorites: возврат на экран рисует
+   *  прошлый ответ мгновенно и обновляет его в фоне, а снятие лайка убирает
+   *  строку СРАЗУ, без похода в сеть (фильтр ниже). Настоящая
+   *  рассинхронизация (лайк, поставленный на другом устройстве) закрывается
+   *  инвалидацией ключа — она дешевле и точнее таймера. */
+  const { data: server = null } = useQuery({
+    queryKey: QK.favorites,
     // Stage 4: сервер лёг — приложение показывает последний снимок списка
     // (loadFavorites); у веба такого умения нет, он спрашивает сервер прямо.
-    (loadFavorites ? loadFavorites() : api.getFavorites())
-      .then((data) => setServer(data))
-      .catch(() => setServer([]));
-    // likes меняются лайками в интерфейсе — перечитываем список
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, canSearch, likes]);
+    queryFn: () => (loadFavorites ? loadFavorites() : api.getFavorites()),
+    enabled: canSearch,
+    // Экран без списка бесполезен, поэтому отказ отдаём пустотой, а не ошибкой:
+    // прежнее поведение (.catch → setServer([])) сохранено ровно.
+    throwOnError: false,
+  });
+
+  /** Реакция на лайки БЕЗ перезапроса списка.
+   *
+   *  Сравниваем с прошлым набором, а не с сервером: сняли сердечко — убираем
+   *  строку из кэша на месте (мгновенно и без сети); поставили новое — вот
+   *  тогда список действительно неполон, и его стоит перечитать. Сидя на
+   *  «Любимом», люди почти всегда снимают, а не добавляют, поэтому дешёвая
+   *  ветка и есть частая.
+   *
+   *  ⚠️ Первый прогон пропускается намеренно: сравнивать не с чем, а принять
+   *  ещё не загруженный `likes` за «человек всё разлайкал» — значит показать
+   *  пустой экран тому, у кого всё на месте. */
+  const queryClient = useQueryClient();
+  const prevLikes = useRef<string[] | null>(null);
+  useEffect(() => {
+    const prev = prevLikes.current;
+    prevLikes.current = likes;
+    if (prev === null) return;
+    const live = new Set(likes);
+    if (prev.some((id) => !live.has(id))) {
+      queryClient.setQueryData<Track[]>(QK.favorites, (old) => old?.filter((tr) => live.has(tr.id)));
+    }
+    const known = new Set(prev);
+    if (likes.some((id) => !known.has(id))) {
+      void queryClient.invalidateQueries({ queryKey: QK.favorites });
+    }
+  }, [likes, queryClient]);
 
   const total = server?.length ?? 0;
 

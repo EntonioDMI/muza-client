@@ -68,6 +68,7 @@ vi.mock("./lib/authWindowStage", async (importOriginal) => {
   return { ...actual, compactForAuth: h.compact, expandAfterAuth: h.expand };
 });
 
+import { QueryTestProvider } from "@muza/app/lib/queryTestUtils";
 import { App } from "./App";
 
 /** jsdom не реализует matchMedia (см. ListeningMode.test.tsx) — минимальная
@@ -138,7 +139,7 @@ afterEach(() => {
 describe("App — окно на экране входа", () => {
   it("сессии нет — окно ужимается под карточку, разворота не было", async () => {
     h.impl.restoreSession = vi.fn().mockResolvedValue(null);
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
 
     await waitFor(() => expect(h.compact).toHaveBeenCalled());
     expect(h.expand).not.toHaveBeenCalled();
@@ -146,7 +147,7 @@ describe("App — окно на экране входа", () => {
 
   it("вошли — окно разворачивается ОДИН раз, и повторные перерисовки его не трогают", async () => {
     h.impl.restoreSession = vi.fn().mockResolvedValue(null);
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
     await waitFor(() => expect(h.compact).toHaveBeenCalled());
 
     // Экран входа отдаёт сессию — это и есть переход «не было → появилась».
@@ -176,7 +177,7 @@ describe("App — окно на экране входа", () => {
   it("вошедший при старте — окно не трогаем вовсе, оно уже нужного размера", async () => {
     // restoreSession отдаёт сессию сразу: сжать окно на долю секунды ради
     // мигания нельзя, а разворачивать нечего — оно и так развёрнуто.
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Любимое" })).toBeTruthy());
     expect(h.compact).not.toHaveBeenCalled();
@@ -186,7 +187,7 @@ describe("App — окно на экране входа", () => {
 
 describe("App — выход из режима прослушивания возвращает исходную вкладку", () => {
   it("Любимое → режим прослушивания → Escape → снова Любимое, не главная", async () => {
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
 
     // Каркас собрался (restoreSession отработал), уходим с главной на «Любимое»
     const favTab = await screen.findByRole("button", { name: "Любимое" });
@@ -214,7 +215,7 @@ describe("App — выход из режима прослушивания воз
    *  дно истории — всегда стартовая главная. Правильное поведение: «назад»
    *  внутри режима — это выход ИЗ режима, вкладка остаётся исходной. */
   it("Alt+← внутри режима закрывает его и НЕ листает вкладки под ним", async () => {
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
 
     const favTab = await screen.findByRole("button", { name: "Любимое" });
     fireEvent.click(favTab);
@@ -232,7 +233,7 @@ describe("App — выход из режима прослушивания воз
   }, 15_000);
 
   it("выход кнопкой «Свернуть» тоже сохраняет вкладку", async () => {
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
 
     const favTab = await screen.findByRole("button", { name: "Любимое" });
     fireEvent.click(favTab);

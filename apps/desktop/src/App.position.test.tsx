@@ -114,6 +114,7 @@ vi.mock("@muza/app/theme/themeVars", async (importOriginal) => {
   return { ...actual, buildThemeVars: h.buildThemeVars };
 });
 
+import { QueryTestProvider } from "@muza/app/lib/queryTestUtils";
 import { App } from "./App";
 
 function stubMatchMedia() {
@@ -219,7 +220,7 @@ afterEach(() => {
 
 describe("App — тик позиции", () => {
   it("четыре тика подряд не перерисовывают каркас, но время в баре идёт", async () => {
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
     await startPlayback();
 
     const framesBefore = h.sidebarRenders.count;
@@ -238,7 +239,7 @@ describe("App — тик позиции", () => {
   }, 20_000);
 
   it("время в баре продолжает идти дальше, а не замирает после первого тика", async () => {
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
     await startPlayback();
 
     await tick(30);
@@ -248,7 +249,7 @@ describe("App — тик позиции", () => {
   }, 20_000);
 
   it("движок темы не пересобирает переменные корня на каждый рендер", async () => {
-    render(<App />);
+    render(<QueryTestProvider><App /></QueryTestProvider>);
     await startPlayback(); // пара рендеров каркаса: playing, буферизация, трек
 
     expect(h.sidebarRenders.count).toBeGreaterThan(1); // рендеры реально были

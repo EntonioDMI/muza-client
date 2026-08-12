@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { ContextMenuProvider } from "@muza/app/shell/ContextMenu";
 import { FavoritesView } from "@muza/app/views/FavoritesView";
 import { getApi } from "../../../src/api";
@@ -20,19 +20,18 @@ import { useWebTrackMenu } from "../../../src/components/trackMenu";
  *  прогрева строк и чтения из последнего снимка при недоступном сервере
  *  (эти пропы отдаёт только приложение).
  *
- *  Обновление при заходе: лайки могли прилететь с десктопа. */
+ *  Обновление при заходе: лайки могли прилететь с десктопа — этим занимается
+ *  срок свежести общего ключа QK.favorites, а не эффект на странице.
+ *  ⚠️ Здесь стоял `useEffect(() => void refresh(), [refresh])`, и он был ВТОРЫМ
+ *  из трёх походов за одним и тем же списком на одно открытие экрана (первый —
+ *  LikesProvider, третий — сам экран). Разбор — шапка src/likes.tsx. */
 export default function FavoritesPage() {
-  const { likedIds, favorites, toggle, refresh } = useLikes();
+  const { likedIds, favorites, toggle } = useLikes();
   const { current, playing, playContext } = usePlayer();
   const notify = useToast();
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Список id — ЗАВИСИМОСТЬ эффекта внутри экрана (лайкнул/разлайкнул → он
-  // перечитывает избранное). Ссылка обязана меняться только вместе с набором:
-  // новый массив на каждый рендер отправил бы экран в бесконечный перезапрос.
+  // Список id: ссылка обязана меняться только вместе с набором — новый массив
+  // на каждый рендер дёргал бы экран впустую.
   const likes = useMemo(() => [...likedIds], [likedIds]);
   // place="favorites" — ровно ради пункта «Заменить версию»: он есть только
   // здесь и в плейлисте (в приложении так же — App.tsx, inFavorites у

@@ -24,7 +24,9 @@
  *  ⚠️ Тут не должно появиться ни `@tauri-apps/*`, ни `import.meta.env`, ни
  *  `next/*` — файл попадает в оба бандла. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { QK } from "../lib/queryClient";
 import { Button, EmptyState, Icon, Shelf, Tile, TrackRow } from "@muza/ui";
 import type { HomeSection, MuzaApi, Track } from "@muza/api-client";
 import { WRAPPED_BANNER_PREVIEW, WRAPPED_ENABLED, wrappedSeason } from "../lib/wrappedSeason";
@@ -170,59 +172,73 @@ export function HomeFeed({
   const { dragSource } = useDrag();
   const altFileDrag = useAltFileDrag();
   // Честные состояния (UX-доводка): loading / live / offline-копия /
-  // сервер недоступен / пустая лента нового аккаунта / аноним (ленты нет)
-  const [feed, setFeed] = useState<{
+  // сервер недоступен / пустая лента нового аккаунта / аноним (ленты нет).
+  // Собираются из запроса ниже — своим состоянием больше не живут.
+
+  /** ⚠️ ЛЕНТА ГРУЗИЛАСЬ ЗАНОВО НА КАЖДЫЙ ЗАХОД. Экран пересобирается целиком
+   *  при любой навигации (`<main key={rendered}>` в App.tsx), эффект
+   *  монтирования срабатывал снова — и человек каждый раз смотрел на спиннер,
+   *  хотя лента менялась куда реже, чем он переключал вкладки (жалоба 12.08:
+   *  «Главная грузится от полусекунды до целой»).
+   *
+   *  Теперь ответ живёт минуту (staleTime в lib/queryClient.ts): возврат на
+   *  Главную рисует её мгновенно и обновляет в фоне. Состояние экрана из
+   *  четырёх положений сохранено ровно — оно про то, ЧТО показать человеку, и
+   *  к тому, откуда взялись данные, отношения не имеет. */
+  const homeQuery = useQuery({
+    queryKey: QK.home,
+    queryFn: () => withSnapshot("home", () => api.getHome()),
+    enabled: canSearch,
+    throwOnError: false,
+  });
+
+  const feed = useMemo<{
     status: "loading" | "live" | "error" | "anon";
     sections: HomeSection[];
-    /** Данные из оффлайн-снапшота — сверху честная плашка. */
     offline: boolean;
-  }>(() => (canSearch ? { status: "loading", sections: [], offline: false } : { status: "anon", sections: [], offline: false }));
+  }>(() => {
+    if (!canSearch) return { status: "anon", sections: [], offline: false };
+    if (homeQuery.data) return { status: "live", sections: homeQuery.data.data, offline: homeQuery.data.offline };
+    // сервер лёг и снапшота нет — говорим прямо, а не притворяемся лентой
+    if (homeQuery.isError) return { status: "error", sections: [], offline: false };
+    return { status: "loading", sections: [], offline: false };
+  }, [canSearch, homeQuery.data, homeQuery.isError]);
 
-  const load = () => {
-    if (!canSearch) {
-      setFeed({ status: "anon", sections: [], offline: false });
-      return () => undefined;
-    }
-    let alive = true;
-    setFeed({ status: "loading", sections: [], offline: false });
-    withSnapshot("home", () => api.getHome())
-      .then(({ data, offline }) => {
-        if (!alive) return;
-        setFeed({ status: "live", sections: data, offline });
-        onSections?.(data);
-      })
-      .catch(() => {
-        // сервер лёг и снапшота нет — говорим прямо, а не притворяемся лентой
-        if (alive) setFeed({ status: "error", sections: [], offline: false });
-      });
-    return () => {
-      alive = false;
-    };
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(load, [api, canSearch]);
+  /** Кнопка «Обновить» на плашке «нет сети» и на экране отказа: спрашиваем
+   *  сервер ЗАНОВО, минуя срок свежести — человек нажал именно за этим. */
+  const load = () => void homeQuery.refetch();
+
+  const sectionsData = homeQuery.data?.data;
+  useEffect(() => {
+    if (sectionsData) onSections?.(sectionsData);
+    // onSections — колбэк хозяина, в зависимостях ему делать нечего
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sectionsData]);
 
   // МЕТА В ШАПКЕ (набросок владельца 04.08 вечером): дата и «N ч M мин за
   // сегодня». Время берём из недельной сводки статистики — её последнее
   // ведро и есть сегодняшний день; отдельной ручки на сервере не нужно.
   // Провал тих по определению: мета — украшение шапки, не контент.
-  const [todayMs, setTodayMs] = useState<number | null>(null);
-  useEffect(() => {
-    if (!canSearch) return;
-    let dead = false;
+  //
+  // ⚠️ ЭТО САМЫЙ ДОРОГОЙ ЗАПРОС ЭКРАНА: на сервере /me/stats/overview — это
+  // девять агрегатов по всей истории прослушиваний, и Главная звала его на
+  // КАЖДОМ монтировании ради одной строки в шапке. Держим кэш подольше ленты:
+  // «сколько наслушал сегодня» не меняется, пока человек листает вкладки.
+  const statsQuery = useQuery({
+    queryKey: ["stats-overview", "week"],
     // Через Promise.resolve(): мета — украшение, и ЛЮБОЙ её провал обязан
     // быть тихим, включая точечные моки api в тестах, где метода нет вовсе
     // (синхронный TypeError без обёртки уронил бы всю Главную).
-    Promise.resolve()
-      .then(() => api.getStatsOverview("week"))
-      .then((d) => {
-        if (!dead) setTodayMs(d.series.length > 0 ? d.series[d.series.length - 1].ms : 0);
-      })
-      .catch(() => undefined);
-    return () => {
-      dead = true;
-    };
-  }, [api, canSearch]);
+    queryFn: () => Promise.resolve().then(() => api.getStatsOverview("week")),
+    enabled: canSearch,
+    staleTime: 5 * 60_000,
+    throwOnError: false,
+  });
+  const todayMs = statsQuery.data
+    ? statsQuery.data.series.length > 0
+      ? statsQuery.data.series[statsQuery.data.series.length - 1].ms
+      : 0
+    : null;
 
   const live = feed.status === "live" && feed.sections.length > 0;
   // Порядок человека, а поверх него канон для полок, которых он не трогал.
