@@ -53,6 +53,8 @@ export const viewsEn = {
     searching: "Searching…",
     searchSources: "Search in sources",
     filters: {
+      emptyTitle: "Nothing matches the filters",
+      emptyHint: "The query is fine — nothing fits the conditions you picked",
       short: "Under 5 minutes",
       cached: "Already downloaded",
       reset: "Clear",

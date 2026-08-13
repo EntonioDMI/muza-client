@@ -2040,6 +2040,5 @@ function appendSearchFilters(params: URLSearchParams, f?: SearchFilters): void {
   if (!f) return;
   if (f.durMin !== undefined) params.set("durMin", String(f.durMin));
   if (f.durMax !== undefined) params.set("durMax", String(f.durMax));
-  if (f.provider) params.set("provider", f.provider);
   if (f.cachedOnly) params.set("cachedOnly", "1");
 }

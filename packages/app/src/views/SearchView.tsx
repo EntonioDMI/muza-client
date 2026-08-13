@@ -142,8 +142,7 @@ export function SearchView({
   // сохраняются намеренно — «до 3 минут», выставленное вчера, завтра выглядело
   // бы как пропавшие треки, и человек не связал бы одно с другим.
   const [filters, setFilters] = useState<SearchFilters>({});
-  const filtersActive =
-    filters.durMax !== undefined || filters.provider !== undefined || filters.cachedOnly === true;
+  const filtersActive = filters.durMax !== undefined || filters.cachedOnly === true;
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -574,26 +573,6 @@ export function SearchView({
             }
           />
           <FilterChip
-            active={filters.provider === "soundcloud"}
-            label="SoundCloud"
-            onToggle={() =>
-              setFilters((f) => ({
-                ...f,
-                provider: f.provider === "soundcloud" ? undefined : "soundcloud",
-              }))
-            }
-          />
-          <FilterChip
-            active={filters.provider === "youtube"}
-            label="YouTube"
-            onToggle={() =>
-              setFilters((f) => ({
-                ...f,
-                provider: f.provider === "youtube" ? undefined : "youtube",
-              }))
-            }
-          />
-          <FilterChip
             active={filters.cachedOnly === true}
             label={t("views.search.filters.cached")}
             onToggle={() => setFilters((f) => ({ ...f, cachedOnly: f.cachedOnly ? undefined : true }))}
@@ -701,6 +680,23 @@ export function SearchView({
       ) : !canSearch ? (
         // Аноним каталог не ищет: сервер его не знает
         <EmptyState icon="user" title={t("views.search.anon.title")} hint={t("views.search.needsAccount")} />
+      ) : filtersActive && query.length >= 2 ? (
+        // ⚠️ ПУСТО ИЗ-ЗА ФИЛЬТРА — И ЭТО НАДО СКАЗАТЬ ВСЛУХ (13.08).
+        // Владелец оставил включённым чип «YouTube», выдача опустела, и это
+        // прочиталось как «поиск сломался» — а сломанного ничего не было.
+        // Молчаливый пустой экран ОБЯЗАН объяснять себя: человек не должен
+        // вспоминать, что он нажал минуту назад, чтобы понять, почему пусто.
+        // Сброс стоит прямо здесь, а не только в строке чипов наверху.
+        <EmptyState
+          icon="filter"
+          title={t("views.search.filters.emptyTitle")}
+          hint={t("views.search.filters.emptyHint")}
+          action={
+            <Button variant="secondary" onClick={() => setFilters({})}>
+              {t("views.search.filters.reset")}
+            </Button>
+          }
+        />
       ) : (
         // Запрос пустой/короткий. Раньше здесь рисовались 4 выдуманных трека
         // из макета Stage 1 под заголовком «Часто ищут» — их видел КАЖДЫЙ,
