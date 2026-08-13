@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   bandCount,
   bandIndexForBar,
+  bandPeaks,
   barBands,
   barGeometry,
   calmTau,
+  DEFAULT_DB_RANGE,
   fallBars,
   glideWave,
   normalizeVisualizerTuning,
+  pinkTilt,
   smoothingStep,
   VIS_LIMITS,
   visClamp,
@@ -117,6 +120,104 @@ describe("barBands — раскладка бинов FFT по барам", () =>
       expect(b.hi).toBeLessThanOrEqual(32);
       expect(b.lo).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe("pinkTilt / bandPeaks — F1: розовый шум обязан быть горизонталью", () => {
+  /** Байты getByteFrequencyData для сигнала с наклоном `slopeDbPerOct`.
+   *  0 дБ/окт — белый шум (ровно по бинам), −3.01 — розовый.
+   *  Шкала как у AnalyserNode и audio.rs: −100..−30 дБ → 0..255. */
+  function noiseBytes(slopeDbPerOct: number, dbAt30 = -40): Uint8Array {
+    const out = new Uint8Array(BINS);
+    for (let i = 1; i < BINS; i++) {
+      const db = dbAt30 + slopeDbPerOct * Math.log2(hz(i) / 30);
+      const byte = ((db + 100) / DEFAULT_DB_RANGE) * 255;
+      out[i] = Math.round(Math.min(255, Math.max(0, byte)));
+    }
+    return out;
+  }
+
+  const spread = (v: number[]) => Math.max(...v) - Math.min(...v);
+
+  it("СНАЧАЛА докажем дефект: без поправки розовый шум завален влево", () => {
+    // Это и есть жалоба «низы всегда выше верхов независимо от музыки».
+    const bands = barBands(56, BINS, RATE);
+    const out: number[] = [];
+    bandPeaks(noiseBytes(-3.0103), bands, null, out);
+    expect(spread(out)).toBeGreaterThan(0.3); // >75 байт перекоса из 255
+    expect(out[0]).toBeGreaterThan(out[out.length - 1] * 1.5);
+  });
+
+  it("с поправкой розовый шум даёт горизонталь", () => {
+    const bands = barBands(56, BINS, RATE);
+    const tilt = pinkTilt(BINS, RATE);
+    const out: number[] = [];
+    bandPeaks(noiseBytes(-3.0103), bands, tilt, out);
+    // Остаток — только округление байтов до целых (±0.5 байта, плюс смещение
+    // максимума по широкой полосе). 5 байт из 255 — предел честности.
+    expect(spread(out)).toBeLessThan(5 / 255);
+  });
+
+  it("горизонталь держится на 44100 и при другой плотности баров", () => {
+    for (const [bars, rate] of [
+      [56, 44100],
+      [24, 48000],
+      [96, 48000],
+    ] as const) {
+      const out: number[] = [];
+      bandPeaks(noiseBytes(-3.0103), barBands(bars, BINS, rate), pinkTilt(BINS, rate), out);
+      expect(spread(out)).toBeLessThan(6 / 255);
+    }
+  });
+
+  it("белый шум после поправки идёт ВВЕРХ на 3 дБ/окт — прибор не врёт", () => {
+    // Обратная сторона критерия: если бы поправка «просто выравнивала всё»,
+    // визуализатор перестал бы показывать разницу тембров вовсе.
+    const bands = barBands(56, BINS, RATE);
+    const out: number[] = [];
+    bandPeaks(noiseBytes(0), bands, pinkTilt(BINS, RATE), out);
+    for (let i = 1; i < out.length; i++) expect(out[i]).toBeGreaterThanOrEqual(out[i - 1] - 1e-6);
+    expect(out[out.length - 1]).toBeGreaterThan(out[0] + 0.2);
+  });
+
+  it("синус — один бар без юбок (поправка пиков не размазывает)", () => {
+    const bands = barBands(56, BINS, RATE);
+    const freq = new Uint8Array(BINS);
+    freq[43] = 255; // ~1 кГц
+    const out: number[] = [];
+    bandPeaks(freq, bands, pinkTilt(BINS, RATE), out);
+    expect(out.filter((v) => v > 0)).toHaveLength(1);
+    expect(Math.max(...out)).toBeGreaterThan(0.5);
+  });
+
+  it("тишина остаётся тишиной: поправка не уводит нули в минус", () => {
+    const bands = barBands(56, BINS, RATE);
+    const out: number[] = [];
+    bandPeaks(new Uint8Array(BINS), bands, pinkTilt(BINS, RATE), out);
+    for (const v of out) expect(v).toBe(0);
+  });
+
+  it("поправка только приглушает: ни один бин не разгоняется к потолку 255", () => {
+    // Наклон привязан к верху шкалы намеренно — иначе верхи срезались бы.
+    const tilt = pinkTilt(BINS, RATE);
+    for (const v of tilt) expect(v).toBeLessThanOrEqual(0);
+    expect(Number.isFinite(tilt[0])).toBe(true); // бин 0: log2(0) не должен утечь
+    expect(tilt[1]).toBeLessThan(-90); // 23 Гц против 16 кГц ≈ 9.4 окт × 3 дБ
+  });
+
+  it("учитывает нестандартную ширину дБ-шкалы", () => {
+    // Вдвое уже шкала — вдвое больше байтов на тот же децибел.
+    const a = pinkTilt(BINS, RATE, DEFAULT_DB_RANGE);
+    const b = pinkTilt(BINS, RATE, DEFAULT_DB_RANGE / 2);
+    expect(b[10]).toBeCloseTo(a[10] * 2, 4);
+  });
+
+  it("не падает на вырожденных размерах", () => {
+    expect(pinkTilt(0, RATE)).toHaveLength(0);
+    expect(pinkTilt(1, RATE)).toHaveLength(1);
+    const out: number[] = [];
+    bandPeaks(new Uint8Array(32), barBands(64, 32, RATE), pinkTilt(32, RATE), out);
+    expect(out).toHaveLength(64);
   });
 });
 

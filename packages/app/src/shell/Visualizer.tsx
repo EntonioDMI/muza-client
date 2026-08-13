@@ -59,6 +59,14 @@
  *  кадра (лаг в 1 кадр, ~16мс — незаметно), это позволяет обновлять и
  *  применять его за один проход без двойного чтения analyser-данных.
  *
+ *  Наклон спектра (F1, 13.08). Бары считаются не по сырым байтам: перед
+ *  взятием максимума по полосе к каждому бину прибавляется поправка `pinkTilt`
+ *  (+3.01 дБ/окт), иначе низы стояли выше верхов ВСЕГДА — это свойство
+ *  прибора, а не музыки, и стоило оно ~27 дБ перекоса на 9 октав (обоснование
+ *  и источники — в шапке раздела F1 в visualizerMath). Настройки правка не
+ *  заводит: наклон единственно верный, критерий один — розовый шум обязан
+ *  рисоваться горизонталью.
+ *
  *  Авто-gain и лог-шкала (T48) не мешают друг другу: `framePeak` как и раньше
  *  «самый громкий из показанных бинов», просто бины разложены по барам
  *  логарифмически. Бин 0 (DC-смещение, не звук) из шкалы ушёл — постоянная
@@ -71,12 +79,15 @@ import { useEffect, useRef } from "react";
 import {
   bandCount,
   bandIndexForBar,
+  bandPeaks,
   barBands,
   barGeometry,
   calmTau,
+  DEFAULT_DB_RANGE,
   fallBars,
   glideWave,
   normalizeVisualizerTuning,
+  pinkTilt,
   smoothingStep,
   waveShape,
   type Band,
@@ -198,6 +209,8 @@ export function Visualizer({
     let bands: Band[] = [];
     let bandsKey = "";
     const bandTarget: number[] = [];
+    // Поправка наклона (F1): считается вместе с полосами, живёт по бинам.
+    let tilt: Float32Array | null = null;
     // Огибающие (инерция T50). Пересоздание при смене размера + шаг с k=1 —
     // старт ровно с цели, без прыжка от нулей.
     let barEnv = new Float32Array(0);
@@ -275,23 +288,25 @@ export function Visualizer({
 
         const barCount = t.bars;
         const nBands = bandCount(barCount, t.mirror);
-        const key = `${nBands}:${bins}:${analyser.context.sampleRate}`;
+        const rate = analyser.context.sampleRate;
+        // Ширина дБ-шкалы байтов: у AnalyserNode она настраиваемая, а у
+        // подменного NativeAnalyser этих полей нет вовсе — отсюда проверка на
+        // конечность, а не просто чтение (иначе поправка стала бы NaN и
+        // погасила бы весь спектр).
+        const minDb = Number.isFinite(analyser.minDecibels) ? analyser.minDecibels : -100;
+        const maxDb = Number.isFinite(analyser.maxDecibels) ? analyser.maxDecibels : -30;
+        const dbRange = maxDb - minDb > 0 ? maxDb - minDb : DEFAULT_DB_RANGE;
+        const key = `${nBands}:${bins}:${rate}:${dbRange}`;
         if (key !== bandsKey) {
-          bands = barBands(nBands, bins, analyser.context.sampleRate);
+          bands = barBands(nBands, bins, rate);
+          tilt = pinkTilt(bins, rate, dbRange);
           bandsKey = key;
         }
 
         // Цель по полосам — каждый бин смотрим один раз (с зеркалом бар
-        // читает полосу дважды, максимум от этого не меняется).
-        bandTarget.length = nBands;
-        for (let b = 0; b < nBands; b++) {
-          const band = bands[b];
-          let peak = 0;
-          for (let j = band.lo; j < band.hi; j++) {
-            if (freq[j] > peak) peak = freq[j];
-          }
-          bandTarget[b] = peak / 255;
-        }
+        // читает полосу дважды, максимум от этого не меняется). Поправка
+        // наклона (F1) кладётся здесь же, до максимума.
+        bandPeaks(freq, bands, tilt, bandTarget);
 
         let kDown = smoothingStep(dt, calmTau(t.barCalm, BAR_FALL_MAX_TAU));
         if (barEnv.length !== nBands) {
