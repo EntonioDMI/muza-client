@@ -13,8 +13,10 @@ import {
   peakHold,
   pinkTilt,
   smoothingStep,
+  spectralCentroid,
   VIS_LIMITS,
   visClamp,
+  warmShift,
   waveShape,
 } from "./visualizerMath";
 import { DEFAULT_PREFS } from "../types";
@@ -505,6 +507,84 @@ describe("peakHold — F3: шапка держится на пике и пада
     expect(() =>
       peakHold(new Float32Array(0), new Float32Array(0), new Float32Array(0), [], 0.016, 0.8, 3.5),
     ).not.toThrow();
+  });
+});
+
+describe("spectralCentroid — F5: центр масс спектра", () => {
+  it("ровный спектр (розовый шум после F1) — ровно 0.5, нейтраль темы", () => {
+    expect(spectralCentroid(new Array(28).fill(0.4), 28)).toBeCloseTo(0.5, 6);
+  });
+
+  it("вся энергия внизу — 0, вверху — 1", () => {
+    const low = [1, 0, 0, 0];
+    const high = [0, 0, 0, 1];
+    expect(spectralCentroid(low, 4)).toBeCloseTo(0, 6);
+    expect(spectralCentroid(high, 4)).toBeCloseTo(1, 6);
+  });
+
+  it("тишина — 0.5, а не деление на ноль", () => {
+    expect(spectralCentroid([0, 0, 0, 0], 4)).toBe(0.5);
+    expect(spectralCentroid([], 0)).toBe(0.5);
+  });
+
+  it("сдвиг энергии вверх поднимает центроид", () => {
+    const dull = [1, 0.8, 0.2, 0.05];
+    const bright = [0.05, 0.2, 0.8, 1];
+    expect(spectralCentroid(bright, 4)).toBeGreaterThan(spectralCentroid(dull, 4));
+  });
+});
+
+describe("warmShift — F5: центроид подкрашивает акцент темы", () => {
+  const hueOf = (css: string) => {
+    const m = /^hsl\(([-\d.]+)/.exec(css);
+    return m ? parseFloat(m[1]) : Number.NaN;
+  };
+
+  it("нейтраль (розовый шум) не трогает цвет темы", () => {
+    // Главный инвариант связки F1↔F5: на «ровном» звуке тема показывает себя.
+    expect(hueOf(warmShift("#347cdc", 0, 20))).toBeCloseTo(hueOf(warmShift("#347cdc", 0, 0)), 3);
+  });
+
+  it("яркий звук уводит к тёплому, глухой — к холодному", () => {
+    const base = hueOf(warmShift("#347cdc", 0, 20)); // синий, ~214°
+    const warm = hueOf(warmShift("#347cdc", 1, 20));
+    const cool = hueOf(warmShift("#347cdc", -1, 20));
+    expect(base).toBeGreaterThan(200);
+    expect(base).toBeLessThan(225);
+    // К тёплому (25°) от 214° кратчайшая дуга — вверх через пурпур.
+    expect((warm - base + 360) % 360).toBeCloseTo(20, 1);
+    // К холодному (205°) идти всего ~9° — дальше цели не уходим.
+    expect(cool).toBeLessThan(base);
+    expect(base - cool).toBeLessThan(20);
+  });
+
+  it("сдвиг ограничен maxDeg — тема остаётся узнаваемой", () => {
+    const base = hueOf(warmShift("#f76967", 0, 20)); // алый акцент «пламени»
+    for (const b of [-1, -0.5, 0.5, 1]) {
+      const d = Math.abs(((hueOf(warmShift("#f76967", b, 20)) - base + 540) % 360) - 180);
+      expect(d).toBeLessThanOrEqual(20 + 1e-6);
+    }
+  });
+
+  it("понимает форматы, которыми записан --accent, включая короткий hex", () => {
+    expect(warmShift("#fff", 0, 20)).toMatch(/^hsl\(/);
+    expect(warmShift("  #2F6FE0  ", 0, 20)).toMatch(/^hsl\(/);
+    expect(warmShift("rgb(52, 124, 220)", 0, 20)).toMatch(/^hsl\(/);
+    expect(hueOf(warmShift("rgb(52, 124, 220)", 0, 20))).toBeCloseTo(hueOf(warmShift("#347cdc", 0, 20)), 1);
+  });
+
+  it("нераспознанный цвет возвращается КАК ЕСТЬ, а не подменяется наугад", () => {
+    // Токен темы могут переписать на oklch — тогда честнее не красить вовсе,
+    // чем показать пользователю не его цвет.
+    expect(warmShift("oklch(0.7 0.2 250)", 1, 20)).toBe("oklch(0.7 0.2 250)");
+    expect(warmShift("var(--x)", 1, 20)).toBe("var(--x)");
+    expect(warmShift("#12", 1, 20)).toBe("#12");
+  });
+
+  it("серый не получает оттенка из ниоткуда", () => {
+    // У серого нет тона; выдумывать его — врать цветом.
+    expect(hueOf(warmShift("#808080", 1, 20))).toBe(0);
+    expect(warmShift("#808080", 1, 20)).toMatch(/ 0%/);
   });
 });
 

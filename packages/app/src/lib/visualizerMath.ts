@@ -360,6 +360,105 @@ export function peakHold(
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// F5: спектральный центроид → оттенок акцента («ярче звук — теплее цвет»).
+//
+// Центроид — «центр масс» спектра, и это самый проверенный предиктор
+// воспринимаемой яркости тембра (Schubert & Wolfe 2006: простой центроид
+// предсказывает яркость, а «центроид, поделённый на основной тон» — нет).
+// Направление цвета тоже не выдумано: в опытах по кросс-модальным
+// соответствиям (Griscom 2014, обзор Reuter и др.) высокий центроид уводит
+// выбор испытуемых к красному/жёлтому, низкий — к тёмному и холодному.
+//
+// Считаем ПО ПОЛОСАМ, а не по бинам: позиция полосы — это уже логарифм
+// частоты, то есть октавы, а не герцы. Побочный подарок от F1: у розового шума
+// все полосы равны, значит центроид ровно 0.5 — «нейтраль» определена не
+// на глаз, а тем же эталоном, что и горизонталь. Тема при розовом шуме
+// показывает свой собственный цвет без сдвига.
+
+/** Центр масс по полосам, 0..1 (0 — вся энергия в нижней, 1 — в верхней).
+ *  Тишина — 0.5: нейтраль, а не деление на ноль. */
+export function spectralCentroid(bands: ArrayLike<number>, n: number): number {
+  if (n <= 1) return 0.5;
+  let acc = 0;
+  let w = 0;
+  for (let i = 0; i < n; i++) {
+    const v = bands[i];
+    if (v > 0) {
+      acc += v * (i / (n - 1));
+      w += v;
+    }
+  }
+  return w > 0 ? acc / w : 0.5;
+}
+
+/** Куда уводим оттенок на ярком звуке (оранжево-красный) и на глухом
+ *  (лазурный). Градусы круга HSL. */
+const WARM_HUE = 25;
+const COOL_HUE = 205;
+
+/** CSS-цвет → sRGB 0..255. Понимает `#rgb`, `#rrggbb(aa)` и `rgb()/rgba()` —
+ *  ровно то, чем записан `--accent` в токенах темы. Всё остальное (oklch,
+ *  color(), имена) — null: тогда сдвиг оттенка честно не применяется, а не
+ *  подменяет цвет темы наугад. */
+function parseRgb(css: string): [number, number, number] | null {
+  const s = css.trim();
+  if (s.startsWith("#")) {
+    const hex = s.slice(1);
+    if (hex.length === 3 || hex.length === 4) {
+      const v = [0, 1, 2].map((i) => parseInt(hex[i] + hex[i], 16));
+      return v.some(Number.isNaN) ? null : [v[0], v[1], v[2]];
+    }
+    if (hex.length === 6 || hex.length === 8) {
+      const v = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return v.some(Number.isNaN) ? null : [v[0], v[1], v[2]];
+    }
+    return null;
+  }
+  const m = /^rgba?\(([^)]+)\)$/i.exec(s);
+  if (!m) return null;
+  const parts = m[1].split(/[\s,/]+/).filter(Boolean).slice(0, 3);
+  if (parts.length < 3) return null;
+  const v = parts.map((p) => (p.endsWith("%") ? (parseFloat(p) * 255) / 100 : parseFloat(p)));
+  return v.some((x) => !Number.isFinite(x)) ? null : [v[0], v[1], v[2]];
+}
+
+/** Сдвиг оттенка темы по яркости звука.
+ *
+ *  `brightness` −1..1 (0 — нейтраль, розовый шум). Плюс — идём к тёплому,
+ *  минус — к холодному, но не дальше цели и не больше `maxDeg` градусов: тема
+ *  обязана оставаться узнаваемой, это подкраска, а не смена палитры.
+ *  Возвращает `hsl(...)` — канвас его понимает, а обратная конверсия в hex не
+ *  нужна. Нераспознанный вход возвращается как есть. */
+export function warmShift(css: string, brightness: number, maxDeg: number): string {
+  const rgb = parseRgb(css);
+  if (!rgb) return css;
+  const [r, g, b] = rgb.map((v) => Math.min(255, Math.max(0, v)) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+
+  const amount = Math.min(1, Math.abs(brightness)) * Math.max(0, maxDeg);
+  if (amount > 0 && d > 0) {
+    const goal = brightness >= 0 ? WARM_HUE : COOL_HUE;
+    // Кратчайшая дуга до цели: сдвиг всегда «в сторону», а не через полкруга.
+    const arc = ((goal - h + 540) % 360) - 180;
+    h = (h + Math.sign(arc) * Math.min(Math.abs(arc), amount) + 360) % 360;
+  }
+  const pc = (x: number) => `${Math.round(x * 1000) / 10}%`;
+  return `hsl(${Math.round(h * 10) / 10} ${pc(s)} ${pc(l)})`;
+}
+
 /** Геометрия баров: слот = width/count, бар занимает fill% слота по центру
  *  (поля симметричны), но не тоньше 1px — иначе на узком канвасе с высокой
  *  плотностью бары исчезали бы совсем. */
