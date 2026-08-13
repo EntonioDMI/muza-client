@@ -66,7 +66,25 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(180);
 /// 180с = до 12 минут «клик висит», причём молча. Общий бюджет делает худший
 /// случай клика равным худшему случаю одной попытки — дальше честный отказ и
 /// сообщение об ошибке, которое пользователь хотя бы видит.
-const RESOLVE_LADDER_BUDGET: Duration = Duration::from_secs(180);
+///
+/// ⚠️ 180 → 60 с (2026-08-13, по замеру, а не по вкусу). Живой прогон полной
+/// лестницы этим же сайдкаром (kJQP7kiw5Fk, 13.08): android_vr 4.9 с,
+/// tv_embedded 5.3–6.3 с, web_embedded 11.4 с, tv 6.8 с — вся лестница ≈28 с
+/// в худшем случае. То есть 180 с не ограничивали НИЧЕГО из реального: они
+/// покрывали только патологию «одна попытка залипла», и покрывали её ценой
+/// трёх минут молчания. 60 с оставляют вдвое больше, чем нужно живой лестнице,
+/// и вдвое режут патологию.
+const RESOLVE_LADDER_BUDGET: Duration = Duration::from_secs(60);
+/// Потолок ОДНОЙ попытки внутри лестницы КЛИКА (в отличие от RESOLVE_TIMEOUT,
+/// который остаётся общим потолком процесса и таймаутом похода за байтами).
+///
+/// Зачем отдельная планка: общий бюджет один залипший клиент может съесть
+/// целиком, и тогда следующий источник (у трека их обычно два — YouTube и
+/// SoundCloud) не получит хода вовсе. По замеру 13.08 самый медленный ЖИВОЙ
+/// клиент — web_embedded, 11.4 с (n-sig challenge в deno); 25 с — это больше
+/// двух его худших времён, то есть здоровую попытку планка не трогает, а
+/// залипшую снимает вовремя, чтобы соседний источник успел сыграть.
+const LADDER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(25);
 /// Потолок ОДНОЙ попытки `--simulate`: метаданные без единого байта аудио.
 /// 180с здесь бессмысленны — дольше 40с simulate не бывает даже с n-sig
 /// challenge в deno (замер 2026-07-15: худший клиент 12.5с).
@@ -162,6 +180,14 @@ pub struct EngineState {
     /// Путь файла-зеркала журнала (app_data/engine-events.log, сеется в
     /// init()); None — тесты/ранний старт, живёт только кольцо.
     stage0_log_path: Mutex<Option<PathBuf>>,
+    /// Сколько раз за сессию googlevideo отбил уже добытый адрес (403).
+    ///
+    /// ⚠️ ОТДЕЛЬНО ОТ `stats.fail_403` НАРОЧНО (2026-08-13): stats ЧЕРПАЮТСЯ
+    /// досуха командой engine_stats_take (аналитика забирает и обнуляет), а
+    /// пользовательская «Диагностика добычи» обязана показывать накопленное
+    /// за сессию, а не «сколько накапало с прошлой выгрузки». Одно и то же
+    /// событие честно считается дважды в двух счётчиках с разной судьбой.
+    gvs_forbidden: Mutex<u64>,
 }
 
 impl Default for EngineState {
@@ -185,6 +211,7 @@ impl Default for EngineState {
             soundcloud_cid_path: Mutex::new(None),
             stage0_events: Mutex::new(VecDeque::new()),
             stage0_log_path: Mutex::new(None),
+            gvs_forbidden: Mutex::new(0),
         }
     }
 }
@@ -2441,7 +2468,10 @@ async fn write_hls_to_part(
 //  - clientVersion строго 1.65.10 (выше — SABR-only, yt-dlp ff459e5);
 //    живёт в горячем рецепте — бампается деплоем сервера без релиза;
 //  - выходная форма = WarmEntry: всё ниже (validate_warm_url, fetch_to_cache,
-//    warm-кэш, muza-stream) переиспользуется байт-в-байт.
+//    warm-кэш, muza-stream) переиспользуется байт-в-байт;
+//  - ⚠️ УСПЕХ /player НЕ ЗНАЧИТ, ЧТО БАЙТЫ ОТДАДУТ (с 08.2026): адрес может
+//    прийти живым и получить 403 у CDN. Это отдельная болезнь со своим
+//    лечением — см. блок «PO-токен и 403 от CDN» ниже.
 
 /// Таймаут одного POST /player: ступень 0 либо быстрая, либо сразу уступает
 /// лестнице (не общий RESOLVE_TIMEOUT 180 с — столько ждать нечего).
@@ -2485,6 +2515,12 @@ enum InnertubeFail {
     Sabr(String),
     Network(String),
     Other(String),
+    /// 403 от googlevideo НА УЖЕ ДОБЫТЫЙ адрес (2026-08-13). Рождается не в
+    /// разборе /player — там всё хорошо, — а позже, у похода за байтами:
+    /// см. блок «PO-токен и 403 от CDN» ниже. Класс отдельный, потому что
+    /// лечится он тоже отдельно (сменой гостевой сессии), а по KPI обязан
+    /// попадать в fail_403, а не в безликое fail_other.
+    Forbidden(String),
 }
 
 /// Успешный разбор ответа /player — та же тройка, что у SimulatedFormat.
@@ -2644,6 +2680,10 @@ fn classify_innertube_failure(stats: &mut EngineStats, fail: &InnertubeFail) {
     match fail {
         InnertubeFail::Sabr(_) => stats.fail_sabr += 1,
         InnertubeFail::LoginRequired(_) => stats.fail_login += 1,
+        // 403 от CDN — тот же KPI, что у 403 лестницы (classify_failure):
+        // счётчик один на оба пути, иначе «сколько раз нас отбил googlevideo»
+        // пришлось бы складывать из двух половин
+        InnertubeFail::Forbidden(_) => stats.fail_403 += 1,
         // сеть считается в fail_other: отдельный KPI не нужен, класс
         // существует ради circuit-breaker'а
         InnertubeFail::Network(_) | InnertubeFail::Other(_) => stats.fail_other += 1,
@@ -2708,6 +2748,7 @@ fn innertube_fail_label(fail: &InnertubeFail) -> (&'static str, &str) {
         InnertubeFail::Sabr(d) => ("YouTube сменил формат", d),
         InnertubeFail::Network(d) => ("сеть не ответила", d),
         InnertubeFail::Other(d) => ("трек недоступен", d),
+        InnertubeFail::Forbidden(d) => ("CDN не отдал байты (403)", d),
     }
 }
 
@@ -2826,6 +2867,108 @@ fn stage0_note_fail(state: &EngineState, video_id: &str, now: SystemTime) {
 /// Успех ступени 0 стирает память о провале — видео снова в деле сразу.
 fn stage0_note_success(state: &EngineState, video_id: &str) {
     state.stage0_recent_fail.lock().unwrap().remove(video_id);
+}
+
+// ── PO-токен и 403 от CDN (2026-08-13) ────────────────────────────
+// РАЗБОР ЖИВОЙ ЖАЛОБЫ «включение с YouTube занимает 8.5 секунды».
+//
+// Что было в журнале владельца: `yt_innertube` отрабатывал (адрес добыт),
+// соединение с googlevideo вставало (первый байт за 315–1000 мс), и уже
+// ПОСЛЕ этого приходил 403. Четыре трека подряд — одинаково. Дальше клик
+// уходил в yt-dlp-лестницу и жёг от 5 до 19 секунд.
+//
+// Причина (апстрим): YouTube с июля 2026 требует GVS PO-token на прямые
+// адреса android_vr. Формулировка в исходниках yt-dlp (`_base.py`, комментарий
+// у клиента android_vr): «Since 2026.07, intermittent/selective POT
+// enforcement has been observed for non-HLS formats». Заведённая на это issue
+// — yt-dlp#17348 («android_vr now requires GVS PO token for anything but
+// format 18», 02.08.2026). Ключевое слово — **intermittent/selective**:
+// запрет НЕ поголовный.
+//
+// ⚠️ ГЛАВНАЯ НАХОДКА — ВЕДРО A/B ЕДЕТ С ГОСТЕВОЙ СЕССИЕЙ, А НЕ С ТРЕКОМ.
+// Живой замер 13.08 с машины владельца, тем же клиентом и той же формой
+// запроса, что у ступени 0:
+//   - 15 роликов подряд, один visitorData → 15 из 15 отдали байты (206),
+//     причём `fexp` в добытом адресе у ВСЕХ пятнадцати совпал до цифры;
+//   - пять СВЕЖИХ сессий (без visitorData) → пять разных `fexp`
+//     (51565115 / 51565116 / +51946837 / +51946838).
+// То есть YouTube раскладывает гостя по эксперименту один раз — при выдаче
+// visitorData, — и дальше ведро одинаково для каждого трека этой сессии.
+// А ступень 0 кэширует visitorData на INNERTUBE_VISITOR_TTL (6 часов).
+//
+// Отсюда наблюдавшийся узор: сессия попала в ведро с включённым требованием
+// токена → 403 приходит на КАЖДЫЙ трек и не рассасывается сам шесть часов.
+// В том же журнале лестница yt-dlp тем же клиентом android_vr срабатывала
+// (`ladder=5068` — это ровно одна удачная попытка) именно потому, что yt-dlp
+// поднимает СВОЮ гостевую сессию и попадает в другое ведро.
+//
+// Лечение, которое отсюда следует (и которое делает код ниже): 403 на байтах
+// — это не «трек плохой», а «сессия плохая». Значит сессию надо ВЫБРОСИТЬ и
+// взять новую, а заодно выбросить прогретые ею адреса: они обречены все.
+// Стоит это один POST (~0.4 с) против 5–19 с лестницы.
+//
+// Чего этот код НЕ делает и почему (честно):
+//  - не добывает PO-токен. Он выдаётся BotGuard'ом — это исполнение чужого
+//    обфусцированного JS в отдельном рантайме на каждый трек (у yt-dlp это
+//    вынесено в сторонние плагины-провайдеры). Отдельная машинерия, отдельный
+//    риск, и она НЕ нужна, пока смена сессии выводит из ведра.
+//  - не уходит на itag 18 (единственный формат, который в ведре с запретом
+//    остаётся доступен): это 360p-видео, СКЛЕЕННОЕ с AAC, то есть мегабайты
+//    видео ради аудио и mp4 с `moov` в конце — такой файл ступень стрима всё
+//    равно отвергает (см. гейт `entry.ext == "m4a"`), и звук пошёл бы только
+//    после полной закачки. Размен в минус по обоим показателям.
+//  - не меняет клиента ступени 0. Замер 13.08 тех же роликов клиентом IOS:
+//    14 из 15 адресов отдали 403 (у IOS требование токена уже поголовное),
+//    а WEB_EMBEDDED_PLAYER/TVHTML5 в тот же замер вернули ERROR/UNPLAYABLE
+//    на всех роликах — то есть менять android_vr не на что.
+
+/// 403 от googlevideo на добытый адрес — по тексту ошибки похода за байтами
+/// (`fetch_to_cache` формирует «warm GET: статус 403»). Отдельная функция, а
+/// не `contains` по месту: точек, где этот вывод делается, три (стрим, warm-
+/// путь, ступень 0), и они обязаны считать одинаково.
+fn is_gvs_forbidden(error: &str) -> bool {
+    error.contains("статус 403")
+}
+
+/// Сколько раз ступень 0 клика имеет право переспросить адрес, меняя гостевую
+/// сессию после 403. Два: первый круг — обычная работа, второй — единственная
+/// попытка выйти из запретного ведра. Третьего нет намеренно: если и свежая
+/// сессия отбита, запрет накрыл не сессию, а адрес целиком, и дешевле уйти в
+/// лестницу, чем крутить лотерею (каждый круг ~0.75 с).
+const STAGE0_FORBIDDEN_ROUNDS: usize = 2;
+
+/// Сменить гостевую сессию после 403 от CDN и выбросить прогретые ею адреса.
+///
+/// Два действия неразделимы: адрес уже добыт СТАРОЙ сессией, и все остальные
+/// записи прогрева добыты ею же — оставить их значит гарантированно заплатить
+/// по ещё одному обречённому GET за каждый трек, к которому притронется
+/// пользователь. Чистим только YouTube: SoundCloud к visitorData отношения не
+/// имеет, а его прогрев дорогой (client_id + api-v2).
+///
+/// Возвращает, сколько записей выброшено, — только для журнала.
+fn stage0_rotate_session(state: &EngineState, now: SystemTime, detail: &str) -> usize {
+    *state.gvs_forbidden.lock().unwrap() += 1;
+    *state.youtube_visitor.lock().unwrap() = None;
+    let dropped = {
+        let mut warm = state.warm.lock().unwrap();
+        let before = warm.len();
+        warm.retain(|_, entry| entry.provider != "youtube");
+        before - warm.len()
+    };
+    let detail: String = detail.chars().take(120).collect();
+    stage0_log(
+        state,
+        now,
+        format!(
+            "CDN отказал в байтах (403) — берём новую гостевую сессию YouTube{} [{detail}]",
+            if dropped > 0 {
+                format!(", прогретых адресов выброшено: {dropped}")
+            } else {
+                String::new()
+            }
+        ),
+    );
+    dropped
 }
 
 /// Провал SC-ступени: след в журнале + негативный кэш (общая дисциплина трёх
@@ -3026,6 +3169,18 @@ fn innertube_ua(cfg: &InnertubeConfig) -> String {
 ///    стоит «PO Token: Not required» и нет DRM-оговорки. Ограничение честное:
 ///    работает только для встраиваемых роликов (музыка — почти всегда).
 ///    Поставлен ПЕРВЫМ.
+///
+/// ⚠️ ЗАМЕР 13.08 (живой, с машины владельца, 15 роликов): обе оставшиеся
+/// ступени 0.5 не сработали НИ РАЗУ — WEB_EMBEDDED_PLAYER вернул
+/// `ERROR: This video is unavailable`, TVHTML5 — `UNPLAYABLE: The page needs
+/// to be reloaded`, на ВСЕХ роликах. IOS в том же прогоне отдавал адрес, но
+/// 14 из 15 адресов получили 403 у CDN (требование PO-токена у него уже
+/// поголовное) — потому он и убран.
+///
+/// Список НЕ удалён, потому что стоит он один запрос и только в ветке
+/// SABR-провала, а замер — это срез одного дня на одной сети. Но полагаться
+/// на него нельзя: настоящая страховка от 403 — смена гостевой сессии
+/// (блок «PO-токен и 403 от CDN»), а от SABR — yt-dlp-лестница.
 fn innertube_fallback_configs() -> [InnertubeConfig; 2] {
     [
         InnertubeConfig {
@@ -3265,6 +3420,7 @@ pub async fn engine_resolve_video(
         let (InnertubeFail::LoginRequired(m)
         | InnertubeFail::Sabr(m)
         | InnertubeFail::Network(m)
+        | InnertubeFail::Forbidden(m)
         | InnertubeFail::Other(m)) = e;
         format!("видео не разрешилось: {m}")
     })?;
@@ -4704,11 +4860,24 @@ pub async fn engine_stream_start(
                     // признакам. Это тот же класс, что и «отказы глотались
                     // молча» из аудита 12.08: best-effort означает «не роняем
                     // клик», а не «не рассказываем, что случилось».
+                    let st = app_task.state::<EngineState>();
                     stage0_log(
-                        &app_task.state::<EngineState>(),
+                        &st,
                         SystemTime::now(),
                         format!("закачка стрима сорвалась: {reason}"),
                     );
+                    // ⚠️ 403 ЛЕЧИТСЯ ЗДЕСЬ, А НЕ ЖДЁТ ЛЕСТНИЦЫ (13.08). Смена
+                    // гостевой сессии обязана случиться ДО того, как фронт
+                    // позовёт engine_resolve этого же клика: тот пойдёт
+                    // ступенью 0 заново, и без смены сессии получил бы адрес
+                    // из того же запретного ведра — ещё один GET в никуда.
+                    // Порядок гарантирован: `failed` уходит в watch-канал
+                    // строкой ниже, а именно его ждёт engine_stream_start,
+                    // прежде чем ответить фронту.
+                    if is_gvs_forbidden(&reason) {
+                        st.stats.lock().unwrap().fail_403 += 1;
+                        stage0_rotate_session(&st, SystemTime::now(), &reason);
+                    }
                     // .part уже удалён самим fetch_to_cache_with_progress
                     let p = *tx.borrow();
                     tx.send_replace(StreamProgress {
@@ -5184,18 +5353,36 @@ pub async fn engine_resolve(
         // от urlMs, и строка `warm_hit=0` рядом с `urlMs=1200` читалась как «шаг
         // бесплатен». let-перед-if — тот же заём timings, что и ниже в match.
         let fetched = timings.measure("fetch", fetch_to_cache(&dir, &track_id, &entry)).await;
-        if let Ok(path) = fetched {
-            let limit = *state.cache_limit_bytes.lock().unwrap();
-            ensure_pins_loaded(&app, &state, &cache_ns);
-            let pins = state.pins.lock().unwrap().clone();
-            evict_lru(&dir, limit, &path, &pins);
-            state.stats.lock().unwrap().resolve_ok += 1;
-            return Ok(ResolveOut {
-                path: path.to_string_lossy().into_owned(),
-                from_cache: false,
-                provider: Some(entry.provider),
-                timings: timings.take(),
-            });
+        match fetched {
+            Ok(path) => {
+                let limit = *state.cache_limit_bytes.lock().unwrap();
+                ensure_pins_loaded(&app, &state, &cache_ns);
+                let pins = state.pins.lock().unwrap().clone();
+                evict_lru(&dir, limit, &path, &pins);
+                state.stats.lock().unwrap().resolve_ok += 1;
+                return Ok(ResolveOut {
+                    path: path.to_string_lossy().into_owned(),
+                    from_cache: false,
+                    provider: Some(entry.provider),
+                    timings: timings.take(),
+                });
+            }
+            // ⚠️ РАНЬШЕ ЭТА ВЕТКА БЫЛА `if let Ok` БЕЗ else — провал прогрева
+            // проваливался дальше НЕ ОСТАВИВ СЛЕДА (13.08). Цена вскрылась на
+            // живом разборе: 403 от CDN на прогретый адрес не попадал ни в
+            // fail_403, ни в журнал, и по KPI выглядело, будто прогрев не
+            // ошибается вовсе. Дисциплина «прогрев не имеет права сделать трек
+            // неиграбельным» — про поведение, а не про молчание.
+            Err(e) => {
+                classify_failure(&mut state.stats.lock().unwrap(), &e);
+                // Прогретый YouTube-адрес отбит по 403 — сессия, которой он
+                // добыт, сидит в запретном ведре (см. блок «PO-токен и 403 от
+                // CDN»). Меняем её ПРЯМО СЕЙЧАС, чтобы ступень 0 ниже, в этом
+                // же вызове, спросила адрес уже у новой.
+                if entry.provider == "youtube" && is_gvs_forbidden(&e) {
+                    stage0_rotate_session(&state, SystemTime::now(), &e);
+                }
+            }
         }
     }
 
@@ -5268,43 +5455,81 @@ pub async fn engine_resolve(
                 // в СКРУТИНИИ живёт до конца всего match — внутри веток
                 // timings.take() тогда не собрать. В let-выражении заём
                 // кончается на точке с запятой.
-                let resolved = timings
-                    .measure(
-                        "yt_innertube",
-                        resolve_via_innertube(&state, &cfg, &video_id, itags),
-                    )
-                    .await;
-                match resolved {
-                    Ok(entry) => {
-                        stage0_note_success(&state, &video_id);
-                        stage0_breaker_note_success(&state);
-                        // см. warm-путь выше: `fetch` — доминирующая фаза
-                        let fetched =
-                            timings.measure("fetch", fetch_to_cache(&dir, &track_id, &entry)).await;
-                        match fetched {
-                            Ok(path) => {
-                                let limit = *state.cache_limit_bytes.lock().unwrap();
-                                ensure_pins_loaded(&app, &state, &cache_ns);
-                                let pins = state.pins.lock().unwrap().clone();
-                                evict_lru(&dir, limit, &path, &pins);
-                                state.stats.lock().unwrap().resolve_ok += 1;
-                                return Ok(ResolveOut {
-                                    path: path.to_string_lossy().into_owned(),
-                                    from_cache: false,
-                                    provider: Some(entry.provider),
-                                    timings: timings.take(),
-                                });
+                // ⚠️ ДВА КРУГА, А НЕ ОДИН (13.08) — и второй круг имеет смысл
+                // ТОЛЬКО после смены гостевой сессии. Обоснование целиком — в
+                // блоке «PO-токен и 403 от CDN»: ведро эксперимента выдаётся
+                // вместе с visitorData и держится на все треки сессии, поэтому
+                // повтор с той же сессией дал бы ровно тот же 403, а повтор со
+                // свежей — новая попытка попасть в разрешающее ведро. Цена
+                // круга ~0.75 с (POST + отбитый GET) против 5–19 с лестницы,
+                // так что даже неудачный второй круг дешевле её первой ступени.
+                for round in 0..STAGE0_FORBIDDEN_ROUNDS {
+                    // ⚠️ Результат СНАЧАЛА в переменную, и только потом в match:
+                    // future из measure держит `&mut timings`, а временное значение
+                    // в СКРУТИНИИ живёт до конца всего match — внутри веток
+                    // timings.take() тогда не собрать. В let-выражении заём
+                    // кончается на точке с запятой.
+                    let resolved = timings
+                        .measure(
+                            "yt_innertube",
+                            resolve_via_innertube(&state, &cfg, &video_id, itags),
+                        )
+                        .await;
+                    match resolved {
+                        Ok(entry) => {
+                            stage0_note_success(&state, &video_id);
+                            stage0_breaker_note_success(&state);
+                            // см. warm-путь выше: `fetch` — доминирующая фаза
+                            let fetched = timings
+                                .measure("fetch", fetch_to_cache(&dir, &track_id, &entry))
+                                .await;
+                            match fetched {
+                                Ok(path) => {
+                                    let limit = *state.cache_limit_bytes.lock().unwrap();
+                                    ensure_pins_loaded(&app, &state, &cache_ns);
+                                    let pins = state.pins.lock().unwrap().clone();
+                                    evict_lru(&dir, limit, &path, &pins);
+                                    state.stats.lock().unwrap().resolve_ok += 1;
+                                    return Ok(ResolveOut {
+                                        path: path.to_string_lossy().into_owned(),
+                                        from_cache: false,
+                                        provider: Some(entry.provider),
+                                        timings: timings.take(),
+                                    });
+                                }
+                                Err(e) => {
+                                    classify_failure(&mut state.stats.lock().unwrap(), &e);
+                                    // Не 403 (протух адрес, оборвалась сеть,
+                                    // размер не сошёлся) — повтор не лечит,
+                                    // сразу лестница.
+                                    if !is_gvs_forbidden(&e) {
+                                        break;
+                                    }
+                                    stage0_rotate_session(&state, SystemTime::now(), &e);
+                                    if round + 1 >= STAGE0_FORBIDDEN_ROUNDS {
+                                        // Круги кончились: помним провал (клик
+                                        // по тому же треку в ближайшую минуту
+                                        // не платит заново) и докладываем
+                                        // предохранителю — если запрет накрыл
+                                        // не сессию, а весь адрес, ступень 0
+                                        // должна замолчать, а не платить 1.5 с
+                                        // впустую на каждом клике.
+                                        stage0_note_fail(&state, &video_id, SystemTime::now());
+                                        stage0_breaker_note_fail(
+                                            &state,
+                                            &InnertubeFail::Forbidden(e),
+                                            SystemTime::now(),
+                                        );
+                                    }
+                                }
                             }
-                            // байты не доехали (протухло/смена IP → 403) —
-                            // лестница; маркеры ошибки понимает существующий
-                            // классификатор
-                            Err(e) => classify_failure(&mut state.stats.lock().unwrap(), &e),
                         }
-                    }
-                    Err(fail) => {
-                        classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
-                        stage0_note_fail(&state, &video_id, SystemTime::now());
-                        stage0_breaker_note_fail(&state, &fail, SystemTime::now());
+                        Err(fail) => {
+                            classify_innertube_failure(&mut state.stats.lock().unwrap(), &fail);
+                            stage0_note_fail(&state, &video_id, SystemTime::now());
+                            stage0_breaker_note_fail(&state, &fail, SystemTime::now());
+                            break;
+                        }
                     }
                 }
             }
@@ -5349,7 +5574,7 @@ pub async fn engine_resolve(
             );
             break;
         };
-        let attempt_timeout = left.min(RESOLVE_TIMEOUT);
+        let attempt_timeout = left.min(LADDER_ATTEMPT_TIMEOUT);
         state.stats.lock().unwrap().attempts += 1;
         let dir_clone = dir.clone();
         let id_clone = track_id.clone();
@@ -5539,6 +5764,13 @@ pub struct Stage0Status {
     pub consecutive_fails: u32,
     /// Ключ SoundCloud добыт и не протух (без него SC-треки — запасной дорогой).
     pub sc_key_ready: bool,
+    /// Сколько раз за сессию googlevideo отбил добытый адрес (403). Появилось
+    /// 13.08: счётчик `fail_403` существовал, но уходил ТОЛЬКО в аналитику и
+    /// при выгрузке обнулялся — то есть на живом разборе жалобы «включается
+    /// 8.5 секунды» посмотреть на него было негде, и причину пришлось собирать
+    /// по косвенным строкам журнала. Ненулевое значение здесь = YouTube требует
+    /// PO-токен у нашей гостевой сессии (см. блок «PO-токен и 403 от CDN»).
+    pub gvs_forbidden: u64,
     /// Последние события журнала, НОВЫЕ ПЕРВЫМИ (кольцо — до 300, наружу — 50).
     pub events: Vec<Stage0Event>,
 }
@@ -5579,6 +5811,7 @@ fn stage0_status_snapshot(state: &EngineState, now: SystemTime) -> Stage0Status 
         cooldown_until_ms,
         consecutive_fails,
         sc_key_ready,
+        gvs_forbidden: *state.gvs_forbidden.lock().unwrap(),
         events,
     }
 }
@@ -8291,6 +8524,92 @@ mod innertube_tests {
         stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
         stage0_breaker_note_fail(&state, &InnertubeFail::LoginRequired("б".into()), t0);
         assert!(!stage0_in_cooldown(&state, t0), "после успеха счёт с нуля");
+    }
+
+    // ── 403 от CDN: смена гостевой сессии (2026-08-13) ─────────────
+
+    /// Опознаём ровно тот текст, который рождает fetch_to_cache («warm GET:
+    /// статус 403»), и не путаем с чужими провалами. Проверка узкая нарочно:
+    /// вся ветка лечения 403 висит на этом предикате, и ложное срабатывание
+    /// выбросило бы прогрев на ровном месте.
+    #[test]
+    fn gvs_forbidden_recognised_by_message() {
+        assert!(is_gvs_forbidden("warm GET: статус 403 Forbidden"));
+        assert!(is_gvs_forbidden("warm GET: статус 403"));
+        assert!(!is_gvs_forbidden("warm GET: статус 404 Not Found"));
+        assert!(!is_gvs_forbidden("warm GET не ушёл: сеть недоступна"));
+        assert!(!is_gvs_forbidden("warm-ответ неполный: 100+1 из 4030"));
+    }
+
+    /// Смена сессии обязана делать ОБА дела разом: выбросить visitorData и
+    /// выбросить прогретые им YouTube-адреса. Записи SoundCloud остаются —
+    /// они к visitorData отношения не имеют, а их прогрев дорогой.
+    #[test]
+    fn rotate_session_drops_visitor_and_youtube_warm_only() {
+        let state = EngineState::default();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-ОТРАВЛЕННЫЙ".into(),
+            obtained_at: now,
+        });
+        let mk = |provider: &str| WarmEntry {
+            url: Url::parse("https://rr1---sn-x.googlevideo.com/videoplayback?itag=251").unwrap(),
+            size: 1024,
+            ext: "webm".into(),
+            provider: provider.into(),
+            expires_at: now + Duration::from_secs(3600),
+            hls_segments: Vec::new(),
+        };
+        store_warm_entry(&state, "ns", "yt-1", mk("youtube"));
+        store_warm_entry(&state, "ns", "yt-2", mk("youtube"));
+        store_warm_entry(&state, "ns", "sc-1", mk("soundcloud"));
+
+        let dropped = stage0_rotate_session(&state, now, "warm GET: статус 403");
+
+        assert_eq!(dropped, 2, "выброшены обе YouTube-записи");
+        assert!(
+            state.youtube_visitor.lock().unwrap().is_none(),
+            "гостевая сессия сброшена — следующий POST возьмёт новую"
+        );
+        let warm = state.warm.lock().unwrap();
+        assert!(warm.contains_key(&warm_key("ns", "sc-1")), "SoundCloud не тронут");
+        assert!(!warm.contains_key(&warm_key("ns", "yt-1")));
+        assert_eq!(*state.gvs_forbidden.lock().unwrap(), 1, "счётчик диагностики");
+    }
+
+    /// Счётчик 403 виден в «Диагностике добычи» и НЕ обнуляется выгрузкой
+    /// аналитики (та черпает EngineStats, а этот счётчик живёт отдельно).
+    #[test]
+    fn status_shows_forbidden_count_surviving_stats_drain() {
+        let state = EngineState::default();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        stage0_rotate_session(&state, now, "warm GET: статус 403");
+        stage0_rotate_session(&state, now, "warm GET: статус 403");
+        // имитируем выгрузку аналитики (engine_stats_take черпает досуха)
+        *state.stats.lock().unwrap() = EngineStats::default();
+        assert_eq!(stage0_status_snapshot(&state, now).gvs_forbidden, 2);
+    }
+
+    /// 403 попадает в fail_403 (общий KPI с лестницей), а не в fail_other.
+    #[test]
+    fn forbidden_class_counts_as_403() {
+        let mut stats = EngineStats::default();
+        classify_innertube_failure(&mut stats, &InnertubeFail::Forbidden("403".into()));
+        assert_eq!(stats.fail_403, 1);
+        assert_eq!(stats.fail_other, 0);
+    }
+
+    /// 403 — провал ГЛОБАЛЬНЫЙ (запрет накрывает сессию, а не конкретное
+    /// видео), поэтому он обязан двигать предохранитель: если и свежая сессия
+    /// отбита, ступень 0 должна замолчать, а не платить впустую каждый клик.
+    #[test]
+    fn forbidden_opens_breaker_cooldown() {
+        let state = EngineState::default();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for _ in 0..STAGE0_BREAKER_THRESHOLD {
+            stage0_breaker_note_fail(&state, &InnertubeFail::Forbidden("403".into()), t0);
+        }
+        assert!(stage0_in_cooldown(&state, t0));
     }
 
     /// После истечения кулдауна счёт начинается заново — один свежий провал

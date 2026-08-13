@@ -341,6 +341,11 @@ export interface Stage0Status {
   cooldown_until_ms: number | null;
   consecutive_fails: number;
   sc_key_ready: boolean;
+  /** Сколько раз за сессию googlevideo отбил уже добытый адрес (403).
+   *  Ненулевое = YouTube требует PO-токен у нашей гостевой сессии; движок
+   *  отвечает на это сменой сессии (см. блок «PO-токен и 403 от CDN» в
+   *  engine.rs). Счётчик НЕ обнуляется выгрузкой аналитики. */
+  gvs_forbidden: number;
   events: Stage0Event[];
 }
 
