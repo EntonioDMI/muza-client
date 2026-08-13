@@ -11,7 +11,7 @@
  *  слоем перетаскивания — превью под курсором рисует обложку. Канва и Image
  *  есть в обоих браузерных движках, а ytimg отдаёт CORS, так что путь один. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /** Потолок кэша обложек в записях.
  *
@@ -224,19 +224,31 @@ function cropLetterbox(img: HTMLImageElement): string | null {
  *  трека её нет), null и на выходе: плейсхолдер рисует ДС, а не подставная
  *  картинка. */
 export function useCoverArt(src: string | null): string | null {
-  const [out, setOut] = useState<string | null>(() => (src === null ? null : (cacheGet(src) ?? src)));
+  /** Готовый кроп ВМЕСТЕ С ИСХОДНИКОМ, из которого он получен.
+   *
+   *  ⚠️ ЗДЕСЬ БЫЛО ПРОСТО `out`, И ОНО ОТСТАВАЛО НА ОДИН НАРИСОВАННЫЙ КАДР
+   *  (жалоба владельца 13.08: «при старте трека плашка „сейчас играет“ один-два
+   *  раза моргает»). Инициализатор useState срабатывает только при первом
+   *  монтировании, поэтому при КАЖДОЙ последующей смене `src` компонент сначала
+   *  рисовался со старым значением, и лишь эффект — который React пропускает
+   *  ПОСЛЕ отрисовки — подтягивал новое. Наблюдаемо это выглядело так:
+   *  • ничего не играло → пошёл трек: один кадр `null`, то есть <Cover> рисовал
+   *    ПЛЕЙСХОЛДЕР (нота на сером), и только следующим кадром — обложку;
+   *  • трек A → трек B: один кадр плашка B показывала обложку A (ключ у <Cover>
+   *    уже сменился, значение — ещё нет), потом обложка пропадала на время
+   *    загрузки B. Отсюда и «один-два раза».
+   *
+   *  Лечится не таймингом, а тем, что значение СЧИТАЕТСЯ В РЕНДЕРЕ (ниже), а в
+   *  состоянии лежит только то, чего в рендере узнать нельзя, — результат
+   *  асинхронного кропа. Кадра со старым значением не существует по построению. */
+  const [cropped, setCropped] = useState<{ src: string; out: string } | null>(null);
 
   useEffect(() => {
-    if (src === null) {
-      setOut(null);
-      return;
-    }
-    const cached = cacheGet(src);
-    if (cached) {
-      setOut(cached);
-      return;
-    }
-    setOut(src);
+    if (src === null) return;
+    // Готовое из кэша и «не ytimg» разбираются в рендере — состояние не трогаем
+    // вовсе: лишний setState здесь означал бы лишнюю перерисовку всего дерева
+    // приложения на каждой смене трека.
+    if (cacheGet(src) !== undefined) return;
     if (!/i\.ytimg\.com/.test(src)) return;
     let alive = true;
     // hqdefault — 480×360 (квадрат контента выйдет ~270px); для больших панелей
@@ -272,7 +284,22 @@ export function useCoverArt(src: string | null): string | null {
           /* CORS/декодер подвёл — оригинал */
         }
         cacheSet(src, result);
-        if (alive) setOut(result);
+        // Кроп не дал ничего нового — и перерисовывать нечего.
+        if (result === src) return;
+        // ⚠️ ПОДМЕНЯЕМ ТОЛЬКО ПОСЛЕ ДЕКОДИРОВАНИЯ. Смена атрибута src у живого
+        // <img> сбрасывает прежний кадр НЕМЕДЛЕННО, а новый рисуется лишь после
+        // декодирования: замер в Chromium на dataURL 720×720 (260 КБ) даёт один
+        // кадр пустоты, сквозь который видно подложку <Cover> — то самое
+        // «моргнуло». Прогретая картинка декодируется заранее, и подмена
+        // происходит уже в том же кадре, без провала.
+        const warm = new Image();
+        const show = () => {
+          if (alive) setCropped({ src, out: result });
+        };
+        warm.src = result;
+        // decode() нет в jsdom — там показываем сразу, поведение прежнее.
+        if (typeof warm.decode === "function") void warm.decode().then(show, show);
+        else show();
       };
       img.onerror = () => tryLoad(i + 1);
       img.src = candidates[i];
@@ -283,5 +310,12 @@ export function useCoverArt(src: string | null): string | null {
     };
   }, [src]);
 
-  return out;
+  // Значение рендера: готовый кроп для ЭТОГО src, иначе кэш, иначе сам src.
+  // useMemo — не ради скорости, а чтобы cacheGet (он переставляет запись в
+  // хвост MRU, то есть трогает Map) не звался на каждой перерисовке дерева.
+  return useMemo(() => {
+    if (src === null) return null;
+    if (cropped && cropped.src === src) return cropped.out;
+    return cacheGet(src) ?? src;
+  }, [src, cropped]);
 }
