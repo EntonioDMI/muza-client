@@ -1945,7 +1945,14 @@ function Player({
     setOpenPlaylistId(entry.payload?.playlistId ?? null);
     setOpenScPlaylistId(entry.payload?.scPlaylistId ?? null);
     // Место в настройках — такая же часть записи, как id плейлиста (13.08).
-    setSettingsPlace({ tab: entry.payload?.settingsTab ?? null, sub: entry.payload?.settingsSub ?? null });
+    // Номер растёт ТОЛЬКО здесь — на «назад»/«вперёд». По нему экран настроек
+    // отличает переход по истории от собственного монтирования; без этого
+    // различия два эффекта дрались за состояние и вешали интерфейс (13.08).
+    setSettingsPlace((p) => ({
+      tab: entry.payload?.settingsTab ?? null,
+      sub: entry.payload?.settingsSub ?? null,
+      nonce: p.nonce + 1,
+    }));
   };
 
   /** Раздел и под-экран настроек, как их видит ИСТОРИЯ.
@@ -1954,9 +1961,10 @@ function Player({
    *  работает и без App — веб-каркас зовёт его без этих пропов), сюда приходит
    *  уведомлением, а обратно уходит только после «назад»/«вперёд». Держать
    *  само состояние здесь было нельзя: экран общий с вебом, а история — нет. */
-  const [settingsPlace, setSettingsPlace] = useState<{ tab: string | null; sub: string | null }>({
+  const [settingsPlace, setSettingsPlace] = useState<{ tab: string | null; sub: string | null; nonce: number }>({
     tab: null,
     sub: null,
+    nonce: 0,
   });
 
   /** Человек сменил раздел настроек — это ПЕРЕХОД, и он обязан попасть в стек.
@@ -1967,7 +1975,10 @@ function Player({
    *  запись, совпавшую с текущей, — именно на это рассчитан отчёт экрана после
    *  возврата назад, где значения ровно те же, что в записи. */
   const onSettingsPlaceChange = (tab: string | null, sub: string | null) => {
-    setSettingsPlace({ tab, sub });
+    // Номер НЕ трогаем: это отчёт экрана о собственном щелчке, а не переход по
+    // истории. Тронь его здесь — и экран немедленно получит приказ встать туда,
+    // куда он и так только что встал, то есть вернётся петля.
+    setSettingsPlace((p) => ({ tab, sub, nonce: p.nonce }));
     historyRef.current = pushHistory(historyRef.current, {
       view: "settings" as View,
       payload: { settingsTab: tab ?? undefined, settingsSub: sub ?? undefined },
@@ -2759,6 +2770,7 @@ function Player({
                 onIntentUsed={clearSettingsIntent}
                 placeTab={settingsPlace.tab}
                 placeSub={settingsPlace.sub}
+                placeNonce={settingsPlace.nonce}
                 onPlaceChange={onSettingsPlaceChange}
                 // Живой трек для честного предпросмотра Discord RPC: обложка —
                 // СЫРАЯ (rawCover, как в реальной активности), не кроп useCoverArt
