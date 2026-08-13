@@ -38,6 +38,8 @@ import {
   PublicPlaylistHitSchema,
   type SoundcloudPlaylist,
   SoundcloudPlaylistSchema,
+  type Artist,
+  type ArtistInfo,
   type Genre,
   type RecipeEnvelope,
   type SearchSourceHealth,
@@ -108,6 +110,26 @@ interface TokenPair {
   refresh_token: string;
   user_id: string;
   username: string;
+}
+
+/** Проводная форма артиста и справки о нём (snake_case сервера). */
+interface ArtistWire {
+  name: string;
+  count: number;
+  cover_url: string | null;
+}
+
+interface ArtistInfoWire {
+  /** null — каталог артиста не опознал. Штатный ответ, см. ArtistInfo. */
+  artist: { name: string; picture_url: string | null; fan_count: number; album_count: number } | null;
+  releases: {
+    id: string;
+    title: string;
+    cover_url: string | null;
+    year: number | null;
+    record_type: string | null;
+    label: string | null;
+  }[];
 }
 
 /** Проводной формат трека (snake_case сервера) → Track (camelCase). */
@@ -713,6 +735,52 @@ export class HttpMuzaApi implements MuzaApi {
       `/genres/${encodeURIComponent(slug)}/tracks${qs ? `?${qs}` : ""}`,
     );
     return tracksFromWire(out.results);
+  }
+
+  /** Артисты, у которых есть что включить. Без параметров — как и жанры: это
+   *  обзор своей медиатеки, а не второй поиск. */
+  async artists(): Promise<Artist[]> {
+    const out = await this.authedRequest<{ artists: ArtistWire[] }>("/artists");
+    return out.artists.map((a) => ({ name: a.name, count: a.count, coverUrl: a.cover_url }));
+  }
+
+  /** Треки одного артиста. Имя берётся из artists() и не собирается руками:
+   *  сервер сравнивает строку ТОЧНО, и «почти то же имя» вернёт пустоту.
+   *
+   *  ⚠️ Имя едет ЗАПРОСОМ, а не куском пути: в нём живут слэши («AC/DC»),
+   *  вопросы и решётки — всё, что попало в заголовок ролика. В пути слэш ломает
+   *  маршрут ещё до контроллера. */
+  async artistTracks(name: string, opts?: { limit?: number; offset?: number }): Promise<Track[]> {
+    const params = new URLSearchParams({ artist: name });
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const out = await this.authedRequest<{ artist: string; results: TrackWire[] }>(
+      `/artists/tracks?${params.toString()}`,
+    );
+    return tracksFromWire(out.results);
+  }
+
+  /** Справка про артиста. Пустой ответ (`found: false`) — норма: каталог знает
+   *  примерно две трети наших имён. Сеть тоже не повод для исключения здесь…
+   *  ловить его всё равно вызывающему, но форма ответа одна и та же. */
+  async artistInfo(name: string): Promise<ArtistInfo> {
+    const out = await this.authedRequest<ArtistInfoWire>(
+      `/artists/meta?${new URLSearchParams({ artist: name }).toString()}`,
+    );
+    return {
+      found: out.artist !== null,
+      pictureUrl: out.artist?.picture_url ?? null,
+      fanCount: out.artist?.fan_count ?? 0,
+      albumCount: out.artist?.album_count ?? 0,
+      releases: (out.releases ?? []).map((r) => ({
+        id: r.id,
+        title: r.title,
+        coverUrl: r.cover_url,
+        year: r.year,
+        recordType: r.record_type,
+        label: r.label,
+      })),
+    };
   }
 
   async getTrack(id: string): Promise<Track> {

@@ -126,6 +126,31 @@ export const viewsEn = {
         hint: "Tracks in this genre can't be played right now — try another one.",
       },
     },
+    /* Artists (13.08). "Tracks: {count}" mirrors the Russian wording, where the
+       colon avoids inventing plural forms the dictionary has no machinery for. */
+    artists: {
+      back: "All artists",
+      count: "Tracks: {count}",
+      tileCount: "{count} tr.",
+      playAll: "Play all",
+      empty: {
+        title: "No artists yet",
+        hint: "An artist shows up here once you have at least two of their songs. Listen to something and the list fills itself.",
+      },
+      emptyOne: {
+        title: "Nothing here yet",
+        hint: "This artist's songs can't be played right now — try another one.",
+      },
+      releases: "Latest releases",
+      releasesHint: "What this artist has put out. Reference only — you can't play these from here yet.",
+      releasesTotal: "Releases in total: {count}",
+      types: {
+        album: "Album",
+        single: "Single",
+        ep: "EP",
+        compilation: "Compilation",
+      },
+    },
     historyEmpty: {
       title: "History is empty",
       hint: "Everything you listen to will show up here — from any device.",
@@ -134,7 +159,7 @@ export const viewsEn = {
     addLink: "By link",
     importPlaylist: "Import playlist",
     byCode: "By code",
-    artistsPlaceholder: "Artists you follow will show up here.",
+    // artistsPlaceholder dropped 13.08: "Artists" has a real screen now.
     albumsPlaceholder: "Albums of the tracks you save will show up here.",
     anon: {
       title: "Playlists live in your account",

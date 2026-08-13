@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
-import { Button, ChipGroup, Dialog, EmptyState, Icon, Tile, TrackRow } from "@muza/ui";
-import type { Genre, HistoryItem, MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
+import { Button, ChipGroup, Cover, Dialog, EmptyState, Icon, Tile, TrackRow } from "@muza/ui";
+import type {
+  Artist,
+  ArtistInfo,
+  Genre,
+  HistoryItem,
+  MuzaApi,
+  PlaylistMeta,
+  Track,
+} from "@muza/api-client";
 import { fmtTime } from "../lib/format";
 import { tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { applyVisibleOrder, gridInsertionIndex } from "../lib/dragEngine";
@@ -116,6 +124,97 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
         }}
       >
         {t("views.library.playlistSubtitle", { count })}
+      </div>
+    </div>
+  );
+}
+
+/** Вид релиза каталога → ключ подписи.
+ *
+ *  ⚠️ ЯВНОЙ ТАБЛИЦЕЙ, А НЕ СКЛЕЙКОЙ КЛЮЧА из recordType. Каталог волен
+ *  прислать вид за пределами этих четырёх, и склеенный ключ вывалил бы на
+ *  экран сам служебный путь («views.library.artists.types.box_set») — словарь
+ *  на ненайденном ключе возвращает ключ. Неизвестный вид показываем как
+ *  приехал: английское слово человек хотя бы прочитает. */
+const RELEASE_TYPE_KEYS = {
+  album: "views.library.artists.types.album",
+  single: "views.library.artists.types.single",
+  ep: "views.library.artists.types.ep",
+  compilation: "views.library.artists.types.compilation",
+} as const;
+
+/** Плитка артиста (13.08).
+ *
+ *  ⚠️ КРУГЛАЯ ОБЛОЖКА — ЭТО НЕ УКРАШЕНИЕ, А ЕДИНСТВЕННОЕ, ЧЕМ АРТИСТ ОТЛИЧИМ
+ *  ОТ ПЛЕЙЛИСТА в одной и той же сетке медиатеки. Квадрат в этом приложении уже
+ *  занят: им подписаны плейлисты, «Любимое» и релизы. Круг во всех музыкальных
+ *  программах означает «человек», и цена этого различия — один borderRadius.
+ *  Подпись под кругом тоже по центру: у круглого арта нет левого края, к
+ *  которому текст мог бы прижаться, и флаг-выключка рядом с ним читается как
+ *  съехавшая.
+ *
+ *  ⚠️ СВОЯ ПЛИТКА, А НЕ Tile ДС — И ПОЭТОМУ ОБЯЗАТЕЛЬНО .muza-tile. Ровно на
+ *  этом уже обжигалось «Любимое» (см. его шапку выше): собственный useState
+ *  подсветки и собственные surface-* разъезжаются с ДС на первой же правке
+ *  канала, и два кафеля в одной сетке начинают жить разными законами. Здесь
+ *  фон, наведение и нажатие берутся тем же каналом (.muza-tile + .muza-press,
+ *  interactions.css), а своего тут только форма обложки.
+ *
+ *  Лицо плитки — обложка ЛЮБОГО его трека из нашей базы, а не фотография из
+ *  каталога: список обязан рисоваться целиком и сразу, а каталог отвечает
+ *  сотни миллисекунд и знает лишь две трети имён. Фотография приезжает уже
+ *  внутри, на странице артиста. */
+function ArtistTile({ artist, onOpen }: { artist: Artist; onOpen: () => void }) {
+  const { t } = useT();
+  return (
+    <div
+      className="muza-press muza-tile"
+      role="button"
+      tabIndex={0}
+      aria-label={artist.name}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      onClick={onOpen}
+      style={{
+        padding: "var(--pad-tile)",
+        borderRadius: "var(--r-md)",
+        background: "var(--tile-bg)",
+        cursor: "pointer",
+        // transition НЕ инлайном: он объявлен на .muza-tile вместе с
+        // transform нажатия — инлайновый перекрыл бы его целиком.
+      }}
+    >
+      <Cover src={artist.coverUrl} radius="50%" style={{ marginBottom: "var(--sp-3)" }} />
+      {/* Усечение одной строкой, как у Tile: имя вроде «Kai Angel & 9mice» в
+          узкой колонке рвётся на две строки, плитка становится выше соседок и
+          ряд читается как сбой раскладки. */}
+      <div
+        style={{
+          fontSize: "var(--fs-body)",
+          fontWeight: "var(--fw-text)",
+          color: "var(--text-1)",
+          lineHeight: "var(--lh-ui)",
+          textAlign: "center",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {artist.name}
+      </div>
+      <div
+        style={{
+          fontSize: "var(--fs-caption)",
+          color: "var(--text-2)",
+          marginTop: 2,
+          textAlign: "center",
+        }}
+      >
+        {t("views.library.artists.tileCount", { count: artist.count })}
       </div>
     </div>
   );
@@ -366,6 +465,16 @@ export function LibraryView({
    *  tracks === null при выбранном жанре и есть «идёт загрузка». */
   const [openGenre, setOpenGenre] = useState<Genre | null>(null);
   const [genreTracks, setGenreTracks] = useState<Track[] | null>(null);
+  /** Артисты — тем же приёмом, что жанры: null = ещё не спрашивали. */
+  const [artists, setArtists] = useState<Artist[] | null>(null);
+  const [openArtist, setOpenArtist] = useState<Artist | null>(null);
+  const [artistTracks, setArtistTracks] = useState<Track[] | null>(null);
+  /** Справка из каталога метаданных. Живёт ОТДЕЛЬНЫМ состоянием от треков и
+   *  никогда их не задерживает: треки свои и приезжают всегда, а справка ходит
+   *  во внешний каталог, отвечает сотни миллисекунд и у каждого третьего имени
+   *  не находится вовсе. Одно состояние на двоих означало бы, что своя музыка
+   *  ждёт чужой сервер. */
+  const [artistInfo, setArtistInfo] = useState<ArtistInfo | null>(null);
   const [locals, setLocals] = useState<LocalFileEntry[] | null>(null);
   const [scanning, setScanning] = useState(false);
   /** История прослушиваний: null — ещё не спрашивали (или спрашиваем). */
@@ -485,6 +594,64 @@ export function LibraryView({
   useEffect(() => {
     if (chip !== "genres" && openGenre !== null) setOpenGenre(null);
   }, [chip, openGenre]);
+
+  // Артисты — тот же приём, что у жанров и истории: спрашиваем один раз при
+  // первом открытии вкладки. Список меняется ровно тогда, когда в медиатеке
+  // прибавляется музыка, и перечитывать его на каждый возврат нечестно к
+  // серверу: это 4 тысячи строк, свёрнутых в группы.
+  useEffect(() => {
+    if (chip !== "artists" || artists !== null || !canSearch) return;
+    void api
+      .artists()
+      .then(setArtists)
+      .catch(() => setArtists([])); // не ответил — покажем «пусто», а не белый экран
+  }, [chip, artists, api, canSearch]);
+
+  // Треки открытого артиста. Сбрасываются в null ПЕРЕД запросом — иначе на
+  // экране оставался бы прошлый артист, пока едет новый, и человек успевал бы
+  // нажать на трек, которого в открытом разделе нет.
+  useEffect(() => {
+    if (!openArtist) return;
+    let alive = true;
+    setArtistTracks(null);
+    void api
+      .artistTracks(openArtist.name, { limit: 200 })
+      .then((tracks) => {
+        if (alive) setArtistTracks(tracks);
+      })
+      .catch(() => {
+        if (alive) setArtistTracks([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [openArtist, api]);
+
+  // Справка из каталога — ВТОРЫМ, независимым запросом (см. artistInfo выше).
+  // Её провал не имеет права ничего сообщать: человек пришёл слушать, а не
+  // читать про лейблы, и тост «каталог не ответил» был бы жалобой на то, чего
+  // он не просил. Не приехала — раздела просто нет.
+  useEffect(() => {
+    if (!openArtist) return;
+    let alive = true;
+    setArtistInfo(null);
+    void api
+      .artistInfo(openArtist.name)
+      .then((info) => {
+        if (alive) setArtistInfo(info);
+      })
+      .catch(() => {
+        if (alive) setArtistInfo({ found: false, pictureUrl: null, fanCount: 0, albumCount: 0, releases: [] });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [openArtist, api]);
+
+  // Уход с вкладки закрывает открытого артиста — та же причина, что у жанров.
+  useEffect(() => {
+    if (chip !== "artists" && openArtist !== null) setOpenArtist(null);
+  }, [chip, openArtist]);
 
   const addLocal = async (kind: "files" | "folder") => {
     if (scanning || !local) return;
@@ -721,10 +888,181 @@ export function LibraryView({
             ))}
           </div>
         )
+      ) : chip === "artists" && canSearch ? (
+        openArtist ? (
+          <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
+            <div style={{ padding: "var(--sp-4) 0 0" }}>
+              <Button variant="ghost" icon="arrow-left" onClick={() => setOpenArtist(null)}>
+                {t("views.library.artists.back")}
+              </Button>
+            </div>
+            {/* ШАПКА. Фотография из каталога, а нет её — обложка его же трека
+                (та самая, что была на плитке: человек нажал на круг с этой
+                картинкой и обязан увидеть её же, а не подмену на пустой
+                кружок, пока едет каталог). Круг — тот же смысл, что на плитке:
+                это человек, а не сборник. */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: phone ? "var(--sp-3)" : "var(--sp-5)",
+                padding: "var(--sp-4) 0 var(--sp-5)",
+              }}
+            >
+              <Cover
+                src={artistInfo?.pictureUrl ?? openArtist.coverUrl}
+                size={phone ? 88 : 132}
+                radius="50%"
+              />
+              {/* minWidth: 0 — чтобы длинное имя усекалось, а не распирало ряд
+                  и не выдавливало кнопку «Слушать всё» за край экрана. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 0 }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: phone ? "var(--fs-title)" : "var(--fs-h1)",
+                    fontWeight: 600,
+                    color: "var(--text-1)",
+                    lineHeight: "var(--lh-ui)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {openArtist.name}
+                </h2>
+                <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
+                  {t("views.library.artists.count", { count: openArtist.count })}
+                </div>
+                <div>
+                  {/* Кнопка появляется, только когда играть УЖЕ есть что:
+                      «Слушать всё» над пустым списком — обещание, которого
+                      экран не сдержит. */}
+                  {artistTracks && artistTracks.length > 0 ? (
+                    <Button
+                      variant="primary"
+                      icon="play"
+                      onClick={() => onPlayHistory?.(artistTracks, 0)}
+                    >
+                      {t("views.library.artists.playAll")}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            {artistTracks === null ? (
+              <div style={{ padding: "var(--sp-6) 0", color: "var(--text-3)" }}>{t("common.loading")}</div>
+            ) : artistTracks.length === 0 ? (
+              <EmptyState
+                icon="music-2"
+                title={t("views.library.artists.emptyOne.title")}
+                hint={t("views.library.artists.emptyOne.hint")}
+              />
+            ) : (
+              artistTracks.map((tr, i) => (
+                <TrackRow
+                  key={tr.id}
+                  {...trackRowL10n(t)}
+                  compact={phone}
+                  index={i + 1}
+                  cover={tr.coverUrl}
+                  title={tr.title}
+                  // артист В СТРОКЕ НЕ ПОВТОРЯЕТСЯ: на его же странице это
+                  // одно и то же слово пятьдесят раз подряд. Показываем то,
+                  // чем строки РАЗЛИЧАЮТСЯ, — название и длительность.
+                  artist=""
+                  duration={fmtTime(tr.durationSec)}
+                  active={currentId === tr.id}
+                  playing={currentId === tr.id && playing}
+                  // Тот же общий колбэк «сыграй этот список», что у истории и
+                  // жанров: артист — такой же контекст воспроизведения.
+                  onPlay={() => onPlayHistory?.(artistTracks, i)}
+                />
+              ))
+            )}
+            {/* СПРАВКА ИЗ КАТАЛОГА — только когда артист опознан И релизы есть.
+                Раздел, который у каждого третьего пуст, хуже отсутствующего:
+                у Deezer нет ни «Kai Angel & 9mice», ни «akktawa», и рамка
+                «релизов нет» сообщала бы человеку о нашем неудачном запросе,
+                а не о музыке. */}
+            {artistInfo?.found && artistInfo.releases.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", paddingTop: "var(--sp-6)" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)" }}>
+                    {t("views.library.artists.releases")}
+                  </div>
+                  {/* Сколько их ВСЕГО у артиста — иначе шесть строк читаются
+                      как «всё, что он выпустил», и справка начинает врать. */}
+                  <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>
+                    {t("views.library.artists.releasesTotal", { count: artistInfo.albumCount })}
+                  </div>
+                </div>
+                <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", lineHeight: 1.5 }}>
+                  {t("views.library.artists.releasesHint")}
+                </div>
+                {artistInfo.releases.map((r) => {
+                  const typeKey = r.recordType
+                    ? RELEASE_TYPE_KEYS[r.recordType as keyof typeof RELEASE_TYPE_KEYS]
+                    : undefined;
+                  const kind = typeKey ? t(typeKey) : r.recordType;
+                  const meta = [r.year, kind].filter(Boolean).join(" · ");
+                  return (
+                    <div
+                      key={r.id}
+                      style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", padding: "var(--sp-1) 0" }}
+                    >
+                      <Cover src={r.coverUrl} size={48} radius="var(--r-sm)" />
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: "var(--fs-body)",
+                            color: "var(--text-1)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {r.title}
+                        </div>
+                        {/* Год, вид и лейбл — ОДНОЙ строкой: три отдельные
+                            подписи под каждым релизом превратили бы справку в
+                            таблицу, которую никто не читает. */}
+                        <div
+                          style={{
+                            fontSize: "var(--fs-caption)",
+                            color: "var(--text-2)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {meta}
+                          {r.label ? `${meta ? " · " : ""}${r.label}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : artists === null ? (
+          <div style={{ padding: "var(--sp-6) 0", color: "var(--text-3)" }}>{t("common.loading")}</div>
+        ) : artists.length === 0 ? (
+          <EmptyState
+            icon="user-round"
+            title={t("views.library.artists.empty.title")}
+            hint={t("views.library.artists.empty.hint")}
+          />
+        ) : (
+          <div style={grid}>
+            {artists.map((a) => (
+              <ArtistTile key={a.name} artist={a} onOpen={() => setOpenArtist(a)} />
+            ))}
+          </div>
+        )
       ) : chip === "artists" ? (
-        <div style={{ padding: "var(--sp-6) 0", color: "var(--text-2)" }}>
-          {t("views.library.artistsPlaceholder")}
-        </div>
+        // Аноним: медиатека живёт на сервере, считать в ней некого.
+        <EmptyState icon="user" title={t("views.library.anon.title")} hint={t("views.library.anon.hint")} />
       ) : chip === "history" && historyTab ? (
         // «История» — последние 50 прослушиваний с сервера, общие для всех
         // устройств. Одна и та же песня попадает в список столько раз, сколько

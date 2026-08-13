@@ -31,6 +31,9 @@ import type {
   PublicPlaylist,
   PublicPlaylistHit,
   SoundcloudPlaylist,
+  Artist,
+  ArtistInfo,
+  ArtistRelease,
   Genre,
   RecipeEnvelope,
   RecsSettings,
@@ -142,6 +145,14 @@ export interface MuzaApi {
   discover(limit?: number): Promise<Track[]>;
   genres(): Promise<Genre[]>;
   genreTracks(slug: string, opts?: { limit?: number; offset?: number }): Promise<Track[]>;
+  /** Артисты, у которых есть что включить. */
+  artists(): Promise<Artist[]>;
+  artistTracks(name: string, opts?: { limit?: number; offset?: number }): Promise<Track[]>;
+  /** Справка про артиста из каталога метаданных. Отдельным вызовом от треков
+   *  НАМЕРЕННО: треки — свои и приезжают всегда, справка ходит во внешний
+   *  каталог и вполне может не доехать. Связать их одним запросом значило бы
+   *  поставить показ своей музыки в зависимость от чужого сервера. */
+  artistInfo(name: string): Promise<ArtistInfo>;
   getTrack(id: string): Promise<Track>;
   /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
    *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */
