@@ -57,17 +57,59 @@ export function DiagnosticsSub() {
   // больше внимания, чем экономил.
   const summary = port?.startSummary?.() ?? [];
 
-  /** Журнал в буфер обмена ТАБЛИЦЕЙ (TSV), а не JSON: он вставляется прямо в
-   *  Excel/Sheets и там же считает медианы — разбирать его руками не надо. */
-  const copyLog = async () => {
+  /** Всё содержимое экрана одним куском: журнал причин, сводка по фазам и
+   *  таблица стартов.
+   *
+   *  ⚠️ ПОЧЕМУ ОДНА КНОПКА, А НЕ ТРИ. Раньше копировалась только таблица
+   *  стартов, и разбор упирался в это каждый раз: в таблице видно, ЧТО было
+   *  медленно, а в журнале — ПОЧЕМУ, и без второй половины первая читается
+   *  как загадка. Человек копировал по кускам и всё равно привозил не то.
+   *  Отдельные кнопки на каждую часть заставляли бы его знать, какая часть
+   *  нужна, — а он этого знать не обязан.
+   *
+   *  Таблица идёт ПОСЛЕДНЕЙ и остаётся сплошным TSV: так её по-прежнему можно
+   *  выделить и вставить в Excel/Sheets, чтобы считать медианы там. Разделы
+   *  подписаны, чтобы человек (и тот, кому он это пришлёт) видел границы. */
+  // Разделители вынесены именами: в этом файле их правил генератор, и
+  // буквальный перенос строки внутри литерала уже один раз ломал сборку.
+  const NL = String.fromCharCode(10);
+  const TAB = String.fromCharCode(9);
+
+  const copyAll = async () => {
     const tsv = port?.startLogTsv?.();
     if (!tsv) return;
+    const events = health?.events ?? [];
+    const parts: string[] = [];
+    if (events.length > 0) {
+      parts.push(
+        `${t("settings.system.stage0.title")}:`,
+        ...events.map((e) => `${fmtEventClock(e.at_ms)}${TAB}${e.text}`),
+        "",
+      );
+    }
+    if (summary.length > 0) {
+      parts.push(`${t("settings.system.stage0.starts.summary")}:`, ...summary.map(summaryLine), "");
+    }
+    parts.push(`${t("settings.system.stage0.starts.title")}:`, tsv);
     try {
-      await navigator.clipboard.writeText(tsv);
+      await navigator.clipboard.writeText(parts.join(NL));
       onNotify(t("settings.system.stage0.starts.copied"), "copy");
     } catch {
       onNotify(t("settings.system.stage0.starts.copyFailed"), "x");
     }
+  };
+
+  /** Строка сводки текстом — то же, что видно на экране. Отдельной функцией,
+   *  а не вторым выражением: разойдись они, скопированное перестало бы
+   *  совпадать с показанным, и разбор пошёл бы по несуществующим числам. */
+  const summaryLine = (s: (typeof summary)[number]): string => {
+    const phases = PHASES.filter((p) => s.phases[p])
+      .map((p) => {
+        const stat = s.phases[p];
+        return stat ? `${phaseLabel[p]} ${stat.median} / ${stat.p90} ${t("settings.system.stage0.starts.ms")}` : "";
+      })
+      .filter(Boolean);
+    return [`${s.cls} ×${s.count}`, ...phases].join(" · ");
   };
 
   const locale = lang === "ru" ? "ru-RU" : "en-US";
@@ -156,7 +198,7 @@ export function DiagnosticsSub() {
         </Button>
         {/* Нет умения выгрузить журнал — нет и кнопки (правило розетки). */}
         {port?.startLogTsv ? (
-          <Button variant="ghost" icon="copy" onClick={() => void copyLog()}>
+          <Button variant="ghost" icon="copy" onClick={() => void copyAll()}>
             {t("settings.system.stage0.starts.copy")}
           </Button>
         ) : null}
