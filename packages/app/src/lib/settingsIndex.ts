@@ -329,7 +329,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("system", null, "settings.system.closeAction", ["закрытие", "крестик", "свернуть"], { needs: "tray" }),
   e("system", null, "settings.system.update", ["обновление", "версия", "update"], { needs: "updates" }),
   e("system", null, "settings.system.miniPlayer", ["мини-плеер", "маленькое окно", "miniplayer"], { needs: "miniPlayer" }),
-  e("system", null, "settings.system.stage0", ["диагностика", "медленно", "долго грузится", "журнал", "diagnostics", "slow"], {
+  // Синонимы 13.08: экран перестал быть только про «медленно» — он теперь
+  // отвечает и на «почему всё из одного места» и «почему трек не заиграл».
+  // Человек ищет словами своей жалобы, а не названием экрана.
+  e("system", null, "settings.system.stage0", ["диагностика", "медленно", "долго грузится", "журнал", "не играет", "не заиграл", "источники", "youtube", "soundcloud", "не находит", "diagnostics", "slow", "sources"], {
     title: "settings.system.stage0.rowTitle",
     hint: "settings.system.stage0.rowHint",
     needs: "diagnostics",

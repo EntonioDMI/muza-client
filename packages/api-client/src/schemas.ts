@@ -434,6 +434,35 @@ export interface TelemetryStats {
   playsCompleted: number;
 }
 
+/** СВОДКА ПО ОДНОМУ МЕСТУ, ГДЕ ИЩЕТСЯ МУЗЫКА — GET /health/sources.
+ *
+ *  ⚠️ «Ничего не нашлось» и «не ответил» здесь РАЗНЫЕ поля, и склеивать их
+ *  нельзя (обоснование — muza-server/src/catalog/source-health.ts). На редком
+ *  запросе здоровое место честно отвечает пустотой; сложи её с отказом, и
+ *  живое место станет неотличимо от отвалившегося — ровно на этой склейке
+ *  отказ YouTube и прожил незамеченным месяцы.
+ *
+ *  Схема лежит здесь, а не в экране: ответ приходит по сети от чужой стороны,
+ *  а всё, что приходит по сети, разбирается схемой в одном месте. */
+export const SearchSourceHealthSchema = z.object({
+  /** Имя ветки как её знает сервер: «youtube:music», «soundcloud:scsearch». */
+  source: z.string(),
+  attempts: z.number(),
+  ok: z.number(),
+  empty: z.number(),
+  failed: z.number(),
+  /** Медиана времени ответа удачных попыток, мс; null — удач не было. */
+  medianMs: z.number().nullable(),
+  /** Среднее число находок на удачную попытку; null — удач не было. */
+  avgCount: z.number().nullable(),
+  /** Причина последнего отказа человеческим языком. */
+  lastFailure: z.object({ reason: z.string(), at: z.number() }).nullable(),
+  /** Когда место в последний раз вышло на связь; null — ни разу за окно. */
+  lastOkAt: z.number().nullable(),
+  failureRate: z.number(),
+});
+export type SearchSourceHealth = z.infer<typeof SearchSourceHealthSchema>;
+
 /** Батч клиентских ошибок (админ-панель, кусок A) — POST /telemetry/error.
  *  Та же анонимность, что TelemetryStats: без идентификаторов; стек не уходит
  *  с клиента вовсе — только его хэш для группировки. */

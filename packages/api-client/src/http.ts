@@ -40,6 +40,8 @@ import {
   SoundcloudPlaylistSchema,
   type Genre,
   type RecipeEnvelope,
+  type SearchSourceHealth,
+  SearchSourceHealthSchema,
   type RecsSettings,
   type RegisterStatus,
   type ScrobblingStatus,
@@ -1235,6 +1237,22 @@ export class HttpMuzaApi implements MuzaApi {
 
   async getRecipe(): Promise<RecipeEnvelope> {
     return this.authedRequest<RecipeEnvelope>("/recipe");
+  }
+
+  /** Кто из мест поиска сейчас на связи.
+   *
+   *  ⚠️ БЕЗ ВХОДА (request, не authedRequest) — намеренно, и это не недосмотр.
+   *  Ручка на сервере открыта по той же причине: когда что-то отвалилось, это
+   *  часто видно РАНЬШЕ, чем удаётся войти, а экран проверки обязан отвечать
+   *  именно в такую минуту. Персональных данных в ответе нет — имена веток,
+   *  счётчики и причина последнего отказа.
+   *
+   *  Ответ прогоняется схемой: он приходит от чужой стороны, и старый сервер
+   *  (без lastOkAt) обязан быть отличим от свежего явной ошибкой разбора, а не
+   *  тихим undefined, из которого экран нарисует «на связи только что». */
+  async searchSourceHealth(): Promise<SearchSourceHealth[]> {
+    const out = await this.request<{ sources: unknown[] }>("/health/sources");
+    return SearchSourceHealthSchema.array().parse(out.sources);
   }
 
   // ---------- Рекомендации и лента (Stage 5) ----------

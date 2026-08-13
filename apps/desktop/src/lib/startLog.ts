@@ -224,14 +224,25 @@ export function phaseMs(r: StartRecord, phase: StartPhaseKey): number | null {
  *  особых прогона» матрицы, и мешать его с тёплыми нельзя — вопрос ровно в
  *  том, насколько он дороже. */
 export function startClass(r: StartRecord): string {
-  const base =
+  return r.cold ? `cold:${startProvider(r)}` : startProvider(r);
+}
+
+/** Класс БЕЗ приставки холодного старта — то есть просто «откуда играло».
+ *
+ *  ⚠️ Вынесен из startClass отдельной функцией, а не скопирован (2026-08-13):
+ *  обзор состояния складывает включения по МЕСТУ («сколько играло из
+ *  SoundCloud»), и приставка `cold:` там мешает — она отвечает на другой
+ *  вопрос. Две копии правила «что считать SoundCloud» разъехались бы на первой
+ *  же новой метке добычи, и экраны начали бы спорить друг с другом. */
+export function startProvider(r: StartRecord): string {
+  return (
     r.cls ??
     (r.timings?.some(([l]) => l.startsWith("sc_"))
       ? "soundcloud"
       : r.timings?.some(([l]) => l.startsWith("yt_"))
         ? "youtube"
-        : (r.path ?? "?"));
-  return r.cold ? `cold:${base}` : base;
+        : (r.path ?? "?"))
+  );
 }
 
 export interface StartPhaseStat {

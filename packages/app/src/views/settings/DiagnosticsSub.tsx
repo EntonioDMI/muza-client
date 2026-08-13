@@ -1,18 +1,44 @@
-/** ПОД-ЭКРАН «ДИАГНОСТИКА ЗАГРУЗКИ ТРЕКОВ»: состояние предохранителей
- *  подготовки + журнал последних включений «клик → звук».
+/** ЭКРАН «ДИАГНОСТИКА ЗАГРУЗКИ ТРЕКОВ»: обзор состояния сверху, подробности —
+ *  по требованию.
  *
  *  Приехало из apps/desktop/src/views/SettingsView.tsx (волна «настройки»,
- *  2026-08-02) без правок разметки.
+ *  2026-08-02); 2026-08-13 переписано под обзор.
  *
  *  Зачем экран вообще: предохранители срабатывают МОЛЧА, и жалоба «стало
  *  медленно» была неразбираема — не видно ни того, что подготовка на паузе,
- *  ни того, на какой фазе уходит время. Тексты событий приходят от площадки
- *  уже человеческими и показываются как есть. */
+ *  ни того, на какой шаг уходит время.
+ *
+ *  ⚠️ ЧТО ИЗМЕНИЛОСЬ 13.08 И ПОЧЕМУ. Экран показывал три ленты подряд: события,
+ *  сводку по классам, поштучные старты. Всё честно — и всё требовало заранее
+ *  знать, что искать. Владелец: «нужен инструмент вроде журнала, но более
+ *  сжатый», «при одном взгляде можно сразу понять содержимое». Поэтому теперь:
+ *
+ *    1. ОБЗОР (DiagnosticsOverview) — вердикт, три числа, два графика, места.
+ *    2. ЖУРНАЛ — сжатый: одинаковые события склеены в строку со счётчиком.
+ *       Одна авария давала два десятка почти одинаковых записей, и лента из
+ *       них читалась как двадцать новостей вместо одной.
+ *    3. ПОДРОБНОСТИ — прежние сводка по классам и поштучный список стартов,
+ *       СВЁРНУТЫЕ. Ничего не выброшено: это по-прежнему единственное место,
+ *       где видно конкретный старт с его отметками. Но открывает их тот, кто
+ *       уже знает, что ищет, — а это единицы и не каждый раз.
+ *
+ *  ⚠️ ПОЛОВИНА КАРТИНЫ ПРИХОДИТ С СЕРВЕРА. Экран мерил только то, что
+ *  происходит НА УСТРОЙСТВЕ, и был слеп к тому, отвечают ли вообще места, где
+ *  музыка ищется. Ровно там 13.08 и нашлась авария: имя YouTube не
+ *  разрешалось на сети владельца, поиск месяцами отдавал остаток, и это
+ *  выглядело как решение программы. Спрашиваем /health/sources — умения нет
+ *  (старый сервер, чужая сборка) — раздела просто нет, правило розетки.
+ *
+ *  Тексты событий приходят от площадки уже человеческими и показываются как
+ *  есть. */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@muza/ui";
+import type { SearchSourceHealth } from "@muza/api-client";
 import { useT } from "../../i18n";
 import type { DiagnosticsPort, EngineHealth, TrackStartRecord } from "../../platform";
+import { buildOverview, compressJournal } from "../../lib/engineOverview";
+import { DiagnosticsOverview, type SearchProbeState } from "./DiagnosticsOverview";
 import { paneStyle, SettingRow, SubHeader } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
 
@@ -36,9 +62,14 @@ export function useEngineHealth(port: DiagnosticsPort | undefined): [EngineHealt
   return [health, reload];
 }
 
+/** Сколько сжатых строк журнала видно до нажатия «показать всё». Шесть — это
+ *  примерно один экран без прокрутки: столько человек читает не листая, а
+ *  дальше начинается работа, на которую он не подписывался. */
+const JOURNAL_PREVIEW = 6;
+
 export function DiagnosticsSub() {
   const { t, lang } = useT();
-  const { platform, closeSub, paneClass, onNotify } = useSettingsScreen();
+  const { platform, closeSub, paneClass, onNotify, api } = useSettingsScreen();
   const port = platform.diagnostics;
   const [health, reloadHealth] = useEngineHealth(port);
 
@@ -51,14 +82,49 @@ export function DiagnosticsSub() {
     return port.subscribeStartLog(() => setStartLog(port.startLog()));
   }, [port]);
 
+  // ── Половина картины с сервера: кто из мест поиска сейчас отвечает ──
+  // Умения нет → "off", и раздела на экране не появляется вовсе. Отказ сети
+  // отличается от пустого ответа: «не смогли спросить» и «спросили, там пусто»
+  // — разные новости, и валить их в одну пустую рамку значит повторять ровно
+  // ту ошибку, из-за которой экран и переписывался.
+  const askSources = api.searchSourceHealth;
+  const [searchSources, setSearchSources] = useState<SearchSourceHealth[] | null>(null);
+  const [searchProbe, setSearchProbe] = useState<SearchProbeState>(askSources ? "loading" : "off");
+  const reloadSources = useCallback(() => {
+    if (!askSources) return;
+    setSearchProbe("loading");
+    askSources
+      .call(api)
+      .then((list) => {
+        setSearchSources(list);
+        setSearchProbe("ready");
+      })
+      .catch(() => {
+        setSearchSources(null);
+        setSearchProbe("error");
+      });
+  }, [askSources, api]);
+  useEffect(() => {
+    reloadSources();
+  }, [reloadSources]);
+
+  const overview = useMemo(
+    () => buildOverview({ starts: startLog, health, searchSources }),
+    [startLog, health, searchSources],
+  );
+
   // Сводка считается площадкой заново на каждую отрисовку — намеренно, без
   // мемоизации: отрисовка случается ровно тогда, когда журнал пополнился, а
   // двести записей складываются за доли миллисекунды. Кэш здесь стоил бы
   // больше внимания, чем экономил.
   const summary = port?.startSummary?.() ?? [];
+  const journal = useMemo(() => compressJournal(health?.events ?? []), [health]);
 
-  /** Всё содержимое экрана одним куском: журнал причин, сводка по фазам и
-   *  таблица стартов.
+  const [journalAll, setJournalAll] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  /** Всё содержимое экрана одним куском: короткая сводка, журнал причин,
+   *  разбор по видам треков и таблица стартов.
    *
    *  ⚠️ ПОЧЕМУ ОДНА КНОПКА, А НЕ ТРИ. Раньше копировалась только таблица
    *  стартов, и разбор упирался в это каждый раз: в таблице видно, ЧТО было
@@ -66,6 +132,11 @@ export function DiagnosticsSub() {
    *  как загадка. Человек копировал по кускам и всё равно привозил не то.
    *  Отдельные кнопки на каждую часть заставляли бы его знать, какая часть
    *  нужна, — а он этого знать не обязан.
+   *
+   *  ⚠️ СВОДКА ИДЁТ ПЕРВОЙ и повторяет то, что человек видит наверху экрана.
+   *  Раньше выгрузка начиналась сразу с сырых событий, и тот, кому её
+   *  присылали, начинал разбор с нуля — хотя ответ («не отвечает YouTube»)
+   *  уже был на экране у отправителя.
    *
    *  Таблица идёт ПОСЛЕДНЕЙ и остаётся сплошным TSV: так её по-прежнему можно
    *  выделить и вставить в Excel/Sheets, чтобы считать медианы там. Разделы
@@ -80,6 +151,8 @@ export function DiagnosticsSub() {
     if (!tsv) return;
     const events = health?.events ?? [];
     const parts: string[] = [];
+
+    parts.push(`${t("settings.system.stage0.overview.recentTitle")}:`, ...overviewLines(), "");
     if (events.length > 0) {
       parts.push(
         `${t("settings.system.stage0.title")}:`,
@@ -97,6 +170,23 @@ export function DiagnosticsSub() {
     } catch {
       onNotify(t("settings.system.stage0.starts.copyFailed"), "x");
     }
+  };
+
+  /** Сводка обзора текстом. Считается ИЗ ТОЙ ЖЕ модели, что рисует экран, —
+   *  иначе присланное и увиденное разошлись бы, и спорить пришлось бы о том,
+   *  какая из двух цифр настоящая. */
+  const overviewLines = (): string[] => {
+    const ms = (v: number | null) => (v === null ? "—" : `${v} ${t("settings.system.stage0.starts.ms")}`);
+    const out = [
+      `${t("settings.system.stage0.overview.typical")}: ${ms(overview.typicalMs)} (${t("settings.system.stage0.overview.typicalSlow", { value: ms(overview.slowMs) })})`,
+      `${t("settings.system.stage0.overview.didNotPlay")}: ${t("settings.system.stage0.overview.didNotPlayValue", { failed: overview.failed, total: overview.total })}`,
+      `${t("settings.system.stage0.overview.cold")}: ${ms(overview.coldMs)}`,
+    ];
+    for (const p of overview.places) out.push(`${p.key}${TAB}${p.count}`);
+    for (const s of overview.searchPlaces) {
+      out.push(`${s.source}${TAB}${s.downNow ? "нет ответа" : "ok"}${TAB}${s.failed}/${s.attempts}${TAB}${s.lastFailure ?? ""}`);
+    }
+    return out;
   };
 
   /** Строка сводки текстом — то же, что видно на экране. Отдельной функцией,
@@ -130,8 +220,8 @@ export function DiagnosticsSub() {
     return `${d.toLocaleDateString(locale, { day: "2-digit", month: "2-digit" })} ${fmtEventClock(ms)}`;
   };
 
-  // Строка фаз включения: «источники 12 мс · ссылка 180 мс (поток) · звук 215 мс».
-  // Пропущенные фазы не печатаются (файл с устройства не ходит за источниками).
+  // Строка шагов включения: «источники 12 мс · ссылка 180 мс (напрямую) · звук 215 мс».
+  // Пропущенные шаги не печатаются (файл с устройства не ходит за источниками).
   const startMs = (n: number) => `${n} ${t("settings.system.stage0.starts.ms")}`;
   const formatStartPhases = (r: TrackStartRecord): string => {
     if (r.error === "superseded") return t("settings.system.stage0.starts.superseded");
@@ -177,23 +267,25 @@ export function DiagnosticsSub() {
     total: t("settings.system.stage0.starts.total"),
   };
 
+  const journalShown = journalAll ? journal : journal.slice(0, JOURNAL_PREVIEW);
+
   return (
     <div className={paneClass} style={paneStyle}>
       <SubHeader title={t("settings.system.stage0.title")} onBack={closeSub} />
-      <SettingRow
-        title={
-          health?.cooldown_until_ms
-            ? t("settings.system.stage0.paused", {
-                until: new Date(health.cooldown_until_ms).toLocaleTimeString(lang === "ru" ? "ru-RU" : "en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }),
-              })
-            : t("settings.system.stage0.ok")
-        }
-        hint={health?.cooldown_until_ms ? t("settings.system.stage0.pausedHint") : t("settings.system.stage0.okHint")}
-      >
-        <Button variant="ghost" icon="refresh-cw" onClick={reloadHealth}>
+
+      {/* Кнопки живут в ряду-плашке над обзором: у них ровно одна работа —
+          «перечитать» и «унести с собой», и обе относятся ко ВСЕМУ экрану,
+          а не к какому-то одному его блоку. Строка «Быстрый путь на паузе»
+          из этого ряда ушла: она теперь строка вердикта, там ей и место. */}
+      <SettingRow title={t("settings.system.stage0.rowTitle")} hint={t("settings.system.stage0.rowHint")}>
+        <Button
+          variant="ghost"
+          icon="refresh-cw"
+          onClick={() => {
+            reloadHealth();
+            reloadSources();
+          }}
+        >
           {t("settings.system.stage0.refresh")}
         </Button>
         {/* Нет умения выгрузить журнал — нет и кнопки (правило розетки). */}
@@ -203,83 +295,132 @@ export function DiagnosticsSub() {
           </Button>
         ) : null}
       </SettingRow>
-      {(health?.events.length ?? 0) === 0 ? (
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-          {t("settings.system.stage0.empty")}
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
-          {health?.events.map((e, i) => (
-            <div
-              key={`${e.at_ms}-${i}`}
-              style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
-            >
-              <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                {fmtEventClock(e.at_ms)}
-              </span>
-              <span style={{ color: "var(--text-2)" }}>{e.text}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* СВОДКА выше списка намеренно: список отвечает «что было только что»,
-          а вопрос владельца — «сколько это стоит вообще». Сырые числа на этот
-          вопрос не отвечают, поэтому первым идёт разбор по классам. */}
-      {summary.length > 0 ? (
-        <>
-          <SettingRow
-            title={t("settings.system.stage0.starts.summary")}
-            hint={t("settings.system.stage0.starts.summaryHint")}
-          />
+
+      <DiagnosticsOverview overview={overview} searchProbe={searchProbe} />
+
+      {/* ЖУРНАЛ. Сжатый: одинаковые события — одной строкой со счётчиком.
+          Хвост показывается у самого свежего события группы — он и есть та
+          зацепка, ради которой журнал открывают. */}
+      <div>
+        <SettingRow title={t("settings.system.stage0.overview.journalTitle")} />
+        {journal.length === 0 ? (
+          <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+            {t("settings.system.stage0.empty")}
+          </div>
+        ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
-            {summary.map((s) => (
-              <div key={s.cls} style={{ fontSize: "var(--fs-caption)", lineHeight: 1.5 }}>
-                <span style={{ color: "var(--text-1)" }}>{s.cls}</span>
-                <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{` ×${s.count}`}</span>
-                <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
-                  {PHASES.filter((p) => s.phases[p]).map((p) => {
-                    const stat = s.phases[p];
-                    return stat ? ` · ${phaseLabel[p]} ${stat.median} / ${stat.p90} ${t("settings.system.stage0.starts.ms")}` : null;
-                  })}
+            {journalShown.map((e) => (
+              <div
+                key={e.head}
+                style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
+              >
+                <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                  {fmtEventClock(e.lastAt)}
+                </span>
+                <span style={{ color: "var(--text-2)", minWidth: 0 }}>
+                  <span style={{ color: "var(--text-1)" }}>{e.head}</span>
+                  {e.count > 1 ? (
+                    <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+                      {` ${t("settings.system.stage0.overview.journalRepeat", { count: e.count })}`}
+                    </span>
+                  ) : null}
+                  {e.detail ? <span style={{ color: "var(--text-3)" }}>{` — ${e.detail}`}</span> : null}
                 </span>
               </div>
             ))}
+            {journal.length > JOURNAL_PREVIEW ? (
+              <div>
+                <Button
+                  variant="ghost"
+                  icon={journalAll ? "chevron-up" : "chevron-down"}
+                  onClick={() => setJournalAll((v) => !v)}
+                >
+                  {journalAll
+                    ? t("settings.system.stage0.overview.journalLess")
+                    : t("settings.system.stage0.overview.journalMore")}
+                </Button>
+              </div>
+            ) : null}
           </div>
+        )}
+      </div>
+
+      {/* ПОДРОБНОСТИ. Ничего не выброшено — только убрано с глаз: разбор по
+          видам треков и поштучный список стартов открывает тот, кто уже знает,
+          что ищет. Именно они и делали экран простынёй. */}
+      <div>
+        <Button
+          variant="ghost"
+          icon={detailsOpen ? "chevron-up" : "chevron-down"}
+          onClick={() => setDetailsOpen((v) => !v)}
+        >
+          {detailsOpen
+            ? t("settings.system.stage0.overview.startsLess")
+            : t("settings.system.stage0.overview.startsMore")}
+        </Button>
+      </div>
+
+      {detailsOpen ? (
+        <>
+          {summary.length > 0 ? (
+            <>
+              <SettingRow
+                title={t("settings.system.stage0.starts.summary")}
+                hint={t("settings.system.stage0.starts.summaryHint")}
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+                {summary.map((s) => (
+                  <div key={s.cls} style={{ fontSize: "var(--fs-caption)", lineHeight: 1.5 }}>
+                    <span style={{ color: "var(--text-1)" }}>{s.cls}</span>
+                    <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{` ×${s.count}`}</span>
+                    <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
+                      {PHASES.filter((p) => s.phases[p]).map((p) => {
+                        const stat = s.phases[p];
+                        return stat
+                          ? ` · ${phaseLabel[p]} ${stat.median} / ${stat.p90} ${t("settings.system.stage0.starts.ms")}`
+                          : null;
+                      })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
+          <SettingRow title={t("settings.system.stage0.starts.title")} hint={t("settings.system.stage0.starts.hint")} />
+          {startLog.length === 0 ? (
+            <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
+              {t("settings.system.stage0.starts.empty")}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+              {startLog.map((r, i) => (
+                <div
+                  key={`${r.at}-${i}`}
+                  style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
+                >
+                  <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                    {fmtStartClock(r.at)}
+                  </span>
+                  <span style={{ color: "var(--text-2)", minWidth: 0 }}>
+                    <span style={{ color: "var(--text-1)" }}>{r.title}</span>
+                    {/* Первый старт после запуска отмечен прямо в строке: именно
+                        он и есть жалоба владельца, и его надо видеть, не сверяясь
+                        со временем запуска программы. */}
+                    {r.cold ? (
+                      <span style={{ color: "var(--text-3)" }}>{` (${t("settings.system.stage0.starts.cold")})`}</span>
+                    ) : null}
+                    {" — "}
+                    {formatStartPhases(r)}
+                    {r.timings?.length ? (
+                      <span style={{ color: "var(--text-3)" }}>{` · ${formatTimings(r)}`}</span>
+                    ) : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       ) : null}
-      <SettingRow title={t("settings.system.stage0.starts.title")} hint={t("settings.system.stage0.starts.hint")} />
-      {startLog.length === 0 ? (
-        <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5 }}>
-          {t("settings.system.stage0.starts.empty")}
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
-          {startLog.map((r, i) => (
-            <div
-              key={`${r.at}-${i}`}
-              style={{ display: "flex", gap: "var(--sp-4)", fontSize: "var(--fs-caption)", lineHeight: 1.5 }}
-            >
-              <span style={{ color: "var(--text-3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                {fmtStartClock(r.at)}
-              </span>
-              <span style={{ color: "var(--text-2)", minWidth: 0 }}>
-                <span style={{ color: "var(--text-1)" }}>{r.title}</span>
-                {/* Первый старт после запуска отмечен прямо в строке: именно
-                    он и есть жалоба владельца, и его надо видеть, не сверяясь
-                    со временем запуска программы. */}
-                {r.cold ? (
-                  <span style={{ color: "var(--text-3)" }}>{` (${t("settings.system.stage0.starts.cold")})`}</span>
-                ) : null}
-                {" — "}
-                {formatStartPhases(r)}
-                {r.timings?.length ? (
-                  <span style={{ color: "var(--text-3)" }}>{` · ${formatTimings(r)}`}</span>
-                ) : null}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
