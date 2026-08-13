@@ -3,7 +3,7 @@ import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
 import { Cover } from "./Cover.jsx";
 
-/** Media tile — soft rounded card with square cover; play pill appears on
+/** Media tile — square cover with a caption under it; play pill appears on
  *  hover AND keyboard focus. The tile itself is a keyboard target
  *  (role=button, Enter/Space = onClick).
  *  Обложка — через Cover: нет картинки → плейсхолдер, а не дыра в плитке.
@@ -16,7 +16,21 @@ import { Cover } from "./Cover.jsx";
  *  e.relatedTarget в onBlur заменил :focus-within — он не оставляет плитку
  *  подсвеченной, когда сетка уехала из-под неподвижного курсора (прокрутка,
  *  смена фильтра). Пилюля и раньше была смонтирована всегда, так что здесь
- *  переезд ничего не стоил: ушли два useState и две перерисовки на проход. */
+ *  переезд ничего не стоил: ушли два useState и две перерисовки на проход.
+ *
+ *  ⚠️ ПЛИТКА БОЛЬШЕ НЕ КАРТОЧКА (13.08.2026). В покое фона нет: обложка лежит
+ *  прямо на зоне, плёнка приходит только состоянием. Почему именно так и что
+ *  теперь держит наведение/играющую/выделенную — целиком в шапке блока
+ *  «ПЛИТКА» в interactions.css; здесь не дублируется намеренно.
+ *
+ *  ⚠️ СОСТОЯНИЯ — АТРИБУТАМИ, А НЕ ТЕРНАРНИКАМИ (та же правка). Раньше
+ *  выделение красилось ИНЛАЙНОМ (`selected ? var(--surface-4) : var(--tile-bg)`),
+ *  то есть инвариант «выделение сильнее наведения» был записан в двух местах
+ *  сразу — в JSX плитки и в порядке правил канала. Инлайн-стиль сильнее любого
+ *  правила, так что при расхождении молча побеждала бы плитка, и второй закон
+ *  никто бы не заметил. Теперь плитка только СООБЩАЕТ состояние
+ *  (data-playing / data-selected), а решает канал — как это давно делает
+ *  строка трека (TrackRow.jsx). */
 export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", playing = false, selected = false, onPlay, onClick, onMenu, playLabel = "Play", pauseLabel = "Pause" }) {
   return (
     <div
@@ -45,17 +59,28 @@ export function Tile({ cover, title, subtitle, width = "var(--w-tile, 176px)", p
       }}
       onClick={onClick}
       aria-selected={selected || undefined}
+      // Каналу подсветки нужны АТРИБУТЫ: «сильнее» решается порядком правил в
+      // interactions.css (выделение > играет > наведение), и это единственное
+      // место, где инвариант записан целиком. См. шапку файла.
+      data-playing={playing || undefined}
+      data-selected={selected || undefined}
       style={{
         width,
         flex: "none",
         padding: "var(--pad-tile)",
         borderRadius: "var(--r-md)",
-        background: selected ? "var(--surface-4)" : "var(--tile-bg)",
+        background: "var(--tile-bg)",
         cursor: "pointer",
       }}
     >
       <div style={{ position: "relative", marginBottom: "var(--sp-3)" }}>
-        <Cover src={cover} />
+        {/* Скругление обложки — --r-md, а не дефолтный --r-xs Cover'а. Пока
+            плитка была карточкой, арт был вложенным элементом и брал меньший
+            радиус; теперь карточки нет, и силуэт плитки — это силуэт самой
+            обложки. То же значение носит витрина публичных плейлистов
+            (PublicPlaylistCard variant="tile"), которая безрамочной была
+            всегда: два безрамочных арта в одном окне обязаны быть одной формы. */}
+        <Cover src={cover} radius="var(--r-md)" />
         {/* галочка выделения — ЛЕВЫЙ верх: правый низ занят play-пилюлей */}
         {selected ? (
           <div

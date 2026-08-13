@@ -26,9 +26,28 @@ describe("Tile: подсветка ушла в CSS", () => {
     expect(tile(container).className).toBe("muza-tile");
   });
 
-  it("выделение сильнее наведения — его плитка решает сама", () => {
+  /** ⚠️ ПРАВКА 13.08.2026. Раньше здесь стояло «выделение сильнее наведения —
+   *  его плитка решает сама» и ожидался ИНЛАЙНОВЫЙ var(--surface-4). Это и был
+   *  дефект, который тест закреплял: инвариант «выделение сильнее играющего,
+   *  играющий сильнее наведения» был записан ДВАЖДЫ — порядком правил в
+   *  interactions.css и тернарником в JSX, — а инлайн сильнее любого правила,
+   *  так что при расхождении молча побеждал бы JSX. Плитка теперь только
+   *  СООБЩАЕТ состояние атрибутом, красит канал; сам порядок правил сторожит
+   *  interactions.test.js («выделение сильнее …»). */
+  it("состояния сообщаются атрибутами, а красит их канал", () => {
     const { container } = render(<Tile title="A" selected onClick={() => {}} />);
-    expect(tile(container).style.background).toBe("var(--surface-4)");
+    expect(tile(container).getAttribute("data-selected")).toBe("true");
+    expect(tile(container).style.background).toBe("var(--tile-bg)");
+  });
+
+  it("играющая плитка помечена для канала — «что звучит» видно без курсора", () => {
+    // До 13.08 играющая плитка отличалась от соседей ТОЛЬКО пилюлей в углу
+    // обложки: фон у неё был общий с покоем, и на витрине из шести карточек
+    // ответ «что сейчас звучит» приходилось искать глазами.
+    const { container } = render(<Tile title="A" playing onClick={() => {}} />);
+    expect(tile(container).getAttribute("data-playing")).toBe("true");
+    const { container: idle } = render(<Tile title="A" onClick={() => {}} />);
+    expect(idle.firstElementChild.hasAttribute("data-playing")).toBe(false);
   });
 
   it("переход НЕ инлайновый — иначе .muza-press:active не даст несимметричности", () => {

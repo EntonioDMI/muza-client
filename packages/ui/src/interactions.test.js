@@ -56,12 +56,28 @@ describe("каналы наведения: инварианты", () => {
   it("выделение сильнее «играет сейчас», играющий сильнее наведения", () => {
     // Все три правила весят одинаково (0,2,0) — верх берёт ПОСЛЕДНЕЕ. Значит
     // инвариант мультивыбора (2026-07-20) держится порядком строк в файле.
-    const hover = ruleIndex(".muza-row:hover");
-    const active = ruleIndex(".muza-row[data-active]");
-    const selected = ruleIndex(".muza-row[data-selected]");
-    expect(hover).toBeGreaterThan(-1);
-    expect(active).toBeGreaterThan(hover);
-    expect(selected).toBeGreaterThan(active);
+    //
+    // ⚠️ С 13.08.2026 тот же закон носит и ПЛИТКА: её покой стал прозрачным, и
+    // «играет»/«выделено» переехали из тернарника в JSX в этот же каскад
+    // (разбор — в шапке блока «ПЛИТКА»). Инвариант общий, проверка общая:
+    // разъедутся строка и плитка — глаз заметит это на Главной, а не в тесте.
+    for (const base of [".muza-row", ".muza-tile"]) {
+      const hover = ruleIndex(`${base}:hover`);
+      const active = ruleIndex(`${base}[data-${base === ".muza-row" ? "active" : "playing"}]`);
+      const selected = ruleIndex(`${base}[data-selected]`);
+      expect(hover, `${base}: нет правила наведения`).toBeGreaterThan(-1);
+      expect(active, `${base}: «играет сейчас» объявлен раньше наведения или отсутствует`).toBeGreaterThan(hover);
+      expect(selected, `${base}: выделение объявлено раньше «играет сейчас» или отсутствует`).toBeGreaterThan(active);
+    }
+  });
+
+  it("покой плитки прозрачен — иначе обложка снова обведена рамкой", () => {
+    // Жалоба владельца 13.08 («не нравятся все плашки, кроме тех, что в
+    // настройках») была ровно про это: плитка носила --surface-2 постоянно, то
+    // есть тот же материал, что панель настроек, и сетка читалась решёткой
+    // рамок, а не выкладкой обложек. Вернуть сюда плёнку — вернуть жалобу.
+    const rest = css.match(/\.muza-tile \{([^}]+)\}/);
+    expect(rest[1]).toMatch(/--tile-bg:\s*transparent;/);
   });
 
   it("строка трека и плитка объявляют переход transform — иначе нажатие мгновенное", () => {
@@ -129,6 +145,7 @@ describe("каналы наведения: инварианты", () => {
       [".muza-tab \\{", ["--tab-bg"]],
       [".muza-chip \\{", ["--chip-bg", "--chip-fg"]],
       [".muza-nav \\{", ["--nav-bg", "--nav-fg"]],
+      [".muza-field \\{", ["--field-bg", "--field-fg"]],
       [".muza-setting-row \\{", ["--setting-bg"]],
     ]) {
       const m = css.match(new RegExp(`${sel}([^}]+)\\}`));
