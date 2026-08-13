@@ -11,8 +11,8 @@
  *  yt-dlp качает файл секундами, и всё окно между кликом и engine.play()
  *  и есть предмет бага. */
 
-import { act, renderHook, type RenderHookResult } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, type RenderHookResult } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuzaApi, TrackSource } from "@muza/api-client";
 import { DEFAULT_PREFS, type AudioOutputRoute, type Prefs } from "../types";
 import type { EngineCallbacks } from "./audioEngine";
@@ -184,6 +184,15 @@ beforeEach(() => {
   // тесте передачи источников в стрим).
   invalidateCachedSources("a");
   invalidateCachedSources("b");
+});
+
+// ⚠️ РАЗМОНТИРУЕМ ХУК ЯВНО. В конфиге нет `globals`, поэтому авто-очистка
+// testing-library не включается, и хук предыдущего теста остаётся живым вместе
+// со СВОИМИ таймерами — сторожем замершего звука и проверкой границы повтора.
+// Мок движка на файл один: сработав в соседнем тесте, чужой таймер зовёт
+// лечение и добавляет лишний engine.play в чужие счётчики.
+afterEach(() => {
+  cleanup();
 });
 
 describe("usePlayback: старый трек и добыча нового", () => {
@@ -689,6 +698,85 @@ describe("usePlayback: самолечение мёртвого звука", () =
     expect(h.engine.play).toHaveBeenLastCalledWith("r1-заново.webm", 1, 0);
     expect(hook.result.current.track?.id).toBe("heal-r1");
     expect(hook.result.current.playing).toBe(true);
+  });
+
+  /** Регресс 12.08: «повтор происходит, но только через тридцать секунд».
+   *
+   *  Замер живым окном показал, что движок принимал ОБЕ команды рестарта —
+   *  и перемотку, и снятие паузы, — и всё равно оставался немым: у webm,
+   *  дочитанного до конца, читатель перемотаться не может (корень чинится в
+   *  Rust). Снаружи это выглядело как «всё хорошо»: resume вернул успех,
+   *  лечение не звалось, и трек оживал только когда до него добирался сторож
+   *  замершего звука — на шестом тике, то есть на тридцатой секунде тишины.
+   *
+   *  Поэтому граница теперь ПРОВЕРЯЕТ себя по единственному честному признаку
+   *  — растущей позиции. Тест краснеет на коде без проверки: там лечения не
+   *  будет вовсе. */
+  it("repeat-one: команды приняты, но позиция не поехала → лечение сразу, а не через сторожа", async () => {
+    const P = trk("heal-p1");
+    h.resolvePlayable.mockResolvedValueOnce({ url: "p1.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([P], "heal-p1");
+    });
+    act(() => {
+      hook.result.current.cycleRepeat(); // off → all
+    });
+    act(() => {
+      hook.result.current.cycleRepeat(); // all → one
+    });
+    expect(hook.result.current.repeat).toBe("one");
+
+    // Движок отвечает «принял» на всё, но звук стоит: позиция не двигается.
+    h.engine.position.mockReturnValue(0);
+    h.resolvePlayable.mockResolvedValueOnce({ url: "p1-заново.webm", fromCache: false, provider: "youtube" });
+    await act(async () => {
+      h.cb.current?.onEnded();
+    });
+
+    // Сразу после границы лечения ещё нет — движок имеет право «поехать».
+    expect(h.engine.play).toHaveBeenCalledTimes(1);
+
+    // Ждём окно проверки живым таймером: сторож замершего звука сюда добраться
+    // не успевает (его первый тик — через 5 с, лечение — через 30 с).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1200));
+    });
+
+    expect(h.cacheRemove).toHaveBeenCalledWith("heal-p1");
+    expect(h.engine.play).toHaveBeenLastCalledWith("p1-заново.webm", 1, 0);
+    expect(hook.result.current.track?.id).toBe("heal-p1");
+    expect(hook.result.current.playing).toBe(true);
+  });
+
+  it("repeat-one: позиция поехала — лечения нет, границу починил сам движок", async () => {
+    const G = trk("heal-g1");
+    h.resolvePlayable.mockResolvedValueOnce({ url: "g1.webm", fromCache: true, provider: "youtube" });
+    const hook = mount();
+    await act(async () => {
+      hook.result.current.playContext([G], "heal-g1");
+    });
+    act(() => {
+      hook.result.current.cycleRepeat();
+    });
+    act(() => {
+      hook.result.current.cycleRepeat();
+    });
+
+    // Рестарт удался: позиция ушла от нуля — это и есть доказательство звука.
+    h.engine.position.mockReturnValue(0.8);
+    await act(async () => {
+      h.cb.current?.onEnded();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1200));
+    });
+
+    // Ни выбитого кэша, ни повторного старта: проверка не должна быть
+    // «перезапускать трек каждый круг повтора».
+    expect(h.cacheRemove).not.toHaveBeenCalled();
+    expect(h.engine.play).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.track?.id).toBe("heal-g1");
   });
 
   it("ошибка медиа посреди трека: одна попытка лечения; повторная смерть сразу — честная остановка", async () => {

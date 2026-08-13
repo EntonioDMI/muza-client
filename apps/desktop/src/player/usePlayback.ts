@@ -69,6 +69,20 @@ const MAX_AUTO_SKIPS = 3;
  *  раньше этого окна — честная остановка, а не вечная карусель рестартов с
  *  нуля (битый насмерть файл иначе перезапускался бы каждые пару секунд). */
 const HEAL_COOLDOWN_MS = 30_000;
+/** Кулдаун лечения ГРАНИЦЫ трека (рестарт повтора не завёлся). Отдельный и
+ *  короткий намеренно: граница — событие редкое и всегда осмысленное, а общий
+ *  кулдаун в 30 с превращал бы неудачный повтор в полминуты тишины ровно
+ *  тогда, когда сторож только что лечил тот же трек. Карусель этим не
+ *  открывается: трек, который не добывается вовсе, останавливает счётчик
+ *  авто-скипов в startAt (MAX_AUTO_SKIPS). */
+const HEAL_BOUNDARY_COOLDOWN_MS = 3_000;
+/** Через сколько после рестарта повтора спрашиваем движок «поехал?». Секунда с
+ *  небольшим — заведомо больше такта опроса позиции (250 мс) и заведомо меньше
+ *  того, что человек стерпит как тишину. */
+const REPEAT_CONFIRM_MS = 900;
+/** Насколько позиция обязана уйти от нуля к этому моменту. Порог низкий
+ *  намеренно: доказываем ДВИЖЕНИЕ, а не скорость. */
+const REPEAT_CONFIRM_SEC = 0.25;
 /** Сторож замершего звука: шаг опроса и пороги эскалации (в тиках подряд).
  *  Позиция при «играем» не сдвинулась WATCHDOG_RESUME_TICKS тиков → мягкий
  *  толчок resume() (позиция сохраняется — ложное срабатывание бесплатно);
@@ -488,6 +502,7 @@ export function usePlayback({
     stateRef.current = { ...stateRef.current, index: i, track: t, playing: true };
     autoAdvancedRef.current = false;
     stopGaplessPoll(); // новый трек — старый прицел точного триггера уже неактуален
+    stopRepeatConfirm(); // и проверка прошлой границы: этим стартом владеем мы
     rememberPlayed(t.id);
     // «Последний активный трек» — материал для восстановления при следующем
     // запуске (App.tsx). Пишем на каждый реальный старт (клик/авто-переход),
@@ -641,15 +656,25 @@ export function usePlayback({
       // паузу не снимает. Голый seek(0) оставлял тишину на 0:00 под
       // «играющим» баром — повтор молча умирал на первой же границе
       // (жалоба 2026-07-16). resume() = el.play() на том же src.
-      engine().seek(0);
       posStore.set(0);
       const seqBefore = playSeqRef.current;
-      const ok = await engine().resume();
+      const ok = (await engine().seekChecked(0)) && (await engine().resume());
       // Рестарт мог не завестись (файл выпал из LRU-кэша, элемент в ошибке):
       // повтор обязан пережить и это — полный перезапуск через добычу, а не
       // тишина навсегда под «играющим» баром. seq-сверка: за время await
       // пользователь мог начать другой старт/паузу — граница уже не наша.
-      if (!ok && playSeqRef.current === seqBefore) await healCurrent();
+      if (playSeqRef.current !== seqBefore) return;
+      if (!ok) {
+        await healCurrent({ boundary: true });
+        return;
+      }
+      // ⚠️ «КОМАНДЫ ПРИНЯТЫ» ≠ «ЗВУК ПОШЁЛ» (замер 12.08). Движок мог принять и
+      // перемотку, и снятие паузы, и всё равно остаться немым: у webm, дочитанного
+      // до конца, читатель перемотаться не может, и декодер молча вставал обратно
+      // на конец. Снаружи это выглядело как играющий бар над тишиной, и спасал
+      // только сторож замершего звука — через тридцать секунд. Поэтому граница
+      // повтора теперь ПРОВЕРЯЕТ себя, а не докладывает об успехе.
+      confirmRepeatRestart(seqBefore);
       return;
     }
     const ni = nextIndexFor(d, auto);
@@ -718,11 +743,13 @@ export function usePlayback({
    *  из LRU, пока играл»). Кулдаун: битый насмерть трек делает конечное число
    *  попыток и честно встаёт на паузу, а не крутит вечную карусель рестартов. */
   const healGuardRef = useRef(0);
-  const healCurrent = async () => {
+  const healCurrent = async (opts?: { boundary?: boolean }) => {
     const s = stateRef.current;
     if (!s.track) return;
     const now = Date.now();
-    if (now - healGuardRef.current < HEAL_COOLDOWN_MS) {
+    // Граница трека лечится по своему, короткому кулдауну — см. его объявление.
+    const cooldown = opts?.boundary ? HEAL_BOUNDARY_COOLDOWN_MS : HEAL_COOLDOWN_MS;
+    if (now - healGuardRef.current < cooldown) {
       flushPlayEnd(false);
       setPlaying(false);
       stopGaplessPoll();
@@ -734,6 +761,34 @@ export function usePlayback({
     }
     invalidateCachedSources(s.track.id);
     await startAt(s.index, { auto: true });
+  };
+
+  /** Проверка границы повтора: движок сказал «принял» — теперь пусть докажет.
+   *
+   *  Единственный надёжный признак, что звук ПОШЁЛ, — растущая позиция: она
+   *  считается по кадрам, реально отданным устройству. Не выросла за
+   *  REPEAT_CONFIRM_MS — рестарт мёртв, лечим сразу, не дожидаясь сторожа
+   *  замершего звука (тот заметил бы это только на тридцатой секунде).
+   *
+   *  Все три «не наше дело» — молча: старт перебит другим треком, пошла добыча
+   *  (ею владеет startAt), человек нажал паузу. */
+  const repeatConfirmRef = useRef<number | null>(null);
+  const stopRepeatConfirm = () => {
+    if (repeatConfirmRef.current !== null) {
+      window.clearTimeout(repeatConfirmRef.current);
+      repeatConfirmRef.current = null;
+    }
+  };
+  const confirmRepeatRestart = (seqBefore: number) => {
+    stopRepeatConfirm();
+    repeatConfirmRef.current = window.setTimeout(() => {
+      repeatConfirmRef.current = null;
+      if (playSeqRef.current !== seqBefore) return;
+      if (startPendingRef.current) return;
+      if (!stateRef.current.playing) return;
+      if (engine().position() >= REPEAT_CONFIRM_SEC) return;
+      void healCurrent({ boundary: true });
+    }, REPEAT_CONFIRM_MS);
   };
 
   /** Остановить точный gapless-опрос (пауза/новый трек/сик/размонтирование). */
@@ -1208,6 +1263,7 @@ export function usePlayback({
     () => () => {
       engineRef.current?.stop();
       stopGaplessPoll();
+      stopRepeatConfirm();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],

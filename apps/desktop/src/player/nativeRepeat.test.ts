@@ -84,6 +84,40 @@ describe("повтор трека на нативном пути", () => {
     engine.stop();
   });
 
+  /** Регресс 12.08: страховка повтора не могла сработать на нативном пути.
+   *
+   *  `usePlayback.advance` при repeat-one лечит трек, когда рестарт не завёлся,
+   *  и решение принимает по ответу resume(). А тот шёл через `call()`, который
+   *  глотает любой отказ и резолвится в `undefined`: `catch` не срабатывал
+   *  никогда, метод возвращал `true` безусловно. Отказ движка выглядел как
+   *  успех, лечение не звалось, и мёртвый повтор доживал до сторожа замершего
+   *  звука — до тридцатой секунды тишины.
+   *
+   *  На старом коде оба теста ниже падают: там ответ всегда true. */
+  it("resume отвечает false, когда движок отказал", async () => {
+    const { engine } = await nativeEngine(() => ({ position: 0, ended: false, playing: true }));
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "native_set_paused") return Promise.reject(new Error("нативного движка нет"));
+      return Promise.resolve(undefined);
+    });
+
+    await expect(engine.resume()).resolves.toBe(false);
+
+    engine.stop();
+  });
+
+  it("перемотка рестарта отвечает false, когда движок отказал", async () => {
+    const { engine } = await nativeEngine(() => ({ position: 0, ended: false, playing: true }));
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "native_seek") return Promise.reject(new Error("нативного движка нет"));
+      return Promise.resolve(undefined);
+    });
+
+    await expect(engine.seekChecked(0)).resolves.toBe(false);
+
+    engine.stop();
+  });
+
   it("конец доезжает, даже когда движок уже не считает себя играющим", async () => {
     // playing:false — состояние «звук кончился». Конец обязан прийти всё равно.
     const { onEnded } = await nativeEngine(() => ({ position: 0, ended: true, playing: false }));

@@ -135,7 +135,15 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T | u
  *  опрос позиции). Через него же до 12.08 шёл и `native_play`, а это команда
  *  ровно обратной природы: она либо завела звук, либо нет. Её отказ уходил в
  *  `undefined`, движок объявлял трек играющим — и получалась вечная тишина с
- *  бегущей полоской. Команды «получилось или нет» обязаны звать ЭТО. */
+ *  бегущей полоской. Команды «получилось или нет» обязаны звать ЭТО.
+ *
+ *  ⚠️ ПРАВИЛО НАРУШАЛОСЬ ДВАЖДЫ, поэтому список ведём здесь. Строгим путём
+ *  ходят: `native_play`, `native_play_stream`, `native_set_paused` (resume),
+ *  `native_seek` (seekChecked). Общее у них одно — на их ответе стоит решение
+ *  «лечить трек или нет». Всё остальное (громкость, эквалайзер, скорость,
+ *  маршруты, опрос позиции) идёт через `call()` и молчит: там отказ не значит
+ *  «музыка встала». Добавляя нативную команду, спроси: соврав «получилось»,
+ *  она оставит человека в тишине? Если да — сюда. */
 async function callStrict(command: string, args?: Record<string, unknown>): Promise<string | null> {
   try {
     await invoke(command, args);
@@ -352,14 +360,32 @@ export class HybridAudioEngine {
     else this.web.pause();
   }
 
+  /** Честный ответ «звук пошёл?» — на нём держится страховка повтора.
+   *
+   *  ⚠️ ЗДЕСЬ БЫЛ ТИХИЙ ОТКАЗ (найден замером 12.08). Нативная ветка шла через
+   *  `call()`, который глотает любой отказ и резолвится в `undefined` — значит
+   *  `catch` не срабатывал НИКОГДА, и метод возвращал `true` безусловно. А на
+   *  этом `true` стоит `usePlayback.advance`: «рестарт повтора не завёлся —
+   *  лечим немедленно». Страховка, написанная аудитом 17.07, на нативном
+   *  движке не могла сработать в принципе, и мёртвый повтор доживал до сторожа
+   *  замершего звука — до тридцатой секунды тишины. */
   async resume(): Promise<boolean> {
     if (!this.native) return this.web.resume();
-    try {
-      await call("native_set_paused", { paused: false });
+    return (await callStrict("native_set_paused", { paused: false })) === null;
+  }
+
+  /** Перемотка, чей отказ ЗНАЧИМ: рестарт повтора обязан знать, что движок
+   *  запрос не принял. Обычный `seek()` ниже остаётся синхронным — его зовут
+   *  ползунок и восстановление позиции, где отказ выражается сам собой
+   *  (полоса не сдвинулась), и лишний промис там только мешает. */
+  async seekChecked(sec: number): Promise<boolean> {
+    if (!this.native) {
+      this.web.seek(sec);
       return true;
-    } catch {
-      return false;
     }
+    this.lastPosition = Math.max(0, sec);
+    this.endedSent = false;
+    return (await callStrict("native_seek", { sec: Math.max(0, sec) })) === null;
   }
 
   stop(): void {

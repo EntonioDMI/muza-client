@@ -65,6 +65,13 @@ fn xfade_gain(pos: u64, len: u64, fade_in: bool) -> f32 {
 /// загруженной машине, больше — задержка реакции на паузу и перемотку.
 const BUFFER_SECONDS: f32 = 1.5;
 
+/// Признак «трек доигран» отдельной функцией — чтобы его можно было проверить
+/// без устройства вывода (см. NativeAudio::ended, там же разбор каждого из
+/// трёх условий).
+fn is_ended(drained: bool, seek_pending: bool, pcm_empty: bool) -> bool {
+    drained && !seek_pending && pcm_empty
+}
+
 /// Предел тональности сдвига высоты: выше этой частоты вокодер тон не двигает.
 ///
 /// Без предела опущенный трек звучит глухо (шипящие уезжают вниз вместе со
@@ -222,17 +229,23 @@ impl NativeAudio {
         //
         // Отказ формата так поймать нельзя (его видит только проба внутри
         // decode_loop) — он приезжает позже через `shared.error`.
-        let file = File::open(path).map_err(|e| format!("открыть файл: {e}"))?;
+        drop(File::open(path).map_err(|e| format!("открыть файл: {e}"))?);
+        // ⚠️ ФАБРИКА, А НЕ ОДИН ДЕСКРИПТОР. Источник строится заново каждый раз,
+        // когда читатель не смог перемотаться (Outcome::Rebuild ниже) — держать
+        // единственный File здесь значило бы «перемотки после конца файла не
+        // будет никогда».
+        let path = path.to_path_buf();
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .map(|s| s.to_string());
         Self::start(
             move || {
+                let file = File::open(&path).map_err(|e| format!("открыть файл: {e}"))?;
                 let mss = MediaSourceStream::new(Box::new(file), Default::default());
                 let mut hint = Hint::new();
-                if let Some(ext) = ext {
-                    hint.with_extension(&ext);
+                if let Some(ext) = &ext {
+                    hint.with_extension(ext);
                 }
                 Ok((mss, hint))
             },
@@ -253,11 +266,11 @@ impl NativeAudio {
             .map(|s| s.to_string());
         Self::start(
             move || {
-                let source = GrowingSource::open(live)?;
+                let source = GrowingSource::open(live.clone())?;
                 let mss = MediaSourceStream::new(Box::new(source), Default::default());
                 let mut hint = Hint::new();
-                if let Some(ext) = hint_ext {
-                    hint.with_extension(&ext);
+                if let Some(ext) = &hint_ext {
+                    hint.with_extension(ext);
                 }
                 Ok((mss, hint))
             },
@@ -267,7 +280,7 @@ impl NativeAudio {
 
     fn start<F>(make_source: F, gain: f32) -> Result<Self, String>
     where
-        F: FnOnce() -> Result<(MediaSourceStream<'static>, Hint), String> + Send + 'static,
+        F: Fn() -> Result<(MediaSourceStream<'static>, Hint), String> + Send + 'static,
     {
         let host = cpal::default_host();
         let device = host
@@ -316,12 +329,55 @@ impl NativeAudio {
         std::thread::Builder::new()
             .name("muza-decode".into())
             .spawn(move || {
-                let outcome = match make_source() {
-                    Ok((mss, hint)) => decode_loop(mss, hint, &decoder_shared)
-                        .map_err(|e| format!("декодирование оборвалось: {e}")),
-                    Err(e) => Err(format!("источник не открылся: {e}")),
-                };
-                if let Err(message) = outcome {
+                // ⚠️ ВНЕШНИЙ ЦИКЛ — ЭТО ПЕРЕСБОРКА ЧИТАТЕЛЯ (12.08.2026).
+                //
+                // Живой замер границы повтора: `format.seek` после конца файла
+                // на webm/mkv отвечает «malformed stream: mkv (ebml): the
+                // element is not an ancestor of the current element» — то есть
+                // читатель, дочитавший сегмент до конца, отмотать себя уже НЕ
+                // МОЖЕТ. А webm — наш основной контейнер (312 файлов из 423 в
+                // кэше). Дальше всё выглядело так: декодер вставал обратно в
+                // парковку с drained=true, фронт видел «трек кончился» ещё
+                // раз, слал перемотку ещё раз — и так по кругу, пока сторож
+                // замершего звука не перезапускал трек через 30 секунд. Это и
+                // есть жалоба «повтор происходит только через полминуты».
+                //
+                // Лечится не «более удачной перемоткой», а СВЕЖИМ ЧИТАТЕЛЕМ:
+                // запрос остаётся в `seek_to`, источник строится заново, и
+                // новый decode_loop отматывает его первым же проходом — там
+                // читатель ещё в начале сегмента, и перемотка законна.
+                let mut failure: Option<String> = None;
+                loop {
+                    let built = match make_source() {
+                        Ok(source) => source,
+                        Err(e) => {
+                            failure = Some(format!("источник не открылся: {e}"));
+                            break;
+                        }
+                    };
+                    match decode_loop(built.0, built.1, &decoder_shared) {
+                        Ok(Outcome::Done) => break,
+                        Ok(Outcome::Rebuild { progressed, why }) => {
+                            // Свежий читатель не смог того же самого — пересборка
+                            // не лечит, и крутить её вечно значит греть процессор
+                            // вместо музыки. Причину наружу, дальше фронт свалится
+                            // на прежний движок.
+                            if !progressed {
+                                failure = Some(format!("перемотка не удалась и на свежем читателе: {why}"));
+                                break;
+                            }
+                            // Событие редкое (граница повтора, перемотка после
+                            // конца трека) и объясняет целый класс жалоб —
+                            // пусть будет видно, что сработало именно оно.
+                            eprintln!("[audio] читатель пересобран: {why}");
+                        }
+                        Err(e) => {
+                            failure = Some(format!("декодирование оборвалось: {e}"));
+                            break;
+                        }
+                    }
+                }
+                if let Some(message) = failure {
                     eprintln!("[audio] {message}");
                     *decoder_shared.error.lock().unwrap() = Some(message);
                     // Иначе фронт ждал бы конца трека, которого не будет:
@@ -665,8 +721,21 @@ impl NativeAudio {
     /// Трек доигран: декодер дошёл до конца И буфер опустел. Второе условие
     /// обязательно — иначе конец объявлялся бы за полторы секунды до того, как
     /// человек его услышит, и следующий трек наезжал бы на хвост текущего.
+    ///
+    /// ⚠️ ТРЕТЬЕ УСЛОВИЕ — ЗАКАЗАННАЯ ПЕРЕМОТКА (12.08.2026). Заказали
+    /// перемотку — трек не «кончился», он сейчас поедет с новой точки, и
+    /// объявлять конец нельзя, пока запрос не исполнен. Без этого получался
+    /// шторм: `HybridAudioEngine.seek` снимает защёлку `endedSent` СИНХРОННО, а
+    /// `drained` гаснет только когда до запроса дойдёт поток декодера. В окне
+    /// между ними опрос (4 раза в секунду) видел конец ещё раз, слал ещё одну
+    /// границу, та — ещё одну перемотку, и позиция топталась около нуля.
+    /// Замер 12.08: 33 секунды такого круга на каждой границе повтора.
     pub fn ended(&self) -> bool {
-        self.shared.drained.load(Ordering::Relaxed) && self.shared.pcm.lock().unwrap().is_empty()
+        is_ended(
+            self.shared.drained.load(Ordering::Relaxed),
+            self.shared.seek_to.lock().unwrap().is_some(),
+            self.shared.pcm.lock().unwrap().is_empty(),
+        )
     }
 
     pub fn stop(&self) {
@@ -680,13 +749,27 @@ impl Drop for NativeAudio {
     }
 }
 
+/// Чем кончился один проход декодера.
+enum Outcome {
+    /// Движок остановлен — поток больше не нужен.
+    Done,
+    /// Читатель не смог перемотаться и должен быть построен заново. Запрос
+    /// перемотки при этом ОСТАВЛЕН в `seek_to`: его исполнит свежий читатель.
+    Rebuild {
+        /// Успел ли ЭТОТ читатель отдать хоть один пакет. false означает, что
+        /// он и был свежим — пересобирать второй раз бессмысленно.
+        progressed: bool,
+        why: String,
+    },
+}
+
 /// Декод файла до конца: symphonia отдаёт кадры, мы приводим их к частоте и
 /// числу каналов устройства и складываем в общий буфер.
 fn decode_loop(
     mss: MediaSourceStream<'static>,
     hint: Hint,
     shared: &Arc<Shared>,
-) -> Result<(), String> {
+) -> Result<Outcome, String> {
     let mut format = symphonia::default::get_probe()
         .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
         .map_err(|e| format!("формат не распознан: {e}"))?;
@@ -724,6 +807,13 @@ fn decode_loop(
     // Второй характер темпа. Живёт рядом с вокодером и никогда не работает
     // одновременно с ним: у каждого куска ровно один обработчик.
     let mut wsola: Option<crate::wsola::Wsola> = None;
+    // Отдал ли ЭТОТ читатель хоть один пакет: по нему внешний цикл отличает
+    // «читатель износился, дай свежий» от «свежий тоже не смог».
+    let mut progressed = false;
+    // Перемотку только что применили, а пакета после неё ещё не было. Нужен,
+    // чтобы поймать вторую разновидность отказа: `seek` ответил «хорошо», а
+    // читатель остался на конце и сразу отдал конец файла.
+    let mut just_sought: Option<f64> = None;
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Устройство могли переключить — тогда у него другая частота, и
@@ -750,8 +840,15 @@ fn decode_loop(
             let time = Time::from_millis_u64((sec * 1000.0) as u64);
             let target = SeekTo::Time { time, track_id: Some(track_id) };
             if let Err(e) = format.seek(SeekMode::Accurate, target) {
-                eprintln!("[audio] перемотка не удалась: {e}");
+                // ⚠️ НЕ `eprintln!`. Именно здесь ломался повтор: у дочитанного
+                // до конца webm перемотка невозможна в принципе, а причина
+                // уходила в консоль, которой у собранного приложения нет.
+                // Возвращаем запрос на место и просим свежий читатель — его
+                // построит внешний цикл потока декодера.
+                *shared.seek_to.lock().unwrap() = Some(sec);
+                return Ok(Outcome::Rebuild { progressed, why: e.to_string() });
             }
+            just_sought = Some(sec);
             decoder.reset();
             shared.pcm.lock().unwrap().clear();
             shared.frames_out.store((sec * out_rate as f64) as u64, Ordering::Relaxed);
@@ -784,6 +881,18 @@ fn decode_loop(
                 // Теперь поток паркуется и продолжает ждать перемотку, пока
                 // движок жив. Пришла — `continue` уводит в голову цикла, где
                 // seek-блок отматывает читатель и сбрасывает `drained`.
+                //
+                // ⚠️ Вторая разновидность отказа (12.08.2026): перемотка ответила
+                // «хорошо», а читатель с конца не сошёл и сразу отдал конец файла
+                // снова. Парковаться тут нельзя — это тишина навсегда; нужен
+                // свежий читатель, как и при явном отказе seek выше.
+                if let Some(sec) = just_sought {
+                    *shared.seek_to.lock().unwrap() = Some(sec);
+                    return Ok(Outcome::Rebuild {
+                        progressed,
+                        why: "перемотка не сдвинула читатель с конца файла".to_string(),
+                    });
+                }
                 shared.drained.store(true, Ordering::Relaxed);
                 while !shared.stop.load(Ordering::Relaxed)
                     && shared.seek_to.lock().unwrap().is_none()
@@ -803,6 +912,10 @@ fn decode_loop(
             Ok(d) => d,
             Err(_) => continue, // битый пакет — пропускаем, музыка важнее
         };
+        // Звук пошёл: читатель жив и перемотка (если была) действительно
+        // сдвинула его — пересобирать нечего.
+        progressed = true;
+        just_sought = None;
         let (samples, in_channels, in_rate) = flatten(&decoded);
         // Раскладка каналов делается ДО пересчёта частоты: моно идёт тем же
         // сэмплом в оба уха, лишние каналы источника отбрасываются (настоящее
@@ -905,7 +1018,7 @@ fn decode_loop(
         // незачем, а колбэк вывода не должен упереться в пустоту.
         loop {
             if shared.stop.load(Ordering::Relaxed) {
-                return Ok(());
+                return Ok(Outcome::Done);
             }
             let mut pcm = shared.pcm.lock().unwrap();
             if pcm.len() < capacity {
@@ -916,7 +1029,7 @@ fn decode_loop(
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
-    Ok(())
+    Ok(Outcome::Done)
 }
 
 /// Поток захвата голоса: слушает микрофон и раздаёт его тем маршрутам, где
@@ -1220,12 +1333,24 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
     // сносим — обрыв потока на середине формы волны динамик отрабатывает
     // низкочастотным щелчком. Рампа громкости в колбэке сводит уровень за
     // один буфер, ждём чуть дольше, чтобы он успел выйти.
+    // ⚠️ ПРОВЕРЯЕМ ДО ТОГО, КАК СНОСИТЬ ПРЕЖНИЙ. Раньше старый движок дропался
+    // безусловно, и отказ нового (файла нет, формат чужой) оставлял ENGINE
+    // пустым: `native_status` начинал отвечать `playing: false`, позиция
+    // замирала — к одному видимому отказу добавлялся второй, невидимый.
+    let audio = match NativeAudio::play(Path::new(&path), volume) {
+        Ok(audio) => audio,
+        Err(e) => {
+            *ENGINE.lock().unwrap() = previous;
+            return Err(e);
+        }
+    };
     if let Some(old) = previous {
+        // Прежний трек гасим ПЛАВНО и только потом сносим — обрыв потока на
+        // середине формы волны динамик отрабатывает низкочастотным щелчком.
         old.set_volume(0.0);
         std::thread::sleep(std::time::Duration::from_millis(30));
         drop(old);
     }
-    let audio = NativeAudio::play(Path::new(&path), volume)?;
     apply_saved_routing(&audio);
     *ENGINE.lock().unwrap() = Some(audio);
     Ok(())
@@ -1308,17 +1433,32 @@ pub fn native_set_mic(name: Option<String>, gain: f32) {
     }
 }
 
+/// ⚠️ ОТВЕЧАЕТ Result, А НЕ МОЛЧИТ (12.08.2026). Пауза и перемотка — команды
+/// природы «получилось или нет»: на них опирается повтор трека, который при
+/// неудачном рестарте обязан позвать самолечение. Пока они отвечали `()` на
+/// пустой движок, фронт получал «успех» на команду, которую никто не исполнил,
+/// и страховка повтора не срабатывала НИКОГДА — отказ доживал до сторожа
+/// замершего звука, то есть до тридцатой секунды тишины.
 #[tauri::command]
-pub fn native_set_paused(paused: bool) {
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
-        audio.set_paused(paused);
+pub fn native_set_paused(paused: bool) -> Result<(), String> {
+    match ENGINE.lock().unwrap().as_ref() {
+        Some(audio) => {
+            audio.set_paused(paused);
+            Ok(())
+        }
+        None => Err("нативного движка нет".to_string()),
     }
 }
 
+/// Пара к native_set_paused — см. разбор там же.
 #[tauri::command]
-pub fn native_seek(sec: f64) {
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
-        audio.seek(sec);
+pub fn native_seek(sec: f64) -> Result<(), String> {
+    match ENGINE.lock().unwrap().as_ref() {
+        Some(audio) => {
+            audio.seek(sec);
+            Ok(())
+        }
+        None => Err("нативного движка нет".to_string()),
     }
 }
 
@@ -1437,6 +1577,26 @@ pub fn native_stop() {
 mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom, Write};
+
+    /// Регресс 12.08: конец трека не объявляется поверх заказанной перемотки.
+    ///
+    /// Живой замер границы повтора: `HybridAudioEngine.seek` снимает защёлку
+    /// `endedSent` синхронно, а `drained` гаснет только когда до запроса дойдёт
+    /// поток декодера. Пока в этом окне `ended()` отвечал «да», опрос (4 раза в
+    /// секунду) слал границу ещё раз, та — ещё одну перемотку, и позиция
+    /// топталась около нуля все тридцать секунд до сторожа.
+    #[test]
+    fn seek_request_suppresses_end_of_track() {
+        // Обычный конец: декодер дочитал, буфер пуст, перемотки не заказано.
+        assert!(is_ended(true, false, true));
+        // Ровно тот же конец, но перемотка уже заказана — трек не «кончился»,
+        // он сейчас поедет с новой точки.
+        assert!(!is_ended(true, true, true));
+        // Буфер ещё звучит — конец объявлять рано (это условие было и раньше).
+        assert!(!is_ended(true, false, false));
+        // Декодер до конца не дошёл — конца нет ни при каких перемотках.
+        assert!(!is_ended(false, false, true));
+    }
 
     /// Равномощность кроссфейда: сумма квадратов встречных кривых обязана
     /// держаться около единицы. Линейные кривые дают в середине провал −3 дБ —
