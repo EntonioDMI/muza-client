@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, ChipGroup, Dialog, EmptyState, Icon, Tile, TrackRow } from "@muza/ui";
-import type { HistoryItem, MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
+import type { Genre, HistoryItem, MuzaApi, PlaylistMeta, Track } from "@muza/api-client";
 import { fmtTime } from "../lib/format";
 import { tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { applyVisibleOrder, gridInsertionIndex } from "../lib/dragEngine";
@@ -24,17 +24,23 @@ import { useT } from "../i18n";
 /** «Любимое» — закреплённая ПЕРВАЯ плитка библиотеки (Spotify-паттерн, выбор
  *  владельца 2026-07-16): не пункт сайдбара, а особый плейлист. Вместо обложки
  *  — акцентный градиент с сердцем: выделяется среди обычных плиток без ломки
- *  сетки. Геометрия и текстовый блок повторяют Tile ДС. */
+ *  сетки. Геометрия и текстовый блок повторяют Tile ДС.
+ *
+ *  ⚠️ ПОДСВЕТКА — ТЕМ ЖЕ КАНАЛОМ, ЧТО У ПЛИТКИ ДС (13.08.2026). Здесь стоял
+ *  свой useState `lit` и свои surface-2/surface-3, и это уже один раз стреляло:
+ *  правка 12.08 попала только в «Любимое», и два соседних кафеля в медиатеке
+ *  стояли разными весами шрифта (сторож — Tile.test.jsx). Когда покой плитки
+ *  стал прозрачным, копия материала выстрелила бы снова — «Любимое» осталось
+ *  бы единственной карточкой в безрамочной сетке. Теперь класс .muza-tile и
+ *  var(--tile-bg): закон один, живёт в interactions.css, копий нет. */
 function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void }) {
   const { t } = useT();
-  const [lit, setLit] = useState(false);
   return (
     <div
+      className="muza-tile"
       role="button"
       tabIndex={0}
       aria-label={t("views.favorites.title")}
-      onMouseEnter={() => setLit(true)}
-      onMouseLeave={() => setLit(false)}
       // глотаем ПКМ: своего меню у «Любимого» пока нет, а меню пустого места
       // медиатеки на конкретной плитке выглядело бы враньём (2026-07-20)
       onContextMenu={(e) => {
@@ -51,9 +57,10 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
       style={{
         padding: "var(--pad-tile)",
         borderRadius: "var(--r-md)",
-        background: lit ? "var(--surface-3)" : "var(--surface-2)",
+        background: "var(--tile-bg)",
         cursor: "pointer",
-        transition: "background var(--dur-state) var(--ease-standard)",
+        // transition НЕ инлайном: он объявлен на .muza-tile (interactions.css)
+        // вместе с transform нажатия — инлайновый перекрыл бы его целиком.
       }}
     >
       <div
@@ -61,7 +68,9 @@ function FavoritesTile({ count, onOpen }: { count: number; onOpen: () => void })
           position: "relative",
           aspectRatio: "1",
           marginBottom: "var(--sp-3)",
-          borderRadius: "var(--r-sm)",
+          // --r-md, как обложка Tile: у безрамочной плитки силуэт задаёт арт,
+          // а «Любимое» обязано быть той же формы, что соседи по сетке.
+          borderRadius: "var(--r-md)",
           display: "grid",
           placeItems: "center",
           overflow: "hidden",
@@ -343,8 +352,20 @@ export function LibraryView({
     ...(historyTab ? [{ key: "history", label: t("views.library.chips.history") }] : []),
     { key: "albums", label: t("views.library.chips.albums") },
     { key: "artists", label: t("views.library.chips.artists") },
+    // Жанры (13.08). Стоят В ОДНОМ РЯДУ с альбомами и артистами намеренно: это
+    // третий способ нарезать ту же библиотеку, а не отдельный экран. Владелец
+    // просил именно «распределять музыку по жанрам» — то есть смотреть на своё,
+    // а не искать новое.
+    ...(canSearch ? [{ key: "genres", label: t("views.library.chips.genres") }] : []),
   ];
   const [chip, setChip] = useState("playlists");
+  /** Жанры: null — ещё не спрашивали. Пустой массив — спросили, их нет
+   *  (теги проставляются фоном, у свежей библиотеки их может не быть). */
+  const [genres, setGenres] = useState<Genre[] | null>(null);
+  /** Открытый жанр и его треки. Ноль состояний «загружается» отдельно:
+   *  tracks === null при выбранном жанре и есть «идёт загрузка». */
+  const [openGenre, setOpenGenre] = useState<Genre | null>(null);
+  const [genreTracks, setGenreTracks] = useState<Track[] | null>(null);
   const [locals, setLocals] = useState<LocalFileEntry[] | null>(null);
   const [scanning, setScanning] = useState(false);
   /** История прослушиваний: null — ещё не спрашивали (или спрашиваем). */
@@ -427,6 +448,43 @@ export function LibraryView({
       .then(setHistory)
       .catch(() => setHistory([])); // не ответила — покажем «пусто», а не белый экран
   }, [chip, history, api]);
+
+  // Жанры — тем же приёмом, что история: спрашиваем один раз при первом
+  // открытии вкладки. Список меняется медленно (теги проставляются фоном), и
+  // перечитывать его на каждый возврат значило бы дёргать сервер зря.
+  useEffect(() => {
+    if (chip !== "genres" || genres !== null) return;
+    void api
+      .genres()
+      .then(setGenres)
+      .catch(() => setGenres([])); // не ответил — покажем «пусто», а не белый экран
+  }, [chip, genres, api]);
+
+  // Треки открытого жанра. Сбрасываются в null ПЕРЕД запросом, иначе на экране
+  // оставался бы прошлый жанр, пока едет новый, — и человек успевал бы нажать
+  // на трек, которого в открытом разделе нет.
+  useEffect(() => {
+    if (!openGenre) return;
+    let alive = true;
+    setGenreTracks(null);
+    void api
+      .genreTracks(openGenre.slug, { limit: 100 })
+      .then((tracks) => {
+        if (alive) setGenreTracks(tracks);
+      })
+      .catch(() => {
+        if (alive) setGenreTracks([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [openGenre, api]);
+
+  // Уход с вкладки закрывает открытый жанр: вернувшись, человек ждёт список
+  // жанров, а не тот раздел, в котором был десять минут назад.
+  useEffect(() => {
+    if (chip !== "genres" && openGenre !== null) setOpenGenre(null);
+  }, [chip, openGenre]);
 
   const addLocal = async (kind: "files" | "folder") => {
     if (scanning || !local) return;
@@ -610,7 +668,60 @@ export function LibraryView({
         <ChipGroup items={chips} value={chip} onChange={setChip} />
       </div>
 
-      {chip === "artists" ? (
+      {chip === "genres" ? (
+        openGenre ? (
+          <div style={{ display: "flex", flexDirection: "column", paddingBottom: "var(--sp-6)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", padding: "var(--sp-4) 0" }}>
+              <Button variant="ghost" icon="arrow-left" onClick={() => setOpenGenre(null)}>
+                {t("views.library.genres.back")}
+              </Button>
+              <div style={{ fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)" }}>
+                {openGenre.label}
+              </div>
+            </div>
+            {genreTracks === null ? (
+              <div style={{ padding: "var(--sp-6) 0", color: "var(--text-3)" }}>{t("common.loading")}</div>
+            ) : genreTracks.length === 0 ? (
+              <EmptyState icon="music-2" title={t("views.library.genres.emptyOne.title")} hint={t("views.library.genres.emptyOne.hint")} />
+            ) : (
+              genreTracks.map((tr, i) => (
+                <TrackRow
+                  key={tr.id}
+                  {...trackRowL10n(t)}
+                  compact={phone}
+                  index={i + 1}
+                  cover={tr.coverUrl}
+                  title={tr.title}
+                  artist={tr.artist}
+                  duration={fmtTime(tr.durationSec)}
+                  active={currentId === tr.id}
+                  playing={currentId === tr.id && playing}
+                  // Жанр — такой же контекст воспроизведения, как история или
+                  // плейлист: включаем ВЕСЬ раздел с этой позиции, дальше
+                  // очередь идёт по нему. Колбэк общий на «сыграй этот список»,
+                  // историей он назван по первому потребителю.
+                  onPlay={() => onPlayHistory?.(genreTracks, i)}
+                />
+              ))
+            )}
+          </div>
+        ) : genres === null ? (
+          <div style={{ padding: "var(--sp-6) 0", color: "var(--text-3)" }}>{t("common.loading")}</div>
+        ) : genres.length === 0 ? (
+          <EmptyState icon="tag" title={t("views.library.genres.empty.title")} hint={t("views.library.genres.empty.hint")} />
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-2)", padding: "var(--sp-4) 0" }}>
+            {genres.map((g) => (
+              // Число НА кнопке, а не отдельной подписью: «сколько» — это часть
+              // ответа на «что тут есть», и разносить их значит заставлять глаз
+              // сводить две колонки.
+              <Button key={g.slug} variant="ghost" onClick={() => setOpenGenre(g)}>
+                {g.label} · {g.count}
+              </Button>
+            ))}
+          </div>
+        )
+      ) : chip === "artists" ? (
         <div style={{ padding: "var(--sp-6) 0", color: "var(--text-2)" }}>
           {t("views.library.artistsPlaceholder")}
         </div>

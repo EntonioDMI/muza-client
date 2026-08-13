@@ -38,6 +38,7 @@ import {
   PublicPlaylistHitSchema,
   type SoundcloudPlaylist,
   SoundcloudPlaylistSchema,
+  type Genre,
   type RecipeEnvelope,
   type RecsSettings,
   type RegisterStatus,
@@ -690,6 +691,26 @@ export class HttpMuzaApi implements MuzaApi {
       if (card !== null) cards.push(card);
     }
     return cards;
+  }
+
+  /** Жанры, по которым есть что слушать. Без параметров: любой фильтр здесь
+   *  превратил бы обзор в ещё один поиск, а он уже есть. */
+  async genres(): Promise<Genre[]> {
+    const out = await this.authedRequest<{ genres: Genre[] }>("/genres");
+    return out.genres;
+  }
+
+  /** Треки одного жанра. slug берётся из genres() и не собирается руками:
+   *  это канонический ключ каталога, а не то, что человек написал. */
+  async genreTracks(slug: string, opts?: { limit?: number; offset?: number }): Promise<Track[]> {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    const out = await this.authedRequest<{ genre: string; results: TrackWire[] }>(
+      `/genres/${encodeURIComponent(slug)}/tracks${qs ? `?${qs}` : ""}`,
+    );
+    return tracksFromWire(out.results);
   }
 
   async getTrack(id: string): Promise<Track> {

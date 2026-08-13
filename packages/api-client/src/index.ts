@@ -31,6 +31,7 @@ import type {
   PublicPlaylist,
   PublicPlaylistHit,
   SoundcloudPlaylist,
+  Genre,
   RecipeEnvelope,
   RecsSettings,
   RegisterStatus,
@@ -125,6 +126,12 @@ export interface MuzaApi {
     query: string,
     opts?: { scope?: SearchScope; limit?: number; filters?: SearchFilters },
   ): Promise<GroupedSearchResult[]>;
+  /** Жанры, по которым есть что слушать (13.08). Отвечает на «что у меня
+   *  вообще есть», а не «найди мне вот это», — поэтому не режим поиска, а своя
+   *  ручка. Пустой список — законный ответ: теги проставляются фоном, и у
+   *  свежей библиотеки их может не быть вовсе. */
+  genres(): Promise<Genre[]>;
+  genreTracks(slug: string, opts?: { limit?: number; offset?: number }): Promise<Track[]>;
   getTrack(id: string): Promise<Track>;
   /** Живые источники трека для клиентской добычи (Stage 3), по убыванию priority.
    *  Stage 4: выбранный пользователем источник приходит первым (isChosen). */

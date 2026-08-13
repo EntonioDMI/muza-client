@@ -110,6 +110,18 @@ export const viewsEn = {
       history: "History",
       albums: "Albums",
       artists: "Artists",
+      genres: "Genres",
+    },
+    genres: {
+      back: "All genres",
+      empty: {
+        title: "No genres yet",
+        hint: "They appear on their own as you listen: every song gradually gets its genre recognised.",
+      },
+      emptyOne: {
+        title: "Nothing here yet",
+        hint: "Tracks in this genre can't be played right now — try another one.",
+      },
     },
     historyEmpty: {
       title: "History is empty",
