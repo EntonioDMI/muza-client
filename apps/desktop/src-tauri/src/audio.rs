@@ -846,12 +846,6 @@ impl NativeAudio {
         now
     }
 
-    /// Трек доигран. Ровно одна фаза из четырёх — `Ended`; всё остальное
-    /// (в том числе дренаж буфера и заказанная перемотка) концом НЕ является.
-    pub fn ended(&self) -> bool {
-        self.phase() == Phase::Ended
-    }
-
     pub fn stop(&self) {
         self.shared.stop.store(true, Ordering::Relaxed);
     }
@@ -1360,20 +1354,85 @@ fn spawn_tap(shared: &Arc<Shared>, tap: Arc<Tap>) {
 // Движок один на приложение: слот пока тоже один (второй придёт с кроссфейдом).
 // Новый play глушит прежний через Drop — вывод останавливается сам.
 
-static ENGINE: Mutex<Option<NativeAudio>> = Mutex::new(None);
+/// ВСЁ ГЛОБАЛЬНОЕ СОСТОЯНИЕ ДВИЖКА — в одной структуре под ОДНИМ замком.
+///
+/// ⚠️ ПОЧЕМУ НЕ ШЕСТЬ ОТДЕЛЬНЫХ СТАТИКОВ, КАК БЫЛО ДО 13.08.2026. Здесь лежат
+/// движок и настройки, которые ОБЯЗАНЫ ему соответствовать: скорость, высота,
+/// характер темпа, маршруты, микрофон. Держать их под разными замками значит
+/// разрешить состояния, которых не бывает: `native_set_speed` уже записала
+/// 1.25x, `native_play` в этот же миг взяла свой снимок настроек — и новый
+/// трек поехал на прежней скорости, а ползунок показывает новую. Ровно тот же
+/// зазор был между скоростью и темп-режимом: применилось одно, не применилось
+/// второе.
+///
+/// Второе (и главное) — дедлок. Шесть независимых замков означают, что у
+/// каждой новой команды есть свой порядок захвата, и любые два несогласованных
+/// порядка складываются в инверсию. Правило из практики звучит буквально:
+/// данные, которые обязаны быть согласованы, кладут под ОДИН замок, а не
+/// «уменьшают область блокировки» — второе чинит дедлок и ломает
+/// согласованность (Effective Rust, item 17 «Be wary of shared-state
+/// parallelism»). Здесь ровно этот случай.
+///
+/// Цена: команды сериализуются между собой. Она нулевая — все они короткие и
+/// дёргаются руками человека, а не в цикле. Единственное, чего внутри замка
+/// делать НЕЛЬЗЯ, — спать и открывать устройства; поэтому и создание движка, и
+/// плавное гашение прежнего живут ВНЕ захвата (см. native_play).
+struct EngineState {
+    /// Движок текущего трека. Один слот: кроссфейд сделан двумя независимыми
+    /// выводами, разбор — в native_play.
+    audio: Option<NativeAudio>,
+    /// Маршруты живут дольше движка: движок рождается вместе с треком, а
+    /// «вывод на устройства» человек настраивает один раз. Без этого маршруты
+    /// слетали бы на каждом переключении песни.
+    routes: Vec<(String, f32, bool)>,
+    /// Настройка микрофона тоже переживает смену трека.
+    mic: Option<(Option<String>, f32)>,
+    /// И скорость: человек выставил 1.25x — она обязана пережить следующую
+    /// песню.
+    speed: f32,
+    /// Высота тона — по той же причине: движок живёт один трек, настройка —
+    /// сессию.
+    pitch: f32,
+    /// Характер темпа: false — вокодер, true — WSOLA.
+    tempo_wsola: bool,
+}
 
-/// Маршруты живут дольше движка: движок рождается вместе с треком, а «вывод на
-/// устройства» человек настраивает один раз. Без этого маршруты слетали бы на
-/// каждом переключении песни.
-static ROUTES: Mutex<Vec<(String, f32, bool)>> = Mutex::new(Vec::new());
-/// Настройка микрофона тоже переживает смену трека.
-static MIC_CONFIG: Mutex<Option<(Option<String>, f32)>> = Mutex::new(None);
-/// И скорость: человек выставил 1.25x — она обязана пережить следующую песню.
-static SPEED: Mutex<f32> = Mutex::new(1.0);
-/// Высота тона — по той же причине: движок живёт один трек, настройка — сессию.
-static PITCH: Mutex<f32> = Mutex::new(0.0);
-/// Характер темпа: false — вокодер, true — WSOLA. Тоже переживает смену трека.
-static TEMPO_WSOLA: Mutex<bool> = Mutex::new(false);
+impl EngineState {
+    /// Донести до только что рождённого движка всё, что человек настроил
+    /// раньше. Берёт `&self`, а не лезет за настройками сама: вызывающий уже
+    /// держит замок, и повторный захват был бы дедлоком на ровном месте.
+    fn apply_to(&self, audio: &NativeAudio) {
+        audio.set_speed(self.speed);
+        audio.set_pitch(self.pitch);
+        audio.set_tempo_mode(self.tempo_wsola);
+        audio.set_outputs(&self.routes);
+        if let Some((name, gain)) = self.mic.clone() {
+            audio.set_mic(name, gain);
+        }
+    }
+}
+
+static STATE: Mutex<EngineState> = Mutex::new(EngineState {
+    audio: None,
+    routes: Vec::new(),
+    mic: None,
+    speed: 1.0,
+    pitch: 0.0,
+    tempo_wsola: false,
+});
+
+/// Единственная дверь к состоянию.
+///
+/// ⚠️ ОТРАВЛЕНИЕ ЗАМКА НЕ ГЛУШИТ МУЗЫКУ. `lock().unwrap()` на общем замке —
+/// это «одна паника в любой команде, и приложение больше не играет никогда»:
+/// каждый следующий вызов паниковал бы на отравленном Mutex. Пока замков было
+/// шесть, беда ограничивалась одной настройкой; с одним замком цена выросла, и
+/// её надо снять. Отравление означает «кто-то упал, держа состояние», а не
+/// «состояние испорчено»: здесь внутри лежат Option и числа, инвариантов между
+/// ними нет — забираем и работаем дальше.
+fn state() -> std::sync::MutexGuard<'static, EngineState> {
+    STATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(serde::Deserialize)]
 pub struct NativeRoute {
@@ -1385,24 +1444,16 @@ pub struct NativeRoute {
     mix_mic: bool,
 }
 
-/// Донести до только что рождённого движка всё, что человек настроил раньше:
-/// движок живёт один трек, а настройки — всю сессию.
-fn apply_saved_routing(audio: &NativeAudio) {
-    audio.set_speed(*SPEED.lock().unwrap());
-    audio.set_pitch(*PITCH.lock().unwrap());
-    audio.set_tempo_mode(*TEMPO_WSOLA.lock().unwrap());
-    audio.set_outputs(&ROUTES.lock().unwrap().clone());
-    if let Some((name, gain)) = MIC_CONFIG.lock().unwrap().clone() {
-        audio.set_mic(name, gain);
-    }
-}
-
 /// Что плееру нужно знать каждый тик. Позиция и конец трека спрашиваются
 /// вместе: фронт и так опрашивает позицию, отдельные события были бы лишним
 /// каналом с собственными гонками.
 #[derive(serde::Serialize)]
 pub struct NativeStatus {
     position: f64,
+    /// Трек доигран. Это не отдельный признак, а `phase == Ended`, сжатая до
+    /// булева ради фронта, который её так и читает. Отдельного `ended()` у
+    /// движка НЕТ намеренно: два способа спросить одно и то же — это и есть
+    /// та развилка, из которой вырос баг 12.08.
     ended: bool,
     playing: bool,
     /// Причина, по которой звука не будет: формат не поддерживается, файл
@@ -1429,7 +1480,9 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
     // дал бы ровно тот же звук ценой второго декодера, второго буфера и
     // общего состояния между ними.
     let fade = crossfade_sec.max(0.0);
-    let previous = ENGINE.lock().unwrap().take();
+    // Замок берём и сразу отпускаем: дальше идут открытие устройства и сон —
+    // под общим замком им делать нечего.
+    let previous = state().audio.take();
 
     if fade > 0.0 {
         if let Some(old) = previous {
@@ -1445,8 +1498,11 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
         }
         let audio = NativeAudio::play(Path::new(&path), volume)?;
         audio.start_crossfade(true, fade);
-        apply_saved_routing(&audio);
-        *ENGINE.lock().unwrap() = Some(audio);
+        // Настройки и установка в слот — под одним захватом: между ними не
+        // должно быть окна, в котором движок уже виден, а скорость ещё прежняя.
+        let mut st = state();
+        st.apply_to(&audio);
+        st.audio = Some(audio);
         return Ok(());
     }
 
@@ -1461,19 +1517,22 @@ pub fn native_play(path: String, volume: f32, crossfade_sec: f64) -> Result<(), 
     let audio = match NativeAudio::play(Path::new(&path), volume) {
         Ok(audio) => audio,
         Err(e) => {
-            *ENGINE.lock().unwrap() = previous;
+            state().audio = previous;
             return Err(e);
         }
     };
     if let Some(old) = previous {
         // Прежний трек гасим ПЛАВНО и только потом сносим — обрыв потока на
         // середине формы волны динамик отрабатывает низкочастотным щелчком.
+        // ⚠️ Сон — строго вне замка: 30 мс с общим замком в руках заморозили бы
+        // и опрос позиции, и ползунок громкости.
         old.set_volume(0.0);
         std::thread::sleep(std::time::Duration::from_millis(30));
         drop(old);
     }
-    apply_saved_routing(&audio);
-    *ENGINE.lock().unwrap() = Some(audio);
+    let mut st = state();
+    st.apply_to(&audio);
+    st.audio = Some(audio);
     Ok(())
 }
 
@@ -1491,7 +1550,7 @@ pub fn native_play_stream(
         return Ok(false);
     };
     let fade = crossfade_sec.max(0.0);
-    let previous = ENGINE.lock().unwrap().take();
+    let previous = state().audio.take();
     if let Some(old) = previous {
         if fade > 0.0 {
             old.start_crossfade(false, fade);
@@ -1510,15 +1569,20 @@ pub fn native_play_stream(
     if fade > 0.0 {
         audio.start_crossfade(true, fade);
     }
-    apply_saved_routing(&audio);
-    *ENGINE.lock().unwrap() = Some(audio);
+    let mut st = state();
+    st.apply_to(&audio);
+    st.audio = Some(audio);
     Ok(true)
 }
 
 #[tauri::command]
 pub fn native_set_speed(speed: f32) {
-    *SPEED.lock().unwrap() = speed;
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    // Записать настройку и донести её до движка — под ОДНИМ захватом. Порознь
+    // между ними помещался бы native_play со своим снимком настроек, и трек
+    // поехал бы на прежней скорости при новой на ползунке.
+    let mut st = state();
+    st.speed = speed;
+    if let Some(audio) = st.audio.as_ref() {
         audio.set_speed(speed);
     }
 }
@@ -1529,8 +1593,9 @@ pub fn native_set_speed(speed: f32) {
 /// то, что в FL Studio одной ручкой не выражается — время и высота развязаны.
 #[tauri::command]
 pub fn native_set_pitch(semitones: f32) {
-    *PITCH.lock().unwrap() = semitones;
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    let mut st = state();
+    st.pitch = semitones;
+    if let Some(audio) = st.audio.as_ref() {
         audio.set_pitch(semitones);
     }
 }
@@ -1540,16 +1605,18 @@ pub fn native_set_pitch(semitones: f32) {
 /// разбор в шапке src/wsola.rs.
 #[tauri::command]
 pub fn native_set_tempo_mode(wsola: bool) {
-    *TEMPO_WSOLA.lock().unwrap() = wsola;
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    let mut st = state();
+    st.tempo_wsola = wsola;
+    if let Some(audio) = st.audio.as_ref() {
         audio.set_tempo_mode(wsola);
     }
 }
 
 #[tauri::command]
 pub fn native_set_mic(name: Option<String>, gain: f32) {
-    *MIC_CONFIG.lock().unwrap() = Some((name.clone(), gain));
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    let mut st = state();
+    st.mic = Some((name.clone(), gain));
+    if let Some(audio) = st.audio.as_ref() {
         audio.set_mic(name, gain);
     }
 }
@@ -1562,7 +1629,7 @@ pub fn native_set_mic(name: Option<String>, gain: f32) {
 /// замершего звука, то есть до тридцатой секунды тишины.
 #[tauri::command]
 pub fn native_set_paused(paused: bool) -> Result<(), String> {
-    match ENGINE.lock().unwrap().as_ref() {
+    match state().audio.as_ref() {
         Some(audio) => {
             audio.set_paused(paused);
             Ok(())
@@ -1574,7 +1641,7 @@ pub fn native_set_paused(paused: bool) -> Result<(), String> {
 /// Пара к native_set_paused — см. разбор там же.
 #[tauri::command]
 pub fn native_seek(sec: f64) -> Result<(), String> {
-    match ENGINE.lock().unwrap().as_ref() {
+    match state().audio.as_ref() {
         Some(audio) => {
             audio.seek(sec);
             Ok(())
@@ -1585,14 +1652,14 @@ pub fn native_seek(sec: f64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn native_set_volume(gain: f32) {
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    if let Some(audio) = state().audio.as_ref() {
         audio.set_volume(gain);
     }
 }
 
 #[tauri::command]
 pub fn native_status() -> NativeStatus {
-    match ENGINE.lock().unwrap().as_ref() {
+    match state().audio.as_ref() {
         Some(audio) => {
             // Фазу спрашиваем ОДИН раз за опрос: она же печатает переход, и
             // второй вызов сделал бы вид, будто перехода не было.
@@ -1620,15 +1687,16 @@ pub fn native_status() -> NativeStatus {
 pub fn native_set_outputs(routes: Vec<NativeRoute>) {
     let list: Vec<(String, f32, bool)> =
         routes.into_iter().map(|r| (r.name, r.volume, r.mix_mic)).collect();
-    *ROUTES.lock().unwrap() = list.clone();
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    let mut st = state();
+    st.routes = list.clone();
+    if let Some(audio) = st.audio.as_ref() {
         audio.set_outputs(&list);
     }
 }
 
 #[tauri::command]
 pub fn native_set_eq(on: bool, bands: Vec<f32>) {
-    if let Some(audio) = ENGINE.lock().unwrap().as_ref() {
+    if let Some(audio) = state().audio.as_ref() {
         audio.set_eq(on, &bands);
     }
 }
@@ -1652,8 +1720,8 @@ pub fn native_scope() -> NativeScope {
         wave: vec![128; FFT_SIZE],
         rate: 48_000,
     };
-    let guard = ENGINE.lock().unwrap();
-    let Some(audio) = guard.as_ref() else {
+    let guard = state();
+    let Some(audio) = guard.audio.as_ref() else {
         return empty;
     };
     let samples: Vec<f32> = {
@@ -1704,7 +1772,12 @@ pub fn native_scope() -> NativeScope {
 
 #[tauri::command]
 pub fn native_stop() {
-    *ENGINE.lock().unwrap() = None; // Drop останавливает вывод и декодер
+    // Настройки (скорость, высота, маршруты, микрофон) переживают стоп: они
+    // принадлежат человеку, а не треку. Гасим ровно движок.
+    // ⚠️ Дроп — ВНЕ замка: он останавливает потоки вывода и декодера, и делать
+    // это с общим замком в руках незачем.
+    let previous = state().audio.take();
+    drop(previous); // Drop останавливает вывод и декодер
 }
 
 #[cfg(test)]
