@@ -4333,8 +4333,12 @@ pub async fn engine_stream_start(
 
     // уже стримится (повторный клик по треку) — подхватываем тот же канал
     let existing = state.streams.lock().unwrap().get(&key).cloned();
-    let handle = if let Some(handle) = existing {
-        handle
+    // is_hls едет из ветки-создателя наружу: голову склейки надо проверить
+    // ПОСЛЕ подтверждения первого чанка, а `entry` к тому моменту уже уехал в
+    // задачу закачки. У подхваченного стрима флаг false — его голову проверили
+    // при старте, второй раз незачем.
+    let (handle, is_hls) = if let Some(handle) = existing {
+        (handle, false)
     } else {
         if find_cached(&dir, &track_id).is_some() {
             return stream_declined(&mut timings); // кэш-хит быстрее обычным путём
@@ -4424,14 +4428,28 @@ pub async fn engine_stream_start(
                 }
             }
         };
-        // MP4/AAC (m4a) НЕ стримится с первых байт (отчёт J, И3 2026-07-22):
-        // у сырого MP4 индекс-атом moov лежит В КОНЦЕ файла, Chromium не
+        // Склейка HLS — фрагментированный mp4, и её `moov` лежит В НАЧАЛЕ
+        // (init-сегмент `#EXT-X-MAP` пишется первым). Это ровно тот случай,
+        // на который ссылалась оговорка отказа ниже, — поэтому HLS через
+        // гейт проходит, а сырой MP4 по-прежнему нет. Флаг снимаем ДО
+        // spawn'а: `entry` уезжает в задачу закачки по значению.
+        let is_hls = !entry.hls_segments.is_empty();
+        // Сырой MP4/AAC (m4a) НЕ стримится с первых байт (отчёт J, И3
+        // 2026-07-22): индекс-атом moov лежит В КОНЦЕ файла, Chromium не
         // начинает декод, пока не получит его целиком, — «стрим» такого файла
         // молчал бы до конца закачки, держа UI в состоянии «играет». Opus/webm
-        // и mp3 декодируются с первых килобайт. m4a честно уходит no_stream —
-        // обычная дорога докачает файл и заиграет из кэша. (Если появится
-        // источник с fMP4 — тому moov-в-начале, пересмотреть точечно.)
-        if entry.ext == "m4a" {
+        // и mp3 декодируются с первых килобайт. Такой m4a честно уходит
+        // no_stream — обычная дорога докачает файл и заиграет из кэша.
+        //
+        // ⚠️ HLS СЮДА НЕ ПОПАДАЕТ (2026-08-13). Раньше условие смотрело только
+        // на расширение, а у SoundCloud AAC HLS ext ровно "m4a" — значит КАЖДЫЙ
+        // холодный SC-трек уходил мимо стрима и ждал сборки ВСЕГО файла, хотя
+        // играбельность его головы доказана (hls_head_looks_playable, отчёт H:
+        // «ftyp iso5 → moov в начале, Chromium играет, ремукс не нужен»). Для
+        // двухчасового микса это была разница между «звук через секунды» и
+        // «звук через десятки секунд». Голова всё равно проверяется — ниже, по
+        // первому чанку, до того как фронт получит добро.
+        if entry.ext == "m4a" && !is_hls {
             // ⚠️ ЗАПИСЬ ОБЯЗАНА ВЕРНУТЬСЯ В РЕЕСТР (2026-08-05). take_live_warm_entry
             // читает РАЗРУШАЮЩЕ, а этот выход отказывается только от СТРИМА, не от
             // добытого адреса: ступень 0 отработала, url и размер на руках. Без
@@ -4526,7 +4544,7 @@ pub async fn engine_stream_start(
                 .unwrap()
                 .remove(&key_task);
         });
-        handle
+        (handle, is_hls)
     };
 
     // добро фронту — только с первыми килобайтами на диске
@@ -4539,8 +4557,19 @@ pub async fn engine_stream_start(
             ),
         )
         .await;
+    // ⚠️ ПОСЛЕДНИЙ ГЕЙТ СКЛЕЙКИ (2026-08-13, вместе со снятием запрета на HLS).
+    // У прямой закачки голову проверять незачем — там байты идут как есть. У
+    // HLS файл СОБИРАЕТСЯ из кусков, и битая склейка (не тот init, обрезанный
+    // первый сегмент) даёт файл, который Chromium молча не играет. До сих пор
+    // эту проверку делал только fetch_hls_to_cache — но ПОСЛЕ полной сборки,
+    // то есть слишком поздно для стрима. Здесь она приходит вовремя: первые
+    // STREAM_FIRST_CHUNK уже на диске, а «добро» фронту ещё не отдано. Провал
+    // ведёт себя как любой другой незаведшийся стрим — снос закачки и уход на
+    // обычную дорогу, то есть НЕ ХУЖЕ, чем было до снятия запрета.
+    let hls_head_bad =
+        is_hls && matches!(confirmed, Ok(true)) && !stream_hls_head_ok(&handle.part);
     match confirmed {
-        Ok(true) => Ok(StreamStartOut {
+        Ok(true) if !hls_head_bad => Ok(StreamStartOut {
             stream: true,
             timings: timings.take(),
         }),
@@ -4563,14 +4592,35 @@ pub async fn engine_stream_start(
             stage0_log(
                 &state,
                 SystemTime::now(),
-                format!(
-                    "стрим не завёлся за {}с — трек докачивается целиком, запасной дорогой (это дольше)",
-                    STREAM_START_TIMEOUT.as_secs()
-                ),
+                if hls_head_bad {
+                    // Отдельная причина: стрим успел завестись по байтам, но
+                    // склейка непригодна — путать это с таймаутом нельзя,
+                    // лечится оно совсем другим.
+                    "склейка HLS не похожа на fMP4 — стрим отменён, трек играем обычной дорогой"
+                        .to_string()
+                } else {
+                    format!(
+                        "стрим не завёлся за {}с — трек докачивается целиком, запасной дорогой (это дольше)",
+                        STREAM_START_TIMEOUT.as_secs()
+                    )
+                },
             );
             stream_declined(&mut timings)
         }
     }
+}
+
+/// Играбельна ли голова УЖЕ НАЧАТОЙ склейки HLS. Тот же критерий, что у
+/// финальной проверки в `fetch_hls_to_cache` (`hls_head_looks_playable`), но
+/// применённый к недописанному `.part`: к моменту вызова на диске лежат
+/// init-сегмент и первые медиа-куски, а `ftyp`/`moov` живут именно в init —
+/// значит вердикт уже окончательный и ждать конца сборки незачем.
+///
+/// Ошибка чтения трактуется как «непригодна»: файл обязан существовать (первый
+/// чанк подтверждён), и если его не прочесть — это отказ, а не повод рискнуть
+/// молчащим плеером.
+fn stream_hls_head_ok(part: &Path) -> bool {
+    matches!(hls_part_head(part), Ok(head) if hls_head_looks_playable(&head))
 }
 
 /// Ожидание подтверждения стрима: первые STREAM_FIRST_CHUNK (или весь файл,
@@ -8373,6 +8423,62 @@ mod soundcloud_tests {
         let track: serde_json::Value = serde_json::from_str(&sc_track_fixture()).unwrap();
         let picked = sc_pick_transcoding(&track).unwrap();
         assert_eq!(picked.protocol, ScProtocol::Progressive);
+    }
+
+    /// Голова fMP4: `ftyp` со смещения 4 (первые четыре байта — размер бокса)
+    /// и `moov` где-то в начале. Кусок init-сегмента SoundCloud выглядит так.
+    fn fmp4_head() -> Vec<u8> {
+        let mut head = Vec::new();
+        head.extend_from_slice(&[0, 0, 0, 0x18]);
+        head.extend_from_slice(b"ftypiso5");
+        head.extend_from_slice(&[0u8; 16]);
+        head.extend_from_slice(&[0, 0, 0, 0x10]);
+        head.extend_from_slice(b"moov");
+        head.extend_from_slice(&[0u8; 64]);
+        head
+    }
+
+    fn write_part(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("muza-hls-head-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(name);
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    /// Гейт снятия запрета на стрим HLS (2026-08-13): недописанный `.part`,
+    /// у которого init-сегмент уже на диске, обязан признаваться играбельным —
+    /// иначе SoundCloud так и остался бы без стрима.
+    #[test]
+    fn stream_hls_head_ok_accepts_partial_fmp4() {
+        let mut bytes = fmp4_head();
+        bytes.extend_from_slice(&[0xAB; 4096]); // «первый медиа-сегмент», файл ещё растёт
+        let part = write_part("partial-ok.m4a.part", &bytes);
+        assert!(stream_hls_head_ok(&part));
+    }
+
+    /// Битая склейка (не тот init / обрезано) обязана отдавать false — тогда
+    /// engine_stream_start снесёт закачку и уйдёт обычной дорогой. Это и есть
+    /// страховка «не хуже, чем было до снятия запрета».
+    #[test]
+    fn stream_hls_head_ok_rejects_garbage_and_missing_moov() {
+        let garbage = write_part("garbage.m4a.part", &[0x00; 512]);
+        assert!(!stream_hls_head_ok(&garbage), "мусор — не fMP4");
+
+        let mut no_moov = Vec::new();
+        no_moov.extend_from_slice(&[0, 0, 0, 0x18]);
+        no_moov.extend_from_slice(b"ftypiso5");
+        no_moov.extend_from_slice(&[0u8; 256]); // ftyp есть, moov не приехал
+        let path = write_part("no-moov.m4a.part", &no_moov);
+        assert!(!stream_hls_head_ok(&path), "без moov Chromium не заиграет");
+    }
+
+    /// Отсутствующий файл — отказ, а не паника: голова не прочлась, значит
+    /// рисковать молчащим плеером нельзя.
+    #[test]
+    fn stream_hls_head_ok_rejects_unreadable() {
+        let missing = std::env::temp_dir().join("muza-hls-head-none/never-created.part");
+        assert!(!stream_hls_head_ok(&missing));
     }
 
     /// Отчёт H: у части каталога progressive уже нет — берём AAC HLS.
