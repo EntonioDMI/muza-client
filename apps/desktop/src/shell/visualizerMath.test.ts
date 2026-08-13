@@ -10,6 +10,7 @@ import {
   fallBars,
   glideWave,
   normalizeVisualizerTuning,
+  peakHold,
   pinkTilt,
   smoothingStep,
   VIS_LIMITS,
@@ -452,6 +453,58 @@ describe("fallBars — огибающая баров: атака мгновен�
   it("возвращает пик state после шага", () => {
     const env = new Float32Array([0.3, 0.9]);
     expect(fallBars(env, [0.5, 0], 0.5)).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("peakHold — F3: шапка держится на пике и падает с ускорением", () => {
+  /** Один бар: прогнать n кадров по dt с постоянной целью. */
+  function run(dt: number, seconds: number, target: number, start = 1) {
+    const peak = new Float32Array([start]);
+    const vel = new Float32Array(1);
+    const hold = new Float32Array([0.8]);
+    const frames = Math.round(seconds / dt);
+    for (let i = 0; i < frames; i++) peakHold(peak, vel, hold, [target], dt, 0.8, 3.5);
+    return peak[0];
+  }
+
+  it("рост подхватывается мгновенно и заново берёт выдержку", () => {
+    const peak = new Float32Array([0.2]);
+    const vel = new Float32Array([5]);
+    const hold = new Float32Array([0]);
+    peakHold(peak, vel, hold, [0.9], 0.016, 0.8, 3.5);
+    expect(peak[0]).toBeCloseTo(0.9, 6);
+    expect(vel[0]).toBe(0); // разогнавшееся падение обнуляется, а не продолжается
+    expect(hold[0]).toBeCloseTo(0.8, 6);
+  });
+
+  it("в течение выдержки шапка стоит намертво", () => {
+    expect(run(0.016, 0.7, 0)).toBeCloseTo(1, 6);
+  });
+
+  it("после выдержки падает, и падает ускоряясь", () => {
+    const a = run(0.016, 0.9, 0);
+    const b = run(0.016, 1.0, 0);
+    const c = run(0.016, 1.1, 0);
+    expect(a).toBeLessThan(1);
+    expect(b - c).toBeGreaterThan(a - b); // второй шаг длиннее первого
+  });
+
+  it("от верха до нуля ≈0.75 с после выдержки — и одинаково на 60 и 144 Гц", () => {
+    // Кадронезависимость: иначе на 144 Гц шапки падали бы заметно быстрее.
+    expect(run(1 / 60, 0.8 + 0.7, 0)).toBeGreaterThan(0);
+    expect(run(1 / 60, 0.8 + 0.8, 0)).toBe(0);
+    expect(run(1 / 144, 0.8 + 0.7, 0)).toBeGreaterThan(0);
+    expect(run(1 / 144, 0.8 + 0.8, 0)).toBe(0);
+  });
+
+  it("никогда не проваливается ниже бара — шапка не может оказаться внутри", () => {
+    expect(run(0.016, 5, 0.4)).toBeCloseTo(0.4, 6);
+  });
+
+  it("пустые массивы не падают", () => {
+    expect(() =>
+      peakHold(new Float32Array(0), new Float32Array(0), new Float32Array(0), [], 0.016, 0.8, 3.5),
+    ).not.toThrow();
   });
 });
 

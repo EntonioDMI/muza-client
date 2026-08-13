@@ -59,13 +59,13 @@
  *  кадра (лаг в 1 кадр, ~16мс — незаметно), это позволяет обновлять и
  *  применять его за один проход без двойного чтения analyser-данных.
  *
- *  Наклон спектра (F1, 13.08). Бары считаются не по сырым байтам: перед
+ *  Наклон и шапки (F1/F3, 13.08). Бары считаются не по сырым байтам: перед
  *  взятием максимума по полосе к каждому бину прибавляется поправка `pinkTilt`
  *  (+3.01 дБ/окт), иначе низы стояли выше верхов ВСЕГДА — это свойство
  *  прибора, а не музыки, и стоило оно ~27 дБ перекоса на 9 октав (обоснование
- *  и источники — в шапке раздела F1 в visualizerMath). Настройки правка не
- *  заводит: наклон единственно верный, критерий один — розовый шум обязан
- *  рисоваться горизонталью.
+ *  и источники — в шапке раздела F1 в visualizerMath). Поверх баров идут шапки
+ *  пик-холда. Настроек ни та ни другая правка не заводят: наклон единственно
+ *  верный (розовый шум = горизонталь), шапки подобраны по эталонам жанра.
  *
  *  Авто-gain и лог-шкала (T48) не мешают друг другу: `framePeak` как и раньше
  *  «самый громкий из показанных бинов», просто бины разложены по барам
@@ -87,6 +87,7 @@ import {
   fallBars,
   glideWave,
   normalizeVisualizerTuning,
+  peakHold,
   pinkTilt,
   smoothingStep,
   waveShape,
@@ -115,6 +116,18 @@ const WAVE_ECHO_SCALE = 2.6;
 const WAVE_ECHO_ALPHA = 0.1;
 /** Плотность заливки тела волны при ползунке 100%. */
 const WAVE_FILL_ALPHA_MAX = 0.32;
+/** Пик-холд (F3). Падение — от audioMotion-analyzer, эталона жанра в вебе:
+ *  с УСКОРЕНИЕМ, от верха до нуля ≈0.75 с (t = sqrt(2/gravity)). Ускорение
+ *  принципиально: экспоненциальный спад читается как «плывёт», ускорение — как
+ *  «падает». Выдержка 0.8 с — между их 0.5 и железной практикой PPM (1–3 с,
+ *  «чтобы можно было отвести взгляд и не пропустить»): у метра пик держат ради
+ *  перегруза, а у визуализатора он сбрасывается каждой долей, и длинная
+ *  выдержка читалась бы как зависшая планка. Шапка тонкая, 2 CSS-пикселя: это
+ *  отметка, а не второй бар. */
+const PEAK_HOLD_SEC = 0.8;
+const PEAK_GRAVITY = 3.5;
+const PEAK_CAP_PX = 2;
+const PEAK_ALPHA = 0.85;
 /** Как часто перечитывать --accent: смена темы/акцента подхватывается живьём
  *  (раньше цвет читался один раз на маунт и до перезахода в оверлей висел
  *  старый), а getComputedStyle не дёргается каждый кадр. */
@@ -215,6 +228,12 @@ export function Visualizer({
     // старт ровно с цели, без прыжка от нулей.
     let barEnv = new Float32Array(0);
     let waveEnv = new Float32Array(0);
+    // Пик-холд (F3): нарисованная высота полосы, сама шапка, её скорость и
+    // остаток паузы. Всё длиной nBands — пересоздаются одним куском.
+    let barNorm = new Float32Array(0);
+    let peakVal = new Float32Array(0);
+    let peakVel = new Float32Array(0);
+    let peakLeft = new Float32Array(0);
     // Скользящий максимум авто-gain (нормализовано 0..1, где 1 = байт 255).
     let runningMax = GAIN_FLOOR;
     let lastT = performance.now();
@@ -315,16 +334,35 @@ export function Visualizer({
         }
         framePeak = fallBars(barEnv, bandTarget, kDown);
 
+        // Высоты как они лягут на канвас — по ним же считается пик-холд.
+        if (barNorm.length !== nBands) {
+          barNorm = new Float32Array(nBands);
+          peakVal = new Float32Array(nBands);
+          peakVel = new Float32Array(nBands);
+          peakLeft = new Float32Array(nBands);
+        }
+        for (let b = 0; b < nBands; b++) barNorm[b] = Math.min(1, barEnv[b] * gain);
+        peakHold(peakVal, peakVel, peakLeft, barNorm, dt, PEAK_HOLD_SEC, PEAK_GRAVITY);
+
         const { slot, bw, pad } = barGeometry(w, barCount, t.barFill);
         const radius = (bw / 2) * (t.barRound / 100);
         ctx.fillStyle = accent;
         for (let i = 0; i < barCount; i++) {
-          const norm = Math.min(1, barEnv[bandIndexForBar(i, barCount, t.mirror)] * gain);
+          const norm = barNorm[bandIndexForBar(i, barCount, t.mirror)];
           const bh = Math.max(2 * dpr, norm * h);
           ctx.globalAlpha = 0.28 + norm * 0.5;
           ctx.beginPath();
           ctx.roundRect(i * slot + pad, h - bh, bw, bh, radius);
           ctx.fill();
+        }
+        // Шапки-пики поверх баров: отдельным проходом, чтобы не переключать
+        // альфу на каждый бар туда-сюда.
+        const capH = Math.max(1, PEAK_CAP_PX * dpr);
+        ctx.globalAlpha = PEAK_ALPHA;
+        for (let i = 0; i < barCount; i++) {
+          const p = peakVal[bandIndexForBar(i, barCount, t.mirror)];
+          if (p <= 0) continue;
+          ctx.fillRect(i * slot + pad, Math.min(h - capH, h - p * h), bw, capH);
         }
         ctx.globalAlpha = 1;
       } else {
