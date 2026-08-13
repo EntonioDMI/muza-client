@@ -907,6 +907,8 @@ export const en = {
       visualizerBarFill: { title: "Bar width", hint: "How much of its row each bar takes: less — airier, 100% — a solid strip." },
       visualizerBarRound: { title: "Bar rounding", hint: "At 0% the bars are rectangles, at 100% — round like pills." },
       visualizerBarCalm: { title: "Fall smoothness", hint: "Hits land instantly, while the bars sink gently: the higher, the slower." },
+      visualizerPeaks: { title: "Peak caps", hint: "A thin line remembers how high the bar reached, then drops after it." },
+      visualizerPeakFall: { title: "Cap fall speed", hint: "Slow keeps the trail longer. Fast and the line follows right behind the bar." },
       visualizerMirror: { title: "Mirrored spectrum", hint: "Bass in the centre, highs at the edges — symmetric both ways." },
       visualizerWaveSmooth: { title: "Wave softness", hint: "Smooths the line: at 0% it's sharp and jagged, higher — softer." },
       visualizerWaveThick: { title: "Wave thickness", hint: "From a thin stroke to a dense ribbon." },

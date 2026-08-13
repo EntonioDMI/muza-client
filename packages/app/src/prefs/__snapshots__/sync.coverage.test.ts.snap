@@ -135,6 +135,8 @@ exports[`что синхронизируется между устройства
   "visualizerBars",
   "visualizerMirror",
   "visualizerOpacity",
+  "visualizerPeakFall",
+  "visualizerPeaks",
   "visualizerWaveAmp",
   "visualizerWaveCalm",
   "visualizerWaveFill",

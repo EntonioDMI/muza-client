@@ -3317,6 +3317,8 @@ function Player({
         visualizerTuning={{
           bars: prefs.visualizerBars,
           mirror: prefs.visualizerMirror,
+          peaks: prefs.visualizerPeaks,
+          peakFall: prefs.visualizerPeakFall,
           barFill: prefs.visualizerBarFill,
           barRound: prefs.visualizerBarRound,
           barCalm: prefs.visualizerBarCalm,

@@ -231,6 +231,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", "customize", "settings.extensions.visualizer", ["визуализатор", "волна", "бары", "visualizer"]),
   e("appearance", "customize", "settings.extensions.visualizerKind", ["визуализатор", "вид"]),
   e("appearance", "customize", "settings.extensions.visualizerMirror", ["зеркало", "визуализатор"]),
+  e("appearance", "customize", "settings.extensions.visualizerPeaks", ["пики", "шапки", "пластинки", "peaks"]),
+  e("appearance", "customize", "settings.extensions.visualizerPeakFall", ["пики", "падение", "скорость", "peaks"]),
   e("appearance", "customize", "settings.extensions.bassShake", ["бас", "тряска", "пульсация", "bass"]),
   e("appearance", "customize", "settings.extensions.bassShakeStrength", ["бас", "сила"]),
   e("appearance", "customize", "settings.extensions.bassSharp", ["бас", "резкость", "атака", "bass"]),

@@ -901,6 +901,25 @@ export function CustomizeSub() {
                         limit={VIS_LIMITS.barCalm}
                         onChange={(v) => set({ visualizerBarCalm: v })}
                       />
+                      <SettingRow title={t("settings.extensions.visualizerPeaks.title")} hint={t("settings.extensions.visualizerPeaks.hint")}>
+                        <Switch
+                          checked={prefs.visualizerPeaks}
+                          onChange={(on: boolean) => set({ visualizerPeaks: on })}
+                          label={t("settings.extensions.visualizerPeaks.title")}
+                        />
+                      </SettingRow>
+                      {/* Скорость падения показывается только при включённых
+                          шапках: ползунок, который ничего не делает, читается
+                          как сломанный, а не как «выключено выше». */}
+                      {prefs.visualizerPeaks ? (
+                        <VisSliderRow
+                          title={t("settings.extensions.visualizerPeakFall.title")}
+                          hint={t("settings.extensions.visualizerPeakFall.hint")}
+                          value={prefs.visualizerPeakFall}
+                          limit={VIS_LIMITS.peakFall}
+                          onChange={(v) => set({ visualizerPeakFall: v })}
+                        />
+                      ) : null}
                       <SettingRow title={t("settings.extensions.visualizerMirror.title")} hint={t("settings.extensions.visualizerMirror.hint")}>
                         <Switch
                           checked={prefs.visualizerMirror}

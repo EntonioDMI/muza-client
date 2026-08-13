@@ -92,6 +92,7 @@ import {
   glideWave,
   normalizeVisualizerTuning,
   peakHold,
+  peakParams,
   pinkTilt,
   smoothingStep,
   spectralCentroid,
@@ -130,8 +131,9 @@ const WAVE_FILL_ALPHA_MAX = 0.32;
  *  перегруза, а у визуализатора он сбрасывается каждой долей, и длинная
  *  выдержка читалась бы как зависшая планка. Шапка тонкая, 2 CSS-пикселя: это
  *  отметка, а не второй бар. */
-const PEAK_HOLD_SEC = 0.8;
-const PEAK_GRAVITY = 3.5;
+// Пауза и ускорение больше не константы: их считает peakParams по ползунку
+// «Падение пиков» (VIS_LIMITS.peakFall). Прежние 0.8 / 3.5 достижимы —
+// это ровно середина шкалы.
 const PEAK_CAP_PX = 2;
 const PEAK_ALPHA = 0.85;
 /** Центроид → оттенок (F5): максимум ±20° по кругу HSL. Больше — и тема
@@ -360,7 +362,8 @@ export function Visualizer({
           peakLeft = new Float32Array(nBands);
         }
         for (let b = 0; b < nBands; b++) barNorm[b] = Math.min(1, barEnv[b] * gain);
-        peakHold(peakVal, peakVel, peakLeft, barNorm, dt, PEAK_HOLD_SEC, PEAK_GRAVITY);
+        const pk = peakParams(t.peakFall);
+        peakHold(peakVal, peakVel, peakLeft, barNorm, dt, pk.holdSec, pk.gravity);
 
         // Оттенок по центроиду (F5). Считается по ЦЕЛИ, а не по нарисованному:
         // авто-gain и клампинг высот исказили бы центр масс, а тут важна форма
@@ -385,14 +388,16 @@ export function Visualizer({
         }
         // Шапки-пики поверх баров: отдельным проходом, чтобы не переключать
         // альфу на каждый бар туда-сюда.
-        const capH = Math.max(1, PEAK_CAP_PX * dpr);
-        ctx.globalAlpha = PEAK_ALPHA;
-        for (let i = 0; i < barCount; i++) {
-          const p = peakVal[bandIndexForBar(i, barCount, t.mirror)];
-          if (p <= 0) continue;
-          ctx.fillRect(i * slot + pad, Math.min(h - capH, h - p * h), bw, capH);
+        if (t.peaks) {
+          const capH = Math.max(1, PEAK_CAP_PX * dpr);
+          ctx.globalAlpha = PEAK_ALPHA;
+          for (let i = 0; i < barCount; i++) {
+            const p = peakVal[bandIndexForBar(i, barCount, t.mirror)];
+            if (p <= 0) continue;
+            ctx.fillRect(i * slot + pad, Math.min(h - capH, h - p * h), bw, capH);
+          }
+          ctx.globalAlpha = 1;
         }
-        ctx.globalAlpha = 1;
       } else {
         if (!wave || wave.length !== analyser.fftSize) wave = new Uint8Array(analyser.fftSize);
         analyser.getByteTimeDomainData(wave);
