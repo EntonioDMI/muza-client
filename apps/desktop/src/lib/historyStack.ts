@@ -12,7 +12,26 @@ export interface HistoryPayload {
   playlistId?: string;
   /** view="scPlaylist": id плейлиста SoundCloud (с префиксом sc:, 2026-07-20). */
   scPlaylistId?: string;
+  /** view="settings": выбранный раздел («Внешний вид», «Воспроизведение»…).
+   *
+   *  ⚠️ ЗАЧЕМ ЭТО ЗДЕСЬ (13.08). Раздел настроек жил только в useState внутри
+   *  SettingsView и историю не трогал вовсе. Человек заходил Настройки →
+   *  Внешний вид, жал «назад» боковой кнопкой мыши — и оказывался на Главной,
+   *  потому что предыдущей ЗАПИСЬЮ была Главная: вход в раздел записи не
+   *  создавал. Владелец: «таких моментов стало довольно много». */
+  settingsTab?: string;
+  /** view="settings": под-экран внутри раздела (эквалайзер, диагностика…).
+   *  Второй уровень той же вложенности — без него «назад» из под-экрана
+   *  выбрасывал бы из настроек целиком, ровно как раньше из раздела. */
+  settingsSub?: string;
 }
+
+/** Поля payload, по которым записи считаются разными. Список ЯВНЫЙ, а не
+ *  перебор ключей: забытое поле здесь не ломает сборку, а тихо склеивает две
+ *  разные записи в одну — и «назад» молча перескакивает через экран. Так уже
+ *  было со `scPlaylistId`: его добавили в payload 20.07, а в сравнение нет, и
+ *  два разных плейлиста SoundCloud подряд считались одной записью. */
+const PAYLOAD_KEYS = ["playlistId", "scPlaylistId", "settingsTab", "settingsSub"] as const;
 
 export interface HistoryEntry<V extends string = string> {
   view: V;
@@ -27,7 +46,8 @@ export interface HistoryState<V extends string = string> {
 const DEFAULT_CAP = 50;
 
 function entriesEqual<V extends string>(a: HistoryEntry<V>, b: HistoryEntry<V>): boolean {
-  return a.view === b.view && (a.payload?.playlistId ?? null) === (b.payload?.playlistId ?? null);
+  if (a.view !== b.view) return false;
+  return PAYLOAD_KEYS.every((k) => (a.payload?.[k] ?? null) === (b.payload?.[k] ?? null));
 }
 
 /** Начальный стек из одной записи (текущий экран на момент старта). */

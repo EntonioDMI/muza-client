@@ -105,4 +105,39 @@ describe("historyStack: назад/вперёд (без пуша)", () => {
     s = goBack(s);
     expect(currentEntry(s)).toEqual({ view: "playlist", payload: { playlistId: "p42" } });
   });
+
+  it("два разных плейлиста SoundCloud подряд — ДВЕ записи, а не одна", () => {
+    // Дыра до 13.08: сравнение смотрело только playlistId, и второй sc-плейлист
+    // считался повтором первого — «назад» перескакивал через целый экран.
+    let s: HistoryState<string> = createHistory({ view: "home" });
+    s = pushHistory(s, { view: "scPlaylist", payload: { scPlaylistId: "sc:1" } });
+    s = pushHistory(s, { view: "scPlaylist", payload: { scPlaylistId: "sc:2" } });
+    expect(s.entries.length).toBe(3);
+    s = goBack(s);
+    expect(currentEntry(s).payload?.scPlaylistId).toBe("sc:1");
+  });
+
+  it("раздел настроек — своя запись: «назад» ведёт в настройки, а не на главную", () => {
+    // Жалоба владельца 13.08: из Настройки → Внешний вид «назад» выбрасывал
+    // на Главную, потому что вход в раздел записи не создавал вовсе.
+    let s: HistoryState<string> = createHistory({ view: "home" });
+    s = pushHistory(s, { view: "settings" });
+    s = pushHistory(s, { view: "settings", payload: { settingsTab: "appearance" } });
+    s = goBack(s);
+    expect(currentEntry(s)).toEqual({ view: "settings" });
+    expect(currentEntry(s).payload?.settingsTab).toBeUndefined();
+  });
+
+  it("под-экран внутри раздела — тоже своя запись", () => {
+    let s: HistoryState<string> = createHistory({ view: "settings", payload: { settingsTab: "appearance" } });
+    s = pushHistory(s, { view: "settings", payload: { settingsTab: "appearance", settingsSub: "customize" } });
+    s = goBack(s);
+    expect(currentEntry(s).payload).toEqual({ settingsTab: "appearance" });
+  });
+
+  it("повторный вход в ТОТ ЖЕ раздел записи не плодит", () => {
+    let s: HistoryState<string> = createHistory({ view: "settings", payload: { settingsTab: "appearance" } });
+    s = pushHistory(s, { view: "settings", payload: { settingsTab: "appearance" } });
+    expect(s.entries.length).toBe(1);
+  });
 });
