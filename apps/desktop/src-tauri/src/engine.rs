@@ -2814,6 +2814,14 @@ fn build_innertube_body(
             "hl": "en",
             "gl": "US",
         }),
+        // Встроенный плеер: полей устройства не несёт вовсе — он «страница на
+        // чужом сайте». Зато ТРЕБУЕТ thirdParty.embedUrl, он добавляется ниже.
+        "WEB_EMBEDDED_PLAYER" => serde_json::json!({
+            "clientName": cfg.client_name,
+            "clientVersion": cfg.client_version,
+            "hl": "en",
+            "gl": "US",
+        }),
         _ => serde_json::json!({
             "clientName": cfg.client_name,
             "clientVersion": cfg.client_version,
@@ -2829,8 +2837,16 @@ fn build_innertube_body(
     if let Some(v) = visitor {
         client["visitorData"] = serde_json::Value::String(v.to_string());
     }
+    let mut context = serde_json::json!({ "client": client });
+    if cfg.client_name == "WEB_EMBEDDED_PLAYER" {
+        // ⚠️ АДРЕС ОБЯЗАН БЫТЬ НЕ-YOUTUBE (yt-dlp #16177, ноябрь 2025): раньше
+        // сюда клали https://www.youtube.com/ и это работало, теперь YouTube
+        // такой встраивание не признаёт. Любой валидный чужой адрес годится —
+        // берём тот же, на который перешёл yt-dlp.
+        context["thirdParty"] = serde_json::json!({ "embedUrl": "https://www.reddit.com/" });
+    }
     serde_json::json!({
-        "context": { "client": client },
+        "context": context,
         "videoId": video_id,
         "contentCheckOk": true,
         "racyCheckOk": true,
@@ -2931,22 +2947,38 @@ fn innertube_ua(cfg: &InnertubeConfig) -> String {
 
 /// Ступень 0.5 (отчёт G, 2026-07-22): SABR-only у android_vr раскатывается
 /// региональными A/B-тестами — прежде чем сдаться лестнице yt-dlp (~4.5с),
-/// пробуем ещё два клиента, которым по ресёрчу не нужен PoToken/n-sig.
-/// Версии дрейфуют — провал любого МОЛЧА уступает дальше (лестница остаётся
-/// страховкой), поэтому устаревание констант безопасно: ноль вреда, просто
-/// перестанет выручать. Порядок: tv по ресёрчу стабильнее; ios — под
-/// вопросом (местами требует PoToken), идёт вторым.
+/// пробуем клиентов, которым не нужен PoToken/n-sig. Версии дрейфуют —
+/// провал любого МОЛЧА уступает дальше (лестница остаётся страховкой),
+/// поэтому устаревание констант безопасно: ноль вреда, просто перестанет
+/// выручать.
+///
+/// ⚠️ ПЕРЕСМОТР 13.08 по таблице PO-токенов yt-dlp (их вики + исходники
+/// _base.py). Живой журнал владельца показал, что ступень 0.5 не спасала
+/// НИ РАЗУ — клик уходил в лестницу на 4–8 с. Причина видна в таблице:
+///  - `ios` теперь требует PO-токен для БАЙТОВ (GVS) — player-ответ приходит,
+///    а скачивание получает 403. Для анонима бесполезен, УБРАН.
+///  - `tv` (TVHTML5) без cookie отдаёт DRM-форматы («All formats DRM'd if
+///    cookies aren't passed»), то есть неиграбельное. Оставлен последним:
+///    иногда всё же выручает и стоит один запрос.
+///  - `tv_downgraded`, который просился первым кандидатом, в актуальном
+///    мастере помечен `REQUIRE_AUTH: True` и в их доках описан как клиент
+///    для СЕССИЙ С COOKIE. Анонимной Музе не подходит — НЕ добавлен, чтобы
+///    не платить обход ради гарантированного отказа.
+///  - `web_embedded` — единственный анонимный клиент, у которого в таблице
+///    стоит «PO Token: Not required» и нет DRM-оговорки. Ограничение честное:
+///    работает только для встраиваемых роликов (музыка — почти всегда).
+///    Поставлен ПЕРВЫМ.
 fn innertube_fallback_configs() -> [InnertubeConfig; 2] {
     [
+        InnertubeConfig {
+            client_name: "WEB_EMBEDDED_PLAYER".into(),
+            client_version: "2.20260708.00.00".into(),
+            client_name_id: 56,
+        },
         InnertubeConfig {
             client_name: "TVHTML5".into(),
             client_version: "7.20250312.16.00".into(),
             client_name_id: 7,
-        },
-        InnertubeConfig {
-            client_name: "IOS".into(),
-            client_version: "19.45.4".into(),
-            client_name_id: 5,
         },
     ]
 }
@@ -8564,6 +8596,43 @@ mod soundcloud_tests {
     fn stream_hls_head_ok_rejects_unreadable() {
         let missing = std::env::temp_dir().join("muza-hls-head-none/never-created.part");
         assert!(!stream_hls_head_ok(&missing));
+    }
+
+    /// Ступень 0.5 после пересмотра 13.08: встроенный плеер идёт ПЕРВЫМ (он
+    /// единственный анонимный клиент без PO-токена по таблице yt-dlp), IOS
+    /// убран (требует токен на байты — 403 на скачивании).
+    #[test]
+    fn fallback_clients_prefer_web_embedded_and_drop_ios() {
+        let names: Vec<String> = innertube_fallback_configs()
+            .iter()
+            .map(|c| c.client_name.clone())
+            .collect();
+        assert_eq!(names, vec!["WEB_EMBEDDED_PLAYER", "TVHTML5"]);
+    }
+
+    /// ⚠️ Встроенному плееру нужен thirdParty.embedUrl, и он обязан быть
+    /// НЕ-YOUTUBE (yt-dlp #16177): со ссылкой на youtube.com встраивание
+    /// перестало признаваться. Без этого поля клиент отвечает отказом, и
+    /// ступень 0.5 снова стала бы бесполезной — молча.
+    #[test]
+    fn web_embedded_request_carries_non_youtube_embed_url() {
+        let cfg = InnertubeConfig {
+            client_name: "WEB_EMBEDDED_PLAYER".into(),
+            client_version: "2.20260708.00.00".into(),
+            client_name_id: 56,
+        };
+        let body = build_innertube_body(&cfg, "dQw4w9WgXcQ", None);
+        let embed = body["context"]["thirdParty"]["embedUrl"]
+            .as_str()
+            .expect("встроенному плееру нужен thirdParty.embedUrl");
+        assert!(!embed.contains("youtube.com"), "адрес встраивания обязан быть чужим: {embed}");
+        // у прочих клиентов поля быть не должно — оно их контекст только портит
+        let vr = InnertubeConfig {
+            client_name: "ANDROID_VR".into(),
+            client_version: "1.65.10".into(),
+            client_name_id: 28,
+        };
+        assert!(build_innertube_body(&vr, "dQw4w9WgXcQ", None)["context"]["thirdParty"].is_null());
     }
 
     /// Отчёт H: у части каталога progressive уже нет — берём AAC HLS.
