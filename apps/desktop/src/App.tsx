@@ -2409,7 +2409,10 @@ function Player({
         содержащий блок для position: fixed (filter, transform, backdrop-filter),
         у него нет — в отличие от стеклянных зон внутри. Разбор с замером —
         packages/ui/src/lib/layerRoot.js. */}
-    <div data-theme={prefs.theme} data-accent={accentAttr} data-radius={prefs.radius} data-muza-layer-root="" style={rootStyle}>
+    {/* data-radius снят 13.08: скругление стало свободным числом, и атрибут
+        рисовал мёртвое data-radius="16" — селекторов под него не осталось ни
+        одного (форму задают токены --r-*, которые считает themeVars). */}
+    <div data-theme={prefs.theme} data-accent={accentAttr} data-muza-layer-root="" style={rootStyle}>
     {/* DragLayer ВНУТРИ этого div, а не снаружи: превью переноса рисуется его
         потомком и берёт токены отсюда (тема/акцент/--glass-panel живут inline
         на этом div, а не в :root). Старый HTML5-гость вешался на document.body

@@ -74,6 +74,10 @@ export const ICONS = {
   speaker: HI.Speaker01Icon,
   "audio-lines": HI.AudioLinesIcon,
   "sliders-vertical": HI.SlidersVerticalIcon,
+  // Фильтры выдачи поиска и жанры медиатеки (13.08). Обе просились кодом, но
+  // в таблице их не было — Icon рисовал пустоту, и сторож таблицы это поймал.
+  filter: HI.FilterIcon,
+  tag: HI.TagIcon,
   gauge: HI.DashboardSpeed01Icon,
   "mic-vocal": HI.MicIcon,
 
