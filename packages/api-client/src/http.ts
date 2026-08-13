@@ -43,6 +43,7 @@ import {
   type RegisterStatus,
   type ScrobblingStatus,
   type SearchScope,
+  type SearchFilters,
   type Session,
   type SessionInfo,
   SessionSchema,
@@ -631,11 +632,20 @@ export class HttpMuzaApi implements MuzaApi {
   }
 
   // ---------- Каталог (Stage 2, слайс 3) ----------
+  // Фильтры выдачи (13.08) добавляются обоим методам поиска через
+  // appendSearchFilters (объявлен ниже файла, у остальных чистых хелперов):
+  // разъехавшись, плоский и группированный поиск отдавали бы РАЗНОЕ на
+  // одинаковых фильтрах, хотя переключение между ними — один тумблер в
+  // настройках, а не смена запроса.
 
-  async search(query: string, opts?: { scope?: SearchScope; limit?: number }): Promise<Track[]> {
+  async search(
+    query: string,
+    opts?: { scope?: SearchScope; limit?: number; filters?: SearchFilters },
+  ): Promise<Track[]> {
     const params = new URLSearchParams({ q: query });
     if (opts?.scope) params.set("scope", opts.scope);
     if (opts?.limit) params.set("limit", String(opts.limit));
+    appendSearchFilters(params, opts?.filters);
     const out = await this.authedRequest<{ query: string; results: TrackWire[] }>(`/search?${params}`);
     return tracksFromWire(out.results);
   }
@@ -648,11 +658,12 @@ export class HttpMuzaApi implements MuzaApi {
    *  типы существующих плоских вызывателей (десктоп) без всякой выгоды. */
   async searchGrouped(
     query: string,
-    opts?: { scope?: SearchScope; limit?: number },
+    opts?: { scope?: SearchScope; limit?: number; filters?: SearchFilters },
   ): Promise<GroupedSearchResult[]> {
     const params = new URLSearchParams({ q: query, group: "1", offset: "0" });
     if (opts?.scope) params.set("scope", opts.scope);
     if (opts?.limit) params.set("limit", String(opts.limit));
+    appendSearchFilters(params, opts?.filters);
     const out = await this.authedRequest<{ query: string; results: GroupedResultWire[] }>(`/search?${params}`);
     const cards: GroupedSearchResult[] = [];
     for (const w of out.results) {
@@ -1962,4 +1973,16 @@ export class HttpMuzaApi implements MuzaApi {
     localStorage.removeItem(STORAGE_KEY);
     return null;
   }
+}
+
+/** Фильтры выдачи → query-параметры. `cachedOnly` шлётся только когда true:
+ *  сервер трактует отсутствие параметра как «нет», и явный `cachedOnly=0` в
+ *  адресе был бы шумом без смысла. Длительность — в СЕКУНДАХ, границы
+ *  включительны с обеих сторон (см. applySearchFilters на сервере). */
+function appendSearchFilters(params: URLSearchParams, f?: SearchFilters): void {
+  if (!f) return;
+  if (f.durMin !== undefined) params.set("durMin", String(f.durMin));
+  if (f.durMax !== undefined) params.set("durMax", String(f.durMax));
+  if (f.provider) params.set("provider", f.provider);
+  if (f.cachedOnly) params.set("cachedOnly", "1");
 }

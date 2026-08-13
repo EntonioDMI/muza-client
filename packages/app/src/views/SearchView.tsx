@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState, SearchInput, Shelf, TrackRow } from "@muza/ui";
 import { humanError } from "@muza/api-client";
-import type { GroupedSearchResult, MuzaApi, PublicPlaylist, PublicPlaylistHit, Track } from "@muza/api-client";
+import type {
+  GroupedSearchResult,
+  MuzaApi,
+  PublicPlaylist,
+  PublicPlaylistHit,
+  SearchFilters,
+  Track,
+} from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
@@ -131,6 +138,12 @@ export function SearchView({
   // сервера поддерживает только offset=0 — см. lib/searchGrouping.ts).
   const [groupLimit, setGroupLimit] = useState(30);
   const [groupExhausted, setGroupExhausted] = useState(false);
+  // Фильтры выдачи (13.08). Состояние ЗАПРОСА, а не предпочтение: в prefs не
+  // сохраняются намеренно — «до 3 минут», выставленное вчера, завтра выглядело
+  // бы как пропавшие треки, и человек не связал бы одно с другим.
+  const [filters, setFilters] = useState<SearchFilters>({});
+  const filtersActive =
+    filters.durMax !== undefined || filters.provider !== undefined || filters.cachedOnly === true;
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -251,7 +264,7 @@ export function SearchView({
         setGroupLimit(30);
         setGroupExhausted(false);
         api
-          .searchGrouped(query, { scope: "catalog", limit: 30 })
+          .searchGrouped(query, { scope: "catalog", limit: 30, filters })
           .then((found) => {
             if (seqRef.current === seq) {
               setGroupedResults(found);
@@ -261,7 +274,7 @@ export function SearchView({
           .catch(() => undefined); // живой ввод ошибок не показывает — есть полный поиск
       } else {
         api
-          .search(query, { scope: "catalog" })
+          .search(query, { scope: "catalog", filters })
           .then((found) => {
             if (seqRef.current === seq) {
               setResults(found);
@@ -272,7 +285,7 @@ export function SearchView({
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [api, query, canSearch, instantSearch, searchGrouping, playlistCode]);
+  }, [api, query, canSearch, instantSearch, searchGrouping, playlistCode, filters]);
 
   const runSearch = async (scope: "catalog" | "full") => {
     if (!canSearch || query.length < 2 || busy || playlistLookup) return;
@@ -283,13 +296,13 @@ export function SearchView({
       if (searchGrouping) {
         setGroupLimit(30);
         setGroupExhausted(false);
-        const found = await api.searchGrouped(query, { scope, limit: 30 });
+        const found = await api.searchGrouped(query, { scope, limit: 30, filters });
         if (seqRef.current === seq) {
           setGroupedResults(found);
           setResults(null);
         }
       } else {
-        const found = await api.search(query, { scope });
+        const found = await api.search(query, { scope, filters });
         if (seqRef.current === seq) {
           setResults(found);
           setGroupedResults(null);
@@ -325,7 +338,7 @@ export function SearchView({
     const seq = ++seqRef.current;
     setMoreBusy(true);
     try {
-      const found = await api.searchGrouped(query, { scope: loadMoreScope(searchScope), limit: next });
+      const found = await api.searchGrouped(query, { scope: loadMoreScope(searchScope), limit: next, filters });
       if (seqRef.current === seq) {
         const prevCount = groupedFlat.length;
         // Стабильное слияние вместо голой замены: сервер пересобирает
@@ -544,6 +557,57 @@ export function SearchView({
         ) : null}
       </div>
 
+      {/* Фильтры выдачи (13.08). Чипы, а не выпадающие списки: правило
+          владельца «частое — в один клик». Показываем только когда поиск
+          вообще возможен и это не режим кода плейлиста — иначе строка висела
+          бы над карточкой плейлиста, к которой не относится. */}
+      {canSearch && !playlistLookup ? (
+        <div
+          style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 12 }}
+          data-testid="search-filters"
+        >
+          <FilterChip
+            active={filters.durMax === 300}
+            label={t("views.search.filters.short")}
+            onToggle={() =>
+              setFilters((f) => ({ ...f, durMax: f.durMax === 300 ? undefined : 300 }))
+            }
+          />
+          <FilterChip
+            active={filters.provider === "soundcloud"}
+            label="SoundCloud"
+            onToggle={() =>
+              setFilters((f) => ({
+                ...f,
+                provider: f.provider === "soundcloud" ? undefined : "soundcloud",
+              }))
+            }
+          />
+          <FilterChip
+            active={filters.provider === "youtube"}
+            label="YouTube"
+            onToggle={() =>
+              setFilters((f) => ({
+                ...f,
+                provider: f.provider === "youtube" ? undefined : "youtube",
+              }))
+            }
+          />
+          <FilterChip
+            active={filters.cachedOnly === true}
+            label={t("views.search.filters.cached")}
+            onToggle={() => setFilters((f) => ({ ...f, cachedOnly: f.cachedOnly ? undefined : true }))}
+          />
+          {filtersActive ? (
+            // Сброс появляется только при активном фильтре: это и есть подсказка,
+            // почему выдача короче обычного
+            <Button variant="ghost" onClick={() => setFilters({})}>
+              {t("views.search.filters.reset")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       {playlistLookup && canSearch ? (
         // Режим кода PL_… / @адреса: одна карточка вместо трековой выдачи
         <div data-testid="playlist-code-result">
@@ -658,5 +722,16 @@ export function SearchView({
           actions={selectionActions}
         />
     </div>
+  );
+}
+
+/** Чип фильтра: включён/выключен одним нажатием. Отдельным компонентом, а не
+ *  пятью копиями разметки — иначе активное состояние неизбежно разъедется
+ *  между чипами при первой же правке стилей. */
+function FilterChip({ active, label, onToggle }: { active: boolean; label: string; onToggle: () => void }) {
+  return (
+    <Button variant={active ? "primary" : "secondary"} onClick={onToggle} aria-pressed={active}>
+      {label}
+    </Button>
   );
 }

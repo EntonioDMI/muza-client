@@ -52,6 +52,11 @@ export const viewsEn = {
     placeholder: "Track, artist, album",
     searching: "Searching…",
     searchSources: "Search in sources",
+    filters: {
+      short: "Under 5 minutes",
+      cached: "Already downloaded",
+      reset: "Clear",
+    },
     needsAccount: "Catalog search is available after signing in — an anonymous account only lives on this device.",
     anon: { title: "Search needs an account" },
     /** Пустой/короткий запрос — приглашение искать. */
