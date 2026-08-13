@@ -2059,8 +2059,18 @@ fn warm_http_client() -> &'static reqwest::Client {
 /// - результат становится кэшем только атомарным rename ПОСЛЕ полной записи;
 ///   `.part` не может стать кэш-хитом (find_cached, тест part_file_is_not_a_cache_hit);
 /// - `validate_ytdlp_output` на финальном пути — буквально та же функция.
+/// Диагностика одного похода за байтами: сколько ждали первого байта и что
+/// сказал CDN про свой кэш. Нужна ровно для журнала — на поведение не влияет.
+#[derive(Default)]
+struct FetchProbe {
+    ttfb_ms: u64,
+    /// Значение заголовка `x-cache` (у CloudFront «Hit/Miss from cloudfront»);
+    /// пусто — заголовка не было (не CloudFront или его срезали).
+    cdn_cache: String,
+}
+
 async fn fetch_to_cache(dir: &Path, track_id: &str, entry: &WarmEntry) -> Result<PathBuf, String> {
-    fetch_to_cache_with_progress(dir, track_id, entry, None, None).await
+    fetch_to_cache_with_progress(dir, track_id, entry, None, None, None).await
 }
 
 /// То же скачивание, но с публикацией прогресса для протокола muza-stream
@@ -2073,6 +2083,11 @@ async fn fetch_to_cache_with_progress(
     entry: &WarmEntry,
     progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
     cancel: Option<&tokio::sync::Notify>,
+    // Куда положить диагностику ответа CDN, если вызывающему она нужна.
+    // Отдельным out-параметром, а НЕ полем StreamProgress: ту структуру
+    // читает нативный движок (audio.rs, LiveStream), и расширять общий
+    // контракт ради диагностики — плохой размен.
+    probe: Option<&mut FetchProbe>,
 ) -> Result<PathBuf, String> {
     // ⚠️ size == 0 — «размер НЕИЗВЕСТЕН» (SoundCloud с 13.08, проба снята),
     // а не «нулевой файл». Проверять заявленный размер тогда нечем, и из трёх
@@ -2110,6 +2125,13 @@ async fn fetch_to_cache_with_progress(
     } else {
         MAX_YTDLP_OUTPUT_BYTES - 1
     };
+    // ⚠️ ЗАМЕР ВРЕМЕНИ ДО ПЕРВОГО БАЙТА (13.08). Порог первого чанка опустили
+    // со 128 до 64 КиБ в расчёте, что ожидание упирается в СКОРОСТЬ ОТДАЧИ, —
+    // живой замер владельца этого НЕ подтвердил: медиана first_chunk_wait как
+    // была ~800 мс, так и осталась. Значит ждём мы не байты, а их НАЧАЛО:
+    // установление соединения с краем CDN и подтягивание с origin у редкого
+    // трека. Пока эти две цифры не разделены, любая оптимизация — гадание.
+    let sent_at = std::time::Instant::now();
     let send = warm_http_client()
         .get(entry.url.clone())
         .header("Range", format!("bytes=0-{range_end}"))
@@ -2124,6 +2146,23 @@ async fn fetch_to_cache_with_progress(
     }
     .map_err(|e| format!("warm GET не ушёл: {e}"))?;
 
+    let ttfb = sent_at.elapsed();
+    if let Some(sink) = probe {
+        sink.ttfb_ms = ttfb.as_millis() as u64;
+        // ⚠️ x-cache — ЕДИНСТВЕННЫЙ способ отличить «край CDN холодный» от
+        // «канал узкий», не гадая. CloudFront пишет туда «Hit from cloudfront»
+        // или «Miss from cloudfront»; на Miss он идёт в origin SoundCloud, и по
+        // замерам самих AWS это добавляет сотни миллисекунд (соединение до
+        // origin ~195 мс + первый байт от origin ~366 мс в их же примере).
+        // Владелец слушает редкое — мэшапы и фонк, — то есть как раз то, чего
+        // в кэше края обычно нет. Гипотеза проверяемая, вот её прибор.
+        sink.cdn_cache = resp
+            .headers()
+            .get("x-cache")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+    }
     let status = resp.status();
     // total — сколько байт СУЩЕСТВУЕТ у CDN: у 206 — из Content-Range (наш
     // Range мог попросить меньше или больше реального), у 200 — Content-Length.
@@ -4582,6 +4621,11 @@ pub async fn engine_stream_start(
         let key_task = key.clone();
         let cancel_task = handle.cancel.clone();
         tauri::async_runtime::spawn(async move {
+            // Время до первого байта пишем в журнал: замер 13.08 показал, что
+            // порог первого чанка (128 → 64 КиБ) ожидание почти не изменил,
+            // значит ждём НАЧАЛО отдачи, а не сами байты. Без этой цифры
+            // отделить «край CDN холодный» от «канал узкий» нечем.
+            let mut probe = FetchProbe::default();
             let result = match cache_dir(&app_task, &ns_task) {
                 Ok(dir) => {
                     fetch_to_cache_with_progress(
@@ -4590,11 +4634,24 @@ pub async fn engine_stream_start(
                         &entry,
                         Some(&tx),
                         Some(&cancel_task),
+                        Some(&mut probe),
                     )
                     .await
                 }
                 Err(e) => Err(e),
             };
+            if probe.ttfb_ms > 0 {
+                let cache = if probe.cdn_cache.is_empty() {
+                    String::new()
+                } else {
+                    format!(", кэш CDN: {}", probe.cdn_cache)
+                };
+                stage0_log(
+                    &app_task.state::<EngineState>(),
+                    SystemTime::now(),
+                    format!("первый байт от CDN за {} мс{cache}", probe.ttfb_ms),
+                );
+            }
             match result {
                 Ok(path) => {
                     // тот же хвост, что у быстрого пути engine_resolve
