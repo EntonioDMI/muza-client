@@ -427,10 +427,18 @@ export function SearchView({
         album={rowShow?.album ? (tr.album ?? undefined) : undefined}
         duration={fmtTime(tr.durationSec)}
         showDuration={rowShow?.duration !== false}
-        // Бейдж источника в ПОИСКЕ виден всегда (запрос владельца 14.07:
-        // «откуда возьмётся звук» — свойство выдачи); тумблер rowShow.source
-        // добавляет его в остальные списки и этот ряд не гасит.
-        source={primarySourceLabel(tr.sources, lang)}
+        // ⚠️ ТЕПЕРЬ ТУМБЛЕР ДЕЙСТВУЕТ И ЗДЕСЬ (13.08). До этого бейдж источника
+        // в поиске был виден ВСЕГДА — исключение, заведённое 14.07 по запросу
+        // «откуда возьмётся звук». Владелец его отменил: «сделать чтобы
+        // показывание источников теперь было выключено изначально». Настройка
+        // rowShow.source и так стоит в false по умолчанию, поэтому отдельного
+        // тумблера заводить не пришлось — хватило перестать его игнорировать.
+        //
+        // Довод отмены сильнее прежнего: источник — это НАША ТРУБА, а не
+        // свойство песни. Ровно по этой причине 13.08 сняли и фильтр выдачи по
+        // источнику (см. SearchFilters в api-client) — исключение в строке
+        // осталось последним следом того же взгляда.
+        source={rowShow?.source ? primarySourceLabel(tr.sources, lang) : undefined}
         showVersions={searchGrouping}
         versionCount={versions?.count}
         versionsExpanded={versions?.expanded}
