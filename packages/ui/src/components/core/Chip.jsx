@@ -20,7 +20,12 @@ export function Chip({ children, icon, selected = false, onClick, style }) {
         height: 36,
         padding: "0 var(--sp-4)",
         border: "none",
-        borderRadius: "var(--r-pill)",
+        // Чип — ОРГАН УПРАВЛЕНИЯ, а не «намеренно круглое»: форму ему задаёт
+        // общее скругление через --r-chip (tokens/radius.css). Пока здесь стоял
+        // --r-pill, теги в поиске оставались круглыми при скруглении в ноль —
+        // жалоба владельца 2026-08-13. Фолбэк на пилюлю оставлен для
+        // потребителей @muza/ui без токенов Muza.
+        borderRadius: "var(--r-chip, var(--r-pill))",
         background: selected ? "var(--surface-4)" : hover ? "var(--surface-3)" : "var(--surface-2)",
         color: selected ? "var(--text-1)" : hover ? "var(--text-1)" : "var(--text-2)",
         fontFamily: "var(--font-ui)",

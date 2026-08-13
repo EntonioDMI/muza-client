@@ -11,14 +11,38 @@ import type { TranslationKey, TParams } from "../../i18n";
 /** Функция перевода — та же, что отдаёт useT().t. */
 type T = (key: TranslationKey, params?: TParams) => string;
 
+/** ТРИ ПРИВЫЧНЫХ СКРУГЛЕНИЯ — теперь просто ЗАСЕЧКИ на непрерывной шкале.
+ *
+ *  До 2026-08-13 это были единственные три значения, какие человек мог выбрать
+ *  («три зашитых варианта, которые он не может изменить», жалоба владельца).
+ *  Теперь ползунок «Скругление» даёт любое число 0–40, а эти три остаются
+ *  быстрыми чипами над ним: частое — в один клик, редкое — рукой. Числа = --r-lg
+ *  бывших пресетов mild/soft/round (tokens/radius.css), поэтому у выбравшего
+ *  «Больше» не меняется ни пиксель.
+ *
+ *  Отсюда же их берёт ряд настроек (AppearancePane) — второй копии этих трёх
+ *  чисел в интерфейсе быть не должно. */
+export const RADIUS_MILD = 8;
+export const RADIUS_SOFT = 16;
+export const RADIUS_ROUND = 28;
+
+/** Порядок чипов ряда «Скругление» — он же порядок нарастания. */
+export const RADIUS_CHIPS = [
+  { key: "mild", value: RADIUS_MILD },
+  { key: "soft", value: RADIUS_SOFT },
+  { key: "round", value: RADIUS_ROUND },
+] as const;
+
 export interface AppearancePreset {
   key: string;
   name: string;
   hint: string;
   accent: Prefs["accent"];
   accentColor: string;
-  /** Те же три значения, что у настройки «Углы». */
-  radius: "mild" | "soft" | "round";
+  /** Опорное скругление в px — то же число, что у ползунка «Скругление»
+   *  (Prefs.radius). Было тремя именами до 2026-08-13; облик по-прежнему задаёт
+   *  ОДНО из трёх привычных значений, просто теперь их можно догнать рукой. */
+  radius: number;
   /** Остальные ключи облика, если пресет меняет не только цвет и углы.
    *  Нужен ровно «Классике»: она возвращает ГЕОМЕТРИЮ до редизайна 04.08,
    *  а не только форму углов. Пресеты без него ведут себя как раньше. */
@@ -58,7 +82,7 @@ export const WINDOW_LAYOUTS: Record<WindowLayout, Partial<Prefs>> = {
     wSidebar: 240,
     hPlayerBar: 72,
     coverBarSize: 48,
-    radius: "soft",
+    radius: RADIUS_SOFT,
     // 50 → поле зоны 16px = --r-lg пресета "soft" (16px). Концентрично.
     density: 50,
     radiusPanels: 100,
@@ -70,7 +94,7 @@ export const WINDOW_LAYOUTS: Record<WindowLayout, Partial<Prefs>> = {
     wSidebar: 240,
     hPlayerBar: 72,
     coverBarSize: 48,
-    radius: "soft",
+    radius: RADIUS_SOFT,
     density: 50,
     radiusPanels: 100,
   },
@@ -86,7 +110,7 @@ export const WINDOW_LAYOUTS: Record<WindowLayout, Partial<Prefs>> = {
     // 16px вместо исторических 20. Обещание «число в число» — про РЕЗУЛЬТАТ:
     // 10 + round(12·83/100) = 20 (ревизия 04.08).
     density: 83,
-    radius: "round",
+    radius: RADIUS_ROUND,
     // ЧИНИМ КОНЦЕНТРИЧНОСТЬ КЛАССИКИ (правка владельца 05.08).
     //
     // Что было сломано: при radius "round" --r-lg = 28px, а поле зоны при
@@ -142,7 +166,7 @@ export function appearancePresets(t: T): AppearancePreset[] {
       hint: t("settings.appearance.presets.muza.hint"),
       accent: "blue",
       accentColor: "#3b82f6",
-      radius: "soft",
+      radius: RADIUS_SOFT,
     },
     {
       key: "flame",
@@ -150,7 +174,7 @@ export function appearancePresets(t: T): AppearancePreset[] {
       hint: t("settings.appearance.presets.flame.hint"),
       accent: "red",
       accentColor: "#f76967",
-      radius: "round",
+      radius: RADIUS_ROUND,
     },
     {
       key: "graphite",
@@ -158,7 +182,7 @@ export function appearancePresets(t: T): AppearancePreset[] {
       hint: t("settings.appearance.presets.graphite.hint"),
       accent: "bolt",
       accentColor: "#327ad9",
-      radius: "mild",
+      radius: RADIUS_MILD,
     },
   ];
 }

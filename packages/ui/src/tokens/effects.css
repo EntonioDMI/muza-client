@@ -147,10 +147,15 @@
    zones by density instead of by frost — leaving the blur on a now-opaque
    background would only cost paint for an effect nobody can see. */
 @media (prefers-reduced-transparency: reduce) {
-  :root {
-    --blur-chip: 0px;
-    --blur-scenery: 0px;
-    --blur-glass: 0px;
+  /* Двойной селектор и !important — по тому же основанию, что у материалов в
+     tokens/glass.css: --blur-glass и --blur-scenery ставит движок темы инлайном
+     на корень темы, и без !important этот блок в живой программе не срабатывал
+     вовсе (был виден только на экране входа). */
+  :root,
+  [data-muza-layer-root] {
+    --blur-chip: 0px !important;
+    --blur-scenery: 0px !important;
+    --blur-glass: 0px !important;
   }
 }
 

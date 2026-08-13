@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { buildThemeVars } from "../../theme/themeVars";
 import { DEFAULT_PREFS, type Prefs } from "../../prefs/types";
-import { currentWindowLayout, WINDOW_LAYOUTS, type WindowLayout } from "./appearancePresets";
+import { currentWindowLayout, RADIUS_ROUND, WINDOW_LAYOUTS, type WindowLayout } from "./appearancePresets";
 
 const LAYOUTS = Object.keys(WINDOW_LAYOUTS) as WindowLayout[];
 
@@ -49,21 +49,15 @@ describe("currentWindowLayout", () => {
   });
 });
 
-/** --r-lg пресетов скругления (tokens/radius.css в @muza/ui). Зеркало на три
- *  числа: сам токен живёт в CSS, в тест не приезжает, а таблица RADIUS_BASE в
- *  theme/themeVars.ts наружу не отдана. Разъедется с CSS — покраснеет здесь. */
-const PRESET_LG: Record<Prefs["radius"], number> = { mild: 8, soft: 16, round: 28 };
-
 /** Поле зоны и её скругление — так, как их увидит окно: через настоящий движок
- *  темы, а не через переписанную в тест формулу. */
+ *  темы, а не через переписанную в тест формулу. С 2026-08-13 движок объявляет
+ *  --r-lg ВСЕГДА (скругление стало свободным числом, атрибута [data-radius]
+ *  больше нет), поэтому подстановки пресета из CSS здесь не осталось. */
 function zoneGeometry(prefs: Prefs): { pad: number; radius: number } {
   const vars = buildThemeVars(prefs) as unknown as Record<string, string | undefined>;
-  // --r-lg ставится инлайном ТОЛЬКО при radiusPanels !== 100; при 100 действует
-  // токен пресета из CSS.
-  const rLg = vars["--r-lg"];
   return {
     pad: parseFloat(vars["--pad-zone"] ?? ""),
-    radius: rLg === undefined ? PRESET_LG[prefs.radius] : parseFloat(rLg),
+    radius: parseFloat(vars["--r-lg"] ?? ""),
   };
 }
 
@@ -103,7 +97,7 @@ describe("геометрия раскладок: поле зоны равно е
     expect(classic.wSidebar).toBe(280);
     expect(classic.hPlayerBar).toBe(92);
     expect(classic.coverBarSize).toBe(60);
-    expect(classic.radius).toBe("round");
+    expect(classic.radius).toBe(RADIUS_ROUND);
     // Плитки и строки остаются круглыми: чинили только скругление ЗОН.
     expect(withLayout("classic").radiusTiles).toBe(DEFAULT_PREFS.radiusTiles);
   });

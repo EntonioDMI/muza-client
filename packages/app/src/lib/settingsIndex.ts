@@ -121,7 +121,12 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", null, "settings.appearance.layout", ["раскладка", "плоский", "воздушная", "классика", "впритык", "layout", "flat", "classic"]),
   e("appearance", null, "settings.appearance.theme", ["тема", "светлая", "тёмная", "dark", "light"]),
   e("appearance", null, "settings.appearance.accent", ["акцент", "цвет", "color", "accent"]),
-  e("appearance", null, "settings.appearance.radius", ["углы", "скругление", "радиус", "corners"]),
+  e("appearance", null, "settings.appearance.radius", ["углы", "скругление", "радиус", "corners", "острые", "круглые"]),
+  // Ползунок точного значения живёт ЗА стрелкой ряда «Скругление» — своя
+  // запись нужна ему потому, что ищут его отдельными словами: человек, которому
+  // мало трёх чипов, набирает «острые углы» или «своё скругление».
+  e("appearance", null, "settings.appearance.radius.exact", ["скругление", "своё", "острые углы", "px", "радиус", "sharp corners", "custom radius"]),
+  e("appearance", null, "settings.appearance.glassOn", ["стекло", "выключить стекло", "сплошной", "непрозрачный", "производительность", "glass off", "solid", "opaque", "performance"]),
   e("appearance", null, "settings.appearance.glass", ["стекло", "прозрачность", "блюр", "glass", "blur"]),
   e("appearance", null, "settings.appearance.background", ["фон", "обои", "background", "wallpaper"]),
   e("appearance", null, "settings.appearance.scale", ["масштаб", "зум", "scale", "zoom"]),

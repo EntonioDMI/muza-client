@@ -131,14 +131,23 @@ export function CustomizeSub() {
         <SubHeader title={t("settings.customize.title")} onBack={closeSub} />
 
         <GroupTitle>{t("settings.customize.glass.groupTitle")}</GroupTitle>
-        <SettingRow title={t("settings.customize.glass.panelBlur.title")} hint={t("settings.customize.glass.panelBlur.hint")}>
-          <LiveSlider
-            value={prefs.blur}
-            max={64}
-            label={t("settings.customize.glass.panelBlur.title")}
-            suffix={`${prefs.blur} px`}
-            onChange={(v) => set({ blur: Math.round(v) })}
-          />
+        {/* Ряды, которым нечего делать при выключённом стекле, ГАСНУТ, а не
+            исчезают: исчезнувший ряд не найти поиском по настройкам, и человек
+            решает, что возможность пропала. Гашение — общий приём страницы
+            (см. шапку файла), подсказка при этом честно объясняет причину. */}
+        <SettingRow
+          title={t("settings.customize.glass.panelBlur.title")}
+          hint={prefs.glassOn ? t("settings.customize.glass.panelBlur.hint") : t("settings.customize.glass.offHint")}
+        >
+          <div style={prefs.glassOn ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+            <LiveSlider
+              value={prefs.blur}
+              max={64}
+              label={t("settings.customize.glass.panelBlur.title")}
+              suffix={`${prefs.blur} px`}
+              onChange={(v) => set({ blur: Math.round(v) })}
+            />
+          </div>
         </SettingRow>
         <SettingRow title={t("settings.customize.glass.bgBlur.title")} hint={t("settings.customize.glass.bgBlur.hint")}>
           <LiveSlider
@@ -149,10 +158,15 @@ export function CustomizeSub() {
             onChange={(v) => set({ blurScenery: Math.round(v) })}
           />
         </SettingRow>
-        <SettingRow title={t("settings.customize.glass.zones.title")} hint={t("settings.customize.glass.zones.hint")}>
-          <Switch checked={prefs.glassZonesOn} onChange={(glassZonesOn: boolean) => set({ glassZonesOn })} label={t("settings.customize.glass.zones.title")} />
+        <SettingRow
+          title={t("settings.customize.glass.zones.title")}
+          hint={prefs.glassOn ? t("settings.customize.glass.zones.hint") : t("settings.customize.glass.offHint")}
+        >
+          <div style={prefs.glassOn ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+            <Switch checked={prefs.glassZonesOn} onChange={(glassZonesOn: boolean) => set({ glassZonesOn })} label={t("settings.customize.glass.zones.title")} />
+          </div>
         </SettingRow>
-        {prefs.glassZonesOn ? (
+        {prefs.glassZonesOn && prefs.glassOn ? (
           <>
             <SettingRow title={t("settings.customize.glass.zonePlayer.title")} hint={t("settings.customize.glass.zonePlayer.hint")}>
               <LiveSlider
@@ -262,6 +276,14 @@ export function CustomizeSub() {
         </SettingRow>
 
         <GroupTitle>{t("settings.customize.shape.groupTitle")}</GroupTitle>
+        {/* ⚠️ ВСЯ ЭТА ГРУППА — ПОДСТРОЙКА ПОВЕРХ ОБЩЕГО «Скругления» («Внешний
+            вид»), а не замена ему. Проценты множат опорное число, px —
+            перебивают его для одного вида элементов. Сентинел «Авто» (999) не
+            ставит токен вовсе, и форма органа управления считается из общего
+            скругления (tokens/radius.css). До 2026-08-13 «Авто» означало
+            ЖЁСТКУЮ пилюлю, и кнопки с полями не слушались общей настройки
+            вообще — отсюда жалоба «закругление работает далеко не на все
+            элементы». */}
         <SettingRow title={t("settings.customize.shape.tiles.title")} hint={t("settings.customize.shape.tiles.hint")}>
           <LiveSlider
             value={prefs.radiusTiles}
@@ -276,7 +298,7 @@ export function CustomizeSub() {
             value={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusControls}
             max={27}
             label={t("settings.customize.shape.buttons.title")}
-            suffix={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.pill") : `${prefs.radiusControls} px`}
+            suffix={prefs.radiusControls >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.auto") : `${prefs.radiusControls} px`}
             onChange={(v) => set({ radiusControls: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
           />
         </SettingRow>
@@ -285,7 +307,7 @@ export function CustomizeSub() {
             value={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusTabs}
             max={27}
             label={t("settings.customize.shape.tabs.title")}
-            suffix={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.pill") : `${prefs.radiusTabs} px`}
+            suffix={prefs.radiusTabs >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.auto") : `${prefs.radiusTabs} px`}
             onChange={(v) => set({ radiusTabs: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
           />
         </SettingRow>
@@ -294,7 +316,7 @@ export function CustomizeSub() {
             value={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? 27 : prefs.radiusFields}
             max={27}
             label={t("settings.customize.shape.fields.title")}
-            suffix={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.preset") : `${prefs.radiusFields} px`}
+            suffix={prefs.radiusFields >= RADIUS_OVERRIDE_OFF ? t("settings.customize.shape.auto") : `${prefs.radiusFields} px`}
             onChange={(v) => set({ radiusFields: Math.round(v) >= 27 ? RADIUS_OVERRIDE_OFF : Math.round(v) })}
           />
         </SettingRow>
@@ -1115,6 +1137,7 @@ export function CustomizeSub() {
                 radiusTabs: DEFAULT_PREFS.radiusTabs,
                 blur: DEFAULT_PREFS.blur,
                 glassOpacity: DEFAULT_PREFS.glassOpacity,
+                glassOn: DEFAULT_PREFS.glassOn,
                 glassZonesOn: DEFAULT_PREFS.glassZonesOn,
                 glassPlayer: DEFAULT_PREFS.glassPlayer,
                 glassMenu: DEFAULT_PREFS.glassMenu,

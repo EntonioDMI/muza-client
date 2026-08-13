@@ -59,10 +59,19 @@ describe("buildThemeVars — дефолтный профиль", () => {
     expect(v["--orb-dur"]).toBe("64s");
   });
 
+  it("шкалу скруглений движок объявляет ВСЕГДА (у пресетов больше нет имён)", () => {
+    // До 2026-08-13 базу задавал атрибут [data-radius], а инлайн появлялся лишь
+    // при отличии процентов от 100 — два источника правды на одно значение.
+    // Свободному числу имени не подберёшь, поэтому шкала уезжает целиком.
+    expect(v["--r-xs"]).toBe("4px");
+    expect(v["--r-sm"]).toBe("8px");
+    expect(v["--r-md"]).toBe("12px");
+    expect(v["--r-lg"]).toBe("16px");
+    expect(v["--r-xl"]).toBe("20px");
+  });
+
   it("при дефолтах НЕ ставит того, что должно достаться токенам ДС", () => {
     for (const key of [
-      "--r-xs",
-      "--r-lg",
       "--r-control",
       "--r-field",
       "--r-tabs",
@@ -96,16 +105,82 @@ describe("buildThemeVars — ручки настроек", () => {
     expect(v["--sp-10"]).toBe("100px"); // 80 × 1.25
   });
 
-  it("скругление по типам: проценты от пресета radius, px — у кнопок и полей", () => {
-    const v = vars({ ...DEFAULT_PREFS, radius: "round", radiusTiles: 50, radiusPanels: 200, radiusControls: 8 });
-    // Пресет round после редизайна 2026-08-04 — это вид ДО него, число в
-    // число (tokens/radius.css): xs 10, md 20, lg 28.
-    expect(v["--r-xs"]).toBe("5px"); // round.xs 10 × 0.5
-    expect(v["--r-md"]).toBe("10px"); // round.md 20 × 0.5
-    expect(v["--r-lg"]).toBe("56px"); // round.lg 28 × 2
+  it("скругление по типам: проценты от опорного, px — у кнопок и полей", () => {
+    const v = vars({ ...DEFAULT_PREFS, radius: 28, radiusTiles: 50, radiusPanels: 200, radiusControls: 8 });
+    // Опорное 28 после редизайна 2026-08-04 — это вид ДО него, число в
+    // число (бывший пресет round, tokens/radius.css): xs 10, md 20, lg 28.
+    expect(v["--r-xs"]).toBe("5px"); // 10 × 0.5
+    expect(v["--r-md"]).toBe("10px"); // 20 × 0.5
+    expect(v["--r-lg"]).toBe("56px"); // 28 × 2
     expect(v["--r-control"]).toBe("8px");
-    // «как в ДС» (сентинел 999) — токен не ставим вовсе
+    // «Авто» (сентинел 999) — токен не ставим вовсе, и форму задаёт общее
+    // скругление через --r-field из tokens/radius.css.
     expect(v).not.toHaveProperty("--r-field");
+  });
+
+  /** ⚠️ ОБЕЩАНИЕ ОТКАТА. Три бывших пресета обязаны отдавать РОВНО те пятёрки,
+   *  что стояли в tokens/radius.css у mild/soft/round: на 28 стоит встроенная
+   *  тема «Классика» («кому нравился прежний интерфейс, тот получает ровно
+   *  его»), 16 — сегодняшний вид всех, кто ничего не трогал, 8 — облик
+   *  «Графит». Сдвинется хоть одно число — у людей поедет вид без их участия. */
+  it("три засечки шкалы совпадают с прежними пресетами число в число", () => {
+    const scale = (radius: number) =>
+      ["--r-xs", "--r-sm", "--r-md", "--r-lg", "--r-xl"].map((k) => vars({ ...DEFAULT_PREFS, radius })[k]);
+    expect(scale(8)).toEqual(["0px", "2px", "4px", "8px", "10px"]);
+    expect(scale(16)).toEqual(["4px", "8px", "12px", "16px", "20px"]);
+    expect(scale(28)).toEqual(["10px", "14px", "20px", "28px", "36px"]);
+  });
+
+  it("свободное скругление доходит до обоих концов и растёт по всей шкале", () => {
+    // Жалоба, ради которой пресеты и разобрали: «нельзя полностью выключить
+    // скругление или выкрутить его на возможный максимум».
+    const zero = vars({ ...DEFAULT_PREFS, radius: 0 });
+    for (const k of ["--r-xs", "--r-sm", "--r-md", "--r-lg", "--r-xl"]) {
+      expect(zero[k], `${k} при скруглении 0`).toBe("0px");
+    }
+    // Монотонность: ни одна ступень не должна где-то на ходу пойти вниз —
+    // иначе ползунок в середине хода начал бы УМЕНЬШАТЬ углы части элементов.
+    const px = (s: unknown) => parseFloat(String(s));
+    for (const k of ["--r-xs", "--r-sm", "--r-md", "--r-lg", "--r-xl"]) {
+      let prev = -1;
+      for (let r = 0; r <= 40; r++) {
+        const cur = px(vars({ ...DEFAULT_PREFS, radius: r })[k]);
+        expect(cur, `${k} при скруглении ${r}`).toBeGreaterThanOrEqual(prev);
+        prev = cur;
+      }
+    }
+    // Максимум действительно крупный: зона 40, плитка 28 (бывший потолок ЗОН).
+    const max = vars({ ...DEFAULT_PREFS, radius: 40 });
+    expect(max["--r-lg"]).toBe("40px");
+    expect(max["--r-md"]).toBe("28px");
+  });
+
+  it("выключенное стекло даёт сплошные поверхности без размытия", () => {
+    const v = vars({ ...DEFAULT_PREFS, glassOn: false });
+    expect(v["--blur-glass"]).toBe("0px");
+    expect(v["--bf-zone"]).toBe("none");
+    // Материалы глухие И РАЗВЕДЕНЫ: без прозрачности лестница обязана
+    // читаться плотностью тона, иначе зоны сольются с панелями (беда 04.08).
+    for (const k of ["--glass-zone", "--glass-panel", "--glass-dialog"] as const) {
+      expect(String(v[k]), k).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    expect(new Set([v["--glass-zone"], v["--glass-panel"], v["--glass-dialog"]]).size).toBe(3);
+    // Плёнки элевации НЕ трогаются: их работа (покой/наведение/выделение) от
+    // прозрачности материала не зависит, а поднять их значило бы утопить третью
+    // ступень текста — разбор у SOLID в themeVars.ts.
+    for (const i of [1, 2, 3, 4]) expect(v).not.toHaveProperty(`--surface-${i}`);
+    // Скрим полноэкранного остаётся полупрозрачным: глухой стёр бы фон караоке.
+    expect(String(v["--glass-deep"])).toMatch(/^rgba\(/);
+  });
+
+  it("выключенное стекло глушит и поштучную подстройку зон", () => {
+    // Иначе тумблер не действовал бы на пять зон из шести у того, кто когда-то
+    // включил «Прозрачность по зонам», — и выглядел бы сломанным.
+    const v = vars({ ...DEFAULT_PREFS, glassOn: false, glassZonesOn: true });
+    for (const k of ["--glass-player", "--glass-menu", "--glass-sidebar", "--glass-nowplaying"]) {
+      expect(v).not.toHaveProperty(k);
+    }
+    expect(v["--glass-dialog"]).toBe(vars({ ...DEFAULT_PREFS, glassOn: false })["--glass-dialog"]);
   });
 
   it("стекло по зонам: все пять зон в ОДНОМ тоне стекла", () => {
@@ -302,6 +377,42 @@ describe("стеклянная лестница — читаемость", () =>
     expect(low.c, `худшее ${low.c.toFixed(2)}:1 — ${low.where}`).toBeGreaterThanOrEqual(4);
   });
 
+  /** СПЛОШНОЙ РЕЖИМ («Стекло» выключено) МЕРЯЕТСЯ ТЕМ ЖЕ АРШИНОМ.
+   *
+   *  Свобода настройки не отменяет обещания читаемости там, где его можно
+   *  держать: ползунок плотности человек крутит сам и вправе увести ниже нормы
+   *  (см. GLASS_MIN), а тумблер «Стекло» — это НАШ пресет из двух состояний, и
+   *  оба обязаны быть читаемыми из коробки. Сплошной режим тут в выигрышном
+   *  положении: под текстом больше нет ни обложки, ни сценографии — тон
+   *  известен заранее. Тест ловит обратное: если кто-то подберёт «красивый»
+   *  тёмно-серый для панели и утопит в нём третью ступень текста. */
+  it("сплошные поверхности читаются не хуже стеклянных", () => {
+    let low = { c: Infinity, where: "" };
+    for (const theme of ["dark", "light"] as const) {
+      const v = vars({ ...DEFAULT_PREFS, theme, glassOn: false });
+      for (const mat of ["--glass-zone", "--glass-panel", "--glass-dialog"] as const) {
+        const hex = String(v[mat]);
+        const surface = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+        const films: [string, number[]][] = [
+          ["голая поверхность", surface],
+          // Плёнки — родные токены ДС (сплошной режим их не трогает, см. SOLID),
+          // поэтому берутся из того же зеркала FILMS, что и у стеклянной ветки.
+          ...Object.entries(FILMS).map(
+            ([n, fa]) => [n, over([...THEMES[theme].film], fa, surface)] as [string, number[]],
+          ),
+        ];
+        for (const [layer, bg] of films) {
+          for (const ink of INKS) {
+            const t = v[ink] ? parse(String(v[ink])) : { rgb: [...THEMES[theme].ink1], a: 1 };
+            const c = ratio(over(t.rgb, t.a, bg), bg);
+            if (c < low.c) low = { c, where: `${theme} ${mat} / ${layer} / ${ink}` };
+          }
+        }
+      }
+    }
+    expect(low.c, `худшее ${low.c.toFixed(2)}:1 — ${low.where}`).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("плотнее стекло — не хуже контраст (лестница не должна инвертироваться)", () => {
     // Смысловая проверка: ползунок «Плотность стекла» обязан быть монотонным
     // рычагом читаемости. Если добавление стекла где-то УХУДШАЕТ контраст,
@@ -372,10 +483,15 @@ describe("themeAttrs", () => {
   });
 
   it("непресетные значения уезжают в data-атрибуты для CSS ДС", () => {
-    expect(themeAttrs({ theme: "light", accent: "red", radius: "round" })).toEqual({
+    expect(themeAttrs({ theme: "light", accent: "red" })).toEqual({
       "data-theme": "light",
       "data-accent": "red",
-      "data-radius": "round",
     });
+  });
+
+  it("скругление в атрибуты больше НЕ уезжает — его целиком ставит движок", () => {
+    // Пока пресетов было три, [data-radius] был вторым способом задать то же
+    // самое. У свободного числа имени нет, и второй дороги быть не должно.
+    expect(themeAttrs({ ...DEFAULT_PREFS, radius: 28 })).toEqual({});
   });
 });

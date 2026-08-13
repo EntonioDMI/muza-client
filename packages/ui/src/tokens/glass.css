@@ -121,65 +121,81 @@
    плоским» — панели слились бы с содержимым, и разделять зоны стало бы нечем.
    Материалы становятся глухими, а плёнки элевации — заметно плотнее: роль
    разделителя переходит от прозрачности к плотности. Размытие при этом гасит
-   effects.css — размывать под глухой заливкой нечего, это плата ни за что. */
-@media (prefers-reduced-transparency: reduce) {
-  :root {
-    --glass-zone: #171614;
-    --glass-panel: #171614;
-    --glass-dialog: #171614;
-    --glass-deep: #121110;
-    --glass-light: rgba(255, 255, 255, 0.16);
+   effects.css — размывать под глухой заливкой нечего, это плата ни за что.
 
-    --surface-1: rgba(255, 255, 255, 0.05);
-    --surface-2: rgba(255, 255, 255, 0.09);
-    --surface-3: rgba(255, 255, 255, 0.14);
-    --surface-4: rgba(255, 255, 255, 0.2);
-    --hairline: rgba(255, 255, 255, 0.18);
+   ⚠️ ЗАЧЕМ ЗДЕСЬ !important (2026-08-13). Движок темы ставит --glass-* ИНЛАЙНОМ
+   на корень темы, а инлайн сильнее любого селектора — то есть весь этот блок до
+   сегодняшнего дня НЕ РАБОТАЛ в приложении и в вебе вовсе: он был виден только
+   на экране входа, куда движок не доходит. Человек включал системное «меньше
+   прозрачности» и не получал ничего. Кастомные свойства с !important инлайн
+   перебивают — это единственный способ сохранить порядок «системная просьба
+   доступности выше пользовательской темы», не таща знание о медиазапросе в
+   чистую функцию движка (её зовут из тестов и из веба, matchMedia там нет).
+
+   Порядок именно такой: сначала выбор человека (ползунок «Прозрачность» и
+   тумблер «Стекло»), а поверх — просьба системы, которую человек адресовал
+   ВСЕМ программам сразу. Своей темой её не отменяют. */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  [data-muza-layer-root] {
+    --glass-zone: #171614 !important;
+    --glass-panel: #171614 !important;
+    --glass-dialog: #171614 !important;
+    --glass-deep: #121110 !important;
+    --glass-light: rgba(255, 255, 255, 0.16) !important;
+
+    --surface-1: rgba(255, 255, 255, 0.05) !important;
+    --surface-2: rgba(255, 255, 255, 0.09) !important;
+    --surface-3: rgba(255, 255, 255, 0.14) !important;
+    --surface-4: rgba(255, 255, 255, 0.2) !important;
+    --hairline: rgba(255, 255, 255, 0.18) !important;
   }
 
   [data-theme="light"] {
-    --glass-zone: #faf9f6;
-    --glass-panel: #faf9f6;
-    --glass-dialog: #faf9f6;
-    --glass-deep: #f8f6f3;
-    --glass-light: rgba(20, 18, 15, 0.14);
+    --glass-zone: #faf9f6 !important;
+    --glass-panel: #faf9f6 !important;
+    --glass-dialog: #faf9f6 !important;
+    --glass-deep: #f8f6f3 !important;
+    --glass-light: rgba(20, 18, 15, 0.14) !important;
 
-    --surface-1: rgba(20, 18, 15, 0.05);
-    --surface-2: rgba(20, 18, 15, 0.09);
-    --surface-3: rgba(20, 18, 15, 0.14);
-    --surface-4: rgba(20, 18, 15, 0.2);
-    --hairline: rgba(20, 18, 15, 0.2);
+    --surface-1: rgba(20, 18, 15, 0.05) !important;
+    --surface-2: rgba(20, 18, 15, 0.09) !important;
+    --surface-3: rgba(20, 18, 15, 0.14) !important;
+    --surface-4: rgba(20, 18, 15, 0.2) !important;
+    --hairline: rgba(20, 18, 15, 0.2) !important;
   }
 }
 
 /* ── Больше контраста (системная настройка) ──────────────────────────
    Материалы глухие: любая прозрачность пускает под текст фоновую картинку, а
    именно её человек и просит убрать. Плёнки элевации, наоборот, поднимаются —
-   иначе разница между покоем, наведением и выделением исчезнет вовсе. */
+   иначе разница между покоем, наведением и выделением исчезнет вовсе.
+   !important и двойной селектор — по тому же основанию, что у блока выше. */
 @media (prefers-contrast: more) {
-  :root {
-    --glass-zone: #171614;
-    --glass-panel: #171614;
-    --glass-dialog: #171614;
-    --glass-deep: #121110;
+  :root,
+  [data-muza-layer-root] {
+    --glass-zone: #171614 !important;
+    --glass-panel: #171614 !important;
+    --glass-dialog: #171614 !important;
+    --glass-deep: #121110 !important;
 
-    --surface-1: rgba(255, 255, 255, 0.06);
-    --surface-2: rgba(255, 255, 255, 0.1);
-    --surface-3: rgba(255, 255, 255, 0.15);
-    --surface-4: rgba(255, 255, 255, 0.21);
-    --hairline: rgba(255, 255, 255, 0.26);
+    --surface-1: rgba(255, 255, 255, 0.06) !important;
+    --surface-2: rgba(255, 255, 255, 0.1) !important;
+    --surface-3: rgba(255, 255, 255, 0.15) !important;
+    --surface-4: rgba(255, 255, 255, 0.21) !important;
+    --hairline: rgba(255, 255, 255, 0.26) !important;
   }
 
   [data-theme="light"] {
-    --glass-zone: #faf9f6;
-    --glass-panel: #faf9f6;
-    --glass-dialog: #faf9f6;
-    --glass-deep: #f8f6f3;
+    --glass-zone: #faf9f6 !important;
+    --glass-panel: #faf9f6 !important;
+    --glass-dialog: #faf9f6 !important;
+    --glass-deep: #f8f6f3 !important;
 
-    --surface-1: rgba(20, 18, 15, 0.06);
-    --surface-2: rgba(20, 18, 15, 0.1);
-    --surface-3: rgba(20, 18, 15, 0.15);
-    --surface-4: rgba(20, 18, 15, 0.21);
-    --hairline: rgba(20, 18, 15, 0.28);
+    --surface-1: rgba(20, 18, 15, 0.06) !important;
+    --surface-2: rgba(20, 18, 15, 0.1) !important;
+    --surface-3: rgba(20, 18, 15, 0.15) !important;
+    --surface-4: rgba(20, 18, 15, 0.21) !important;
+    --hairline: rgba(20, 18, 15, 0.28) !important;
   }
 }

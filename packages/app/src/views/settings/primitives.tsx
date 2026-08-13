@@ -600,12 +600,17 @@ export function PresetTile({
   name: string;
   hint: string;
   accentColor: string;
-  /** Те же три значения, что у настройки «Углы» (Prefs["radius"] десктопа). */
-  radius: "mild" | "soft" | "round";
+  /** Опорное скругление облика в px — то же число, что у ползунка «Скругление»
+   *  (Prefs["radius"]). Было тремя именами до 2026-08-13. */
+  radius: number;
   selected: boolean;
   onClick: () => void;
 }) {
-  const r = radius === "round" ? 15 : radius === "mild" ? 6 : 10;
+  // Превью — плашка высотой 30px, а число описывает УГОЛ ЗОНЫ во весь экран.
+  // Коэффициент 0.6 подобран так, чтобы три привычных облика выглядели ровно
+  // как раньше (8→5, 16→10, 28→15); потолок 15 — половина высоты плашки,
+  // круглее самой себя она стать не может.
+  const r = Math.min(15, Math.round(radius * 0.6));
   return (
     <button
       type="button"

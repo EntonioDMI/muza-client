@@ -5,7 +5,7 @@
  *  запуск программы, либо тихо обнуляет настройки человека в браузере. */
 import { afterEach, describe, expect, it } from "vitest";
 import { loadPrefs, mergePrefs, PREFS_KEY, savePrefs } from "./load";
-import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF } from "./types";
+import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type Prefs } from "./types";
 
 afterEach(() => localStorage.clear());
 
@@ -69,10 +69,23 @@ describe("mergePrefs", () => {
     });
 
     it("выбор «Меньше/Обычные/Больше» переездом не трогается", () => {
-      // Скругления поменяли ЧИСЛА в tokens/radius.css, а не имена пресетов:
-      // новая шкала приезжает ко всем сама, а выбор человека — его выбор.
-      expect(mergePrefs({ radius: "round" }).radius).toBe("round");
-      expect(mergePrefs({ radius: "mild" }).radius).toBe("mild");
+      // Скругление стало свободным числом 2026-08-13, но выбор человека обязан
+      // приехать НА ТО ЖЕ МЕСТО ШКАЛЫ: сохранённое имя пресета превращается в
+      // его же --r-lg из tokens/radius.css, а не в дефолт.
+      const stored = (radius: string) => mergePrefs({ radius } as unknown as Partial<Prefs>).radius;
+      expect(stored("round")).toBe(28);
+      expect(stored("soft")).toBe(16);
+      expect(stored("mild")).toBe(8);
+      // Незнакомая строка (чужой профиль, версия из будущего) → дефолт, а не NaN.
+      expect(stored("такого-пресета-нет")).toBe(DEFAULT_PREFS.radius);
+    });
+
+    it("свободное скругление зажимается в границы ползунка", () => {
+      // Профиль правят руками и приносят с чужой машины (шапка prefs/load.ts):
+      // 999 не должен превратиться в окно из одних кругов, −5 — в NaN.
+      expect(mergePrefs({ radius: 999 }).radius).toBe(40);
+      expect(mergePrefs({ radius: -5 }).radius).toBe(0);
+      expect(mergePrefs({ radius: 21 }).radius).toBe(21);
     });
   });
 

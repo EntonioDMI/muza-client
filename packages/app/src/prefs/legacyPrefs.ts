@@ -14,6 +14,10 @@ import { RADIUS_OVERRIDE_OFF } from "./types";
 /** Пресет → число. Значения = бывшие таблицы App.tsx, чтобы мигрированный
  *  вид совпал со старым пиксель-в-пиксель. */
 export const LEGACY_ENUM_TO_NUMBER: Record<string, Record<string, number>> = {
+  // Опорное скругление: три пресета стали свободным числом 2026-08-13.
+  // Числа = --r-lg тех же пресетов в tokens/radius.css — вид у человека,
+  // выбравшего «Больше», не меняется ни на пиксель.
+  radius: { mild: 8, soft: 16, round: 28 },
   radiusTiles: { sharper: 50, preset: 100, rounder: 160 },
   radiusPanels: { sharper: 50, preset: 100, rounder: 160 },
   radiusControls: { pill: RADIUS_OVERRIDE_OFF, soft: 14, sharp: 8 },
@@ -45,6 +49,10 @@ export interface NumberRange {
  *  ключей оттуда, так что до правки его диапазон был недостижим. Теперь его
  *  читает sanitizeTokens по общей числовой ветке. */
 export const PREF_RANGES: Record<string, NumberRange> = {
+  // 0 — совсем острые углы, 40 — предельно круглые. Верх выбран не «на глаз»:
+  // при 40 плитка получает 28px (это бывший максимум «Больше» у ЗОН), а зона —
+  // 40px, и дальше скругление начинает съедать содержимое узких панелей.
+  radius: { min: 0, max: 40 },
   radiusTiles: { min: 0, max: 200 },
   radiusPanels: { min: 0, max: 200 },
   radiusControls: { min: 0, max: 26, offAbove: true },

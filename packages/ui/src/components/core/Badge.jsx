@@ -8,7 +8,9 @@ export function Badge({ children, tone = "accent", style }) {
       style={{
         display: "inline-block",
         padding: "2px 8px",
-        borderRadius: "var(--r-pill, 999px)",
+        // Бейдж носит ту же форму, что чипы (--r-chip): визуально это тот же
+        // «тег», и расходиться им при настройке скругления незачем.
+        borderRadius: "var(--r-chip, 999px)",
         background: tone === "accent" ? "var(--accent-soft)" : "var(--surface-3)",
         color: tone === "accent" ? "var(--accent-text)" : "var(--text-2)",
         fontFamily: "var(--font-ui)",

@@ -12,13 +12,30 @@ import { useEffect, useRef } from "react";
 import { Kbd, Switch, Tabs } from "@muza/ui";
 import { useT } from "../../i18n";
 import type { Prefs } from "../../prefs/types";
-import { AccentSwatch, CustomAccentSwatch, GLASS_MIN, LiveSlider, paneStyle, PresetTile, RowValue, ScaleSlider, SettingRow } from "./primitives";
-import { appearancePresets, currentWindowLayout, WINDOW_LAYOUTS, type WindowLayout } from "./appearancePresets";
+import { PREF_RANGES } from "../../prefs/legacyPrefs";
+import {
+  AccentSwatch,
+  CustomAccentSwatch,
+  GLASS_MIN,
+  LiveSlider,
+  paneStyle,
+  PresetRow,
+  PresetTile,
+  RowValue,
+  ScaleSlider,
+  SettingRow,
+} from "./primitives";
+import { appearancePresets, currentWindowLayout, RADIUS_CHIPS, WINDOW_LAYOUTS, type WindowLayout } from "./appearancePresets";
 import { useSettingsScreen } from "./settingsContext";
 
 /** Ключ псевдо-сегмента «Своя» в ряду раскладок. Не WindowLayout: применить
  *  его нечего — он описывает состояние, а не задаёт его. */
 const CUSTOM = "custom";
+
+/** Потолок ползунка «Скругление» — из той же таблицы, что клампит чужие темы
+ *  и старые сохранения (prefs/legacyPrefs.ts). Своя копия числа в интерфейсе
+ *  означала бы ряд, умеющий выставить значение, которое фильтр тем зарежет. */
+const RADIUS_MAX = PREF_RANGES.radius.max;
 
 export function AppearancePane() {
   const { t } = useT();
@@ -122,25 +139,52 @@ export function AppearancePane() {
           />
         </div>
       </SettingRow>
-      <SettingRow title={t("settings.appearance.radius.title")} hint={t("settings.appearance.radius.hint")}>
-        <Tabs
-          items={[
-            { key: "mild", label: t("settings.appearance.radius.mild") },
-            { key: "soft", label: t("settings.appearance.radius.soft") },
-            { key: "round", label: t("settings.appearance.radius.round") },
-          ]}
-          value={prefs.radius}
-          onChange={(radius: string) => set({ radius: radius as Prefs["radius"] })}
-        />
+      {/* СКРУГЛЕНИЕ: три привычных значения чипами + свободный ползунок за
+          стрелкой. До 2026-08-13 здесь были ровно три сегмента и ничего больше —
+          «у пользователя есть три зашитых варианта, которые он не может
+          изменить» (жалоба владельца). Чипы остались потому, что 99 % выборов
+          это одно из трёх, и терять клик ради ползунка незачем; чип «Своё»
+          появляется сам, когда число не совпало ни с одной засечкой. */}
+      <PresetRow
+        title={t("settings.appearance.radius.title")}
+        hint={t("settings.appearance.radius.hint")}
+        chips={RADIUS_CHIPS.map((c) => ({ key: c.key, label: t(`settings.appearance.radius.${c.key}`) }))}
+        active={RADIUS_CHIPS.find((c) => c.value === prefs.radius)?.key ?? "custom"}
+        onPick={(k) => {
+          const chip = RADIUS_CHIPS.find((c) => c.key === k);
+          if (chip) set({ radius: chip.value });
+        }}
+      >
+        <SettingRow title={t("settings.appearance.radius.exact.title")} hint={t("settings.appearance.radius.exact.hint")}>
+          <LiveSlider
+            value={prefs.radius}
+            max={RADIUS_MAX}
+            label={t("settings.appearance.radius.exact.title")}
+            suffix={prefs.radius === 0 ? t("settings.appearance.radius.sharp") : `${prefs.radius} px`}
+            onChange={(v) => set({ radius: Math.round(v) })}
+          />
+        </SettingRow>
+      </PresetRow>
+      {/* СТЕКЛО ЦЕЛИКОМ. Тумблер стоит НАД ползунком плотности, а не рядом с
+          ним: «сколько стекла» имеет смысл только после «стекло вообще». При
+          выключенном ползунок гаснет — он честно показывает, что ему нечем
+          управлять, и остаётся находимым поиском по настройкам. */}
+      <SettingRow title={t("settings.appearance.glassOn.title")} hint={t("settings.appearance.glassOn.hint")}>
+        <Switch checked={prefs.glassOn} onChange={(glassOn: boolean) => set({ glassOn })} label={t("settings.appearance.glassOn.title")} />
       </SettingRow>
-      <SettingRow title={t("settings.appearance.glass.title")} hint={t("settings.appearance.glass.hint")}>
-        <LiveSlider
-          value={prefs.glassOpacity - GLASS_MIN}
-          max={100 - GLASS_MIN}
-          label={t("settings.appearance.glass.title")}
-          suffix={`${prefs.glassOpacity} %`}
-          onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
-        />
+      <SettingRow
+        title={t("settings.appearance.glass.title")}
+        hint={prefs.glassOn ? t("settings.appearance.glass.hint") : t("settings.appearance.glass.disabledHint")}
+      >
+        <div style={prefs.glassOn ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          <LiveSlider
+            value={prefs.glassOpacity - GLASS_MIN}
+            max={100 - GLASS_MIN}
+            label={t("settings.appearance.glass.title")}
+            suffix={`${prefs.glassOpacity} %`}
+            onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
+          />
+        </div>
       </SettingRow>
       <SettingRow title={t("settings.appearance.background.title")} hint={t("settings.appearance.background.hint")}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>

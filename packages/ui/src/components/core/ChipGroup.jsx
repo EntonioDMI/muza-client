@@ -71,7 +71,10 @@ export function ChipGroup({ items, value, onChange, style }) {
             left: ind.left,
             width: ind.width,
             height: 36,
-            borderRadius: "var(--r-pill)",
+            // Подсветка обязана носить форму чипа, под которым едет, — иначе
+            // при остром скруглении круглая пилюля вылезала бы из-под квадратных
+            // чипов (--r-chip, разбор в tokens/radius.css).
+            borderRadius: "var(--r-chip, var(--r-pill))",
             background: "var(--surface-4)",
             /* Пилюля БЫЛА и ОСТАЛАСЬ — она переезжает, а не появляется. Значит
                симметричная кривая: и старт, и финиш одинаково на виду. */
@@ -103,7 +106,7 @@ export function ChipGroup({ items, value, onChange, style }) {
               height: 36,
               padding: "0 var(--sp-4)",
               border: "none",
-              borderRadius: "var(--r-pill)",
+              borderRadius: "var(--r-chip, var(--r-pill))",
               // у выбранного чипа фон рисует подсветка под ним — свой прозрачен
               background: selected ? "transparent" : "var(--chip-bg)",
               color: selected ? "var(--text-1)" : "var(--chip-fg)",

@@ -60,6 +60,7 @@ exports[`что синхронизируется между устройства
   "glassDialog",
   "glassMenu",
   "glassNowPlaying",
+  "glassOn",
   "glassOpacity",
   "glassPlayer",
   "glassSidebar",

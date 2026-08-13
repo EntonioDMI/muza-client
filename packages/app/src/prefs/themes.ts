@@ -69,6 +69,10 @@ export const THEME_KEYS = [
   "wNowPlaying",
   "blur",
   "glassOpacity",
+  // «Стекло» целиком (2026-08-13) — ОФОРМЛЕНИЕ, и потому едет с темой: автор
+  // темы, собравший сплошной непрозрачный вид, задумал именно его, и приехать
+  // должен весь замысел, а не половина.
+  "glassOn",
   "glassZonesOn",
   "glassPlayer",
   "glassMenu",
@@ -332,7 +336,7 @@ export function applyTheme(tokens: ThemeTokens, prefs: Prefs): Prefs {
  *  Полноту сторожит themes.test.ts: числовой ключ THEME_KEYS без строки здесь
  *  валит тест — иначе новая ручка снова поехала бы без границ. */
 export const THEME_NUMBER_RANGES: Record<string, NumberRange> = {
-  // radiusTiles/Panels/Controls/Fields/Tabs, density, lineSpacing, animSpeed
+  // radius, radiusTiles/Panels/Controls/Fields/Tabs, density, lineSpacing, animSpeed
   ...PREF_RANGES,
   bgDim: { min: 0, max: 80 },
   bgAnimSpeedSec: { min: 16, max: 180 },

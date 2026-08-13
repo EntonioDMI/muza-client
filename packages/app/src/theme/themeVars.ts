@@ -48,6 +48,7 @@ export type ThemePrefs = Pick<
   | "radiusControls"
   | "radiusFields"
   | "radiusTabs"
+  | "glassOn"
   | "glassZonesOn"
   | "glassPlayer"
   | "glassMenu"
@@ -127,14 +128,81 @@ const BASE_BG: Record<Prefs["baseBg"], { bg0: string; bg1: string } | null> = {
   amoled: { bg0: "#000000", bg1: "#0b0b0b" },
 };
 
-/** Базовые значения шкалы радиусов по пресету [data-radius] (radius.css ДС) —
- *  «скругление по типам» (ползунки-проценты) умножает их и переопределяет
- *  токены inline. */
-const RADIUS_BASE: Record<Prefs["radius"], { xs: number; sm: number; md: number; lg: number; xl: number }> = {
-  mild: { xs: 0, sm: 2, md: 4, lg: 8, xl: 10 },
-  soft: { xs: 4, sm: 8, md: 12, lg: 16, xl: 20 },
-  round: { xs: 10, sm: 14, md: 20, lg: 28, xl: 36 },
-};
+/** ШКАЛА СКРУГЛЕНИЙ ИЗ ОДНОГО ЧИСЛА (2026-08-13, свободное «Скругление»).
+ *
+ *  ЗАЧЕМ. До этого дня шкала выбиралась из трёх зашитых наборов (mild/soft/
+ *  round) — ровно то ограничение, на которое пожаловался владелец: «нельзя
+ *  полностью выключить скругление или выкрутить его на возможный максимум».
+ *  Теперь человек задаёт ОДНО опорное число (скругление зоны, --r-lg), а
+ *  остальные четыре ступени выводятся из него.
+ *
+ *  ПОЧЕМУ НЕ ОДИН МНОЖИТЕЛЬ НА ВСЕ СТУПЕНИ. Отношения ступеней в трёх прежних
+ *  наборах РАЗНЫЕ и не сводятся к пропорции: у «острого» набора xs равен нулю
+ *  (мелкой плашке скруглять нечего), у «круглого» — 10/28. Единый множитель
+ *  сломал бы обещание отката: набор при 28 обязан совпасть с прежним «round»
+ *  ЧИСЛО В ЧИСЛО, на нём стоит встроенная тема «Классика».
+ *
+ *  КАК УСТРОЕНО. Три прежних набора остаются ЯКОРЯМИ, между ними — линейная
+ *  интерполяция, за ними — продолжение крайнего отрезка. Ниже 8 продолжение
+ *  само приводит все ступени к нулю (отрицательное срезается), то есть «0»
+ *  означает буквально острые углы везде.
+ *
+ *  ⚠️ Пятёрки якорей ДУБЛИРУЮТ tokens/radius.css (фолбэк для экрана входа) —
+ *  правятся ПАРОЙ, сторож на совпадение — в themeVars.test.ts. */
+const RADIUS_ANCHORS = [
+  { lg: 8, xs: 0, sm: 2, md: 4, xl: 10 },
+  { lg: 16, xs: 4, sm: 8, md: 12, xl: 20 },
+  { lg: 28, xs: 10, sm: 14, md: 20, xl: 36 },
+] as const;
+
+type RadiusStep = "xs" | "sm" | "md" | "xl";
+
+/** Опорное скругление (px) → вся шкала. Отрицательного не бывает: угол либо
+ *  есть, либо его нет. */
+function radiusScale(lg: number): Record<"xs" | "sm" | "md" | "lg" | "xl", number> {
+  const [low, mid, high] = RADIUS_ANCHORS;
+  // Ниже среднего якоря работает нижний отрезок (и его продолжение вниз),
+  // выше — верхний. Так «0» приходит из отрезка 8→16, а «40» — из 16→28.
+  const [p, q] = lg < mid.lg ? [low, mid] : [mid, high];
+  const k = (lg - p.lg) / (q.lg - p.lg);
+  const at = (step: RadiusStep) => Math.max(0, Math.round(p[step] + (q[step] - p[step]) * k));
+  return { xs: at("xs"), sm: at("sm"), md: at("md"), lg: Math.max(0, Math.round(lg)), xl: at("xl") };
+}
+
+/** СПЛОШНЫЕ ПОВЕРХНОСТИ — «Стекло» выключено (prefs.glassOn === false).
+ *
+ *  ПОЧЕМУ ТОНЫ РАЗВЕДЕНЫ, А НЕ ОДИН НА ВСЁ. Под стеклом зона отличается от
+ *  панели не только плотностью, но и тем, ЧТО сквозь них видно; убери
+ *  прозрачность — и композиты лестницы сойдутся в три соседних значения из 255
+ *  (та же беда, что чинил редизайн 04.08: «зоны не читались вовсе»). Поэтому в
+ *  сплошном режиме ступени разводятся руками, и стопка остаётся читаемой:
+ *  зона < панель < диалог.
+ *
+ *  ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ:
+ *   • --glass-deep (скрим караоке и подложка диалога) остаётся полупрозрачным.
+ *     Это не поверхность, на которую смотрят, а плёнка, СКВОЗЬ которую смотрят:
+ *     глухой скрим стёр бы фон караоке — отдельную настройку, которую человек
+ *     выбирал сам. «Выключить стекло» и «выключить фон» — разные просьбы.
+ *   • --blur-scenery (размытие фона-обложки) — своя ручка в «Кастомизации»,
+ *     к материалам панелей отношения не имеет.
+ *
+ *  ⚠️ ЧИСЛА ПОДОБРАНЫ СТОРОЖЕМ, А НЕ НА ГЛАЗ. Первая версия была на две ступени
+ *  светлее (#161513 / #1e1c19 / #26221e) и красиво выглядела — но третья
+ *  ступень текста на плёнке выделения давала 3.57:1 при норме 4.5, и поймал это
+ *  тест «сплошные поверхности читаются не хуже стеклянных», а не глаз. Правишь
+ *  тон — прогоняй его же; предел тёмной темы примерно здесь.
+ *
+ *  ⚠️ ПЛЁНКИ ЭЛЕВАЦИИ (--surface-1..4) ЗДЕСЬ НЕ ТРОГАЮТСЯ, и это осознанно.
+ *  Системное «меньше прозрачности» их поднимает — но там материалы становятся
+ *  ОДИНАКОВЫМИ (#171614 у всех трёх), и разделять зоны больше нечем, кроме
+ *  плёнок. Здесь ступени разведены тоном, плёнкам достаётся только их родная
+ *  работа — покой, наведение, выделение, — а видны они на глухом ровно так же,
+ *  как на стекле (математика наложения одна). Поднимать их значило бы платить
+ *  контрастом текста ни за что: та самая версия на 3.57:1 платила именно этим. */
+const SOLID = {
+  dark: { zone: "#141311", panel: "#1b1917", dialog: "#221f1c" },
+  light: { zone: "#f5f3ef", panel: "#fbf9f6", dialog: "#fefdfb" },
+} as const;
 
 /** Дефолтные --bg-0/1 тем (colors.css / themes.css ДС) — база для тонировки
  *  обложкой, когда baseBg-пресет не активен. */
@@ -247,21 +315,23 @@ export function mixHex(a: string, b: string, t: number): string {
   return "#" + [16, 8, 0].map((sh) => ch(sh).toString(16).padStart(2, "0")).join("");
 }
 
-/** data-атрибуты корня: пресетные акценты/радиусы применяет CSS ДС.
+/** data-атрибуты корня: пресетные акценты применяет CSS ДС.
  *  Приложение ставит атрибуты само (у него data-theme стоит всегда, включая
- *  "dark") — эта функция для веба, где лишний атрибут в разметке не нужен. */
+ *  "dark") — эта функция для веба, где лишний атрибут в разметке не нужен.
+ *
+ *  ⚠️ data-radius СНЯТ 2026-08-13 вместе с пресетами скругления. Атрибут мог
+ *  выражать только имя («mild»/«round»), а у непрерывной шкалы имён нет: у
+ *  «17px» их не бывает. Всю пятёрку --r-* теперь ставит buildThemeVars, всегда
+ *  и явно, — второй дороги задать то же самое больше не существует. */
 export function themeAttrs(t: ThemeInput): {
   "data-theme"?: "light";
   "data-accent"?: string;
-  "data-radius"?: string;
 } {
   const theme = t.theme ?? DEFAULT_PREFS.theme;
   const accent = t.accent ?? DEFAULT_PREFS.accent;
-  const radius = t.radius ?? DEFAULT_PREFS.radius;
   return {
     ...(theme === "light" ? { "data-theme": "light" as const } : {}),
     ...(accent !== "blue" && accent !== "custom" ? { "data-accent": accent } : {}),
-    ...(radius !== "soft" ? { "data-radius": radius } : {}),
   };
 }
 
@@ -316,9 +386,12 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
   const deepBase = isLight ? "246, 244, 240" : "10, 9, 8";
   // Плотность стекла: 0–1 из ползунка. Один вход на всю лестницу материалов.
   const g = t.glassOpacity / 100;
-  // Скругление по типам: плитки/панели — процент от пресета, кнопки/поля — px
-  // (RADIUS_OVERRIDE_OFF = токен не ставим, форма как в ДС)
-  const rBase = RADIUS_BASE[t.radius];
+  // СПЛОШНЫЕ ПОВЕРХНОСТИ вместо стекла — тумблер «Стекло» (см. SOLID выше).
+  const solid = t.glassOn ? null : SOLID[isLight ? "light" : "dark"];
+  // Скругление по типам: плитки/панели — процент от ОПОРНОГО, кнопки/поля/
+  // вкладки — px (RADIUS_OVERRIDE_OFF = токен не ставим, и форму задаёт общее
+  // скругление через --r-control/--r-field/--r-tabs из tokens/radius.css).
+  const rBase = radiusScale(t.radius);
   const rTilesMult = t.radiusTiles / 100;
   const rPanelsMult = t.radiusPanels / 100;
   const rControl = t.radiusControls >= RADIUS_OVERRIDE_OFF ? null : `${t.radiusControls}px`;
@@ -333,39 +406,43 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
       : null;
 
   return {
-    "--blur-glass": `${t.blur}px`,
+    // Размытие панелей — ноль при выключенном стекле: размывать под глухой
+    // заливкой нечего, а backdrop-filter стоит композитору отдельного слоя на
+    // каждую панель. Ползунок «Размытие панелей» в этом режиме гаснет.
+    "--blur-glass": solid ? "0px" : `${t.blur}px`,
     // ЛЕСТНИЦА МАТЕРИАЛОВ — всё стекло приложения от одного ползунка (см.
     // MATERIAL выше). Ставится ВСЕГДА, а не только при «стекле по зонам»:
     // именно поэтому ползунок наконец двигает и сайдбар, и «Сейчас играет», и
     // диалоги, а не одни плавающие панели.
-    "--glass-zone": `rgba(${glassBase}, ${materialAlpha("zone", g)})`,
-    "--glass-panel": `rgba(${glassBase}, ${materialAlpha("panel", g)})`,
-    "--glass-dialog": `rgba(${glassBase}, ${materialAlpha("dialog", g)})`,
+    "--glass-zone": solid ? solid.zone : `rgba(${glassBase}, ${materialAlpha("zone", g)})`,
+    "--glass-panel": solid ? solid.panel : `rgba(${glassBase}, ${materialAlpha("panel", g)})`,
+    "--glass-dialog": solid ? solid.dialog : `rgba(${glassBase}, ${materialAlpha("dialog", g)})`,
+    // Скрим полноэкранного остаётся полупрозрачным ВСЕГДА — см. SOLID выше:
+    // глухой скрим стёр бы фон караоке, а его человек выбирал отдельно.
     "--glass-deep": `rgba(${deepBase}, ${materialAlpha("deep", g)})`,
     // Размытие зон — тоже всегда. Раньше переменная появлялась только вместе с
     // «стеклом по зонам», и зоны оставались плоской заливкой: стекло без
     // размытия читается как краска, а не как материал.
-    "--bf-zone": "blur(var(--blur-glass))",
+    "--bf-zone": solid ? "none" : "blur(var(--blur-glass))",
     // свой акцент: все четыре акцент-токена выводятся из выбранного hex (theme-aware)
     ...(t.accent === "custom" ? customAccentVars(t.customAccent, isLight) : {}),
     // роли акцента: play/слайдеры/активный трек отдельно (фолбэк — --accent)
     ...(t.accentRolesOn
       ? accentRoleVars({ play: t.accentPlay, slider: t.accentSlider, active: t.accentActive }, isLight)
       : {}),
-    // скругление по типам поверх пресета [data-radius]
-    ...(t.radiusTiles !== 100
-      ? {
-          "--r-xs": `${Math.round(rBase.xs * rTilesMult)}px`,
-          "--r-sm": `${Math.round(rBase.sm * rTilesMult)}px`,
-          "--r-md": `${Math.round(rBase.md * rTilesMult)}px`,
-        }
-      : {}),
-    ...(t.radiusPanels !== 100
-      ? {
-          "--r-lg": `${Math.round(rBase.lg * rPanelsMult)}px`,
-          "--r-xl": `${Math.round(rBase.xl * rPanelsMult)}px`,
-        }
-      : {}),
+    // ВСЯ ШКАЛА СКРУГЛЕНИЙ — ВСЕГДА И ЯВНО (2026-08-13).
+    // Раньше пятёрка ставилась только при отличии процентов от 100, а базу
+    // задавал атрибут [data-radius] — и это был второй, невидимый источник
+    // правды. С непрерывным опорным числом имени у значения нет, атрибута нет
+    // тоже (см. themeAttrs), поэтому движок объявляет шкалу целиком. Числа в
+    // tokens/radius.css остались ФОЛБЭКОМ для экрана входа и чужих
+    // потребителей @muza/ui; на них же считаются --r-control/--r-field/
+    // --r-tabs/--r-chip, когда точной подстройки в px нет.
+    "--r-xs": `${Math.round(rBase.xs * rTilesMult)}px`,
+    "--r-sm": `${Math.round(rBase.sm * rTilesMult)}px`,
+    "--r-md": `${Math.round(rBase.md * rTilesMult)}px`,
+    "--r-lg": `${Math.round(rBase.lg * rPanelsMult)}px`,
+    "--r-xl": `${Math.round(rBase.xl * rPanelsMult)}px`,
     ...(rControl ? { "--r-control": rControl } : {}),
     ...(rField ? { "--r-field": rField } : {}),
     ...(rTabs ? { "--r-tabs": rTabs } : {}),
@@ -383,7 +460,11 @@ export function buildThemeVars(input: ThemeInput, stage: ThemeStage = {}): CSSPr
     // придётся подкрутить заново. Тумблер по умолчанию выключен, так что это
     // касается единиц; молча чинить сохранённое число нельзя — мы не отличим
     // старую четвёрку от осознанно выставленной.
-    ...(t.glassZonesOn
+    // ⚠️ При выключённом стекле поштучные плотности НЕ ставятся вовсе: они
+    // описывают плотность стекла, а стекла нет — иначе тумблер «Стекло» молча
+    // не действовал бы на пять зон из шести у того, кто когда-то включил
+    // подстройку. Ряды подстройки в этом режиме гаснут (CustomizeSub.tsx).
+    ...(t.glassZonesOn && !solid
       ? {
           "--glass-player": `rgba(${glassBase}, ${t.glassPlayer / 100})`,
           "--glass-menu": `rgba(${glassBase}, ${t.glassMenu / 100})`,
