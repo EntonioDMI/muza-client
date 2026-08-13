@@ -213,6 +213,30 @@ export const viewsEn = {
     },
   },
 
+  /** Экран «что ты слушаешь» — вкус, названный на входе (холодный старт, H7).
+   *  Подсказки отвечают на «что произойдёт», а не «как устроено»: человек на
+   *  этом экране ещё не включил ни одного трека и про устройство рекомендаций
+   *  знать не обязан. */
+  taste: {
+    title: "What do you listen to?",
+    hint: "Pick a few genres and artists — your home screen and recommendations will be built from them. Skip it if you'd rather not: they'll build themselves as you listen.",
+    genresTitle: "Genres",
+    artistsTitle: "Artists",
+    artistsFiltered: "Artists from the genres you picked",
+    searchPlaceholder: "Find an artist",
+    more: "Show more",
+    chosen: "Picked: {count}",
+    done: "Done",
+    skip: "Skip",
+    saving: "Saving",
+    saveFailed: "Couldn't save the picks — they're still here, try again.",
+    emptyTitle: "Nobody here yet",
+    emptyHint: "Nothing matches that name in Muza's catalogue. Try another spelling — or skip this and just search for music.",
+    emptyCatalogTitle: "Nothing to pick from yet",
+    emptyCatalogHint: "Muza's catalogue fills up as people listen. Skip this — recommendations will build themselves from what you play.",
+    loadingAria: "Loading artists",
+  },
+
   stats: {
     title: "Statistics",
     skeletonAria: "Crunching the numbers",
