@@ -1,4 +1,4 @@
-import type { MuzaApi, PrefsSnapshot, PrefsSyncResult } from "./index";
+import type { MuzaApi, PrefsSnapshot, PrefsSyncResult, TasteSeedResult } from "./index";
 import {
   type AdminContent,
   type AdminDayPoint,
@@ -49,6 +49,9 @@ import {
   SessionSchema,
   type StatsOverview,
   type StatsPeriod,
+  type TasteOptions,
+  TasteOptionsSchema,
+  type TasteSeed,
   type TelemetryStats,
   type Track,
   type TrackAlternative,
@@ -456,6 +459,17 @@ function recsSettingsFromWire(wire: RecsSettingsWire): RecsSettings {
     tauScaleMin: wire.tau_scale_min,
     tauScaleMax: wire.tau_scale_max,
   };
+}
+
+interface TasteSeedWire {
+  artists: string[];
+  tags: string[];
+  skipped: boolean;
+  updated_at: string;
+}
+
+function tasteSeedFromWire(wire: TasteSeedWire): TasteSeed {
+  return { artists: wire.artists, tags: wire.tags, skipped: wire.skipped, updatedAt: wire.updated_at };
 }
 
 function sessionFromTokens(pair: TokenPair): Session {
@@ -1270,6 +1284,44 @@ export class HttpMuzaApi implements MuzaApi {
         body: JSON.stringify(body),
       }),
     );
+  }
+
+  // ---------- Вкус, названный на входе (холодный старт) ----------
+
+  /** ⚠️ 404 = «СЕРВЕР СТАРЕЕ КЛИЕНТА», А НЕ ОШИБКА — та же развилка и та же
+   *  причина, что у getPrefs выше: выкладка сервера отстаёт от выкладки веба,
+   *  и ручки `/me/taste` там может ещё не быть. Ловим ровно 404; остальное
+   *  (401, 500, обрыв) уходит наверх. */
+  async getTasteSeed(): Promise<TasteSeedResult> {
+    try {
+      const out = await this.authedRequest<TasteSeedWire | null>("/me/taste");
+      return { supported: true, seed: out ? tasteSeedFromWire(out) : null };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return { supported: false };
+      throw e;
+    }
+  }
+
+  async putTasteSeed(input: { artists: string[]; tags: string[]; skipped?: boolean }): Promise<TasteSeed | false> {
+    try {
+      const out = await this.authedRequest<TasteSeedWire>("/me/taste", {
+        method: "PUT",
+        body: JSON.stringify({ artists: input.artists, tags: input.tags, skipped: input.skipped ?? false }),
+      });
+      return tasteSeedFromWire(out);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return false;
+      throw e;
+    }
+  }
+
+  async getTasteOptions(opts?: { tags?: string[]; query?: string; limit?: number }): Promise<TasteOptions> {
+    const params = new URLSearchParams();
+    if (opts?.tags && opts.tags.length > 0) params.set("tags", opts.tags.join(","));
+    if (opts?.query) params.set("q", opts.query);
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return TasteOptionsSchema.parse(await this.authedRequest<unknown>(`/me/taste/options${qs ? `?${qs}` : ""}`));
   }
 
   // ---------- Jam: слушать вместе (Stage 7) ----------

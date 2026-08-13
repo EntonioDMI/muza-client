@@ -41,6 +41,8 @@ import type {
   SessionInfo,
   StatsOverview,
   StatsPeriod,
+  TasteOptions,
+  TasteSeed,
   TelemetryStats,
   Track,
   TrackAlternative,
@@ -60,6 +62,9 @@ export interface PrefsSnapshot {
 
 /** Ответ на попытку прочитать профиль — см. `MuzaApi.getPrefs`. */
 export type PrefsSyncResult = { supported: false } | { supported: true; prefs: PrefsSnapshot | null };
+
+/** Ответ на попытку прочитать вкус — см. `MuzaApi.getTasteSeed`. */
+export type TasteSeedResult = { supported: false } | { supported: true; seed: TasteSeed | null };
 export { resolveApiBaseUrl, type ApiBuildMode } from "./api-base-url";
 
 export interface MuzaApi {
@@ -241,6 +246,27 @@ export interface MuzaApi {
   getRecsSettings(): Promise<RecsSettings>;
   /** null в поле = сбросить на серверный дефолт; отсутствие поля = не трогать. */
   updateRecsSettings(input: { epsilon?: number | null; tauScale?: number | null }): Promise<RecsSettings>;
+
+  // Вкус, названный на входе (холодный старт, H7). Рекомендации Музы растут из
+  // прослушиваний, а у нового человека их нет — экран выбора даёт им начало.
+  /** Что человек отметил.
+   *
+   *  ⚠️ ТРИ РАЗНЫХ ОТВЕТА, как и у getPrefs, и путать их нельзя:
+   *   - `{ supported: true, seed: {...} }` — выбор есть;
+   *   - `{ supported: true, seed: null }` — ручка есть, экрана ещё не было:
+   *     вот его и показываем;
+   *   - `{ supported: false }` — ручки нет вовсе (сервер старее клиента; на
+   *     проде это штатно). Экран не показываем совсем: сохранять выбор было бы
+   *     некуда, а «выбери артистов, мы это потеряем» — худшее из первых
+   *     впечатлений. */
+  getTasteSeed(): Promise<TasteSeedResult>;
+  /** Сохранить выбор целиком (замена, не слияние: на экране виден весь набор).
+   *  `false` — ручки нет (старый сервер), звать снова незачем. */
+  putTasteSeed(input: { artists: string[]; tags: string[]; skipped?: boolean }): Promise<TasteSeed | false>;
+  /** Что показать на экране: жанры и артисты из каталога Музы.
+   *  `tags` — уже отмеченные жанры (сетка артистов сужается под них),
+   *  `query` — поиск по каталогу, `limit` — сколько плиток вернуть. */
+  getTasteOptions(opts?: { tags?: string[]; query?: string; limit?: number }): Promise<TasteOptions>;
 
   // Маркетплейс тем (Stage 6). Публикация rate-limit 5/час, payload ≤ 16КБ.
   /** `limit` — сколько тем отдать (сервер клампит 1..100, дефолт 50). Без

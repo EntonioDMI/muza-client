@@ -446,6 +446,47 @@ export interface RecsSettings {
   tauScaleMax: number;
 }
 
+// ── Вкус, названный на входе (холодный старт, H7) ──────────────────
+
+/** Что человек отметил на экране «выбери, что слушаешь».
+ *
+ *  ⚠️ `artists` — ТОЧНЫЕ строки артистов каталога, не нормализованные ключи:
+ *  сервер сводит по ним рекомендации напрямую. `tags` — slug'и жанров.
+ *  `skipped` отвечает на вопрос «почему пусто»: человек прошёл мимо экрана
+ *  (true) или снял все отметки руками (false). */
+export const TasteSeedSchema = z.object({
+  artists: z.array(z.string()),
+  tags: z.array(z.string()),
+  skipped: z.boolean(),
+  updatedAt: z.string(),
+});
+export type TasteSeed = z.infer<typeof TasteSeedSchema>;
+
+/** Жанр в подсказке экрана: slug — ключ выбора, label — как его зовут люди,
+ *  tracks — сколько треков каталога им помечено. */
+export const TasteGenreSchema = z.object({
+  slug: z.string(),
+  label: z.string(),
+  tracks: z.number(),
+});
+export type TasteGenre = z.infer<typeof TasteGenreSchema>;
+
+/** Артист в подсказке: name — то, что уедет в выбор; genre — преобладающий
+ *  жанр (null, если у его треков тегов нет — таких в каталоге большинство);
+ *  cover — обложка одного из треков. */
+export const TasteArtistSchema = z.object({
+  name: z.string(),
+  genre: z.string().nullable(),
+  cover: z.string().nullable(),
+});
+export type TasteArtist = z.infer<typeof TasteArtistSchema>;
+
+export const TasteOptionsSchema = z.object({
+  genres: z.array(TasteGenreSchema),
+  artists: z.array(TasteArtistSchema),
+});
+export type TasteOptions = z.infer<typeof TasteOptionsSchema>;
+
 // ── Маркетплейс тем (Stage 6) ──────────────────────────────────────
 
 /** Опубликованная тема оформления. payload — токены клиента (THEME_KEYS
