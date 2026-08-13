@@ -2034,6 +2034,19 @@ fn warm_http_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
+            // ⚠️ КЭШ DNS В ПРОЦЕССЕ (13.08). По умолчанию reqwest резолвит имя
+            // системным getaddrinfo НА КАЖДЫЙ запрос и не помнит ответ. Для
+            // SoundCloud это почти даром — хост один (cf-media.sndcdn.com), и
+            // пул переиспользует соединение. А googlevideo выдаёт КАЖДОМУ
+            // ТРЕКУ свой хост (rr3---sn-xxxx.googlevideo.com), поэтому у
+            // YouTube резолв новый на каждый клик. Замер 13.08: SoundCloud 854
+            // мс медианы против 1687 у YouTube при здоровом резолве ступени 0
+            // (342–508 мс) — разница целиком в ожидании первого байта.
+            //
+            // Кэш не панацея: хост у YouTube и правда новый, попадания будут
+            // редкими. Но повторный клик по тому же треку и добор сегментов
+            // HLS с одного CDN он закрывает, а стоит один флаг.
+            .hickory_dns(true)
             .connect_timeout(Duration::from_secs(10))
             .proxy(reqwest::Proxy::custom(|url| {
                 crate::sysproxy::proxy_for(url.as_str())
@@ -2064,6 +2077,11 @@ fn warm_http_client() -> &'static reqwest::Client {
 #[derive(Default)]
 struct FetchProbe {
     ttfb_ms: u64,
+    /// Хост CDN. Нужен, чтобы проверить догадку о разнице SoundCloud/YouTube:
+    /// если у SC он повторяется, а у YouTube всегда новый — значит YouTube
+    /// платит полный круг (резолв + TCP + TLS) на каждом клике, и это
+    /// объясняет разворот 13.08, когда YouTube стал вдвое медленнее SC.
+    host: String,
     /// Значение заголовка `x-cache` (у CloudFront «Hit/Miss from cloudfront»);
     /// пусто — заголовка не было (не CloudFront или его срезали).
     cdn_cache: String,
@@ -2149,6 +2167,7 @@ async fn fetch_to_cache_with_progress(
     let ttfb = sent_at.elapsed();
     if let Some(sink) = probe {
         sink.ttfb_ms = ttfb.as_millis() as u64;
+        sink.host = entry.url.host_str().unwrap_or("").to_string();
         // ⚠️ x-cache — ЕДИНСТВЕННЫЙ способ отличить «край CDN холодный» от
         // «канал узкий», не гадая. CloudFront пишет туда «Hit from cloudfront»
         // или «Miss from cloudfront»; на Miss он идёт в origin SoundCloud, и по
@@ -4646,10 +4665,15 @@ pub async fn engine_stream_start(
                 } else {
                     format!(", кэш CDN: {}", probe.cdn_cache)
                 };
+                let host = if probe.host.is_empty() {
+                    String::new()
+                } else {
+                    format!(", хост {}", probe.host)
+                };
                 stage0_log(
                     &app_task.state::<EngineState>(),
                     SystemTime::now(),
-                    format!("первый байт от CDN за {} мс{cache}", probe.ttfb_ms),
+                    format!("первый байт от CDN за {} мс{cache}{host}", probe.ttfb_ms),
                 );
             }
             match result {

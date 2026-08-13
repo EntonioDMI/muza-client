@@ -66,7 +66,15 @@ zip = { version = "4", default-features = false, features = ["deflate"] }
 # SOCKS-таргет (частый случай у DPI-обходчиков) — reqwest 0.13.4 реализует
 # CONNECT сам поверх уже разрешённых hyper/tokio, проверено: cargo check не
 # тянет ни одной новой строки в Cargo.lock (0 новых крейтов).
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "socks"] }
+# hickory-dns (13.08): БЕЗ этой фичи reqwest резолвит имя через системный
+# getaddrinfo НА КАЖДЫЙ запрос и ничего не кэширует в процессе. Для SoundCloud
+# это почти бесплатно — он всегда отдаёт с одного хоста cf-media.sndcdn.com, и
+# соединение переиспользуется пулом. А googlevideo выдаёт КАЖДОМУ ТРЕКУ свой
+# хост вида rr3---sn-xxxx.googlevideo.com, то есть у YouTube новый резолв на
+# каждый клик. Замер 13.08 показал ровно такой перекос: SoundCloud 854 мс
+# медианы против 1687 у YouTube при ЗДОРОВОМ резолве ступени 0 (342–508 мс) —
+# всё лишнее время уходит на первый байт.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "socks", "hickory-dns"] }
 # CSPRNG для nonce/staging-токена плагинов (T44-fix: security review) — версия
 # зафиксирована на уже разрешённой в дереве (tauri сама тянет getrandom 0.3.4),
 # доп. компиляции почти нет
