@@ -2074,18 +2074,34 @@ async fn fetch_to_cache_with_progress(
     progress: Option<&tokio::sync::watch::Sender<StreamProgress>>,
     cancel: Option<&tokio::sync::Notify>,
 ) -> Result<PathBuf, String> {
-    if !content_length_ok(entry.size) {
+    // ⚠️ size == 0 — «размер НЕИЗВЕСТЕН» (SoundCloud с 13.08, проба снята),
+    // а не «нулевой файл». Проверять заявленный размер тогда нечем, и из трёх
+    // рубежей лимита содержимого остаются два — оба на РЕАЛЬНЫХ данных:
+    // Content-Length/Content-Range до чтения тела и счётчик байт при записи.
+    // Решающий рубеж не тронут: заголовки врут бесплатно, счётчик — нет.
+    if entry.size > 0 && !content_length_ok(entry.size) {
         return Err(format!("warm-размер вне лимита: {}", entry.size));
     }
     // AAC HLS SoundCloud: аудио не лежит одним файлом — собираем из кусков.
     if !entry.hls_segments.is_empty() {
         return fetch_hls_to_cache(dir, track_id, entry, progress, cancel).await;
     }
-    let send = warm_http_client()
-        .get(entry.url.clone())
-        .header("Range", format!("bytes=0-{}", entry.size - 1))
-        .timeout(RESOLVE_TIMEOUT)
-        .send();
+    let req = warm_http_client().get(entry.url.clone());
+    // size == 0 — «размер неизвестен» (то же обозначение, что у
+    // GrowingSource::byte_len). Так приходит SoundCloud с 13.08: пробу размера
+    // сняли, потому что она стоила лишний RTT ровно за то, что и так приезжает
+    // в заголовках ответа ниже. Без размера явный Range построить НЕЛЬЗЯ —
+    // шлём обычный GET и читаем Content-Length из 200-ответа.
+    //
+    // ⚠️ Явный Range остаётся ОБЯЗАТЕЛЬНЫМ там, где размер известен: у
+    // googlevideo бесдиапазонный GET троттлится до 32 КБ/с (замер 2026-07-15,
+    // 802 КБ за 25 с против 1.2 с) — эту ветку не трогать.
+    let req = if entry.size > 0 {
+        req.header("Range", format!("bytes=0-{}", entry.size - 1))
+    } else {
+        req
+    };
+    let send = req.timeout(RESOLVE_TIMEOUT).send();
     let resp = match cancel {
         Some(n) => tokio::select! {
             _ = n.notified() => return Err("стрим отменён до ответа CDN".into()),
@@ -3701,7 +3717,12 @@ async fn resolve_via_soundcloud_with<F, Fut, P, PFut>(
     canonical: &Url,
     timings: &mut Timings,
     mut call: F,
-    mut probe: P,
+    // ⚠️ НЕ ИСПОЛЬЗУЕТСЯ с 13.08 — проба размера снята (см. комментарий у
+    // возврата progressive-ветки ниже). Параметр и sc_http_probe оставлены
+    // НАМЕРЕННО: правка помечена как опровергаемая (растёт first_chunk_wait →
+    // CDN троттлит бесдиапазонный GET), и откат должен стоить одну строку, а
+    // не восстановление обвязки с тестами.
+    _probe: P,
 ) -> Result<SoundcloudFormat, SoundcloudFail>
 where
     F: FnMut(String) -> Fut,
@@ -3795,15 +3816,31 @@ where
             .await;
     }
 
-    // ⚠️ Проба размера (sc_http_probe) — лишний RTT перед закачкой, и её снятие
-    // обсуждается. Пока она просто ПОМЕЧЕНА: сначала цифра, потом решение.
-    let size = timings
-        .measure("sc_probe", probe(cdn_url.clone()))
-        .await
-        .map_err(SoundcloudFail::Other)?;
+    // ⚠️ ПРОБА РАЗМЕРА СНЯТА (13.08). Прошлая сессия пометила её словами
+    // «лишний RTT перед закачкой, сначала цифра, потом решение» — цифра
+    // пришла с живого замера владельца: sc_probe = 745 мс из 3091 мс всего
+    // пути «клик → звук», почти четверть, на холодном progressive-треке.
+    //
+    // Почему её можно снять без потери гарантий: НАСТОЯЩИЙ размер всё равно
+    // берётся из заголовков ответа самой закачки (206 → Content-Range, 200 →
+    // Content-Length, см. fetch_to_cache), там же проверяется лимит
+    // содержимого, и там же total правится до первого записанного байта.
+    // Проба узнавала ровно то, что через мгновение и так приезжает.
+    //
+    // ⚠️ Единственное, ради чего она была нужна, — явный `Range: bytes=0-N`.
+    // Но требование явного Range — это замер GOOGLEVIDEO («обычный GET
+    // троттлится до 32 КБ/с», 2026-07-15), и к CDN SoundCloud он никогда не
+    // проверялся. Поэтому размер здесь честно объявляется НЕИЗВЕСТНЫМ (0 —
+    // принятое в движке обозначение, ср. GrowingSource::byte_len), а
+    // fetch_to_cache на неизвестном размере шлёт обычный GET.
+    //
+    // ⚠️ КАК ОПРОВЕРГНУТЬ, если я неправ: в телеметрии пропадает sc_probe, но
+    // растёт first_chunk_wait — значит CDN SoundCloud троттлит бесдиапазонный
+    // GET, и пробу надо вернуть. Размен виден в тех же замерах, гадать не
+    // придётся.
     Ok(SoundcloudFormat {
         url: cdn_url,
-        size,
+        size: 0,
         ext: ext.to_string(),
         segments: Vec::new(),
     })
@@ -8962,7 +8999,8 @@ mod soundcloud_tests {
         );
         assert!(result.is_ok(), "{result:?}");
         let labels: Vec<&str> = timings.iter().map(|(l, _)| l.as_str()).collect();
-        assert_eq!(labels, vec!["sc_api_v2", "sc_transcoding", "sc_probe"]);
+        // 13.08: проба размера снята — сетевых шагов на тёплом ключе ровно два
+        assert_eq!(labels, vec!["sc_api_v2", "sc_transcoding"]);
     }
 
     /// Холодный старт: ключа в состоянии нет — появляется sc_client_id, и
@@ -8985,7 +9023,7 @@ mod soundcloud_tests {
         let labels: Vec<&str> = timings.iter().map(|(l, _)| l.as_str()).collect();
         assert_eq!(
             labels,
-            vec!["sc_client_id", "sc_api_v2", "sc_transcoding", "sc_probe"]
+            vec!["sc_client_id", "sc_api_v2", "sc_transcoding"] // 13.08: без пробы
         );
     }
 
@@ -9027,8 +9065,9 @@ mod soundcloud_tests {
         assert_eq!(labels, vec!["sc_api_v2", "sc_transcoding"]);
     }
 
-    /// Обычный путь: client_id уже в состоянии — resolve → transcoding →
-    /// Range-проба; размер — из пробы (transcodings contentLength не отдают).
+    /// Обычный путь: client_id уже в состоянии — resolve → transcoding, и всё.
+    /// ⚠️ Размер приходит НУЛЁМ = «неизвестен» (13.08, проба снята): реальный
+    /// берётся из заголовков ответа самой закачки, см. fetch_to_cache.
     #[test]
     fn sc_orchestration_uses_cached_client_id() {
         let state = EngineState::default();
@@ -9044,7 +9083,8 @@ mod soundcloud_tests {
         );
         let fmt = result.expect("успех");
         assert_eq!(fmt.ext, "mp3");
-        assert_eq!(fmt.size, 4_567_890);
+        assert_eq!(fmt.size, 0, "размер обязан приходить неизвестным — пробы больше нет");
+        assert!(probes.is_empty(), "проба размера снята: сети на неё уходить не должно");
         assert!(
             fmt.url.starts_with("https://cf-media.sndcdn.com/"),
             "{}",
@@ -9061,7 +9101,8 @@ mod soundcloud_tests {
             "{}",
             calls[1]
         );
-        assert_eq!(probes, vec![fmt.url.clone()], "проба — по CDN-URL");
+        // 13.08: раньше здесь проверялось, что проба идёт по CDN-URL. Пробы
+        // больше нет — сторож перевёрнут выше (probes обязан быть пуст).
     }
 
     /// Бутстрап: состояния нет — главная → бандлы С КОНЦА → client_id
@@ -9309,10 +9350,12 @@ mod soundcloud_tests {
         assert!(matches!(result, Err(SoundcloudFail::Other(_))), "{result:?}");
     }
 
-    /// Проба размера провалилась — провал ступени (без размера не построить
-    /// явный Range в fetch_to_cache и не проверить целостность).
+    /// ⚠️ ПЕРЕВЁРНУТЫЙ СТОРОЖ (13.08). Раньше падение пробы роняло всю ступень.
+    /// Теперь пробы нет вовсе, и её мнимый отказ не должен значить НИЧЕГО:
+    /// резолв обязан пройти, а размер прийти неизвестным. Тест оставлен именно
+    /// в перевёрнутом виде — он ловит случайное возвращение пробы в путь.
     #[test]
-    fn sc_orchestration_probe_failure_is_error() {
+    fn sc_orchestration_ignores_probe_entirely() {
         let state = EngineState::default();
         sc_note_client_id(&state, SYNTH_CLIENT_ID, SystemTime::now());
         let (result, _calls, probes) = run_sc(
@@ -9322,10 +9365,11 @@ mod soundcloud_tests {
                 Ok((200, sc_track_fixture())),
                 Ok((200, sc_transcoding_fixture())),
             ],
-            Err("сеть упала".into()),
+            Err("сеть упала".into()), // проба «сломана» — и это больше не важно
         );
-        assert!(matches!(result, Err(SoundcloudFail::Other(_))), "{result:?}");
-        assert_eq!(probes.len(), 1);
+        let fmt = result.expect("резолв обязан пройти без пробы");
+        assert_eq!(fmt.size, 0);
+        assert!(probes.is_empty(), "в путь вернулась проба размера");
     }
 
     /// Провал добычи client_id взводит кулдаун: следующий клик в течение
