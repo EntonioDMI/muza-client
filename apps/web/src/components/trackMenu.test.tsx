@@ -83,13 +83,21 @@ describe("меню трека веба", () => {
   // vitest здесь без globals — авто-очистки testing-library нет
   afterEach(cleanup);
 
-  it("в «Любимом» есть радио, источники, «поделиться» и замена версии", () => {
+  it("в «Любимом» есть источники, замена версии и «Скачать»", () => {
     const icons = iconsFor("favorites");
-    expect(icons).toContain("radio"); // «Радио по треку»
-    expect(icons).toContain("share-2"); // «Поделиться»
     expect(icons).toContain("git-branch"); // «Источники»
     expect(icons).toContain("refresh-cw"); // «Заменить версию» — только тут
-    expect(icons).toContain("download"); // веб-умение «Скачать»
+    // ⚠️ «Скачать» ОСТАЛОСЬ, хотя «Сохранить офлайн» у трека снято 13.08. Это
+    // разные вещи и разные площадки: довод владельца («трек и так тащится на
+    // рабочий стол») — про НАСТОЛЬНОЕ приложение, где есть drag-out. В браузере
+    // тащить некуда, и обычная загрузка файла остаётся единственным способом.
+    expect(icons).toContain("download");
+  });
+
+  it("снятые 13.08 пункты не приехали и в веб: радио и «поделиться»", () => {
+    const icons = iconsFor("favorites");
+    expect(icons).not.toContain("radio");
+    expect(icons).not.toContain("share-2");
   });
 
   it("в поиске замены версии НЕТ (она только у Любимого)", () => {

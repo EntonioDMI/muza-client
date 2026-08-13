@@ -101,6 +101,14 @@ export function ShareVisibilityDialog({
   const handle = freshHandle !== undefined ? freshHandle : detail.handle;
   const visibility = detail.visibility;
   const draftValid = /^[A-Za-z0-9_]{3,32}$/.test(handleDraft.trim());
+  /** Лицо диалога = ТЕКУЩАЯ ступень лесенки: замок / ключ / глобус. Плашка
+   *  отвечает на «что сейчас», не дожидаясь, пока взгляд найдёт галочку.
+   *  ⚠️ ВЫНЕСЕНО В ПЕРЕМЕННУЮ, А НЕ ПОСЧИТАНО В `icon={…}`: сторож таблицы
+   *  иконок (packages/ui/src/components/core/Icon.test.jsx) берёт хвост после
+   *  `icon=` целиком и считает ИМЕНЕМ ИКОНКИ любой kebab-литерал в нём — из
+   *  тернарника прямо в пропе он вычитал «public» и «code» (значения
+   *  видимости) и требовал завести их в таблицу. */
+  const stepIcon = visibility === "public" ? "globe" : visibility === "code" ? "key-round" : "lock";
 
   const setVisibility = async (next: PlaylistVisibility) => {
     if (busy || next === visibility) return;
@@ -134,7 +142,11 @@ export function ShareVisibilityDialog({
       const out = await api.setPlaylistHandle(playlistId, handleDraft.trim());
       setFreshHandle(out.handle);
       setHandleDraft("");
-      onNotify(t("dialogs.shareVisibility.handleSaved"), "at-sign");
+      // ⚠️ Было "at-sign" — иконки с таким именем в ДС НЕТ, и тост рисовал
+      // пустой квадрат (13.08; поймано, когда сторож таблицы иконок научился
+      // читать вторые аргументы тостов). "check" — тот же глиф, что у всех
+      // подтверждений сохранения в приложении.
+      onNotify(t("dialogs.shareVisibility.handleSaved"), "check");
       onChanged();
     } catch (e) {
       onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
@@ -178,6 +190,8 @@ export function ShareVisibilityDialog({
     <Dialog
       open={open}
       title={t("dialogs.shareVisibility.title")}
+      icon={stepIcon}
+      closeLabel={t("dialogs.close")}
       onClose={onClose}
       actions={<Button onClick={onClose}>{t("dialogs.shareVisibility.done")}</Button>}
     >

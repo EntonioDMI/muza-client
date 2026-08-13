@@ -1,4 +1,6 @@
 import React, { useEffect, useRef } from "react";
+import { Icon } from "../core/Icon.jsx";
+import { IconButton } from "../core/IconButton.jsx";
 import { NO_SCROLL } from "../../lib/focusNoScroll.js";
 import { portal } from "../../lib/layerRoot.js";
 import { useLayerState } from "../../lib/useLayerState.js";
@@ -13,8 +15,59 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
  *  посреди закрытия) живёт в lib/useLayerState.js + классе .muza-layer; здесь
  *  остаются только фокус, Escape и клик мимо. Затемнение и панель — ОДИН слой
  *  на два узла: состояние диктует затемнение (на нём хук), панель повторяет за
- *  ним атрибут и берёт свою позу модификатором. */
-export function Dialog({ open, title, headerAction, children, actions, onClose, width = 440 }) {
+ *  ним атрибут и берёт свою позу модификатором.
+ *
+ *  ── ЛИЦО ДИАЛОГА 2026-08-13 (жалоба владельца: «все модалки скучные») ──────
+ *  Скука была не в оформлении, а в ОТСУТСТВИИ СТРОЕНИЯ: панель отдавала три
+ *  висящих в пустоте блока (жирный заголовок, серый абзац, кнопки справа) с
+ *  одинаковым зазором sp-5 между ними, и «Удалить плейлист?» выглядело ровно
+ *  как «Импорт плейлиста» — ни веса, ни предупреждения, ни даже намёка, о чём
+ *  окно, пока не прочтёшь заголовок целиком.
+ *
+ *  Добавлены ЧЕТЫРЕ необязательных вещи, все со старым поведением по умолчанию
+ *  (ни один существующий вызыватель не правится):
+ *    icon        — глиф в круглой плашке слева от заголовка. Диалог получает
+ *                  опознаваемое лицо ДО чтения: замок, ключ, корзина.
+ *    tone        — "danger" перекрашивает плашку (и только её) в тревожный тон.
+ *                  Кнопку не трогаем: вес действия — забота вызывателя.
+ *    description — тихая вторая строка под заголовком: последствие действия.
+ *                  Ровно то место, куда UX-руководства (Carbon, Setproduct)
+ *                  кладут «что произойдёт», чтобы это не смешалось с телом.
+ *    onClose     — крестик в шапке. Раньше выхода было три (Escape, клик мимо,
+ *                  кнопка в actions), и все три НЕВИДИМЫЕ; половина диалогов
+ *                  тратила на это кнопку «Закрыть» в подвале.
+ *
+ *  И главное — ПОДВАЛ СТАЛ ПОДВАЛОМ: над кнопками волосяная линия во всю
+ *  ширину панели (отрицательные поля гасят padding). Тот же приём в шапке,
+ *  когда есть и заголовок, и тело. Три блока перестали висеть — у окна
+ *  появились шапка, тело и подвал. Волосяная линия — ЕДИНСТВЕННОЕ, чем ДС
+ *  разрешает разделять (tokens/glass.css): ни рамок, ни теней тут быть не
+ *  может, и не надо.
+ *
+ *  ⚠️ maxHeight + прокрутка ТЕЛА, а не панели: уехавшие за кромку кнопки —
+ *  худшее, что может случиться с модальным окном, а до 13.08 длинный диалог
+ *  просто выпирал за экран целиком. */
+export function Dialog({
+  open,
+  title,
+  description,
+  icon,
+  tone = "neutral",
+  headerAction,
+  children,
+  actions,
+  onClose,
+  /** false — крестика в шапке нет (подтверждения: выход должен быть осознанным).
+   *  ⚠️ ПО УМОЛЧАНИЮ — «есть, ЕСЛИ шапка ещё не занята». Оба живых потребителя
+   *  headerAction (MeaningDialog, LyricsPanel) кладут туда именно свой крестик,
+   *  собранный руками до того, как он появился здесь. Безусловный крестик дал
+   *  бы им ДВА одинаковых крестика подряд. Правило шире частного случая: если
+   *  вызыватель сам что-то поставил в шапку, он ей и распоряжается. */
+  showClose = !headerAction,
+  /** Подпись крестика для читалок. Пакет без i18n — перевод даёт вызыватель. */
+  closeLabel = "Close",
+  width = 440,
+}) {
   const panelRef = useRef(null);
   const restoreRef = useRef(null);
   const pressTargetRef = useRef(null);
@@ -127,6 +180,9 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
         style={{
           width,
           maxWidth: "calc(100% - 48px)",
+          /* Панель не выше экрана; прокручивается ТЕЛО (см. ниже), шапка и
+             подвал остаются на месте — кнопки недостижимыми не станут. */
+          maxHeight: "calc(100dvh - 64px)",
           padding: "var(--sp-6)",
           borderRadius: "var(--r-xl)",
           /* Диалог — САМЫЙ ПЛОТНЫЙ материал лестницы (packages/ui/src/tokens/
@@ -143,14 +199,68 @@ export function Dialog({ open, title, headerAction, children, actions, onClose, 
         }}
       >
         {title || headerAction ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
-            <div style={{ flex: 1, fontFamily: "var(--font-ui)", fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)", letterSpacing: "-0.01em" }}>{title}</div>
+          <div style={{ display: "flex", alignItems: icon || description ? "flex-start" : "center", gap: "var(--sp-3)" }}>
+            {/* Плашка-лицо. Круг, а не квадрат: заголовок рядом — прямоугольный
+                блок текста, и круглая метка не спорит с ним за форму.
+                color-mix, а не готовый токен: --accent-soft в системе есть, а
+                парного «мягкого тревожного» нет, и заводить его в чужом
+                tokens/colors.css ради одной плашки — хуже, чем посчитать на
+                месте от того же --danger. */}
+            {icon ? (
+              <span
+                aria-hidden="true"
+                style={{
+                  flex: "none",
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background:
+                    tone === "danger"
+                      ? "color-mix(in srgb, var(--danger) 16%, transparent)"
+                      : "var(--accent-soft)",
+                }}
+              >
+                <Icon name={icon} size={18} color={tone === "danger" ? "var(--danger)" : "var(--accent-text)"} />
+              </span>
+            ) : null}
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--fs-title)", fontWeight: "var(--fw-bold)", color: "var(--text-1)", letterSpacing: "-0.01em" }}>{title}</div>
+              {description ? (
+                <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.45 }}>{description}</div>
+              ) : null}
+            </div>
             {headerAction}
+            {showClose && onClose ? (
+              <IconButton icon="x" size="sm" label={closeLabel} onClick={onClose} style={{ flex: "none", marginTop: -2, marginRight: -6 }} />
+            ) : null}
           </div>
         ) : null}
-        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)" }}>{children}</div>
+        {/* ТЕЛО. minHeight:0 обязателен — без него flex-ребёнок не даёт себя
+            сжать, и overflow:auto не включается вовсе (панель растёт наружу). */}
+        <div style={{ color: "var(--text-2)", fontSize: "var(--fs-body)", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+          {children}
+        </div>
         {actions ? (
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--sp-3)" }}>{actions}</div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+              gap: "var(--sp-3)",
+              /* Линия во всю ширину панели: поля гасятся отрицательными
+                 margin'ами и возвращаются padding'ом — иначе разделитель
+                 повисает «поплавком» посреди подвала и делает ровно обратное
+                 тому, зачем нужен. */
+              margin: "0 calc(-1 * var(--sp-6)) calc(-1 * var(--sp-6))",
+              padding: "var(--sp-4) var(--sp-6) var(--sp-5)",
+              borderTop: "1px solid var(--hairline)",
+            }}
+          >
+            {actions}
+          </div>
         ) : null}
       </div>
     </div>

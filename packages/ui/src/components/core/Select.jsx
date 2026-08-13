@@ -37,12 +37,18 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
     if (!open || !triggerRef.current) return;
     const z = cssZoom(triggerRef.current);
     const r = triggerRef.current.getBoundingClientRect();
-    const panelH = Math.min(norm.length * 44 + 12, 292) * z;
+    // 40 = ряд 36 + зазор; +12 — поля панели. Число ОЦЕНОЧНОЕ и нужно только
+    // чтобы решить «вниз или вверх», реальную высоту клампит maxHeight.
+    const panelH = Math.min(norm.length * 40 + 12, 292) * z;
     const below = window.innerHeight - r.bottom;
+    const up = below < panelH + 8 && r.top > panelH;
     setPanelPos({
       left: r.left / z,
       width: r.width / z,
-      ...(below < panelH + 8 && r.top > panelH
+      // origin — КРАЙ, КОТОРЫМ ПАНЕЛЬ КАСАЕТСЯ ПОЛЯ (вниз открылась — верхний,
+      // вверх — нижний). Разбор в стиле панели ниже.
+      origin: up ? "bottom center" : "top center",
+      ...(up
         ? { bottom: (window.innerHeight - r.top + 4) / z }
         : { top: (r.bottom + 4) / z }),
     });
@@ -172,7 +178,22 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
             }}
             style={{
               position: "fixed",
-              ...panelPos,
+              // origin — не CSS-свойство, в раскладку не отдаём (ниже он идёт
+              // в transformOrigin отдельной строкой).
+              left: panelPos.left,
+              width: panelPos.width,
+              ...(panelPos.top !== undefined ? { top: panelPos.top } : { bottom: panelPos.bottom }),
+              /* РАЗВОРАЧИВАЕТСЯ ИЗ ПОЛЯ, А НЕ ИЗ СВОЕГО ЦЕНТРА (жалоба
+                 владельца 13.08: выпадающие списки «плавают в маленьком
+                 окошке»). Ширина у панели и так равна полю, и стоит она
+                 вплотную — но появлялась масштабом от центра, то есть верхний
+                 край сначала уезжал ВНИЗ от поля, а потом возвращался. Полкадра
+                 «оторванного прямоугольника» хватало, чтобы связь не читалась.
+                 Теперь панель растёт из того самого края, которым касается
+                 поля, и сдвига в позе нет вовсе — он бы этот край и таскал.
+                 Тот же закон, что у контекстного меню (feedback/Menu.jsx). */
+              transformOrigin: panelPos.origin,
+              "--layer-pose": "scaleY(0.9)",
               maxHeight: 292,
               overflowY: "auto",
               /* overflow-y:auto переводит overflow-x из visible в auto — без
@@ -212,7 +233,11 @@ export function Select({ items = [], value, onChange, ariaLabel, width = 220, di
                     alignItems: "center",
                     gap: "var(--sp-3)",
                     width: "100%",
-                    minHeight: 40,
+                    /* 36, а не 40: список опций и список команд (Menu, 32)
+                       читаются одним и тем же движением глаза, и разница в 8 px
+                       между ними видна как разнобой. Ниже 32 у опции нельзя —
+                       у неё бывает иконка и галочка по краям. */
+                    minHeight: 36,
                     padding: "0 var(--sp-3)",
                     border: "none",
                     borderRadius: "var(--r-sm)",

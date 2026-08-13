@@ -62,6 +62,18 @@ function usedIconNames() {
         for (const map of src.matchAll(/\b[A-Z][A-Z0-9_]*ICONS?[A-Z0-9_]*\b[^={]*=\s*\{([^}]*)\}/g)) {
           for (const lit of map[1].matchAll(/:\s*"([a-z][a-z0-9]*(?:-[a-z0-9]+)*)"/g)) names.add(lit[1]);
         }
+        // ⚠️ ТОСТЫ: `showToast(t("toast.radio.continuing"), "radio")`. Имя
+        // иконки здесь — ВТОРОЙ АРГУМЕНТ, слова `icon` рядом нет, и обход выше
+        // такие вызовы не видит в принципе. Поймано 13.08: чистка меню трека
+        // сняла последний `icon: "radio"`, и сторож объявил строку `radio`
+        // лишней — хотя её по-прежнему рисует тост «продолжаем похожими»
+        // (бесконечное радио живёт своей настройкой и от меню не зависит).
+        // Удали мы строку по такому «сироте» — тост получил бы пустой квадрат.
+        // Ключи переводов в первый аргумент не мешают: в них есть точки, а
+        // литерал ниже их не допускает.
+        for (const m of src.matchAll(/\b(?:showToast|onNotify|notify)\(([^;\n]{0,200})/g)) {
+          for (const lit of m[1].matchAll(/"([a-z][a-z0-9]*(?:-[a-z0-9]+)*)"/g)) names.add(lit[1]);
+        }
       }
     }
   };
@@ -77,7 +89,10 @@ function usedIconNames() {
  *  настоящее имя после этой правки уже нельзя. */
 const IGNORED = new Set([
   "sm", "lg", "md", "xs", "primary", "secondary", "ghost", "danger", "auto", "none", "relative",
-  "asc", "ascending", "descending", "checking", "installing", "one", "toggle", "tab", "surface",
+  "asc", "ascending", "descending", "checking", "installing", "toggle", "tab", "surface",
+  // режимы повтора из ПЕРВОГО аргумента showToast (иконка там — второй):
+  // showToast(next === "off" ? … : next === "all" ? … : …, "repeat")
+  "one", "all", "off",
   "ok", "bad", "eval", "require", "string", "json", "png", "zip", "src", "y", "ru",
   "muzaplugin", "yt-dlp", "namespace", "aria-label", "aria-sort", "mobile-web-app-capable",
   "track", "library", "stats", "files", "folder", "next", "prev", "close",

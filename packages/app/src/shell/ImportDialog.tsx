@@ -106,6 +106,8 @@ export function ImportDialog({
     <Dialog
       open={open}
       title={report ? t("dialogs.importPlaylist.titleDone") : t("dialogs.importPlaylist.title")}
+      icon={report ? "check" : "import"}
+      closeLabel={t("dialogs.close")}
       onClose={close}
       actions={
         report ? (

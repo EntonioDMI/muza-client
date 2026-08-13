@@ -91,23 +91,31 @@ function item(items: MenuItem[], label: string) {
 describe("buildMenuItems: каталожный трек", () => {
   it("базовый набор поиска: очередь-действия первыми, без «Заменить версию» и jam", () => {
     const items = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx(), t);
+    // ⚠️ ЧИСТКА 13.08: «Радио по треку», «Поделиться» и «Сохранить офлайн» из
+    // набора убраны решением владельца (обоснование каждого — в шапке
+    // packages/app/src/shell/menuActions.ts). Набор стережём равенством, а не
+    // включением, именно ради таких правок: вернувшийся пункт уронит тест.
     expect(labels(items)).toEqual([
       "menu.catalog.playNext",
       "menu.catalog.queue",
-      "menu.catalog.radio",
       "menu.addToPlaylist",
       "menu.catalog.like",
-      "menu.catalog.share",
       "menu.catalog.versions",
-      "menu.catalog.saveOffline",
     ]);
+  });
+
+  it("снятые 13.08 пункты не возвращаются: радио, поделиться, сохранить офлайн", () => {
+    const items = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx(), t);
+    expect(labels(items)).not.toContain("menu.catalog.radio");
+    expect(labels(items)).not.toContain("menu.catalog.share");
+    expect(labels(items)).not.toContain("menu.catalog.saveOffline");
   });
 
   it("плеер-бар (place=player): без «Играть следующим»/«В очередь» — трек уже играет", () => {
     const items = buildMenuItems({ kind: "track", track, place: "player" }, makeCtx(), t);
     expect(labels(items)).not.toContain("menu.catalog.playNext");
     expect(labels(items)).not.toContain("menu.catalog.queue");
-    expect(labels(items)).toContain("menu.catalog.radio");
+    expect(labels(items)).toContain("menu.addToPlaylist"); // общий набор доехал
   });
 
   it("из Любимого добавляется «Заменить версию»", () => {
@@ -128,9 +136,19 @@ describe("buildMenuItems: каталожный трек", () => {
     expect(labels(host)).not.toContain("menu.catalog.addToJam");
   });
 
-  it("закреплённый оффлайн трек — пункт меняется на «Убрать»", () => {
+  /** ⚠️ ВХОДА В ОФЛАЙН В МЕНЮ БОЛЬШЕ НЕТ, А ВЫХОД ОСТАЛСЯ (13.08). Пункт
+   *  «Сохранить офлайн» снят решением владельца, но «Убрать из офлайна»
+   *  показывается уже сохранённым трекам: экрана со списком сохранённого в
+   *  продукте нет, и без этого пункта снять пин было бы неоткуда. */
+  it("закреплённый оффлайн трек — виден «Убрать из офлайна»", () => {
     const items = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx({ isPinned: () => true }), t);
     expect(labels(items)).toContain("menu.catalog.removeOffline");
+    expect(labels(items)).not.toContain("menu.catalog.saveOffline");
+  });
+
+  it("НЕ закреплённый трек не получает ни того, ни другого", () => {
+    const items = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx({ isPinned: () => false }), t);
+    expect(labels(items)).not.toContain("menu.catalog.removeOffline");
     expect(labels(items)).not.toContain("menu.catalog.saveOffline");
   });
 
@@ -165,7 +183,7 @@ describe("buildMenuItems: трек в плейлисте (ctl)", () => {
   it("владелец: общий набор + перестановка, иконка, правка состава за разделителем", () => {
     const items = buildMenuItems({ kind: "track", track, place: "playlist", ctl: ctl() }, makeCtx(), t);
     const ls = labels(items);
-    expect(ls).toContain("menu.catalog.radio"); // общий набор доехал
+    expect(ls).toContain("menu.addToPlaylist"); // общий набор доехал
     const tail = ls.slice(ls.indexOf("-"));
     expect(tail).toEqual([
       "-",
@@ -242,7 +260,12 @@ describe("buildMenuItems: плейлист", () => {
       "menu.playlist.playNext",
       "menu.playlist.queue",
       "-",
-      "menu.catalog.share",
+      // ⚠️ «Поделиться» снято 13.08 той же правкой, что у трека: пункт отдавал
+      // КАРТИНКУ плейлиста. Настоящая раздача доступа (ShareVisibilityDialog,
+      // лесенка private → код → public) живёт на странице плейлиста и цела.
+      // «Сохранить офлайн» у ПЛЕЙЛИСТА, наоборот, оставлено: довод владельца
+      // про перетаскивание на рабочий стол работает для трека, а не для
+      // альбома целиком.
       "menu.catalog.saveOffline",
       "menu.playlist.pin",
       "menu.playlist.rename",

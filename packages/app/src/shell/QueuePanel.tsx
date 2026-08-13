@@ -4,6 +4,22 @@
  *  «Сохранить как плейлист», «К текущему». Фокус при открытии — в панель, при
  *  закрытии вызыватель возвращает его на кнопку очереди.
  *
+ *  ── ПЕРЕДЕЛКА 2026-08-13 (жалоба владельца: «в очереди всё запутано и
+ *  смешано») ──────────────────────────────────────────────────────────────
+ *  Четыре причины путаницы, все сняты; подробности — у мест, где они сняты:
+ *   1. История пряталась под раскрывашку → список открывался с середины, и
+ *      «Далее» начиналось с номера 6. Теперь ОДИН НЕПРЕРЫВНЫЙ СПИСОК.
+ *   2. Номер был абсолютным индексом в массиве → у хвоста он теперь
+ *      ОТНОСИТЕЛЬНЫЙ («через сколько играет»), у истории его нет.
+ *   3. Ряд ПЕРЕКЛАДЫВАЛСЯ под курсором: длительность исчезала, на её место
+ *      вставали кнопки другой ширины → колонка действий фиксирована (ACTIONS_W).
+ *   4. «Сейчас играет» красился очередной серой плёнкой и терялся среди
+ *      наведения → красится акцентом, сыгранное приглушено.
+ *  Разделители стали ЛИПКИМИ: у сплошного списка это единственный способ
+ *  всегда знать, в какой его части ты находишься.
+ *  ⚠️ Ключи dialogs.queue.collapse / showCount осиротели вместе с раскрывашкой —
+ *  в словарях оставлены, чистка словарей идёт отдельной волной.
+ *
  *  ⚠️ ЗАКРЫТАЯ ПАНЕЛЬ ЖИВЁТ В ДЕРЕВЕ ЕЩЁ ~180 мс (2026-08-05) — столько идёт
  *  уход (.muza-layer--panel). До этого узел снимался кадром, и ранний возврат
  *  null держал ТРИ вещи разом: вид, слушатель pointerdown «закрыть кликом
@@ -72,10 +88,21 @@ export interface QueueMenuPort {
   ctx: { current: { addManyToPlaylist: (tracks: Track[]) => void; likeMany: (ids: string[]) => void } };
 }
 
+/** Ширина правой колонки ряда. ОДНО ЧИСЛО НА ДВА СОДЕРЖИМЫХ — и это несущая
+ *  деталь, а не подгонка: в покое здесь стоит длительность, под курсором — до
+ *  трёх кнопок, и колонка обязана быть одинаковой в обоих состояниях. До
+ *  13.08 её не было вовсе: длительность ИСЧЕЗАЛА и на её место вставал блок
+ *  кнопок другой ширины, поэтому ряд перекладывался под курсором — название
+ *  дёргалось, цифры пропадали. Это и был главный источник «в очереди всё
+ *  запутано и смешано»: список менял форму от одного движения мышью.
+ *  84 = три кнопки по 26 + два зазора по 3. */
+const ACTIONS_W = 84;
+
 function QueueRow<T extends QueueTrack>({
   track,
   position,
   current,
+  played,
   playing,
   onPlay,
   onRemove,
@@ -86,8 +113,11 @@ function QueueRow<T extends QueueTrack>({
   onClickCapture,
 }: {
   track: T;
-  position: number;
+  /** Номер В ХВОСТЕ («через сколько играет»); null — номера у ряда нет. */
+  position: number | null;
   current: boolean;
+  /** Ряд уже отзвучал: приглушается целиком (см. комментарий о dim ниже). */
+  played: boolean;
   playing: boolean;
   onPlay: () => void;
   onRemove?: () => void;
@@ -104,7 +134,7 @@ function QueueRow<T extends QueueTrack>({
   const [hover, setHover] = useState(false);
   const [focused, setFocused] = useState(false);
   // кнопки видимы при наведении И при клавиатурном фокусе внутри ряда
-  const showActions = hover || focused;
+  const showActions = (hover || focused) && (onMoveUp || onMoveDown || onRemove);
   return (
     <div
       onMouseEnter={() => setHover(true)}
@@ -116,15 +146,31 @@ function QueueRow<T extends QueueTrack>({
       onContextMenu={onMenu}
       onClickCapture={onClickCapture}
       aria-selected={selected || undefined}
+      data-queue-row
       style={{
         display: "flex",
         alignItems: "center",
         gap: "var(--sp-2)",
         padding: "var(--sp-2)",
         borderRadius: "var(--r-sm)",
-        // выделение сильнее «текущего» — как в TrackRow ДС
-        background: selected ? "var(--surface-4)" : current ? "var(--surface-3)" : hover ? "var(--surface-2)" : "transparent",
-        transition: "background var(--dur-state) var(--ease-standard)",
+        // ТЕКУЩИЙ — АКЦЕНТОМ, а не очередной серой плёнкой. Плёнки элевации
+        // (surface-2/3/4) отличаются друг от друга на 3 % альфы: «сейчас
+        // играет» тонул среди наведения и выделения, и найти себя в списке
+        // глазом было нельзя — приходилось искать синий текст. Выделение
+        // по-прежнему сильнее (surface-4): это временное состояние поверх.
+        background: selected
+          ? "var(--surface-4)"
+          : current
+            ? "var(--accent-soft)"
+            : hover
+              ? "var(--surface-2)"
+              : "transparent",
+        // СЫГРАННОЕ ПРИГЛУШЕНО ЦЕЛИКОМ (обложка тоже). Разделители подписаны
+        // словами, но глаз читает список раньше, чем подписи: разница в
+        // плотности сразу говорит, где «было», а где «будет», и одна прокрутка
+        // мимо ярлыка больше не сбивает.
+        opacity: played && !selected ? 0.45 : 1,
+        transition: "background var(--dur-state) var(--ease-standard), opacity var(--dur-state) var(--ease-standard)",
       }}
       data-queue-current={current || undefined}
     >
@@ -145,16 +191,31 @@ function QueueRow<T extends QueueTrack>({
           textAlign: "left",
         }}
       >
-        <span style={{ width: 22, flex: "none", textAlign: "right", fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+        {/* НОМЕР ТОЛЬКО У ХВОСТА И ТОЛЬКО ОТНОСИТЕЛЬНЫЙ (1, 2, 3 = «через
+            сколько»). Раньше здесь стоял АБСОЛЮТНЫЙ номер в очереди, и при
+            свёрнутой истории список «Далее» начинался с шестёрки — человек
+            видел пять несуществующих треков перед первым. Номер в очереди
+            отвечает на «когда заиграет», а не «какой он по счёту в массиве».
+            У истории номера нет вовсе: «минус третий» — не число, а шум. */}
+        <span
+          style={{
+            width: 20,
+            flex: "none",
+            textAlign: "right",
+            fontSize: "var(--fs-caption)",
+            color: "var(--text-3)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {current ? <Icon name={playing ? "volume-2" : "pause"} size={14} color="var(--accent-text)" /> : position}
         </span>
-        <Cover src={track.cover} size={36} />
+        <Cover src={track.cover} size={34} />
         <span style={{ minWidth: 0, flex: 1 }}>
           <span
             style={{
               display: "block",
               fontSize: "var(--fs-body)",
-              fontWeight: 400,
+              fontWeight: current ? "var(--fw-medium)" : 400,
               color: current ? "var(--accent-text)" : "var(--text-1)",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -168,24 +229,71 @@ function QueueRow<T extends QueueTrack>({
           </span>
         </span>
       </button>
-      {showActions && (onMoveUp || onMoveDown || onRemove) ? (
-        <span style={{ display: "flex", gap: 2, flex: "none" }}>
-          {onMoveUp ? <IconButton icon="chevron-up" size="sm" label={t("dialogs.queue.moveUp")} onClick={onMoveUp} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
-          {onMoveDown ? <IconButton icon="chevron-down" size="sm" label={t("dialogs.queue.moveDown")} onClick={onMoveDown} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
-          {onRemove ? <IconButton icon="x" size="sm" label={t("dialogs.queue.remove")} onClick={onRemove} style={{ width: 28, height: 28 }} iconSize={15} /> : null}
-        </span>
-      ) : (
-        <span style={{ flex: "none", fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
-          {fmtTime(track.duration)}
-        </span>
-      )}
+      {/* Правая колонка ФИКСИРОВАННОЙ ширины (см. ACTIONS_W): длительность и
+          кнопки сменяют друг друга, ряд при этом не шевелится. */}
+      <span
+        style={{
+          flex: "none",
+          width: ACTIONS_W,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 3,
+        }}
+      >
+        {showActions ? (
+          <>
+            {onMoveUp ? <IconButton icon="chevron-up" size="sm" label={t("dialogs.queue.moveUp")} onClick={onMoveUp} style={{ width: 26, height: 26 }} iconSize={15} /> : null}
+            {onMoveDown ? <IconButton icon="chevron-down" size="sm" label={t("dialogs.queue.moveDown")} onClick={onMoveDown} style={{ width: 26, height: 26 }} iconSize={15} /> : null}
+            {onRemove ? <IconButton icon="x" size="sm" label={t("dialogs.queue.remove")} onClick={onRemove} style={{ width: 26, height: 26 }} iconSize={15} /> : null}
+          </>
+        ) : (
+          <span style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+            {fmtTime(track.duration)}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
 
+/** Разделитель непрерывного списка. ЛИПКИЙ (position: sticky) — и это его
+ *  главное свойство, а не украшение: список теперь один сплошной, от сыгранного
+ *  до хвоста, и без липкой подписи, прокрутив её мимо, человек не знает, в
+ *  какой части очереди находится. Липкая подпись отвечает на это всегда. */
 function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--sp-2) var(--sp-2) 0" }}>
+    <div
+      style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "var(--sp-2)",
+        padding: "var(--sp-2) var(--sp-2) var(--sp-1)",
+        // ⚠️ ТРИ СЛОЯ ОДНОГО И ТОГО ЖЕ МАТЕРИАЛА, А НЕ ОДИН. Материал панели
+        // полупрозрачен (0.64 по умолчанию) — с одним слоем сквозь липкую
+        // подпись ПРОЕЗЖАЛИ строки, и она читалась как наложенный поверх текста
+        // мусор (поймано скриншотом сразу после правки). Три слоя складываются
+        // композитором: 1−0.36³ ≈ 0.95, то есть почти глухо. Глухой --bg-1
+        // взять нельзя: плотность стекла крутит пользователь, и подпись обязана
+        // ехать вместе с панелью, а не жить своей жизнью.
+        //
+        // ⚠️ ВЕРХНИЕ СЛОИ — linear-gradient, А НЕ ЦВЕТ, И ЭТО НЕ УКРАШАТЕЛЬСТВО.
+        // В сокращении `background` цвет допустим ТОЛЬКО в последнем слое:
+        // запись «цвет, цвет, цвет» невалидна, и браузер выбрасывает объявление
+        // целиком — подпись осталась вообще без фона, хуже, чем была (поймано
+        // вторым скриншотом). Градиент из одного цвета в себя же — законный
+        // <image> и красит ровно тем же тоном.
+        background: [
+          "linear-gradient(var(--glass-player, var(--glass-panel)), var(--glass-player, var(--glass-panel)))",
+          "linear-gradient(var(--glass-player, var(--glass-panel)), var(--glass-player, var(--glass-panel)))",
+          "var(--glass-player, var(--glass-panel))",
+        ].join(", "),
+      }}
+    >
       <span
         style={{
           fontSize: "var(--fs-caption)",
@@ -248,7 +356,6 @@ export function QueuePanel<T extends QueueTrack>({
   const { t } = useT();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
   // Свой ref отдаём хуку: он нужен и для фокуса, и для contains() в закрытии
   // кликом мимо, и для querySelector по списку — двух ref'ов на узле не будет.
   const { mounted, layerProps } = useLayerState(open, { ref: panelRef });
@@ -372,8 +479,13 @@ export function QueuePanel<T extends QueueTrack>({
         position: "absolute",
         right: "var(--gap-zone)",
         bottom: "var(--pad-under-bar, calc(var(--h-playerbar) + 2 * var(--gap-zone)))",
-        width: 380,
-        maxHeight: 460,
+        // 420, а не 380 (13.08): у ряда появилась постоянная колонка действий
+        // (ACTIONS_W), и на прежней ширине названия резались там, где резаться
+        // было незачем. Ряд теперь не перекладывается — за это платим 40 px.
+        width: 420,
+        // 560, а не 460: список стал сплошным (история больше не свёрнута), и
+        // низкое окно превращало его в щель на три строки.
+        maxHeight: 560,
         borderRadius: "var(--r-lg)",
         // очередь визуально принадлежит плееру — то же зональное стекло
         background: "var(--glass-player, var(--glass-panel))",
@@ -435,36 +547,34 @@ export function QueuePanel<T extends QueueTrack>({
           ref={listRef}
           style={{ overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", gap: 2 }}
         >
+          {/* ОДИН НЕПРЕРЫВНЫЙ СПИСОК: сыгранное → сейчас → дальше. Раскрывашки
+              «Показать (4)» больше нет.
+              Почему её убрали. История была спрятана ПО УМОЛЧАНИЮ, и очередь
+              открывалась с середины: сверху ярлык «ИСТОРИЯ · Показать (4)»,
+              под ним «СЕЙЧАС», под ним «ДАЛЕЕ», начинающееся с номера 6. Три
+              ярлыка на шесть видимых строк, обрыв контекста сверху и нумерация
+              от несуществующего начала — вот это и была «путаница». Прошлое
+              никуда не девается: за ним не надо ходить, к нему надо
+              прокрутить. Открытие по-прежнему центрирует текущий трек
+              (scrollToCurrent), так что первым кадром человек видит своё место,
+              а история лежит ровно там, где ей положено, — выше. */}
           {history.length > 0 ? (
             <>
-              <SectionLabel
-                action={
-                  <button
-                    type="button"
-                    onClick={() => setHistoryOpen((v) => !v)}
-                    style={{ border: "none", background: "none", color: "var(--text-3)", fontSize: "var(--fs-caption)", cursor: "pointer", padding: 0 }}
-                  >
-                    {historyOpen ? t("dialogs.queue.collapse") : t("dialogs.queue.showCount", { count: history.length })}
-                  </button>
-                }
-              >
-                {t("dialogs.queue.history")}
-              </SectionLabel>
-              {historyOpen
-                ? history.map((tr, i) => (
-                    <QueueRow
-                      key={`${tr.id}:${i}`}
-                      track={tr}
-                      position={i + 1}
-                      current={false}
-                      playing={false}
-                      onPlay={() => onPlayTrack(tr.id)}
-                      onRemove={onRemove ? () => onRemove(tr.id) : undefined}
-                      onMenu={rowMenu(tr, i)}
-                      {...rowSelection(tr)}
-                    />
-                  ))
-                : null}
+              <SectionLabel>{t("dialogs.queue.history")}</SectionLabel>
+              {history.map((tr, i) => (
+                <QueueRow
+                  key={`${tr.id}:${i}`}
+                  track={tr}
+                  position={null}
+                  current={false}
+                  played
+                  playing={false}
+                  onPlay={() => onPlayTrack(tr.id)}
+                  onRemove={onRemove ? () => onRemove(tr.id) : undefined}
+                  onMenu={rowMenu(tr, i)}
+                  {...rowSelection(tr)}
+                />
+              ))}
             </>
           ) : null}
 
@@ -473,8 +583,9 @@ export function QueuePanel<T extends QueueTrack>({
               <SectionLabel>{t("dialogs.queue.nowSection")}</SectionLabel>
               <QueueRow
                 track={current}
-                position={currentIndex + 1}
+                position={null}
                 current
+                played={false}
                 playing={playing}
                 onPlay={() => onPlayTrack(current.id)}
                 onRemove={onRemove ? () => onRemove(current.id) : undefined}
@@ -505,8 +616,9 @@ export function QueuePanel<T extends QueueTrack>({
                 <QueueRow
                   key={`${tr.id}:${currentIndex + 1 + i}`}
                   track={tr}
-                  position={currentIndex + 2 + i}
+                  position={i + 1}
                   current={false}
+                  played={false}
                   playing={false}
                   onPlay={() => onPlayTrack(tr.id)}
                   onRemove={onRemove ? () => onRemove(tr.id) : undefined}

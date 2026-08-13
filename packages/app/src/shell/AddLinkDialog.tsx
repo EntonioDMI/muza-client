@@ -48,6 +48,8 @@ export function AddLinkDialog({
     <Dialog
       open={open}
       title={t("dialogs.addLink.title")}
+      icon="link"
+      closeLabel={t("dialogs.close")}
       onClose={() => {
         if (!busy) onClose();
       }}

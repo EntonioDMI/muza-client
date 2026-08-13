@@ -60,6 +60,8 @@ export function JoinPlaylistDialog({
     <Dialog
       open={open}
       title={t("dialogs.joinPlaylist.title")}
+      icon="key-round"
+      closeLabel={t("dialogs.close")}
       onClose={close}
       actions={
         <>

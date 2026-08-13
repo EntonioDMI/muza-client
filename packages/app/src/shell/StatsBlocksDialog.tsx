@@ -112,6 +112,8 @@ export function StatsBlocksDialog({
     <Dialog
       open={open}
       title={t("settings.stats.blocksGroup")}
+      icon="chart-line"
+      closeLabel={t("dialogs.close")}
       width={520}
       onClose={onClose}
       actions={<Button onClick={onClose}>{t("common.ok")}</Button>}

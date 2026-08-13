@@ -91,6 +91,8 @@ export function ReplaceVersionDialog({
     <Dialog
       open={ctx !== null}
       title={ctx ? t("dialogs.replaceVersion.titleWithTrack", { title: ctx.track.title }) : t("menu.catalog.replaceVersion")}
+      icon="refresh-cw"
+      closeLabel={t("dialogs.close")}
       onClose={onClose}
       width={520}
       actions={

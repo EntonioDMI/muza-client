@@ -90,8 +90,9 @@ describe("ContextMenu — транспорт", () => {
     // fireEvent возвращает false, если внутри был preventDefault
     expect(fireEvent.contextMenu(screen.getByTestId("row"), { clientX: 40, clientY: 50 })).toBe(false);
     expect(screen.getByRole("menu")).toBeTruthy();
-    // базовый набор каталожного трека вне Любимого: 8 пунктов (см. menuActions.test.ts)
-    expect(screen.getAllByRole("menuitem")).toHaveLength(8);
+    // базовый набор каталожного трека вне Любимого: 5 пунктов (было 8 —
+    // чистка 13.08 сняла радио/поделиться/офлайн; см. menuActions.test.ts)
+    expect(screen.getAllByRole("menuitem")).toHaveLength(5);
   });
 
   it("клик по пункту зовёт действие и закрывает меню", () => {
@@ -120,9 +121,9 @@ describe("ContextMenu — транспорт", () => {
     act(() => {
       apiRef.current?.openMenu({ clientX: 10, clientY: 10, ...ctx }, { kind: "playlist", id: "pl1", name: "P" });
     });
-    // владелец: открыть/играть/следующим/в очередь/поделиться/оффлайн/
-    // закрепить (2026-07-20)/переименовать/иконка/удалить = 10 пунктов
-    // (разделители — не menuitem)
-    expect(screen.getAllByRole("menuitem")).toHaveLength(10);
+    // владелец: открыть/играть/следующим/в очередь/оффлайн/закрепить
+    // (2026-07-20)/переименовать/иконка/удалить = 9 пунктов (разделители — не
+    // menuitem). Было 10: «Поделиться» снято 13.08 — оно отдавало картинку.
+    expect(screen.getAllByRole("menuitem")).toHaveLength(9);
   });
 });

@@ -108,12 +108,14 @@ export function ShareDialog({
     <Dialog
       open={data !== null}
       title={t("menu.catalog.share")}
+      icon="share-2"
+      closeLabel={t("dialogs.close")}
       onClose={onClose}
-      actions={
-        <Button variant="ghost" onClick={onClose}>
-          {t("dialogs.close")}
-        </Button>
-      }
+      /* Подвала здесь больше нет (13.08). Единственной кнопкой в нём было
+         «Закрыть» — ровно то же, что крестик, появившийся в шапке, только на
+         два сантиметра ниже и с полосой-разделителем над ним. Настоящие
+         действия диалога («Скопировать картинку», «Сохранить PNG»,
+         «Скопировать текст») и так живут в теле, рядом с предпросмотром. */
     >
       <div ref={rootRef} style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", width: 380 }}>
         <div

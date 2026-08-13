@@ -99,9 +99,12 @@ function MenuSlider({ icon, label, value, min, max, step = 1, format, onChange, 
         position: "relative",
         display: "flex",
         alignItems: "center",
-        gap: "var(--sp-3)",
-        minHeight: 42,
-        padding: "var(--sp-2) var(--sp-3)",
+        gap: 10,
+        /* Чуть выше обычного пункта (32) и это НАМЕРЕННО: ряд не нажимают, а
+           тянут, и по 36 промахнуться труднее. Разницу в 4 px глаз в ритме
+           меню не ловит, а рука ловит. */
+        minHeight: 36,
+        padding: "5px var(--sp-3)",
         borderRadius: "var(--r-xs)",
         color: active ? "var(--text-1)" : "var(--text-2)",
         fontFamily: "var(--font-ui)",
@@ -127,7 +130,7 @@ function MenuSlider({ icon, label, value, min, max, step = 1, format, onChange, 
           pointerEvents: "none",
         }}
       ></div>
-      {icon ? <Icon name={icon} size={18} style={{ position: "relative" }} /> : null}
+      {icon ? <Icon name={icon} size={16} style={{ position: "relative" }} /> : null}
       <span style={{ position: "relative" }}>{label}</span>
       <span
         style={{
@@ -152,7 +155,8 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
   // Хук берёт НАШ ref: тот же узел меряется на переворот и обходится стрелками.
   const { mounted, layerProps } = useLayerState(open, { ref: panelRef });
   const closing = mounted && !open;
-  const [pos, setPos] = useState({ left: x, top: y, maxH: undefined });
+  // origin — УГОЛ ПАНЕЛИ, СОВПАВШИЙ С КУРСОРОМ (см. «РАСТЁТ ИЗ КУРСОРА» ниже).
+  const [pos, setPos] = useState({ left: x, top: y, maxH: undefined, origin: "left top" });
 
   // x/y приходят в ЭКРАННЫХ пикселях (clientX ПКМ), а панель внутри
   // зумленного корня (prefs.uiScale) позиционируется в зум-единицах — делим
@@ -173,25 +177,56 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
     //
     // Было: sy = max(8, min(y, innerHeight - h - 8)). У min верхняя граница НЕ
     // зависит от y, поэтому все клики ниже порога давали РОВНО одну точку.
-    // Цифры: ряд меню 58px (minHeight 42 + по 8 полей, border-box в дереве не
-    // объявлен), меню плейлиста — 10 пунктов и 2 разделителя = 636px. В окне
-    // 900px граница = 900 − 636 − 8 = 256px: любой правый клик ниже четверти
-    // окна открывал панель в одном и том же месте.
+    // Цифры на момент разбора (ряд был 58px: minHeight 42 + по 8 полей,
+    // border-box в дереве не объявлен): меню плейлиста — 10 пунктов и 2
+    // разделителя = 636px. В окне 900px граница = 900 − 636 − 8 = 256px: любой
+    // правый клик ниже четверти окна открывал панель в одном и том же месте.
+    // ⚠️ 13.08 ряд ужат до 32+10 = 42px, и то же меню стало ~440px — ошибка
+    // проявлялась бы реже, но НЕ исчезла: у min() верхняя граница по-прежнему
+    // не зависит от y. Переворот ниже держится не на этих цифрах.
     //
     // Теперь как у соседей по пакету (Select.jsx:36, ColorPicker.jsx:413): не
     // влезает вниз — открываем ВВЕРХ от точки, и только если не влезает ни
     // туда, ни туда, прижимаем. Финальный Math.max обязателен на обеих осях:
     // без него клик в двух пикселях от кромки ставит панель вплотную к ней.
     let sy = y;
-    if (y + h > window.innerHeight - M) sy = y - h >= M ? y - h : window.innerHeight - h - M;
+    let flipY = false;
+    if (y + h > window.innerHeight - M) {
+      flipY = y - h >= M;
+      sy = flipY ? y - h : window.innerHeight - h - M;
+    }
     sy = Math.max(M, sy);
     let sx = x;
-    if (x + w > window.innerWidth - M) sx = x - w >= M ? x - w : window.innerWidth - w - M;
+    let flipX = false;
+    if (x + w > window.innerWidth - M) {
+      flipX = x - w >= M;
+      sx = flipX ? x - w : window.innerWidth - w - M;
+    }
     sx = Math.max(M, sx);
     // ПОТОЛОК ВЫСОТЫ. Меню выше окна не помещалось НИКАК: прижим ставил верх в
     // 8px, а хвост списка (включая «Удалить») висел ниже кромки и мышью был
     // недостижим. Клавиатура не спасала — фокус ставится с preventScroll.
-    setPos({ left: sx / z, top: sy / z, maxH: (window.innerHeight - 2 * M) / z });
+    // РАСТЁТ ИЗ КУРСОРА, А НЕ ИЗ СВОЕГО ЦЕНТРА (жалоба владельца 13.08: «меню
+    // плавает в маленьком окошке», «оторванный прямоугольник»).
+    //
+    // Позиция у панели была правильная и раньше: её угол ставился ровно в точку
+    // клика. Читалось всё равно как «прямоугольник, упавший на экран» — потому
+    // что появлялась она масштабом ОТ СВОЕГО ЦЕНТРА (transform-origin по
+    // умолчанию). Глаз связывает всплывающий слой с источником по тому, ОТКУДА
+    // он разворачивается, а не по тому, где потом лежит: центр панели от курсора
+    // в 100+ px, и связь рвалась на первом же кадре.
+    //
+    // Здесь origin ставится в ТОТ САМЫЙ угол, который совпал с курсором. Углов
+    // четыре, потому что кламп умеет переворачивать панель по обеим осям: ушла
+    // вверх — курсор у её НИЗА, ушла влево — у её ПРАВОГО края. Прижатую к
+    // кромке панель (flip не влез) считаем неперевёрнутой: её угол уже не в
+    // курсоре, и врать про origin смысла нет — там связь держит близость.
+    setPos({
+      left: sx / z,
+      top: sy / z,
+      maxH: (window.innerHeight - 2 * M) / z,
+      origin: `${flipX ? "right" : "left"} ${flipY ? "bottom" : "top"}`,
+    });
     // items в deps (аудит 22.07): пункты могут долиться АСИНХРОННО после
     // открытия («Куда играть» ждёт listOutputDevices) — панель расширяется, и
     // посчитанный по узкой панели кламп оставлял её обрезанной краем экрана.
@@ -273,6 +308,13 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           position: "absolute",
           left: pos.left,
           top: pos.top,
+          // Разворот из курсора: origin — угол, совпавший с точкой ПКМ (разбор
+          // в useLayoutEffect выше), поза — ЧИСТЫЙ масштаб без сдвига. Сдвиг
+          // здесь был бы вредом: он таскает тот самый угол, которым панель
+          // держится за курсор, и связь снова рвётся. 0.94, а не 0.8: из «почти
+          // ничего» слой читается как выпрыгнувший, а не как развернувшийся.
+          transformOrigin: pos.origin,
+          "--layer-pose": "scale(0.94)",
           minWidth: 220,
           /* max-content: у края экрана shrink-to-fit сжимал панель до щели и
              метки переносились в фикс-высоте рядов, наезжая друг на друга
@@ -302,13 +344,13 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
           it !== "-" && it.slider !== undefined ? (
             <MenuSlider key={i} {...it.slider} hovered={hoverIdx === i} onHover={(on) => setHoverIdx(on ? i : null)} />
           ) : it === "-" ? (
-            <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--hairline)", margin: "var(--sp-1) var(--sp-2)" }}></div>
+            <div key={i} aria-hidden="true" style={{ height: 1, flex: "none", background: "var(--hairline)", margin: "5px var(--sp-3)" }}></div>
           ) : it.header !== undefined ? (
             <div
               key={i}
               role="presentation"
               style={{
-                padding: "var(--sp-2) var(--sp-3) var(--sp-1)",
+                padding: "var(--sp-2) var(--sp-3) 5px",
                 fontSize: "var(--fs-caption)",
                 fontWeight: "var(--fw-semibold)",
                 color: "var(--text-3)",
@@ -333,15 +375,31 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "var(--sp-3)",
+                gap: 10,
                 /* min-height, не height: многострочная метка растит ряд, а не
-                   вылезает на соседей (аудит 22.07) */
-                minHeight: 42,
+                   вылезает на соседей (аудит 22.07).
+                   ⚠️ 32, А НЕ 42 (13.08). Ряд в 42 px — рост строки СПИСКА, а не
+                   пункта меню, и на нём меню плейлиста из 12 пунктов вырастало в
+                   плиту 500 px: половина экрана, накрытая стеклом. Именно эту
+                   плиту владелец и назвал «не нравится вид ПКМ». Пункт меню
+                   читают одним взглядом сверху вниз, ему нужен ритм строки, а не
+                   площадь кнопки: те же 12 пунктов теперь укладываются в ~400.
+                   Ниже 32 не опускать — 28 уже мажут мышью по соседям. */
+                minHeight: 32,
                 lineHeight: 1.3,
-                padding: "var(--sp-2) var(--sp-3)",
+                padding: "5px var(--sp-3)",
                 border: "none",
                 borderRadius: "var(--r-xs)",
-                background: hoverIdx === i && !it.disabled ? "var(--surface-3)" : "transparent",
+                /* Опасный пункт подсвечивается СВОИМ тоном, а не общим: до
+                   13.08 «Удалить» под курсором заливался тем же surface-3, что
+                   «В плейлист», и красным оставался только текст. Подсветка —
+                   это ответ на «сейчас нажму», и она обязана нести то же
+                   предупреждение, что метка. */
+                background: hoverIdx === i && !it.disabled
+                  ? it.danger
+                    ? "color-mix(in srgb, var(--danger) 15%, transparent)"
+                    : "var(--surface-3)"
+                  : "transparent",
                 color: it.disabled ? "var(--text-3)" : it.danger ? "var(--danger)" : hoverIdx === i ? "var(--text-1)" : "var(--text-2)",
                 fontFamily: "var(--font-ui)",
                 fontSize: "var(--fs-body)",
@@ -351,7 +409,7 @@ export function Menu({ open, x = 0, y = 0, items = [], onClose }) {
                 transition: "background var(--dur-state) var(--ease-standard), color var(--dur-state) var(--ease-standard)",
               }}
             >
-              {it.icon ? <Icon name={it.icon} size={18} /> : null}
+              {it.icon ? <Icon name={it.icon} size={16} /> : null}
               {it.label}
               {it.hint !== undefined ? (
                 <span style={{ marginLeft: "auto", paddingLeft: "var(--sp-3)", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{it.hint}</span>

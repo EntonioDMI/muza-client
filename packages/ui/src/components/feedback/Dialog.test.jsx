@@ -43,7 +43,11 @@ describe("Dialog", () => {
     opener.remove();
   });
 
-  it("зацикливает Tab внутри панели", () => {
+  /** ⚠️ ПЕРВЫЙ В ОБХОДЕ — КРЕСТИК ШАПКИ, А НЕ ПОЛЕ (13.08). Крестик появился
+   *  вместе с «лицом диалога» и стоит в разметке выше тела, поэтому цикл Tab
+   *  замыкается на него. Фокус ПРИ ОТКРЫТИИ по-прежнему уходит в поле — это
+   *  разные вещи, и первый тест файла стережёт именно её. */
+  it("зацикливает Tab внутри панели — на крестик шапки", () => {
     const { rerender } = render(<Harness open={false} />);
     rerender(<Harness open />);
 
@@ -51,7 +55,32 @@ describe("Dialog", () => {
     ok.focus();
     fireEvent.keyDown(ok, { key: "Tab" });
 
-    expect(document.activeElement).toBe(screen.getByLabelText("поле"));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+  });
+
+  it("крестик шапки закрывает диалог", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<Harness open={false} onClose={onClose} />);
+    rerender(<Harness open onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("showClose={false} убирает крестик — для подтверждений", () => {
+    const { rerender } = render(
+      <Dialog open={false} title="Заголовок" onClose={() => {}} showClose={false} actions={<button>ОК</button>}>
+        <input aria-label="поле" />
+      </Dialog>,
+    );
+    rerender(
+      <Dialog open title="Заголовок" onClose={() => {}} showClose={false} actions={<button>ОК</button>}>
+        <input aria-label="поле" />
+      </Dialog>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   });
 
   it("не закрывается, когда выделение текста началось в панели, а отпустили мимо", () => {

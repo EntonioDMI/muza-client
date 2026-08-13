@@ -94,6 +94,8 @@ export function VersionsDialog({
     <Dialog
       open={track !== null}
       title={track ? t("dialogs.versions.titleWithTrack", { title: track.title }) : t("menu.catalog.versions")}
+      icon="git-branch"
+      closeLabel={t("dialogs.close")}
       onClose={onClose}
       actions={
         <>

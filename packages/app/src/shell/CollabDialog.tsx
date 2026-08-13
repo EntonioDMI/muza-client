@@ -129,6 +129,8 @@ export function CollabDialog({
     <Dialog
       open={open}
       title={t("dialogs.collab.title")}
+      icon="users"
+      closeLabel={t("dialogs.close")}
       onClose={onClose}
       actions={
         isOwner ? (
