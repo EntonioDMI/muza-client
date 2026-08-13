@@ -3970,7 +3970,14 @@ fn soundcloud_warm_entry_with_lookup(
     now: SystemTime,
     lookup: &mut impl FnMut(&str, u16) -> LookupResult,
 ) -> Result<WarmEntry, String> {
-    if !content_length_ok(fmt.size) {
+    // ⚠️ РЕГРЕССИЯ 13.08, поймана живым замером владельца. Проверок лимита
+    // ДВЕ — здесь и в fetch_to_cache, — а сняв пробу размера, я починил только
+    // вторую. content_length_ok(0) = false, поэтому вся ступень 0 SoundCloud
+    // падала на ровном месте, клиент уходил в лестницу yt-dlp, и «клик → звук»
+    // вырос с 3.1 с до 6.9 с. Ноль здесь — «размер НЕИЗВЕСТЕН», а не «нулевой
+    // файл»; реальный лимит проверяется по заголовкам ответа и по счётчику
+    // записанных байт, оба ниже по пути.
+    if fmt.size > 0 && !content_length_ok(fmt.size) {
         return Err(format!("sc-размер вне лимита: {}", fmt.size));
     }
     if !valid_warm_ext(&fmt.ext) {
@@ -9416,6 +9423,43 @@ mod soundcloud_tests {
         assert_eq!(entry.expires_at, now + SOUNDCLOUD_WARM_TTL);
     }
 
+    /// ⚠️ СТОРОЖ ШВА (регрессия 13.08). Проверок лимита содержимого ДВЕ — эта
+    /// и в fetch_to_cache. Сняв пробу размера, я починил только вторую, и
+    /// content_length_ok(0)=false уронил всю ступень 0 SoundCloud: клиент
+    /// уходил в лестницу yt-dlp, «клик → звук» вырос с 3.1 с до 6.9 с. Дыра
+    /// пришлась ровно между двумя протестированными единицами — ни один
+    /// существующий тест её не видел. Ноль = «размер неизвестен», не «пустой
+    /// файл»; настоящий лимит проверяется по заголовкам ответа и счётчику байт.
+    #[test]
+    fn sc_warm_entry_accepts_unknown_size() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let fmt = SoundcloudFormat {
+            url: "https://cf-media.sndcdn.com/synthAAAA1111.128.mp3?Policy=P&Signature=S&Key-Pair-Id=K"
+                .into(),
+            size: 0, // ровно то, что отдаёт progressive-ветка с 13.08
+            ext: "mp3".into(),
+            segments: Vec::new(),
+        };
+        let entry = soundcloud_warm_entry_with_lookup(&fmt, now, &mut public_lookup)
+            .expect("неизвестный размер обязан проходить — иначе ступень 0 падает в лестницу");
+        assert_eq!(entry.size, 0);
+    }
+
+    /// А запредельный размер по-прежнему отвергается: снятие пробы не должно
+    /// было превратиться в снятие лимита.
+    #[test]
+    fn sc_warm_entry_still_rejects_oversized() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let fmt = SoundcloudFormat {
+            url: "https://cf-media.sndcdn.com/synthAAAA1111.128.mp3?Policy=P&Signature=S&Key-Pair-Id=K"
+                .into(),
+            size: MAX_YTDLP_OUTPUT_BYTES + 1,
+            ext: "mp3".into(),
+            segments: Vec::new(),
+        };
+        assert!(soundcloud_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err());
+    }
+
     /// Граница доверия warm-пути наследуется без ослаблений (https, без
     /// credentials, лимит 512 МиБ, грамматика ext).
     #[test]
@@ -9424,7 +9468,10 @@ mod soundcloud_tests {
         for (url, size, ext) in [
             ("http://cf-media.sndcdn.com/a.mp3", 100u64, "mp3"),
             ("https://user:pass@cf-media.sndcdn.com/a.mp3", 100, "mp3"),
-            ("https://cf-media.sndcdn.com/a.mp3", 0, "mp3"),
+            // ⚠️ size=0 отсюда УБРАН 13.08: с отменой пробы ноль означает
+            // «размер неизвестен», а не «битый формат», и отвергать его —
+            // ровно та регрессия, что уронила ступень 0 в лестницу. Отдельные
+            // сторожа на ноль и на превышение лимита стоят выше.
             ("https://cf-media.sndcdn.com/a.mp3", MAX_YTDLP_OUTPUT_BYTES + 1, "mp3"),
             ("https://cf-media.sndcdn.com/a.mp3", 100, "MP3."),
         ] {
