@@ -157,3 +157,41 @@ describe("декодер умер уже после старта", () => {
     engine.stop();
   });
 });
+
+/** Регресс 13.08: настройки, выставленные ДО первого трека, пропадали молча.
+ *
+ *  Тот же инвариант, что и у соседей по файлу («не оставлять человека в тишине
+ *  молча»), только с другой стороны: у высоты тона и характера темпа стояло
+ *  `if (!this.native) return;`. Флаг `native` поднимается ТОЛЬКО внутри play(),
+ *  а usePlayback доносит сохранённые значения сразу после создания движка —
+ *  то есть до первого трека, ровно в этот `return`.
+ *
+ *  Итог: высота из прошлой сессии и включённый в настройках WSOLA не доезжали
+ *  до Rust никогда. На экране «−2», в звуке ноль.
+ *
+ *  Адресат у команды есть всегда: `native_set_pitch`/`native_set_tempo_mode`
+ *  пишут значение в сессионное состояние Rust (`EngineState`), и каждый новый
+ *  трек забирает его сам. Проверяем именно это — команда ушла, хотя ни одного
+ *  play() ещё не было. */
+describe("настройки до первого трека доезжают до Rust", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+  });
+
+  it("высота тона уходит в Rust и без играющего трека", () => {
+    const engine = new HybridAudioEngine({ onEnded: vi.fn(), onTime: vi.fn(), onError: vi.fn() } as never);
+
+    engine.setPitch(-2);
+
+    expect(invoke).toHaveBeenCalledWith("native_set_pitch", { semitones: -2 });
+  });
+
+  it("характер темпа уходит в Rust и без играющего трека", () => {
+    const engine = new HybridAudioEngine({ onEnded: vi.fn(), onTime: vi.fn(), onError: vi.fn() } as never);
+
+    engine.setTempoMode(true);
+
+    expect(invoke).toHaveBeenCalledWith("native_set_tempo_mode", { wsola: true });
+  });
+});

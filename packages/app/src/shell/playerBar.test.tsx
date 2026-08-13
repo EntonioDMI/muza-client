@@ -183,3 +183,95 @@ describe("PlayerBar — дорисовка прогресса кадрами", (
     }
   });
 });
+
+/** ПОЛЗУНКИ СКОРОСТИ И ВЫСОТЫ В МЕНЮ «⋯» (жалоба владельца 13.08.2026: «там,
+ *  где три точки, высоту тона регулировать нельзя, а скорость можно»).
+ *
+ *  Здесь сторожатся две разные вещи, и обе — из разбора той жалобы:
+ *
+ *  1) РЯД ЖИВ И ОТЗЫВЧИВ. Корень жалобы лежал не тут (высота застревала в
+ *     памятке usePlayback — регрессия в apps/desktop/src/player/usePlayback
+ *     .test.ts), но снаружи это выглядело как мёртвый ползунок. Поэтому
+ *     проверяем ровно ту цепочку, которую видел владелец: движение ручки →
+ *     onSetPitch, новое значение сверху → подпись и aria поехали. Ползунок с
+ *     неподвижным value — это и есть «регулировать нельзя».
+ *
+ *  2) РЯД НЕ ПРЯЧЕТСЯ ЗА КНОПКУ В БАРЕ. Правило «включено в баре — нет в меню»
+ *     на ползунки не распространяется: кнопка циклит пресеты, ползунок берёт
+ *     любое значение (разбор — у moreItems в PlayerBar.tsx). Тест на это стоит
+ *     потому, что обратная правка выглядит безобидной («уберём дубликат»). */
+describe("ползунки скорости и высоты в меню «⋯»", () => {
+  const more = translate(DEFAULT_LANG, "player.more");
+  const pitchLabel = translate(DEFAULT_LANG, "media.barButtons.pitch.label");
+  const speedLabel = translate(DEFAULT_LANG, "media.barButtons.speed.label");
+
+  /** Открыть меню и вернуть ряд-ползунок по его подписи. */
+  const openMore = (label: string) => {
+    fireEvent.click(screen.getByLabelText(more));
+    return screen.getByRole("slider", { name: label });
+  };
+
+  it("высота — полноценный ползунок на две октавы, а не пункт-переключатель", () => {
+    render(<PlayerBar {...base} {...desktopExtras} pitch={0} onSetPitch={noop} onSetSpeed={noop} />);
+    const row = openMore(pitchLabel);
+
+    expect(row.getAttribute("aria-valuemin")).toBe("-12");
+    expect(row.getAttribute("aria-valuemax")).toBe("12");
+    expect(row.getAttribute("aria-valuenow")).toBe("0");
+  });
+
+  it("движение ручки доходит до обработчика — и мышью, и стрелками", () => {
+    const onSetPitch = vi.fn();
+    render(<PlayerBar {...base} {...desktopExtras} pitch={0} onSetPitch={onSetPitch} onSetSpeed={noop} />);
+    const row = openMore(pitchLabel);
+
+    fireEvent.keyDown(row, { key: "ArrowRight" });
+    expect(onSetPitch).toHaveBeenLastCalledWith(1);
+
+    // Shift — крупный шаг: две октавы по полутону иначе слишком долго.
+    fireEvent.keyDown(row, { key: "ArrowDown", shiftKey: true });
+    expect(onSetPitch).toHaveBeenLastCalledWith(-5);
+
+    fireEvent.keyDown(row, { key: "End" });
+    expect(onSetPitch).toHaveBeenLastCalledWith(12);
+  });
+
+  // Сам ряд был исправен всегда — ломалась ПОДАЧА значения сверху (памятка
+  // usePlayback). Держим здесь конец той же цепочки: пришло новое значение —
+  // ряд обязан его показать. Ниже этой строки чинить было нечего, но и
+  // сломаться тут ничего не должно.
+  it("новое значение сверху доезжает до ряда и до его подписи", () => {
+    const view = render(<PlayerBar {...base} {...desktopExtras} pitch={0} onSetPitch={noop} onSetSpeed={noop} />);
+    const row = openMore(pitchLabel);
+    expect(row.getAttribute("aria-valuetext")).toBe("0");
+
+    view.rerender(<PlayerBar {...base} {...desktopExtras} pitch={4} onSetPitch={noop} onSetSpeed={noop} />);
+    expect(screen.getByRole("slider", { name: pitchLabel }).getAttribute("aria-valuenow")).toBe("4");
+    expect(screen.getByRole("slider", { name: pitchLabel }).getAttribute("aria-valuetext")).toBe("+4");
+  });
+
+  it("кнопка высоты вынесена в бар — ползунок в меню ОСТАЁТСЯ (это не дубликат)", () => {
+    const buttons = [
+      { key: "speed", on: true },
+      { key: "pitch", on: true },
+    ];
+    render(
+      <PlayerBar {...base} {...desktopExtras} buttons={buttons} pitch={2} onPitch={noop} onSetPitch={noop} speed={1} onSetSpeed={noop} />,
+    );
+
+    // Кнопка в баре на месте — цикл по пресетам никуда не делся…
+    expect(screen.queryByLabelText(translate(DEFAULT_LANG, "player.pitchAria", { semitones: "+2" }))).not.toBeNull();
+    // …и точная настройка тоже доступна, обе сразу.
+    fireEvent.click(screen.getByLabelText(more));
+    expect(screen.queryByRole("slider", { name: pitchLabel })).not.toBeNull();
+    expect(screen.queryByRole("slider", { name: speedLabel })).not.toBeNull();
+  });
+
+  it("площадка высоту не умеет (onSetPitch не передан) — ряда нет вовсе", () => {
+    render(<PlayerBar {...base} {...desktopExtras} onSetSpeed={noop} />);
+    fireEvent.click(screen.getByLabelText(more));
+
+    expect(screen.queryByRole("slider", { name: pitchLabel })).toBeNull();
+    expect(screen.queryByRole("slider", { name: speedLabel })).not.toBeNull();
+  });
+});
