@@ -1944,6 +1944,34 @@ function Player({
     setView(entry.view);
     setOpenPlaylistId(entry.payload?.playlistId ?? null);
     setOpenScPlaylistId(entry.payload?.scPlaylistId ?? null);
+    // Место в настройках — такая же часть записи, как id плейлиста (13.08).
+    setSettingsPlace({ tab: entry.payload?.settingsTab ?? null, sub: entry.payload?.settingsSub ?? null });
+  };
+
+  /** Раздел и под-экран настроек, как их видит ИСТОРИЯ.
+   *
+   *  ⚠️ ЭТО НЕ ВТОРАЯ ПРАВДА, а зеркало. Состояние живёт в SettingsView (он
+   *  работает и без App — веб-каркас зовёт его без этих пропов), сюда приходит
+   *  уведомлением, а обратно уходит только после «назад»/«вперёд». Держать
+   *  само состояние здесь было нельзя: экран общий с вебом, а история — нет. */
+  const [settingsPlace, setSettingsPlace] = useState<{ tab: string | null; sub: string | null }>({
+    tab: null,
+    sub: null,
+  });
+
+  /** Человек сменил раздел настроек — это ПЕРЕХОД, и он обязан попасть в стек.
+   *  Без него «назад» из «Внешнего вида» вело на Главную: предыдущей записью
+   *  была она (жалоба владельца 13.08).
+   *
+   *  Повторный вызов с теми же значениями безвреден: pushHistory дедупит
+   *  запись, совпавшую с текущей, — именно на это рассчитан отчёт экрана после
+   *  возврата назад, где значения ровно те же, что в записи. */
+  const onSettingsPlaceChange = (tab: string | null, sub: string | null) => {
+    setSettingsPlace({ tab, sub });
+    historyRef.current = pushHistory(historyRef.current, {
+      view: "settings" as View,
+      payload: { settingsTab: tab ?? undefined, settingsSub: sub ?? undefined },
+    });
   };
 
   const navBack = () => {
@@ -2726,6 +2754,9 @@ function Player({
                 onPluginsChanged={plugins.refresh}
                 intent={settingsIntent}
                 onIntentUsed={clearSettingsIntent}
+                placeTab={settingsPlace.tab}
+                placeSub={settingsPlace.sub}
+                onPlaceChange={onSettingsPlaceChange}
                 // Живой трек для честного предпросмотра Discord RPC: обложка —
                 // СЫРАЯ (rawCover, как в реальной активности), не кроп useCoverArt
                 nowPlaying={

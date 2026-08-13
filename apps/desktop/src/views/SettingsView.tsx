@@ -121,6 +121,9 @@ export function SettingsView({
   intent,
   onIntentUsed,
   nowPlaying,
+  placeTab,
+  placeSub,
+  onPlaceChange,
 }: {
   api: MuzaApi;
   /** false у анонима: серверные функции аккаунта (смена пароля) недоступны. */
@@ -144,6 +147,12 @@ export function SettingsView({
   /** Играющий трек — честный предпросмотр статуса Discord (обложка сырая,
    *  как в реальной активности); null — демо-значения. */
   nowPlaying?: { title: string; artist: string; album: string; cover: string | null; duration: number } | null;
+  /** Куда встать по записи истории (после «назад»/«вперёд»). undefined —
+   *  площадка историей не управляет, экран живёт сам (так делает веб). */
+  placeTab?: string | null;
+  placeSub?: string | null;
+  /** Человек сменил раздел или под-экран — записать это в историю. */
+  onPlaceChange?: (tab: string | null, sub: string | null) => void;
 }) {
   const { t } = useT();
   const platform = usePlatform();
@@ -152,6 +161,40 @@ export function SettingsView({
   // «два одинаковых сайдбара стоят рядом».
   const [tab, setTab] = useState<SettingsTabKey | null>(null);
   const [sub, setSub] = useState<SettingsSubKey | null>(null);
+
+  // ── МЕСТО В НАСТРОЙКАХ ЖИВЁТ В ИСТОРИИ (13.08) ─────────────────────────
+  // Жалоба владельца: «нахожусь в настройках, перехожу в раздел „Внешний
+  // вид“, хочу вернуться назад, нажимаю кнопку — и меня выбрасывает на
+  // главную». Причина: раздел и под-экран были ЧИСТО ЛОКАЛЬНЫМ состоянием
+  // этого файла, и стек истории о них не знал вовсе. Предыдущей ЗАПИСЬЮ
+  // оставалась Главная, туда «назад» и вело — стек работал правильно, просто
+  // ему не сообщали о половине переходов.
+  //
+  // Состояние остаётся ЗДЕСЬ, а наверх уходит уведомление: экран продолжает
+  // работать и без App (веб-каркас зовёт его без этих пропов), а история
+  // получает недостающие записи. Обратный ход — placeTab/placeSub: их App
+  // выставляет после «назад»/«вперёд», и эффект ниже приводит экран к записи.
+  useEffect(() => {
+    if (placeTab === undefined && placeSub === undefined) return;
+    const wantTab = (placeTab ?? null) as SettingsTabKey | null;
+    const wantSub = (placeSub ?? null) as SettingsSubKey | null;
+    if (wantTab !== tab) setTab(wantTab);
+    if (wantSub !== sub) setSub(wantSub);
+    // tab/sub НЕ в зависимостях намеренно: эффект отвечает на смену ЗАПИСИ
+    // ИСТОРИИ, а не на собственный результат. С ними он повторно приводил бы
+    // экран к записи после каждого щелчка человека и запирал бы навигацию.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeTab, placeSub]);
+
+  // Сообщаем наверх о КАЖДОЙ смене места, включая первую. Первая — это вход в
+  // корень настроек, и она законна: стек дедупит запись, совпавшую с текущей
+  // (historyStack.entriesEqual), поэтому лишней записи не появится ни на
+  // монтировании, ни при возврате «назад» — там значения ровно те же, что в
+  // записи, к которой вернулись.
+  useEffect(() => {
+    onPlaceChange?.(tab, sub);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, sub]);
 
   // Умения выводятся из портов розетки — один список и рядам, и поиску.
   const caps = useMemo(() => new Set(settingsCaps(platform)), [platform]);
