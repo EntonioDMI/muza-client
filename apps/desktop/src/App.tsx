@@ -154,6 +154,21 @@ export function App() {
  *  Двадцать секунд: человек, запустивший Discord после приложения, не должен
  *  гадать, работает ли статус, — но и долбить недоступный канал незачем. */
 const DISCORD_RETRY_MS = 20_000;
+/** Как часто сверять, не разъехалась ли отправленная в Discord шкала с
+ *  реальной позицией, и с какого расхождения слать заново.
+ *
+ *  ⚠️ ЗАЧЕМ ЭТО ВООБЩЕ (13.08). Активность уходила по СМЕНЕ ТРЕКА, а на
+ *  повторе идентификатор трека не меняется — Discord навсегда оставался со
+ *  старыми метками, и чужие люди видели «03:19 из 03:19» у песни, которая в
+ *  этот момент играет с начала (снимок владельца). Тот же провал у любой
+ *  перемотки: шкала показывала не то место.
+ *
+ *  Сторож общий на оба случая, потому что случай на самом деле ОДИН —
+ *  «позиция перестала соответствовать отправленной». Три секунды — порог,
+ *  который переживает дрожь таймеров и сетевую задержку, но ловит и повтор
+ *  (прыжок на всю длину трека), и осмысленную перемотку. */
+const DISCORD_DRIFT_CHECK_MS = 5_000;
+const DISCORD_DRIFT_SEC = 3;
 
 function AppRoot() {
   const apiBaseUrl = useMemo(
@@ -1217,11 +1232,15 @@ function Player({
     // Соединение поднимается лениво на первом же rpc_update, так что достаточно
     // просто повторять отправку, пока она не удастся.
     let timer: ReturnType<typeof setInterval> | null = null;
+    /** Метка старта, которую Discord показывает СЕЙЧАС. По ней сторож ниже и
+     *  понимает, что отправленная шкала разошлась с настоящей позицией. */
+    let sentStartTs = 0;
     const send = () => {
     // Позиция — точная, на момент отправки активности: Discord показывает
     // ЧУЖИМ людям время трека, и снимок последнего рендера врал бы им
     // (третий из трёх сценариев в шапке positionStore.ts).
       const startTs = Math.floor(Date.now() / 1000 - posStore.get());
+      sentStartTs = startTs;
       void updateDiscordActivity({
         details: formatTemplate(prefs.discordLine1, vars) || track.title,
         state: formatTemplate(prefs.discordLine2, vars) || track.artist,
@@ -1242,8 +1261,17 @@ function Player({
     };
     send();
     timer = setInterval(send, DISCORD_RETRY_MS);
+    // Сторож рассинхрона: позиция уехала от отправленной — шлём заново.
+    // Ловит ПОВТОР (та же песня, тот же id, эффект бы не перезапустился) и
+    // перемотку. При обычном воспроизведении метка старта не движется: время
+    // и позиция растут вместе, разность постоянна — лишних отправок нет.
+    const drift = setInterval(() => {
+      const nowStart = Math.floor(Date.now() / 1000 - posStore.get());
+      if (Math.abs(nowStart - sentStartTs) >= DISCORD_DRIFT_SEC) send();
+    }, DISCORD_DRIFT_CHECK_MS);
     return () => {
       if (timer !== null) clearInterval(timer);
+      clearInterval(drift);
     };
     // pos нарочно не в deps: активность шлём на смену трека/состояния, не каждый тик
     // eslint-disable-next-line react-hooks/exhaustive-deps
