@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, EmptyState, SearchInput, Shelf, TrackRow } from "@muza/ui";
+import { Button, EmptyState, SearchInput, Shelf, Tile, TrackRow } from "@muza/ui";
 import { humanError } from "@muza/api-client";
 import type {
   GroupedSearchResult,
@@ -10,7 +10,7 @@ import type {
   Track,
 } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
-import { trackRowL10n } from "../lib/dsLabels";
+import { tileL10n, trackRowL10n } from "../lib/dsLabels";
 import { useDrag } from "../shell/DragLayer";
 import { useLayout } from "../shell/LayoutContext";
 import { useAltFileDrag } from "../platform";
@@ -142,6 +142,11 @@ export function SearchView({
   // сохраняются намеренно — «до 3 минут», выставленное вчера, завтра выглядело
   // бы как пропавшие треки, и человек не связал бы одно с другим.
   const [filters, setFilters] = useState<SearchFilters>({});
+  /** «Новое для вас» на пустом экране поиска (13.08). null — ещё не
+   *  спрашивали; пустой массив — спросили, и нового действительно нет
+   *  (человек послушал всё, что у него есть). Второе НЕ ошибка и заглушку про
+   *  сбой рисовать нельзя. */
+  const [discover, setDiscover] = useState<Track[] | null>(null);
   const filtersActive = filters.durMax !== undefined || filters.cachedOnly === true;
   const [busy, setBusy] = useState(false);
   const [moreBusy, setMoreBusy] = useState(false);
@@ -216,6 +221,28 @@ export function SearchView({
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, canSearch, playlistCode, playlistHandle]);
+
+  // «Новое для вас» — спрашивается ОДИН раз, при первом открытии поиска, и
+  // только у того, у кого есть аккаунт (аноним сервером не знаком). Держать
+  // это на каждом очищении строки нельзя: человек стирает запрос десятки раз
+  // за сеанс, а подборка от этого не меняется.
+  useEffect(() => {
+    if (!canSearch || discover !== null) return;
+    let stale = false;
+    void api
+      .discover(20)
+      .then((tracks) => {
+        if (!stale) setDiscover(tracks);
+      })
+      .catch(() => {
+        // Не ответил — просто не показываем полку. Пустой экран поиска и так
+        // осмысленный, ошибку про рекомендации человек здесь не ждёт.
+        if (!stale) setDiscover([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [api, canSearch, discover]);
 
   // Хиты публичных плейлистов: тот же debounce, что живой каталожный поиск.
   // Запрос дешёвый (десятки строк, TS-скоринг) — на полный поиск не ждём.
@@ -701,7 +728,33 @@ export function SearchView({
         // Запрос пустой/короткий. Раньше здесь рисовались 4 выдуманных трека
         // из макета Stage 1 под заголовком «Часто ищут» — их видел КАЖДЫЙ,
         // включая только что зарегистрировавшегося.
-        <EmptyState icon="search" title={t("views.search.start.title")} hint={t("views.search.start.hint")} />
+        //
+        // С 13.08 пустота заполняется тем, чего человек ещё не слышал
+        // (жалоба владельца: «когда я захожу в поиск, он не предлагает ничего
+        // нового»). Подсказка-заглушка остаётся под полкой, а не вместо неё:
+        // объяснить, что тут вообще делают, всё равно нужно — полка отвечает
+        // «а пока послушай вот это», а не заменяет собой смысл экрана.
+        <>
+          {discover !== null && discover.length > 0 ? (
+            <Shelf title={t("views.search.discover.title")}>
+              {discover.map((tr) => (
+                <Tile
+                  key={tr.id}
+                  {...tileL10n(t)}
+                  cover={tr.coverUrl}
+                  title={tr.title}
+                  subtitle={tr.artist}
+                  playing={currentId === tr.id && playing}
+                  // Включаем ВСЮ полку с этого трека: подборка — такой же
+                  // контекст, как плейлист, и дальше очередь идёт по ней.
+                  onPlay={() => onPlayCatalog(discover, tr.id)}
+                  onClick={() => onPlayCatalog(discover, tr.id)}
+                />
+              ))}
+            </Shelf>
+          ) : null}
+          <EmptyState icon="search" title={t("views.search.start.title")} hint={t("views.search.start.hint")} />
+        </>
       )}
 
       {/* Панель массовых действий выделения (2026-07-20): в выдаче состав

@@ -95,6 +95,7 @@ describe("SearchView — «Искать в источниках» не зали�
     );
     const api = {
       searchGrouped,
+      discover: vi.fn().mockResolvedValue([]),
       search: vi.fn().mockResolvedValue([]),
       searchPublicPlaylists: vi.fn().mockResolvedValue([]),
     } as unknown as MuzaApi;
@@ -121,6 +122,7 @@ describe("SearchView — «Искать в источниках» не зали�
     );
     const api = {
       searchGrouped,
+      discover: vi.fn().mockResolvedValue([]),
       search: vi.fn().mockResolvedValue([]),
       searchPublicPlaylists: vi.fn().mockResolvedValue([]),
     } as unknown as MuzaApi;
@@ -143,6 +145,7 @@ describe("SearchView — «Искать в источниках» не зали�
       searchGrouped: vi.fn((_q: string, opts?: { scope?: string }) =>
         opts?.scope === "full" ? full.promise : Promise.resolve([]),
       ),
+      discover: vi.fn().mockResolvedValue([]),
       search: vi.fn().mockResolvedValue([]),
       searchPublicPlaylists: vi.fn().mockResolvedValue([]),
     } as unknown as MuzaApi;
@@ -165,6 +168,7 @@ describe("SearchView — «Загрузить ещё» не залипает", (
     const more = deferred<GroupedSearchResult[]>();
     let calls = 0;
     const api = {
+      discover: vi.fn().mockResolvedValue([]),
       searchGrouped: vi.fn((_q: string, opts?: { limit?: number }) => {
         calls += 1;
         // первый вызов — живой каталожный поиск (лимит 30), дальше «ещё»

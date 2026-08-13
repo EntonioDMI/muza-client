@@ -1257,6 +1257,11 @@ export class HttpMuzaApi implements MuzaApi {
     return tracksFromWire(out.tracks);
   }
 
+  async discover(limit = 20): Promise<Track[]> {
+    const out = await this.authedRequest<{ tracks: TrackWire[] }>(`/discover?limit=${limit}`);
+    return tracksFromWire(out.tracks);
+  }
+
   async getRadio(seedTrackId: string): Promise<Track[]> {
     const out = await this.authedRequest<{ tracks: TrackWire[] }>(
       `/radio?seed=${encodeURIComponent(seedTrackId)}`,

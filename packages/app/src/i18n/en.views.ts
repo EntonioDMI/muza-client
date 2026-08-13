@@ -62,6 +62,9 @@ export const viewsEn = {
     needsAccount: "Catalog search is available after signing in — an anonymous account only lives on this device.",
     anon: { title: "Search needs an account" },
     /** Пустой/короткий запрос — приглашение искать. */
+    discover: {
+      title: "You haven't heard these yet",
+    },
     start: {
       title: "What are we listening to?",
       hint: "Type a track, an artist or an album — we'll look in the catalog, and on YouTube Music and SoundCloud on demand.",

@@ -40,6 +40,7 @@ function makeApi(over: Partial<Record<keyof MuzaApi, unknown>> = {}): MuzaApi {
   return {
     // живой каталожный поиск (grouped-дефолт) — пустая выдача
     searchGrouped: vi.fn().mockResolvedValue([]),
+      discover: vi.fn().mockResolvedValue([]),
     search: vi.fn().mockResolvedValue([]),
     searchPublicPlaylists: vi.fn().mockResolvedValue([]),
     getPublicPlaylistByCode: vi.fn().mockResolvedValue(hit()),
