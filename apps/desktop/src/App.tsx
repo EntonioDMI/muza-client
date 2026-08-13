@@ -109,6 +109,7 @@ import { AdminView } from "./views/AdminView";
 import { SettingsView, type SettingsIntent } from "./views/SettingsView";
 import { StatsView } from "./views/StatsView";
 import { WrappedOverlay } from "./views/WrappedOverlay";
+import { TasteOnboardingView, useTasteGate } from "@muza/app/views/TasteOnboardingView";
 import { usePlugins } from "./plugins/usePlugins";
 import { PluginFrames } from "./plugins/PluginFrames";
 import { pluginHost } from "./plugins/host";
@@ -540,6 +541,11 @@ function Player({
   // Анонимная агрегированная аналитика: KPI добычи + счётчик прослушиваний.
   // Stage 4: честная галочка согласия (prefs.telemetry) — выключил и не шлём.
   const playCountersRef = useRef<PlayCounters>({ plays: 0, completed: 0 });
+  // Спросить вкус на входе (H7). Показывается ровно один раз и только тому,
+  // кому есть куда сохранить ответ: у анонима аккаунт живёт на устройстве, у
+  // старого сервера ручки нет, а кто уже отвечал — второй раз не спрашиваем.
+  // Все три «нет» решает сам useTasteGate, здесь — только подключение.
+  const tasteGate = useTasteGate(api, canSearch);
   useTelemetry(api, canSearch && prefs.telemetry, playCountersRef);
   // Ошибки — та же галочка, но БЕЗ canSearch: эндпоинт анонимный, падения
   // до логина самые ценные (буфер копится с main.tsx, шлётся отсюда).
@@ -3172,6 +3178,10 @@ function Player({
           onVolumeChange: (v) => setPrefs({ ...prefs, wrappedAmbientVol: v }),
         }}
       />
+      ) : null}
+
+      {tasteGate.ask ? (
+        <TasteOnboardingView api={api} onDone={tasteGate.dismiss} onNotify={showToast} />
       ) : null}
 
       <Dialog

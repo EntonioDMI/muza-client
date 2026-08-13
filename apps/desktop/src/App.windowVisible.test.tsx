@@ -65,6 +65,12 @@ vi.mock("./player/audioEngine", () => ({
 vi.mock("@tauri-apps/api/event", () => ({ listen: h.listen, emitTo: h.emitTo }));
 
 import { App } from "./App";
+// ⚠️ Провайдер запросов обязателен с 13.08: App подключил экран «Что ты
+// слушаешь?» (H7), а его гейт спрашивает сервер через react-query. Без
+// провайдера тот бросает — и это правильно, молчаливый фолбэк прятал бы
+// забытый провайдер до самого прода (см. шапку queryTestUtils). Соседние
+// App-тесты (App.test.tsx, App.position.test.tsx) оборачивают так же.
+import { QueryTestProvider } from "@muza/app/lib/queryTestUtils";
 
 function stubMatchMedia() {
   window.matchMedia = ((query: string) => ({
@@ -136,7 +142,11 @@ afterEach(() => {
 
 describe("App — нативный сигнал «видно ли окно»", () => {
   it("свернули окно — вращение фона встаёт на паузу; вернули — крутится снова", async () => {
-    render(<App />);
+    render(
+      <QueryTestProvider>
+        <App />
+      </QueryTestProvider>,
+    );
     await screen.findByRole("button", { name: "Любимое" });
 
     // Пока система молчит, считаем, что видно: диски крутятся.
@@ -152,7 +162,11 @@ describe("App — нативный сигнал «видно ли окно»", (
   }, 15_000);
 
   it("окно ВИДНО, но не в фокусе — ничего не гасим (граница, поставленная владельцем)", async () => {
-    render(<App />);
+    render(
+      <QueryTestProvider>
+        <App />
+      </QueryTestProvider>,
+    );
     await screen.findByRole("button", { name: "Любимое" });
     await waitFor(() => expect(document.querySelectorAll(".muza-orb-spin--cw").length).toBe(1));
 
