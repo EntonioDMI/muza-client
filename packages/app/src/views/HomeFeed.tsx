@@ -486,6 +486,34 @@ export function HomeFeed({
                       onClick={() => onPlayCatalog(s.tracks, tr.id)}
                       onMenu={(e: React.MouseEvent) => onCatalogMenu(tr, e)}
                     />
+                    {tr.reason ? (
+                      // ⚠️ ПРИЧИНА ВИДНА, А НЕ СПРЯТАНА В ПОДСКАЗКУ (H5, 13.08).
+                      // Замер Berkeley (600 оценённых рекомендаций): при
+                      // понятной причине средняя оценка трека 3.51 против 2.79
+                      // и уверенность 8.12 против 6.89 — но это работает,
+                      // только если человек её ВИДИТ. Спрятать в title= значило
+                      // бы получить ноль пользы и считать задачу закрытой.
+                      //
+                      // Одна строка и многоточие: Kouki et al. 2019 —
+                      // подробные объяснения дают перегрузку и нравятся хуже
+                      // коротких. Полный текст остаётся в подсказке ровно на
+                      // случай обрезки.
+                      <div
+                        title={tr.reason.text}
+                        style={{
+                          marginTop: 4,
+                          fontSize: 11,
+                          lineHeight: 1.3,
+                          color: "var(--text-muted, #888)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          maxWidth: "var(--w-tile, 176px)",
+                        }}
+                      >
+                        {tr.reason.text}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </Shelf>

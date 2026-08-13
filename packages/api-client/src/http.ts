@@ -120,6 +120,8 @@ interface TrackWire {
   sources: string[];
   loudness: number | null;
   local_hash?: string | null;
+  /** H5: причина рекомендации. Есть только у полок /home. */
+  reason?: { kind: string; text: string } | null;
 }
 
 /** Проводная форма → форма схемы. Единственное место, где snake_case сервера
@@ -138,6 +140,9 @@ function toTrackShape(wire: TrackWire): unknown {
     sources: wire.sources,
     loudness: wire.loudness ?? null,
     localHash: wire.local_hash ?? null,
+    // H5: полки /home присылают причину, остальные ручки — нет. Пробрасываем
+    // как есть; отсутствие поля — норма, а не битая строка.
+    reason: wire.reason ?? null,
   };
 }
 
