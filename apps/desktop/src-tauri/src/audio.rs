@@ -1715,6 +1715,44 @@ mod tests {
         source.read_exact(&mut buf).unwrap();
         assert_eq!(buf, [4, 5, 6, 7], "перемотка привела не туда");
     }
+
+    /// ⚠️ Сорвавшаяся закачка обязана давать ЧЕСТНЫЙ отказ на перемотке.
+    /// Раньше результат ожидания отбрасывался, seek уезжал за конец файла
+    /// (File::seek это разрешает), чтения давали ноль — и демуксер сообщал не
+    /// «закачка умерла», а «malformed stream: mkv (ebml)», то есть обрыв
+    /// КОНТЕЙНЕРА. Диагноз уходил не туда, чинили не то.
+    #[test]
+    fn growing_source_seek_fails_when_download_died() {
+        let part = temp_file("seek-failed.part");
+        File::create(&part).unwrap().write_all(&[0u8; 8]).unwrap();
+        let (live, writer) = crate::engine::live_stream_for_test(part, temp_file("seek-failed.webm"));
+        writer.wrote(8);
+        let mut source = GrowingSource::open(live).unwrap();
+        writer.fail();
+
+        let err = source
+            .seek(SeekFrom::Start(64)) // за пределы скачанного, байты уже не приедут
+            .expect_err("после срыва перемотка обязана отказать, а не уехать за конец");
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// А дочитанный до конца файл перематывается свободно: wait_for там тоже
+    /// отвечает false, но это «ждать нечего», а не «всё пропало». Сторож от
+    /// починки-наоборот — чтобы проверка провала не запретила обычный seek.
+    #[test]
+    fn growing_source_seek_works_on_finalized_file() {
+        let part = temp_file("seek-final.part");
+        File::create(&part).unwrap().write_all(&[9u8; 8]).unwrap();
+        let (live, writer) = crate::engine::live_stream_for_test(part, temp_file("seek-final.webm"));
+        writer.finish(8);
+        let mut source = GrowingSource::open(live).unwrap();
+
+        assert_eq!(source.seek(SeekFrom::Start(4)).unwrap(), 4);
+        // и даже за конец — это законно, дальше просто конец потока
+        assert_eq!(source.seek(SeekFrom::Start(64)).unwrap(), 64);
+        let mut buf = [0u8; 4];
+        assert_eq!(source.read(&mut buf).unwrap(), 0);
+    }
 }
 
 /// Источник поверх ЕЩЁ КАЧАЮЩЕГОСЯ файла.
@@ -1792,8 +1830,26 @@ impl std::io::Seek for GrowingSource {
     fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
         // Перемотка вперёд по ещё не скачанному — ждём, пока байты приедут.
         if let std::io::SeekFrom::Start(target) = from {
-            self.wait_for(target);
+            // ⚠️ РЕЗУЛЬТАТ ОЖИДАНИЯ ПРОВЕРЯЕТСЯ (2026-08-13). Раньше он
+            // отбрасывался, и на сорвавшейся закачке seek спокойно уезжал ЗА
+            // КОНЕЦ файла — это легальная операция, File::seek её разрешает.
+            // Дальше чтения давали ноль байт, и демуксер видел не «закачка
+            // умерла», а ОБРЫВ КОНТЕЙНЕРА: наружу шло «malformed stream: mkv
+            // (ebml)» вместо честной ошибки, и лечили потом не то. Условие
+            // зеркалит `read` выше: ждать нечего И файл не дописан = провал.
+            if !self.wait_for(target) && !self.live.finalized() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "закачка сорвалась во время перемотки",
+                ));
+            }
         }
+        // ⚠️ SeekFrom::End у РАСТУЩЕГО файла считается от нынешней длины, а не
+        // от итоговой — то есть врёт, пока закачка идёт. Пока это не чинится
+        // намеренно: symphonia на нашем пути (mkv/webm, isomp4) ходит от
+        // начала, а «дождаться финализации ради End» означало бы блокировать
+        // декодер на всю закачку. Появится читатель, которому End нужен по
+        // ходу дела, — сюда же.
         self.pos = self.file.seek(from)?;
         Ok(self.pos)
     }
