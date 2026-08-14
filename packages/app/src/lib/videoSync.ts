@@ -30,8 +30,24 @@
  *  Э7 веб-паритета: переехал из apps/desktop/src/player/useVideoSync.ts (там
  *  пенёк-ре-экспорт и прежние тесты). Ничего платформенного внутри нет —
  *  только React и <video>, поэтому в вебе хук работает как есть; видео-URL в
- *  вебе пока не откуда взять, и панель просто передаёт url=null (хук спит). */
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+ *  вебе пока не откуда взять, и панель просто передаёт url=null (хук спит).
+ *
+ *  ⚠️ ХУК ОТДАЁТ НАРУЖУ ОДНО ЗНАЧЕНИЕ: «у кадра есть ЧТО показать» (14.08,
+ *  жалоба владельца «экран моргает, когда справа включается видео»). Само
+ *  наличие url этого не значит: <video> без единого декодированного кадра по
+ *  спеке HTML рисует ПРОЗРАЧНУЮ ЧЕРНОТУ (см. «represents its poster frame, if
+ *  any, or else transparent black»), а постера у нас нет. Показать такой
+ *  элемент — значит показать дыру. Кто спрашивает про кадр — см. шапку
+ *  NowPlayingPanel. */
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+
+/** rVFC есть в WebView2 и во всех живых браузерах, но НЕ в jsdom тестов и не в
+ *  старых lib.dom. Своё объявление — чтобы не тянуть в проект новый lib и не
+ *  писать `as any` в трёх местах. */
+type VideoWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback?: (cb: () => void) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+};
 
 /** Допуск дрейфа, сек: меньше — дёргаем перемотку слишком часто (сеть!),
  *  больше — заметно на губах в кадре. 0.35с с экстраполяцией достаточно. */
@@ -74,7 +90,7 @@ export function useVideoSync(
      *  тот же обработчик, что и onError элемента. */
     onStuck?: () => void;
   },
-): void {
+): boolean {
   const { url, pos, playing, speed, onStuck } = opts;
   const onStuckRef = useRef(onStuck);
   onStuckRef.current = onStuck;
@@ -92,6 +108,53 @@ export function useVideoSync(
   speedRef.current = speed;
   const playingRef = useRef(playing);
   playingRef.current = playing;
+
+  // «Кадр есть» — единственное, что хук говорит наружу.
+  //
+  // ⚠️ СБРОС ИДЁТ В РЕНДЕРЕ, А НЕ ЭФФЕКТОМ, и это не стилистика. Эффект React
+  // выполняет ПОСЛЕ отрисовки — значит на новый url успел бы уехать один
+  // нарисованный кадр со старым ответом «кадр есть», то есть панель показала бы
+  // пустой <video> ровно на то время, ради которого всё и затевалось. Тем же
+  // самым обожглись на обложке (lib/coverArt.ts, правка 13.08). Обновление
+  // состояния прямо в рендере СВОЕГО компонента — законный приём React: он
+  // применяется до коммита, лишней краски не рождает.
+  const [live, setLive] = useState(false);
+  const liveUrlRef = useRef<string | null>(null);
+  if (liveUrlRef.current !== url) {
+    liveUrlRef.current = url;
+    if (live) setLive(false);
+  }
+
+  // ЧТО СЧИТАЕТСЯ КАДРОМ. Не `loadeddata` (это «байты доехали», кадр в этот
+  // момент ещё может быть не скомпонован) и тем более не `play()`, а
+  // requestVideoFrameCallback — он зовётся ровно тогда, когда кадр ОТДАН
+  // компоновщику. Замер 14.08 (Playwright, WebView2-движок): rVFC срабатывает
+  // одинаково у видимого элемента, у opacity:0 и даже у visibility:hidden —
+  // то есть греть кадр невидимым можно, никакой «фоновой оптимизации» это не
+  // включает (та живёт на уровне скрытой ВКЛАДКИ, а не элемента).
+  // Фолбэк на loadeddata нужен только там, где rVFC нет вовсе (jsdom тестов):
+  // без него «кадр» не наступил бы никогда и панель навсегда осталась бы с
+  // обложкой.
+  useEffect(() => {
+    const el = videoRef.current as VideoWithFrameCallback | null;
+    if (!el || !url) return;
+    let dead = false;
+    const mark = () => {
+      if (!dead) setLive(true);
+    };
+    if (typeof el.requestVideoFrameCallback === "function") {
+      const handle = el.requestVideoFrameCallback(mark);
+      return () => {
+        dead = true;
+        el.cancelVideoFrameCallback?.(handle);
+      };
+    }
+    el.addEventListener("loadeddata", mark);
+    return () => {
+      dead = true;
+      el.removeEventListener("loadeddata", mark);
+    };
+  }, [videoRef, url]);
 
   // play/pause зеркалится событием, не rAF (пауза должна быть мгновенной)
   useEffect(() => {
@@ -203,4 +266,21 @@ export function useVideoSync(
     if (!videoRef.current || !url || playing) return;
     align(true);
   }, [videoRef, url, playing, pos, align]);
+
+  // ПЕРВЫЙ КАДР ДОЛЖЕН БЫТЬ СРАЗУ ТЕМ, ГДЕ ЗВУК (14.08). Свежий элемент грузится
+  // с нуля, а догон выше ждёт HAVE_FUTURE_DATA — значит без этой строки первым
+  // нарисованным кадром было бы НАЧАЛО клипа, и панель, открыв его, тут же
+  // прыгнула бы на минуту вперёд: вторая смена картинки там, где договорились
+  // не иметь ни одной. Момент `loadedmetadata` — самый ранний, когда перемотка
+  // вообще возможна (длительность известна, readyState > 0), и он же самый
+  // дешёвый: голову клипа качать уже не придётся.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !url) return;
+    const onMeta = () => align(true);
+    el.addEventListener("loadedmetadata", onMeta);
+    return () => el.removeEventListener("loadedmetadata", onMeta);
+  }, [videoRef, url, align]);
+
+  return live;
 }

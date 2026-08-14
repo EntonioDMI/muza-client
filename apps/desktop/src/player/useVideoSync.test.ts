@@ -9,16 +9,36 @@ import { useVideoSync } from "./useVideoSync";
 
 let rafCb: FrameRequestCallback | null = null;
 
-const fakeVideo = (over: Partial<HTMLVideoElement> = {}): HTMLVideoElement =>
-  ({
+/** Слушатели стенда: хук подписывается на события ЭЛЕМЕНТА (loadeddata как
+ *  фолбэк «кадр появился», loadedmetadata как «можно перематывать»), а стенд —
+ *  голый объект, не узел DOM. Держим крошечную свою реализацию вместо честного
+ *  <video>: настоящий элемент в jsdom не открывает src, не двигает currentTime
+ *  и не отдаёт readyState — то есть ровно та математика, ради которой файл и
+ *  написан, стала бы непроверяемой. */
+const fakeVideo = (over: Partial<HTMLVideoElement> = {}): HTMLVideoElement => {
+  const listeners = new Map<string, Set<() => void>>();
+  return {
     readyState: 3,
     currentTime: 0,
     playbackRate: 1,
     paused: false,
     play: vi.fn(() => Promise.resolve()),
     pause: vi.fn(),
+    addEventListener: (type: string, fn: () => void) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(fn);
+    },
+    removeEventListener: (type: string, fn: () => void) => listeners.get(type)?.delete(fn),
+    dispatchEvent: (e: Event) => {
+      listeners.get(e.type)?.forEach((fn) => fn());
+      return true;
+    },
     ...over,
-  }) as unknown as HTMLVideoElement;
+  } as unknown as HTMLVideoElement;
+};
+
+/** Поднять событие на стенде так же, как это сделал бы браузер. */
+const fire = (video: HTMLVideoElement, type: string) => act(() => void video.dispatchEvent(new Event(type)));
 
 beforeEach(() => {
   rafCb = null;
@@ -328,5 +348,71 @@ describe("useVideoSync: когда видео не должно декодиро
     act(() => document.dispatchEvent(new Event("visibilitychange")));
 
     expect(video.play).not.toHaveBeenCalled();
+  });
+});
+
+/** «ЕСТЬ ЛИ ЧТО ПОКАЗЫВАТЬ» — ответ, ради которого хук вообще что-то возвращает.
+ *
+ *  Жалоба владельца 14.08: «когда включается видео справа, экран моргает».
+ *  Замер кадрами: обложка → пустота ~0.7 с → кадр. Пустота — это <video> без
+ *  единого декодированного кадра: по спеке HTML он рисует прозрачную черноту.
+ *  Панель обязана спрашивать не «есть ли адрес», а «есть ли КАДР», и ответ
+ *  живёт здесь — рядом с элементом, а не в каждом потребителе. */
+describe("useVideoSync: кадр есть или кадра нет", () => {
+  it("свежий url — кадра ещё нет; loadeddata (фолбэк без rVFC) его объявляет", () => {
+    const video = fakeVideo();
+    const { result } = renderHook(() =>
+      useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 0, playing: true, speed: 1 }),
+    );
+    expect(result.current).toBe(false);
+
+    fire(video, "loadeddata");
+    expect(result.current).toBe(true);
+  });
+
+  it("сменился url — ответ мгновенно снова «нет», не дожидаясь новой загрузки", () => {
+    const video = fakeVideo();
+    const { result, rerender } = renderHook(
+      ({ url }) => useVideoSync({ current: video }, { url, pos: 0, playing: true, speed: 1 }),
+      { initialProps: { url: "http://x/a.mp4" } },
+    );
+    fire(video, "loadeddata");
+    expect(result.current).toBe(true);
+
+    // Перерезолв протухшего адреса: элемент грузится заново, показывать нечего.
+    rerender({ url: "http://x/b.mp4" });
+    expect(result.current).toBe(false);
+  });
+
+  it("url снят (видео сдалось) — ответ «нет», подписок не остаётся", () => {
+    const video = fakeVideo();
+    const { result, rerender } = renderHook(
+      ({ url }: { url: string | null }) => useVideoSync({ current: video }, { url, pos: 0, playing: true, speed: 1 }),
+      { initialProps: { url: "http://x/a.mp4" as string | null } },
+    );
+    fire(video, "loadeddata");
+    expect(result.current).toBe(true);
+
+    rerender({ url: null });
+    expect(result.current).toBe(false);
+    // событие после отписки ничего не воскрешает
+    fire(video, "loadeddata");
+    expect(result.current).toBe(false);
+  });
+
+  it("первый кадр берётся сразу С ПОЗИЦИИ ЗВУКА, а не с начала клипа", () => {
+    vi.spyOn(performance, "now").mockReturnValue(1_000);
+    // readyState 1: метаданные есть, играть вперёд нечем — догон в этот момент
+    // ещё молчит, и без разового выравнивания первым нарисованным кадром был бы
+    // ноль, а следом сразу прыжок на позицию звука. Две смены картинки там, где
+    // договорились не иметь ни одной.
+    const video = fakeVideo({ currentTime: 0, readyState: 1 });
+    renderHook(() =>
+      useVideoSync({ current: video }, { url: "http://x/a.mp4", pos: 87, playing: true, speed: 1 }),
+    );
+
+    fire(video, "loadedmetadata");
+
+    expect(video.currentTime).toBe(87);
   });
 });

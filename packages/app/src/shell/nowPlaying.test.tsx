@@ -175,6 +175,11 @@ describe("NowPlayingPanel — видео замолкает, когда окна
       const box = getByTestId("np-video");
       const video = box.querySelector("video")!;
       const blur = box.querySelector("div")!;
+      // Видео-вид панели наступает только с ПЕРВЫМ КАДРОМ (правка 14.08), а в
+      // jsdom кадров не бывает — там роль «кадр появился» играет loadeddata
+      // (фолбэк-ветка videoSync). Без этой строки блок остался бы греющимся, и
+      // числа перехода, которые сверяет тест, ещё не были бы проставлены.
+      fireEvent.loadedData(video);
 
       // где маска кадра доходит до нуля
       const fadeEnd = /transparent (\d+)%/.exec(video.style.maskImage)?.[1];
@@ -199,6 +204,87 @@ describe("NowPlayingPanel — видео замолкает, когда окна
     } finally {
       vi.restoreAllMocks();
     }
+  });
+});
+
+/** МЕЖДУ ОБЛОЖКОЙ И КАДРОМ НЕ ДОЛЖНО БЫТЬ НИЧЕГО ТРЕТЬЕГО.
+ *
+ *  Жалоба владельца 14.08: «когда включается видео справа, экран моргает».
+ *  Замер кадрами (Playwright + CDP-скринкаст) показал ровно это: обложка →
+ *  ПУСТОТА цвета панели ~0.7 с → кадр видео. Пустота бралась из спеки HTML:
+ *  <video> без единого декодированного кадра и без постера рисует прозрачную
+ *  черноту, а панель переключалась в видео-вид по одному лишь наличию url.
+ *
+ *  Инвариант, который стережёт этот блок: пока кадра нет — на экране обложка и
+ *  коробка текста, а блок видео греется ВНЕ ПОТОКА. Пришёл кадр — всё меняется
+ *  разом, одним состоянием. Тест намеренно не смотрит на пиксели: он сторожит
+ *  ПОРЯДОК (сначала решение, потом показ), а порядок виден в DOM. */
+describe("NowPlayingPanel — видео не показывается, пока нечего показать", () => {
+  const videoProps = {
+    track,
+    lyrics: lines,
+    liked: false,
+    onLike: noop,
+    activeLine: 0,
+    onSeekLine: noop,
+    videoUrl: "https://example.invalid/a.mp4",
+    pos: 10,
+    speed: 1,
+  };
+
+  function withMutedMedia<T>(run: () => T): T {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1 as unknown as number);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      return run();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  }
+
+  it("url пришёл, кадра нет: на экране обложка, блок видео вне потока", () => {
+    withMutedMedia(() => {
+      const { container, getByTestId } = render(<NowPlayingPanel {...videoProps} playing />);
+      // обложка на месте — дыры в квадрате нет
+      expect(container.querySelector(".muza-view")).toBeTruthy();
+      // блок видео смонтирован (ему надо греться), но не занимает места
+      const box = getByTestId("np-video");
+      expect(box.style.position).toBe("absolute");
+      expect(box.style.opacity).toBe("0");
+      // коробка текста ещё со своим фоном — она уходит вместе с обложкой
+      const lyricsBox = container.querySelector("aside > div:last-of-type") as HTMLElement;
+      expect(lyricsBox.style.background).toBe("var(--surface-2)");
+    });
+  });
+
+  it("пришёл кадр: обложка уходит, блок видео встаёт в поток — одной сменой", () => {
+    withMutedMedia(() => {
+      const { container, getByTestId } = render(<NowPlayingPanel {...videoProps} playing />);
+      fireEvent.loadedData(getByTestId("np-video").querySelector("video")!);
+
+      expect(container.querySelector(".muza-view")).toBeNull();
+      const box = getByTestId("np-video");
+      expect(box.style.position).toBe("relative");
+      expect(box.style.opacity).toBe("");
+      const lyricsBox = container.querySelector("aside > div:last-of-type") as HTMLElement;
+      expect(lyricsBox.style.background).toBe("transparent");
+    });
+  });
+
+  it("новый url (перерезолв протухшего) снова прячет кадр до первого кадра", () => {
+    withMutedMedia(() => {
+      const view = render(<NowPlayingPanel {...videoProps} playing />);
+      fireEvent.loadedData(view.getByTestId("np-video").querySelector("video")!);
+      expect(view.container.querySelector(".muza-view")).toBeNull();
+
+      // тот же трек, другой адрес: элемент грузится заново, кадра снова нет —
+      // и панель обязана вернуть обложку, а не показать пустой квадрат
+      view.rerender(<NowPlayingPanel {...videoProps} videoUrl="https://example.invalid/b.mp4" playing />);
+      expect(view.container.querySelector(".muza-view")).toBeTruthy();
+      expect(view.getByTestId("np-video").style.position).toBe("absolute");
+    });
   });
 });
 
