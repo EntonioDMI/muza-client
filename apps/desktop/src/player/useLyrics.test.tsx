@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, render, waitFor } from "@testing-library/react";
 import type { MuzaApi } from "@muza/api-client";
-import { PREFETCH_DWELL_MS, useLyrics, type TrackLyrics } from "./useLyrics";
+import { PREFETCH_DWELL_MS, useLyrics, type TrackLyricsView } from "./useLyrics";
 import type { PlayerTrack } from "./types";
 
 const track = (id: string, kind: PlayerTrack["kind"] = "catalog"): PlayerTrack => ({
@@ -23,17 +23,35 @@ const track = (id: string, kind: PlayerTrack["kind"] = "catalog"): PlayerTrack =
   loudness: null,
 });
 
-const SYNCED = { synced: [{ t: 1, line: "строка" }], plain: null, source: "lrclib" };
-const NOTHING = { synced: null, plain: null, source: null };
+const SYNCED = {
+  synced: [{ t: 1, line: "строка" }],
+  plain: null,
+  source: "lrclib",
+  sourceKey: "lrclib:17594385",
+  rejected: 0,
+};
+const NOTHING = { synced: null, plain: null, source: null, sourceKey: null, rejected: 0 };
 
-function makeApi(byId: Record<string, unknown> = {}): { api: MuzaApi; getLyrics: ReturnType<typeof vi.fn> } {
+function makeApi(byId: Record<string, unknown> = {}): {
+  api: MuzaApi;
+  getLyrics: ReturnType<typeof vi.fn>;
+  rejectLyrics: ReturnType<typeof vi.fn>;
+  restoreLyrics: ReturnType<typeof vi.fn>;
+} {
   const getLyrics = vi.fn(async (id: string) => byId[id] ?? NOTHING);
-  return { api: { getLyrics } as unknown as MuzaApi, getLyrics };
+  const rejectLyrics = vi.fn(async () => NOTHING);
+  const restoreLyrics = vi.fn(async () => NOTHING);
+  return {
+    api: { getLyrics, rejectLyrics, restoreLyrics } as unknown as MuzaApi,
+    getLyrics,
+    rejectLyrics,
+    restoreLyrics,
+  };
 }
 
 /** Хук под наблюдением: отдаёт последнее состояние наружу. */
 function mount(api: MuzaApi, cur: PlayerTrack | null, next: PlayerTrack | null, canFetch = true) {
-  const seen: TrackLyrics[] = [];
+  const seen: TrackLyricsView[] = [];
   function Probe({ t, n }: { t: PlayerTrack | null; n: PlayerTrack | null }) {
     seen.push(useLyrics(api, t, canFetch, n));
     return null;
@@ -167,5 +185,122 @@ describe("useLyrics", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── «Текст не от этой песни» (14.08) ──────────────────────────────────
+//
+// У LRCLIB нашлась запись, подписанная нашим треком точно (артист, название,
+// альбом, длительность), а текст в ней от другой песни. Проверки такое не
+// ловят по построению — ловит человек. Ниже держится главное свойство: отказ
+// обязан ПЕРЕЖИТЬ сессионный кэш этого же хука, иначе на возврате к треку
+// отвергнутый текст вернётся из нашей памяти и кнопка будет выглядеть
+// сломанной, хотя на сервере всё записано.
+
+describe("useLyrics — отказ от текста", () => {
+  it("запись источника доезжает до вызывающего — ею и отвергают", async () => {
+    const { api } = makeApi({ "1": SYNCED });
+    const v = mount(api, track("1"), null);
+    await waitFor(() => expect(v.last().sourceKey).toBe("lrclib:17594385"));
+    v.unmount();
+  });
+
+  it("отказ шлёт ИМЕННО показанную запись и заменяет текст ответом сервера", async () => {
+    const other = { synced: null, plain: "другой", source: "netease", sourceKey: "netease:5", rejected: 1 };
+    const { api, rejectLyrics } = makeApi({ "1": SYNCED });
+    (api.rejectLyrics as ReturnType<typeof vi.fn>).mockResolvedValue(other);
+    const v = mount(api, track("1"), null);
+    await waitFor(() => expect(v.last().sourceKey).toBe("lrclib:17594385"));
+
+    let found: boolean | undefined;
+    await act(async () => {
+      found = await v.last().reject();
+    });
+
+    expect(rejectLyrics).toHaveBeenCalledWith("1", "lrclib:17594385");
+    expect(found).toBe(true);
+    expect(v.last().lines).toEqual([{ t: 0, text: "другой" }]);
+    expect(v.last().rejected).toBe(1);
+    v.unmount();
+  });
+
+  it("отказ перезаписывает сессионный кэш: возврат к треку не воскрешает чужой текст", async () => {
+    const { api, getLyrics } = makeApi({ "1": SYNCED, "2": SYNCED });
+    (api.rejectLyrics as ReturnType<typeof vi.fn>).mockResolvedValue({
+      synced: null,
+      plain: "другой",
+      source: "netease",
+      sourceKey: "netease:5",
+      rejected: 1,
+    });
+    const v = mount(api, track("1"), null);
+    await waitFor(() => expect(v.last().sourceKey).toBe("lrclib:17594385"));
+    await act(async () => {
+      await v.last().reject();
+    });
+
+    // ушли на другой трек и вернулись — сервер не спрашивается (кэш сессии),
+    // и именно поэтому кэш обязан хранить УЖЕ новый текст
+    getLyrics.mockClear();
+    await act(async () => {
+      v.setTracks(track("2"), null);
+    });
+    await act(async () => {
+      v.setTracks(track("1"), null);
+    });
+    expect(getLyrics).not.toHaveBeenCalledWith("1");
+    expect(v.last().lines).toEqual([{ t: 0, text: "другой" }]);
+    v.unmount();
+  });
+
+  it("текста больше не нашлось — отказ честно возвращает false, но счётчик отказов жив", async () => {
+    // Счётчик и есть единственный вход обратно: без него человек застрял бы в
+    // «текста нет» без возможности вернуть.
+    const { api } = makeApi({ "1": SYNCED });
+    (api.rejectLyrics as ReturnType<typeof vi.fn>).mockResolvedValue({
+      synced: null,
+      plain: null,
+      source: null,
+      sourceKey: null,
+      rejected: 1,
+    });
+    const v = mount(api, track("1"), null);
+    await waitFor(() => expect(v.last().sourceKey).toBe("lrclib:17594385"));
+
+    let found: boolean | undefined;
+    await act(async () => {
+      found = await v.last().reject();
+    });
+
+    expect(found).toBe(false);
+    expect(v.last().lines).toEqual([]);
+    expect(v.last().rejected).toBe(1);
+    v.unmount();
+  });
+
+  it("возврат работает и из состояния «текста нет» — id берётся у играющего трека", async () => {
+    const { api, restoreLyrics } = makeApi({ "1": NOTHING });
+    (api.restoreLyrics as ReturnType<typeof vi.fn>).mockResolvedValue(SYNCED);
+    const v = mount(api, track("1"), null);
+    await waitFor(() => expect(v.last().loading).toBe(false));
+
+    await act(async () => {
+      await v.last().restore();
+    });
+
+    expect(restoreLyrics).toHaveBeenCalledWith("1");
+    expect(v.last().lines).toEqual([{ t: 1, text: "строка" }]);
+    v.unmount();
+  });
+
+  it("отвергать нечего (текста нет) — в сеть не идём", async () => {
+    const { api, rejectLyrics } = makeApi({ "1": NOTHING });
+    const v = mount(api, track("1"), null);
+    await waitFor(() => expect(v.last().loading).toBe(false));
+    await act(async () => {
+      expect(await v.last().reject()).toBe(false);
+    });
+    expect(rejectLyrics).not.toHaveBeenCalled();
+    v.unmount();
   });
 });

@@ -1354,12 +1354,16 @@ function Player({
   // очереди: его текст подтягивается заранее, чтобы на переходе трека караоке
   // не гасло на секунды (см. шапку useLyrics). index+1 — та же ставка на
   // «предсказанного следующего», что и у warmer.noteQueue выше.
-  const { lines: rawLyrics, trackId: lyricsTrackId, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(
-    api,
-    track,
-    canSearch,
-    pb.queue[pb.index + 1] ?? null,
-  );
+  const {
+    lines: rawLyrics,
+    trackId: lyricsTrackId,
+    synced: lyricsSynced,
+    loading: lyricsLoading,
+    sourceKey: lyricsSourceKey,
+    rejected: lyricsRejected,
+    reject: rejectLyrics,
+    restore: restoreLyrics,
+  } = useLyrics(api, track, canSearch, pb.queue[pb.index + 1] ?? null);
 
   // Видео вместо обложки в «Сейчас играет» (2026-07-21, преф videoNowPlaying):
   // резолв лениво и только при включённом тумблере; провал = обложка
@@ -1744,6 +1748,37 @@ function Player({
     const line = lyrics[i];
     if (line) pb.seek(line.t);
   };
+
+  // ⚠️ «ТЕКСТ НЕ ОТ ЭТОЙ ПЕСНИ» (14.08) — ответ на испорченные данные У
+  // ИСТОЧНИКА. У LRCLIB нашлась запись, подписанная артистом, названием,
+  // альбомом и длительностью нашего трека ТОЧНО, а внутри — текст другой
+  // песни. Никакая проверка такого не поймает: для неё это идеальное
+  // попадание. Ловит только человек, поэтому у него есть кнопка.
+  //
+  // Обе ручки долгие (сервер обходит цепочку источников заново, 2–4с на
+  // отрицательном пути), поэтому тост о начале — обязателен: без него нажатие
+  // выглядело бы как «ничего не произошло». Второй тост говорит ИСХОД, а не
+  // «готово»: следующий кандидат может и не найтись, и человек должен узнать
+  // об этом словами, а не по пустому экрану.
+  const wrongLyrics = lyricsSourceKey
+    ? () => {
+        showToast(t("toast.lyrics.searchingOther"), "unlink");
+        rejectLyrics()
+          .then((found) => showToast(t(found ? "toast.lyrics.foundOther" : "toast.lyrics.noOther"), "mic-vocal"))
+          .catch(() => showToast(t("toast.lyrics.failed"), "x"));
+      }
+    : null;
+  // Возврат — страховка от промаха по пункту меню: без него один неверный клик
+  // оставлял бы трек без текста навсегда, и это было бы хуже исходной беды.
+  const restoreWrongLyrics =
+    lyricsRejected > 0
+      ? () => {
+          showToast(t("toast.lyrics.searchingOther"), "link");
+          restoreLyrics()
+            .then((found) => showToast(t(found ? "toast.lyrics.restored" : "toast.lyrics.noOther"), "mic-vocal"))
+            .catch(() => showToast(t("toast.lyrics.failed"), "x"));
+        }
+      : null;
   const toggleLike = (id: string) => {
     const had = likes.includes(id);
     setLikes((ls) => (had ? ls.filter((x) => x !== id) : [...ls, id]));
@@ -2843,6 +2878,8 @@ function Player({
             lyricsPanelLines={prefs.lyricsPanelLines}
             onSeekLine={seekLine}
             onExplain={setMeaningLine}
+            onWrongLyrics={wrongLyrics}
+            onRestoreLyrics={restoreWrongLyrics}
             videoUrl={trackVideoUrl}
             pos={pos}
             // `&& !expanded` — единственный потребитель этого пропа внутри
@@ -3433,6 +3470,8 @@ function Player({
         onSeek={pb.seek}
         onSeekLine={seekLine}
         onExplain={setMeaningLine}
+        onWrongLyrics={wrongLyrics}
+        onRestoreLyrics={restoreWrongLyrics}
         onClose={() => setExpanded(false)}
         lyricsShown={prefs.listeningLyricsShown}
         onToggleLyrics={() => setPrefs({ ...prefs, listeningLyricsShown: !prefs.listeningLyricsShown })}

@@ -177,10 +177,33 @@ export function buildMenuItems(target: ContextTarget, ctx: MenuAbilities, t: T):
 
 /** ПКМ по тексту песни (2026-07-21): копировать весь текст — всегда; строку —
  *  когда ПКМ пришёлся на строку с текстом; «Смысл» — только у строк с
- *  объяснением (дубль двойного клика, для находимости). */
+ *  объяснением (дубль двойного клика, для находимости).
+ *
+ *  ⚠️ ЗДЕСЬ ЖЕ ЖИВЁТ «ТЕКСТ НЕ ОТ ЭТОЙ ПЕСНИ» (14.08), и место выбрано, а не
+ *  досталось. Отвергают ведь не абстрактную настройку, а ВОТ ЭТОТ текст на
+ *  экране — путь от «это не оно» до действия должен идти через сам текст.
+ *  Правый клик по тексту в Muza уже означает «сделать что-то с этим текстом»
+ *  (копирование живёт только тут), поэтому второй, отдельный вход раздвоил бы
+ *  одно знание. И главное: пункт меню не стоит ни пикселя, пока он не нужен, —
+ *  а нужен он на одной песне из сотни. Кнопка в караоке ради такого случая
+ *  портила бы сцену все остальные разы.
+ *
+ *  «Вернуть текст» — там же и по той же логике, но появляется, только когда
+ *  есть что возвращать. Без него отказ был бы ловушкой: промахнулся по пункту —
+ *  и трек навсегда без текста. */
 function lyricsItems(target: Extract<ContextTarget, { kind: "lyrics" }>, ctx: MenuAbilities, t: T): MenuItem[] {
-  const { allText, lineText, lineIndex, hasNote, ctl } = target;
+  const { allText, lineText, lineIndex, hasNote, canReject, canRestore, ctl } = target;
   const copyText = ctx.copyText;
+  const reject = ctl.reject;
+  const restore = ctl.restore;
+  const wrong: MenuItem[] = [
+    ...(canReject && reject
+      ? [{ icon: "unlink", label: t("menu.lyrics.wrongSong"), onClick: reject }]
+      : []),
+    ...(canRestore && restore
+      ? [{ icon: "link", label: t("menu.lyrics.restore"), onClick: restore }]
+      : []),
+  ];
   return [
     ...(copyText
       ? [{ icon: "copy", label: t("menu.lyrics.copyAll"), onClick: () => copyText(allText, t("toast.lyrics.copiedAll")) }]
@@ -191,6 +214,11 @@ function lyricsItems(target: Extract<ContextTarget, { kind: "lyrics" }>, ctx: Me
     ...(hasNote && lineIndex !== null
       ? [{ icon: "sparkles", label: t("menu.lyrics.meaning"), onClick: () => ctl.explain(lineIndex) }]
       : []),
+    // Разделитель — не украшение: выше пункты про содержимое текста, ниже про
+    // то, тот ли это текст вообще. Разные вопросы не должны стоять встык.
+    // Пустой блок разделителя не рисует (иначе у веба, где отказа пока нет,
+    // меню кончалось бы чертой).
+    ...(wrong.length > 0 ? ["-" as const, ...wrong] : []),
   ];
 }
 

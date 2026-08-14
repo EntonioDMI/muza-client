@@ -21,11 +21,16 @@ export type ListeningModeProps = Omit<SharedProps, "track" | "lyrics" | "onExpla
   track: PlayerTrack;
   lyrics: LyricLine[];
   onExplain: (index: number) => void;
+  /** «Текст не от этой песни» / «Вернуть текст» — те же пропы и та же
+   *  семантика, что у NowPlayingPanel рядом: чужой текст замечают и в
+   *  караоке, и в панели, а вход в оба случая один — ПКМ по самому тексту. */
+  onWrongLyrics?: (() => void) | null;
+  onRestoreLyrics?: (() => void) | null;
 };
 
 export function ListeningMode(props: ListeningModeProps) {
   const { openMenu } = useContextMenu();
-  const { lyrics, onExplain } = props;
+  const { lyrics, onExplain, onWrongLyrics, onRestoreLyrics, ...rest } = props;
   // ПКМ по тексту (2026-07-21): та же цель "lyrics", что в NowPlayingPanel
   const openLyricsMenu = (e: ReactMouseEvent, i: number | null) =>
     openMenu(e, {
@@ -34,8 +39,10 @@ export function ListeningMode(props: ListeningModeProps) {
       lineText: i !== null ? lyrics[i]?.text || null : null,
       lineIndex: i,
       hasNote: i !== null && !!lyrics[i]?.note,
-      ctl: { explain: onExplain },
+      canReject: !!onWrongLyrics,
+      canRestore: !!onRestoreLyrics,
+      ctl: { explain: onExplain, reject: onWrongLyrics ?? undefined, restore: onRestoreLyrics ?? undefined },
     });
 
-  return <SharedListeningMode {...props} onLineContextMenu={openLyricsMenu} />;
+  return <SharedListeningMode {...rest} lyrics={lyrics} onLineContextMenu={openLyricsMenu} />;
 }

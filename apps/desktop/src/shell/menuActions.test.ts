@@ -433,6 +433,69 @@ describe("buildMenuItems: текст песни (ПКМ, 2026-07-21)", () => {
     item(items, "menu.lyrics.meaning").onClick?.();
     expect(target.ctl.explain).toHaveBeenCalledWith(1);
   });
+
+  // ── «Текст не от этой песни» (14.08) ────────────────────────────────
+  //
+  // Место выбрано, а не досталось: отвергают ВОТ ЭТОТ текст на экране, и путь
+  // к действию должен идти через сам текст. Плюс пункт не стоит ни пикселя,
+  // пока он не нужен, — а нужен он на одной песне из сотни.
+
+  it("известна запись источника — пункт есть, и он отделён от «про содержимое»", () => {
+    const reject = vi.fn();
+    const target: ContextTarget = {
+      ...base,
+      lineText: "line1",
+      lineIndex: 0,
+      hasNote: false,
+      canReject: true,
+      ctl: { ...base.ctl, reject },
+    };
+    const items = buildMenuItems(target, makeCtx(), t);
+    // черта между «что в тексте» и «тот ли это текст» — разные вопросы
+    expect(labels(items)).toEqual(["menu.lyrics.copyAll", "menu.lyrics.copyLine", "-", "menu.lyrics.wrongSong"]);
+    item(items, "menu.lyrics.wrongSong").onClick?.();
+    expect(reject).toHaveBeenCalled();
+  });
+
+  it("отвергать нечего — пункта НЕТ вовсе (не серый) и черты тоже нет", () => {
+    const target: ContextTarget = { ...base, lineText: "line1", lineIndex: 0, hasNote: false };
+    const items = buildMenuItems(target, makeCtx(), t);
+    expect(labels(items)).toEqual(["menu.lyrics.copyAll", "menu.lyrics.copyLine"]);
+    expect(items).not.toContain("-");
+  });
+
+  it("что-то уже отвергнуто — рядом появляется возврат", () => {
+    const restore = vi.fn();
+    const target: ContextTarget = {
+      ...base,
+      lineText: "line1",
+      lineIndex: 0,
+      hasNote: false,
+      canReject: true,
+      canRestore: true,
+      ctl: { ...base.ctl, reject: vi.fn(), restore },
+    };
+    const items = buildMenuItems(target, makeCtx(), t);
+    expect(labels(items)).toContain("menu.lyrics.restore");
+    item(items, "menu.lyrics.restore").onClick?.();
+    expect(restore).toHaveBeenCalled();
+  });
+
+  it("текста нет, но отказ был — виден ОДИН возврат: иначе из «текста нет» нет выхода", () => {
+    const target: ContextTarget = {
+      ...base,
+      lineText: null,
+      lineIndex: null,
+      hasNote: false,
+      canRestore: true,
+      ctl: { ...base.ctl, restore: vi.fn() },
+    };
+    expect(labels(buildMenuItems(target, makeCtx(), t))).toEqual([
+      "menu.lyrics.copyAll",
+      "-",
+      "menu.lyrics.restore",
+    ]);
+  });
 });
 
 describe("buildMenuItems: локальный файл", () => {

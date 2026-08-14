@@ -506,6 +506,29 @@ function tasteSeedFromWire(wire: TasteSeedWire): TasteSeed {
   return { artists: wire.artists, tags: wire.tags, skipped: wire.skipped, updatedAt: wire.updated_at };
 }
 
+/** Ответ ручек текста как он приходит по проводу. Два новых поля появились
+ *  14.08 вместе с отказом «текст не от этой песни» — см. LyricsSchema. */
+interface LyricsWire {
+  synced: { t: number; line: string }[] | null;
+  plain: string | null;
+  source: string | null;
+  source_key?: string | null;
+  rejected_count?: number;
+}
+
+/** Значения по умолчанию нарочно: клиент новее сервера — обычное дело при
+ *  автообновлении, и в этом случае текст обязан показаться как раньше, просто
+ *  без пунктов отказа (sourceKey=null прячет «Текст не от этой песни»). */
+function lyricsFromWire(w: LyricsWire): Lyrics {
+  return {
+    synced: w.synced,
+    plain: w.plain,
+    source: w.source,
+    sourceKey: w.source_key ?? null,
+    rejected: w.rejected_count ?? 0,
+  };
+}
+
 function sessionFromTokens(pair: TokenPair): Session {
   return {
     user: {
@@ -1297,7 +1320,30 @@ export class HttpMuzaApi implements MuzaApi {
   // ---------- Тексты и рецепт (Stage 2, слайсы 5–6) ----------
 
   async getLyrics(trackId: string): Promise<Lyrics> {
-    return this.authedRequest<Lyrics>(`/tracks/${encodeURIComponent(trackId)}/lyrics`);
+    return lyricsFromWire(await this.authedRequest<LyricsWire>(`/tracks/${encodeURIComponent(trackId)}/lyrics`));
+  }
+
+  /** «Текст не от этой песни»: отвергнуть КОНКРЕТНУЮ запись источника и сразу
+   *  получить следующего кандидата (или честное «текста нет»). Ключ передаём
+   *  тот, что пришёл с показанным текстом, — сервер отвергает то, что человек
+   *  ВИДЕЛ, а не то, что успело лечь в кэш к моменту нажатия. */
+  async rejectLyrics(trackId: string, sourceKey: string): Promise<Lyrics> {
+    return lyricsFromWire(
+      await this.authedRequest<LyricsWire>(`/tracks/${encodeURIComponent(trackId)}/lyrics/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_key: sourceKey }),
+      }),
+    );
+  }
+
+  /** Отмена отказа: снимает все отказы трека и переспрашивает цепочку. */
+  async restoreLyrics(trackId: string): Promise<Lyrics> {
+    return lyricsFromWire(
+      await this.authedRequest<LyricsWire>(`/tracks/${encodeURIComponent(trackId)}/lyrics/restore`, {
+        method: "POST",
+      }),
+    );
   }
 
   async getAnnotations(trackId: string): Promise<Annotations> {

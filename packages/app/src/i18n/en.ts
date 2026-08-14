@@ -1290,6 +1290,9 @@ export const en = {
       copyAll: "Copy all lyrics",
       copyLine: "Copy this line",
       meaning: "Line meaning",
+      // Отказ «текст не от этой песни» (14.08) — см. ru.ts.
+      wrongSong: "These aren't this song's lyrics",
+      restore: "Bring the lyrics back",
     },
   },
 
@@ -1300,6 +1303,11 @@ export const en = {
     lyrics: {
       copiedAll: "Lyrics copied",
       copiedLine: "Line copied",
+      searchingOther: "Looking for other lyrics…",
+      foundOther: "Found other lyrics",
+      noOther: "No other lyrics out there",
+      restored: "Lyrics are back",
+      failed: "That didn't work — try again",
     },
     radio: {
       continuing: "Radio: continuing with similar tracks",

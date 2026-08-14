@@ -179,7 +179,10 @@ export function useTrackLyrics(): TrackLyrics {
         if (!cancelled) setData(l);
       })
       .catch(() => {
-        if (!cancelled) setData({ synced: null, plain: null, source: null });
+        // sourceKey/rejected нужны отказу «текст не от этой песни» (14.08);
+        // у веба этого действия ещё нет (нет своего контекстного меню), но
+        // форма ответа общая — заполняем честными «нечего отвергать».
+        if (!cancelled) setData({ synced: null, plain: null, source: null, sourceKey: null, rejected: 0 });
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

@@ -225,6 +225,14 @@ export interface MuzaApi {
   // Тексты и смысл (Stage 2, слайс 5): LRCLIB-синхротекст + Genius-аннотации.
   getLyrics(trackId: string): Promise<Lyrics>;
   getAnnotations(trackId: string): Promise<Annotations>;
+  /** «Текст не от этой песни» (14.08): отвергнуть запись источника, которую
+   *  человек видит сейчас, и получить следующего кандидата. sourceKey — из
+   *  того же ответа getLyrics: отвергается увиденное, а не то, что успело
+   *  лечь в кэш. Против испорченных данных У ИСТОЧНИКА другого средства нет —
+   *  такая запись проходит все наши проверки как идеальное попадание. */
+  rejectLyrics(trackId: string, sourceKey: string): Promise<Lyrics>;
+  /** Отмена отказа: снимает все отказы трека и спрашивает текст заново. */
+  restoreLyrics(trackId: string): Promise<Lyrics>;
 
   // Внешний скробблинг (Last.fm / ListenBrainz). Секреты и подпись — на
   // сервере; сам скроббл сервер шлёт автоматически на recordPlay.

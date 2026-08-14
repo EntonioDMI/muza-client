@@ -28,11 +28,16 @@ export type NowPlayingPanelProps = Omit<SharedProps, "track" | "lyrics" | "onExp
   track: PlayerTrack | null;
   lyrics: LyricLine[];
   onExplain: (index: number) => void;
+  /** «Текст не от этой песни» (14.08): пункт есть, только когда известна
+   *  запись источника — её и отвергаем. null — отвергать нечего. */
+  onWrongLyrics?: (() => void) | null;
+  /** «Вернуть текст»: null — возвращать нечего (ничего не отвергали). */
+  onRestoreLyrics?: (() => void) | null;
 };
 
 export function NowPlayingPanel(props: NowPlayingPanelProps) {
   const { openMenu } = useContextMenu();
-  const { lyrics, onExplain } = props;
+  const { lyrics, onExplain, onWrongLyrics, onRestoreLyrics, ...rest } = props;
   // ПКМ по тексту (2026-07-21): цель "lyrics" — копировать всё/строку, смысл
   const openLyricsMenu = (e: React.MouseEvent, i: number | null) =>
     openMenu(e, {
@@ -42,8 +47,12 @@ export function NowPlayingPanel(props: NowPlayingPanelProps) {
       lineText: i !== null ? lyrics[i]?.text || null : null,
       lineIndex: i,
       hasNote: i !== null && !!lyrics[i]?.note,
-      ctl: { explain: onExplain },
+      canReject: !!onWrongLyrics,
+      canRestore: !!onRestoreLyrics,
+      ctl: { explain: onExplain, reject: onWrongLyrics ?? undefined, restore: onRestoreLyrics ?? undefined },
     });
 
-  return <SharedNowPlayingPanel {...props} onLineContextMenu={openLyricsMenu} />;
+  // Свои пропы до общей панели не доходят: она про них не знает и знать не
+  // должна — меню целиком забота приложения (см. шапку).
+  return <SharedNowPlayingPanel {...rest} lyrics={lyrics} onLineContextMenu={openLyricsMenu} />;
 }
