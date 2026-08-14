@@ -14,6 +14,7 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mediaAnchor } from "./mediaAnchor";
 import { createPositionStore, type PositionStore } from "./positionStore";
 import type { PlayerTrack } from "./types";
 import { useMediaSession } from "./useMediaSession";
@@ -60,10 +61,16 @@ beforeEach(() => {
       }
     },
   );
+  // Хук держит якорь сессии (mediaAnchor.ts) настоящим `<audio>`, а jsdom
+  // объявляет play/pause «не реализовано». Глушим их на весь файл: тесты выше
+  // про якорь ничего не знают и знать не должны.
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   delete (navigator as unknown as { mediaSession?: unknown }).mediaSession;
 });
 
@@ -203,5 +210,105 @@ describe("useMediaSession: позиция уезжает в SMTC без ренд
     expect(setPositionState).toHaveBeenCalledTimes(1);
     expect(setPositionState).toHaveBeenLastCalledWith(expect.objectContaining({ position: 46, duration: 200 }));
     expect(renders).toBe(rendersAtStart); // ни одного рендера ради часов оверлея
+  });
+});
+
+/** Якорь сессии — фундамент под всем, что делает этот хук (регрессия 10.08).
+ *
+ *  Здесь проверяется только ПРОВОДКА: хук обязан держать якорь ровно тогда,
+ *  когда система должна видеть Музу играющей. Сам якорь и его свойства — в
+ *  mediaAnchor.test.ts, физика вопроса и замер — в шапке mediaAnchor.ts. */
+describe("useMediaSession: якорь системной сессии", () => {
+  let hold: ReturnType<typeof vi.spyOn>;
+  let suspend: ReturnType<typeof vi.spyOn>;
+  let release: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    hold = vi.spyOn(mediaAnchor, "hold").mockImplementation(() => {});
+    suspend = vi.spyOn(mediaAnchor, "suspend").mockImplementation(() => {});
+    release = vi.spyOn(mediaAnchor, "release").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    hold.mockRestore();
+    suspend.mockRestore();
+    release.mockRestore();
+  });
+
+  interface AnchorProps {
+    track: PlayerTrack | null;
+    playing: boolean;
+    enabled?: boolean;
+  }
+  const mountAnchor = (initial: AnchorProps) =>
+    renderHook(
+      (p: AnchorProps) =>
+        useMediaSession(
+          p.track,
+          p.playing,
+          store,
+          { toggle: () => {}, next: () => {}, prev: () => {}, seek: () => {}, pause: () => {} },
+          p.enabled ?? true,
+        ),
+      { initialProps: initial },
+    );
+
+  it("трек играет — якорь держим (без него метаданные выше уходят в никуда)", () => {
+    mountAnchor({ track: trk(), playing: true });
+
+    expect(hold).toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("пауза — якорь усыплён, но НЕ отпущен: карточка Музы обязана пережить паузу", () => {
+    const { rerender } = mountAnchor({ track: trk(), playing: true });
+
+    act(() => {
+      rerender({ track: trk(), playing: false });
+    });
+
+    expect(suspend).toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("трек кончился — сессию отпускаем", () => {
+    const { rerender } = mountAnchor({ track: trk(), playing: true });
+    release.mockClear();
+
+    act(() => {
+      rerender({ track: null, playing: false });
+    });
+
+    expect(release).toHaveBeenCalled();
+  });
+
+  it("медиаклавиши выключены в настройках — якоря нет вовсе", () => {
+    mountAnchor({ track: trk(), playing: true, enabled: false });
+
+    expect(hold).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalled();
+  });
+
+  it("тик позиции якорь не дёргает: трек приходит новым объектом 4 раза в секунду", () => {
+    const track = trk();
+    const { rerender } = mountAnchor({ track, playing: true });
+    hold.mockClear();
+
+    for (let i = 1; i <= 4; i++) {
+      act(() => {
+        store.set(i * 0.25);
+        rerender({ track: { ...track }, playing: true });
+      });
+    }
+
+    expect(hold).not.toHaveBeenCalled();
+  });
+
+  it("размонтирование отпускает сессию — закрытое окно не должно держать медиаклавиши", () => {
+    const { unmount } = mountAnchor({ track: trk(), playing: true });
+    release.mockClear();
+
+    unmount();
+
+    expect(release).toHaveBeenCalled();
   });
 });
