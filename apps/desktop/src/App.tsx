@@ -1350,8 +1350,16 @@ function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sleep.mode, track?.id]);
 
-  // Тексты — LRCLIB с сервера
-  const { lines: rawLyrics, trackId: lyricsTrackId, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(api, track, canSearch);
+  // Тексты — цепочка источников на сервере. Четвёртый аргумент — сосед по
+  // очереди: его текст подтягивается заранее, чтобы на переходе трека караоке
+  // не гасло на секунды (см. шапку useLyrics). index+1 — та же ставка на
+  // «предсказанного следующего», что и у warmer.noteQueue выше.
+  const { lines: rawLyrics, trackId: lyricsTrackId, synced: lyricsSynced, loading: lyricsLoading } = useLyrics(
+    api,
+    track,
+    canSearch,
+    pb.queue[pb.index + 1] ?? null,
+  );
 
   // Видео вместо обложки в «Сейчас играет» (2026-07-21, преф videoNowPlaying):
   // резолв лениво и только при включённом тумблере; провал = обложка
