@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Icon } from "@muza/ui";
 import type { PublicPlaylist } from "@muza/api-client";
 import { playlistIconSrc } from "@muza/core";
+import { providerLabel } from "../lib/format";
 import { useT } from "../i18n";
 
 /** Карточка публичного плейлиста в поиске (2026-07-17).
@@ -28,9 +29,20 @@ export function PublicPlaylistCard({
   onFollow?: () => void;
   following?: boolean;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const [busy, setBusy] = useState(false);
   const cover = playlist.iconCoverUrl ?? playlistIconSrc(playlist.icon);
+  // Вторая строка плитки. У своих — @адрес или автор; у чужих — ПЛОЩАДКА
+  // (2026-08-14): полка теперь смешанная, и «от Filtr France» без «Deezer»
+  // рядом не отвечает на единственный вопрос, который к ней возникает —
+  // «а это откуда?». Автор чужого плейлиста при этом виден на его странице,
+  // так что знание не теряется, а переезжает туда, где помещается.
+  const subtitle =
+    playlist.source !== "muza"
+      ? providerLabel(playlist.source, lang)
+      : playlist.handle
+        ? `@${playlist.handle}`
+        : t("views.search.publicPlaylist.by", { owner: playlist.ownerUsername });
   const meta = [
     // @Адрес (2026-07-17) — первым: им хвастаются
     ...(playlist.handle ? [`@${playlist.handle}`] : []),
@@ -99,9 +111,7 @@ export function PublicPlaylistCard({
               textOverflow: "ellipsis",
             }}
           >
-            {playlist.handle
-              ? `@${playlist.handle}`
-              : t("views.search.publicPlaylist.by", { owner: playlist.ownerUsername })}
+            {subtitle}
           </div>
         </div>
       </div>

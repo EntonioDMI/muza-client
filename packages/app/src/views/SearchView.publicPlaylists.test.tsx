@@ -28,10 +28,12 @@ const hit = (over: Partial<PublicPlaylistHit> = {}): PublicPlaylistHit => ({
   handle: null,
   icon: null,
   iconCoverUrl: null,
-  // единая выдача с SoundCloud (2026-07-20)
+  // единая выдача с SoundCloud (2026-07-20), с Deezer и YouTube (2026-08-14)
   source: "muza",
   previewTracks: [],
   permalinkUrl: null,
+  // одноимённых не схлопывалось — карточка единственная в своей группе
+  variants: 1,
   nameMatched: true,
   ...over,
 });

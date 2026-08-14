@@ -86,6 +86,9 @@ export const viewsEn = {
       kind: "Playlist",
       // Плейлисты SoundCloud в выдаче (2026-07-20)
       kindSc: "SoundCloud playlist",
+      // 2026-08-14: три площадки — подпись собирается из имени площадки
+      kindExternal: "{source} playlist",
+      sameName: "{count} more with the same name",
       likeCount: "{count} likes",
       showAll: "View all {count} tracks",
       listen: "Listen",
@@ -204,7 +207,8 @@ export const viewsEn = {
   // Read-only страница плейлиста SoundCloud (2026-07-20)
   scPlaylist: {
     kind: "SoundCloud playlist",
-    loadFailed: "Could not open the SoundCloud playlist",
+    kindExternal: "{source} playlist",
+    loadFailed: "Could not open the playlist",
     saveCopy: "Save to my library",
     saving: "Saving…",
     savedCopy: 'Saved to your library: "{name}"',
@@ -212,6 +216,10 @@ export const viewsEn = {
     playableCount: "{count} tracks playable",
     // жалоба владельца 20.07: расхождение счётчиков надо объяснять словами
     drmNotice: "Some songs are protected by SoundCloud and aren't shown — the list has only the ones you can play.",
+    ytNotice: "Some videos could not be read — the list has only what you can play.",
+    deezerNotice:
+      "Deezer stores song names, not audio. These are the ones Muza already has — the rest show up once you find them in search.",
+    deezerEmpty: "None of these songs are in Muza yet. Find any of them in search and it will show up here.",
   },
 
   playlist: {

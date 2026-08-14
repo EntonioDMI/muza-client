@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button, Icon } from "@muza/ui";
 import type { PublicPlaylist } from "@muza/api-client";
 import { playlistIconSrc } from "@muza/core";
-import { fmtTime } from "../lib/format";
+import { fmtTime, providerLabel } from "../lib/format";
 import { useT } from "../i18n";
 
 /** Карточка плейлиста в выдаче (2026-07-20) — по мотивам SoundCloud: обложка
@@ -33,20 +33,28 @@ export function PlaylistResultCard({
   onFollow?: () => void;
   following?: boolean;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const [busy, setBusy] = useState(false);
-  const isSc = playlist.source === "soundcloud";
+  const isExternal = playlist.source !== "muza";
   const cover = playlist.iconCoverUrl ?? playlistIconSrc(playlist.icon);
   const meta = [
     // @Адрес (2026-07-17) — первым: им хвастаются
     ...(playlist.handle ? [`@${playlist.handle}`] : []),
-    t("views.search.publicPlaylist.by", { owner: playlist.ownerUsername }),
+    // У плейлиста YouTube автора-человека нет — там канал, и он может быть
+    // пустым. Пустое «от » на экране читается как поломка, поэтому строки
+    // просто не будет.
+    ...(playlist.ownerUsername ? [t("views.search.publicPlaylist.by", { owner: playlist.ownerUsername })] : []),
     ...(playlist.followersCount > 0
       ? [
-          isSc
+          isExternal
             ? t("views.search.publicPlaylist.likeCount", { count: playlist.followersCount })
             : t("views.search.publicPlaylist.followerCount", { count: playlist.followersCount }),
         ]
+      : []),
+    // Схлопнутые одноимённые: молчать о них нельзя — иначе выдача выглядит
+    // беднее, чем есть, и человек лезет искать «а где остальные».
+    ...(playlist.variants > 1
+      ? [t("views.search.publicPlaylist.sameName", { count: playlist.variants - 1 })]
       : []),
   ].join(" · ");
 
@@ -94,7 +102,9 @@ export function PlaylistResultCard({
             letterSpacing: "0.04em",
           }}
         >
-          {isSc ? t("views.search.publicPlaylist.kindSc") : t("views.search.publicPlaylist.kind")}
+          {isExternal
+            ? t("views.search.publicPlaylist.kindExternal", { source: providerLabel(playlist.source, lang) })
+            : t("views.search.publicPlaylist.kind")}
         </div>
         <div
           style={{

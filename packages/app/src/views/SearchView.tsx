@@ -463,19 +463,21 @@ export function SearchView({
     </div>
   );
 
-  /** Открыть карточку выдачи: свои — обычной страницей, SC — своим путём
-   *  площадки (у приложения read-only страница, у браузера — первоисточник). */
+  /** Открыть карточку выдачи: свои — обычной страницей, чужие — путём внешней
+   *  площадки (у приложения read-only страница, у браузера — первоисточник).
+   *  Проверка «не наш», а не «SoundCloud»: площадок с 14.08 три, и перечислять
+   *  их здесь значило бы ломать экран каждый раз, когда добавится четвёртая. */
   const openHit = (p: PublicPlaylist) => {
-    if (p.source === "soundcloud") onOpenScPlaylist(p);
-    else onOpenPlaylist(p.id);
+    if (p.source === "muza") onOpenPlaylist(p.id);
+    else onOpenScPlaylist(p);
   };
 
   /** «Слушать» прямо с карточки: состав дотягивается по клику (у своих —
-   *  getPlaylist viewer-ом, у SC — upsert состава на сервере). */
+   *  getPlaylist viewer-ом, у внешних — разрешение состава на сервере). */
   const playHit = async (p: PublicPlaylist) => {
     try {
       const tracks =
-        p.source === "soundcloud" ? (await api.getSoundcloudPlaylist(p.id)).tracks : (await api.getPlaylist(p.id)).tracks;
+        p.source === "muza" ? (await api.getPlaylist(p.id)).tracks : (await api.getExternalPlaylist(p.id)).tracks;
       if (tracks.length > 0) onPlayCatalog(tracks, tracks[0].id);
       else onNotify(t("views.playlist.empty"), "x");
     } catch (e) {

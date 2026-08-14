@@ -50,9 +50,11 @@ export default function SearchPage() {
   const [rows, setRows] = useState<Track[]>([]);
   const menu = useWebTrackMenu(rows);
 
-  /** Плейлист SoundCloud из выдачи. Своей read-only страницы у веба нет (она
-   *  есть в приложении) — честно уводим к первоисточнику новой вкладкой через
-   *  розетку площадки, а не рисуем кнопку, которая никуда не ведёт. */
+  /** Плейлист внешней площадки из выдачи (2026-07-20 SoundCloud, 2026-08-14
+   *  ещё Deezer и YouTube). Своей read-only страницы у веба нет (она есть в
+   *  приложении) — честно уводим к первоисточнику новой вкладкой через розетку
+   *  площадки, а не рисуем кнопку, которая никуда не ведёт. Ветка площадок не
+   *  различает и не должна: permalinkUrl есть у всех трёх. */
   const openScPlaylist = (p: PublicPlaylist) => {
     if (p.permalinkUrl && platform.system) void platform.system.openExternal(p.permalinkUrl);
     else notify(t("views.search.somethingWrong"), "x");

@@ -36,6 +36,10 @@ export function fmtTime(sec: number): string {
 const PROVIDER_LABEL: Record<string, string> = {
   youtube: "YouTube",
   soundcloud: "SoundCloud",
+  // 2026-08-14: Deezer звука не даёт (он каталог метаданных), но подписывает
+  // плейлисты в выдаче — имя площадки берётся отсюда же, чтобы «Deezer» на
+  // карточке и «Deezer» в любом другом месте писались одинаково
+  deezer: "Deezer",
   bandcamp: "Bandcamp",
 };
 

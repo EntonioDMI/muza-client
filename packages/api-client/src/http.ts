@@ -36,8 +36,9 @@ import {
   PublicPlaylistSchema,
   type PublicPlaylistHit,
   PublicPlaylistHitSchema,
+  type ExternalPlaylist,
+  ExternalPlaylistSchema,
   type SoundcloudPlaylist,
-  SoundcloudPlaylistSchema,
   type Artist,
   type ArtistInfo,
   type Genre,
@@ -310,10 +311,11 @@ interface PublicPlaylistWire {
   handle?: string | null;
   icon?: string | null;
   icon_cover_url?: string | null;
-  source?: "muza" | "soundcloud";
+  source?: "muza" | "soundcloud" | "deezer" | "youtube";
   preview_tracks?: PreviewTrackWire[];
   permalink_url?: string | null;
   name_matched?: boolean;
+  variants?: number;
 }
 
 /** Проводной формат строки админ-обзора публичных плейлистов. */
@@ -344,6 +346,8 @@ function publicPlaylistFromWire(w: PublicPlaylistWire): PublicPlaylist {
     source: w.source ?? "muza",
     previewTracks: (w.preview_tracks ?? []).map(previewTrackFromWire),
     permalinkUrl: w.permalink_url ?? null,
+    // старый сервер (≤0.2.0) поля не слал — «схлопывать было нечего»
+    variants: w.variants ?? 1,
   });
 }
 
@@ -1086,9 +1090,24 @@ export class HttpMuzaApi implements MuzaApi {
     );
   }
 
-  async getSoundcloudPlaylist(id: string): Promise<SoundcloudPlaylist> {
-    // id приходит из выдачи с префиксом sc: — серверная ручка ждёт голое число
-    const bare = id.startsWith("sc:") ? id.slice(3) : id;
+  /** Ручка серверa по префиксу id выдачи. Префикс — единственный носитель
+   *  площадки в момент перехода: карточка в истории навигации живёт как
+   *  строка id, и вытаскивать рядом с ней ещё и source значило бы дублировать
+   *  одно знание в двух местах. */
+  private static readonly EXTERNAL_PLAYLIST_ROUTES: Record<string, string> = {
+    "sc:": "soundcloud",
+    "yt:": "youtube",
+    "dz:": "deezer",
+  };
+
+  /** Состав плейлиста внешней площадки (2026-07-20 SoundCloud, 2026-08-14
+   *  YouTube и Deezer). id — как в выдаче, с префиксом площадки. */
+  async getExternalPlaylist(id: string): Promise<ExternalPlaylist> {
+    const prefix = id.slice(0, 3);
+    // Без префикса — id из старой выдачи (сервер ≤0.2.0 слал голое число
+    // SoundCloud): роняем в SoundCloud, как и было
+    const route = HttpMuzaApi.EXTERNAL_PLAYLIST_ROUTES[prefix] ?? "soundcloud";
+    const bare = HttpMuzaApi.EXTERNAL_PLAYLIST_ROUTES[prefix] ? id.slice(3) : id;
     const w = await this.authedRequest<{
       id: string;
       name: string;
@@ -1097,8 +1116,9 @@ export class HttpMuzaApi implements MuzaApi {
       permalink_url: string;
       track_count: number;
       tracks: TrackWire[];
-    }>(`/playlists/soundcloud/${encodeURIComponent(bare)}`);
-    return SoundcloudPlaylistSchema.parse({
+      source?: "soundcloud" | "youtube" | "deezer";
+    }>(`/playlists/${route}/${encodeURIComponent(bare)}`);
+    return ExternalPlaylistSchema.parse({
       id: w.id,
       name: w.name,
       ownerUsername: w.owner_username ?? "",
@@ -1106,7 +1126,15 @@ export class HttpMuzaApi implements MuzaApi {
       permalinkUrl: w.permalink_url,
       trackCount: w.track_count,
       tracks: tracksFromWire(w.tracks),
+      // старый сервер source не слал, а ходили к нему только за SoundCloud
+      source: w.source ?? "soundcloud",
     });
+  }
+
+  /** Старое имя — площадка тогда была одна. Оставлено, чтобы не ломать
+   *  вызывающих: маршрут всё равно выбирается по префиксу id. */
+  getSoundcloudPlaylist(id: string): Promise<SoundcloudPlaylist> {
+    return this.getExternalPlaylist(id);
   }
 
   async getAdminPublicPlaylists(opts?: { limit?: number; offset?: number }): Promise<AdminPublicPlaylists> {

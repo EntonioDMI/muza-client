@@ -1,16 +1,25 @@
 import { useEffect, useState } from "react";
 import { Button, EmptyState, Icon, TrackRow } from "@muza/ui";
-import type { MuzaApi, SoundcloudPlaylist, Track } from "@muza/api-client";
-import { fmtTime, primarySourceLabel } from "../lib/format";
+import type { ExternalPlaylist, MuzaApi, Track } from "@muza/api-client";
+import { fmtTime, primarySourceLabel, providerLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useLayout } from "../shell/LayoutContext";
 import { useT } from "../i18n";
 
-/** Read-only страница плейлиста SoundCloud (2026-07-20). Тонкий вью ОТДЕЛЬНО
- *  от PlaylistView: тому нужны реордер, роли, drop-зоны и правки состава —
- *  внешнему плейлисту из этого не нужно ничего. Треки уже в каталоге (сервер
- *  upsert-ит их при открытии) — играют обычным движком, лайкаются, уходят в
- *  плейлисты через обычное меню трека.
+/** Read-only страница плейлиста внешней площадки (2026-07-20 SoundCloud,
+ *  2026-08-14 YouTube и Deezer). Тонкий вью ОТДЕЛЬНО от PlaylistView: тому
+ *  нужны реордер, роли, drop-зоны и правки состава — внешнему плейлисту из
+ *  этого не нужно ничего. Треки уже в каталоге (сервер разрешает их при
+ *  открытии) — играют обычным движком, лайкаются, уходят в плейлисты через
+ *  обычное меню трека.
+ *
+ *  ⚠️ ПОЧЕМУ СТРАНИЦА ОДНА НА ТРИ ПЛОЩАДКИ, А ОБЪЯСНЕНИЕ РАЗНОЕ. Состав почти
+ *  всегда короче, чем счётчик площадки, но причины у этого РАЗНЫЕ: у
+ *  SoundCloud часть песен под DRM, у YouTube не разобрался ролик, у Deezer
+ *  звука нет в принципе — он каталог названий, и играть можно только то, что
+ *  уже есть в Музе. Одна общая фраза «часть песен недоступна» не отвечает ни
+ *  на один из трёх случаев: человек не понимает, сломалось у него, у нас или
+ *  у площадки. Поэтому текст выбирается по source (см. notice ниже).
  *  «Сохранить к себе» делает КОПИЮ (решение владельца 20.07: страница
  *  read-only, в библиотеку сама по себе ничего не пишет).
  *
@@ -52,7 +61,7 @@ export function ExternalPlaylistView({
 }) {
   const { t, lang } = useT();
   const { phone } = useLayout();
-  const [pl, setPl] = useState<SoundcloudPlaylist | null>(null);
+  const [pl, setPl] = useState<ExternalPlaylist | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -60,7 +69,7 @@ export function ExternalPlaylistView({
     setPl(null);
     setError(null);
     api
-      .getSoundcloudPlaylist(playlistId)
+      .getExternalPlaylist(playlistId)
       .then(setPl)
       .catch((e) => setError(e instanceof Error ? e.message : t("views.scPlaylist.loadFailed")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,14 +85,26 @@ export function ExternalPlaylistView({
 
   const meta = pl
     ? [
-        t("views.search.publicPlaylist.by", { owner: pl.ownerUsername }),
+        // у плейлиста YouTube автора может не быть — пустое «от » выглядит поломкой
+        ...(pl.ownerUsername ? [t("views.search.publicPlaylist.by", { owner: pl.ownerUsername })] : []),
         t("views.search.publicPlaylist.trackCount", { count: pl.trackCount }),
-        // часть состава могла выпасть (DRM/длительность) — говорим честно
+        // часть состава могла выпасть (DRM/длительность/нет у нас) — говорим честно
         ...(pl.tracks.length < pl.trackCount
           ? [t("views.scPlaylist.playableCount", { count: pl.tracks.length })]
           : []),
       ].join(" · ")
     : "";
+
+  /** Объяснение расхождения счётчиков — своё на каждую площадку (см. шапку).
+   *  У Deezer два разных случая: «нашли часть» и «не нашли ничего» — второй
+   *  требует другого текста, иначе экран показывает пустоту и молчит о ней. */
+  const notice = (() => {
+    if (!pl || pl.tracks.length >= pl.trackCount) return null;
+    if (pl.source === "deezer") {
+      return pl.tracks.length === 0 ? t("views.scPlaylist.deezerEmpty") : t("views.scPlaylist.deezerNotice");
+    }
+    return pl.source === "youtube" ? t("views.scPlaylist.ytNotice") : t("views.scPlaylist.drmNotice");
+  })();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: phone ? "var(--sp-4)" : "var(--sp-5)", padding: phone ? "var(--sp-4) var(--sp-4) 0" : "var(--sp-6) var(--sp-6) 0" }}>
@@ -119,7 +140,7 @@ export function ExternalPlaylistView({
               letterSpacing: "0.04em",
             }}
           >
-            {t("views.scPlaylist.kind")}
+            {t("views.scPlaylist.kindExternal", { source: providerLabel(pl?.source ?? "soundcloud", lang) })}
           </div>
           <h1
             style={{
@@ -160,9 +181,9 @@ export function ExternalPlaylistView({
 
       {/* Счётчики разошлись → объясняем словами, а не оставляем загадку
           (жалоба владельца 20.07: «N треков, а слушать нечего») */}
-      {pl && pl.tracks.length < pl.trackCount ? (
+      {notice ? (
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-3)", lineHeight: 1.5, marginTop: "calc(-1 * var(--sp-3))" }}>
-          {t("views.scPlaylist.drmNotice")}
+          {notice}
         </div>
       ) : null}
 

@@ -367,15 +367,28 @@ export const PublicPlaylistSchema = z.object({
   handle: z.string().nullable().default(null),
   icon: z.string().nullable().default(null),
   iconCoverUrl: z.string().nullable().default(null),
-  source: z.enum(["muza", "soundcloud"]).default("muza"),
+  /** Площадка-источник. 2026-08-14: к SoundCloud добавились Deezer и YouTube.
+   *  ⚠️ default("muza") держит совместимость со старым сервером, а НЕ
+   *  «неизвестную площадку»: сервер ≤0.2.0 поля не слал вовсе, и все его
+   *  карточки действительно наши. */
+  source: z.enum(["muza", "soundcloud", "deezer", "youtube"]).default("muza"),
   previewTracks: z.array(PreviewTrackSchema).default([]),
   permalinkUrl: z.string().nullable().default(null),
+  /** Сколько одноимённых плейлистов схлопнулось в эту карточку, включая её
+   *  саму (2026-08-14). 1 — дублей не было. */
+  variants: z.number().default(1),
 });
 export type PublicPlaylist = z.infer<typeof PublicPlaylistSchema>;
 
-/** Состав плейлиста SoundCloud (2026-07-20): read-only страница. Треки —
- *  обычные Track: сервер уже положил их в каталог, играют тем же движком. */
-export const SoundcloudPlaylistSchema = z.object({
+/** Состав плейлиста ВНЕШНЕЙ площадки (2026-07-20 SoundCloud, 2026-08-14
+ *  YouTube и Deezer): read-only страница. Треки — обычные Track: сервер уже
+ *  разрешил их в каталог, играют тем же движком.
+ *
+ *  ⚠️ trackCount — счётчик ПЛОЩАДКИ, tracks.length — сколько мы смогли отдать
+ *  играбельными. Расходятся они по разным причинам у разных площадок, поэтому
+ *  source обязателен: без него экран не сможет объяснить расхождение и
+ *  скатится к общему «часть песен недоступна», которое ничего не объясняет. */
+export const ExternalPlaylistSchema = z.object({
   id: z.string(),
   name: z.string(),
   ownerUsername: z.string().default(""),
@@ -383,8 +396,13 @@ export const SoundcloudPlaylistSchema = z.object({
   permalinkUrl: z.string(),
   trackCount: z.number(),
   tracks: z.array(TrackSchema),
+  source: z.enum(["soundcloud", "deezer", "youtube"]).default("soundcloud"),
 });
-export type SoundcloudPlaylist = z.infer<typeof SoundcloudPlaylistSchema>;
+export type ExternalPlaylist = z.infer<typeof ExternalPlaylistSchema>;
+
+/** Историческое имя той же формы — под ним схема жила с 20.07. */
+export const SoundcloudPlaylistSchema = ExternalPlaylistSchema;
+export type SoundcloudPlaylist = ExternalPlaylist;
 
 /** Хит поиска: nameMatched=true — совпало НАЗВАНИЕ (кандидат в плашку
  *  «Лучший результат»); false — совпали только артисты внутри (витрина). */

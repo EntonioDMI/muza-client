@@ -30,6 +30,7 @@ import type {
   PlaylistVisibility,
   PublicPlaylist,
   PublicPlaylistHit,
+  ExternalPlaylist,
   SoundcloudPlaylist,
   Artist,
   ArtistInfo,
@@ -383,6 +384,9 @@ export interface MuzaApi {
   searchPublicPlaylists(q: string): Promise<PublicPlaylistHit[]>;
   /** Состав плейлиста SoundCloud (2026-07-20): треки уже в каталоге, играют
    *  как обычные; id — с префиксом sc: из выдачи или голый числовой. */
+  /** Состав плейлиста внешней площадки; id — с префиксом (`sc:`/`yt:`/`dz:`). */
+  getExternalPlaylist(id: string): Promise<ExternalPlaylist>;
+  /** Старое имя того же вызова (площадка тогда была одна). */
   getSoundcloudPlaylist(id: string): Promise<SoundcloudPlaylist>;
   /** Админ-рубильник: обзор публичных + снятие с публикации (ban — навсегда).
    *  ⚠️ Возврат сменился с голого массива на страницу (05.08): без `total`
