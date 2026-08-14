@@ -128,7 +128,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("appearance", null, "settings.appearance.radius.exact", ["скругление", "своё", "острые углы", "px", "радиус", "sharp corners", "custom radius"]),
   e("appearance", null, "settings.appearance.glassOn", ["стекло", "выключить стекло", "сплошной", "непрозрачный", "производительность", "glass off", "solid", "opaque", "performance"]),
   e("appearance", null, "settings.appearance.glass", ["стекло", "прозрачность", "блюр", "glass", "blur"]),
-  e("appearance", null, "settings.appearance.background", ["фон", "обои", "background", "wallpaper"]),
+  // Точная плотность живёт за стрелкой ряда образцов — та же причина для
+  // отдельной записи, что у скругления выше.
+  e("appearance", null, "settings.appearance.glass.exact", ["плотность стекла", "процент", "своё", "прозрачность", "custom glass"]),
+  e("appearance", null, "settings.appearance.background", ["фон", "обои", "background", "wallpaper", "без фона", "из обложки"]),
   e("appearance", null, "settings.appearance.scale", ["масштаб", "зум", "scale", "zoom"]),
   e("appearance", null, "settings.appearance.customize", ["кастомизация", "тонкая настройка", "customize"]),
   // Режим правки вида: ищут его словами про размеры и пропорции, а не по
@@ -186,6 +189,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   // Дубль karaokeSize из Типографики удалён 19.07 (спека §7) — единственный
   // ряд остался в «Текстах песен» (запись settings.lyrics.karaokeSize ниже).
   e("appearance", "customize", "settings.customize.motion.anims", ["анимации", "движение", "animations"]),
+  // Общий темп поверх четырёх множителей (2026-08-14). Сами множители остались
+  // рядами за стрелкой «Настроить» и своих записей не теряют: их ищут
+  // отдельными словами («переходы», «диалоги»).
+  e("appearance", "customize", "settings.customize.motion.pace", ["темп", "скорость анимаций", "спокойно", "живо", "pace", "speed"]),
   e("appearance", "customize", "settings.customize.motion.animSpeed", ["скорость анимаций", "speed"]),
   e("appearance", "customize", "settings.customize.motion.durMenu", ["отклики", "меню", "подсказки", "скорость", "responses"]),
   e("appearance", "customize", "settings.customize.motion.durDialog", ["окна", "диалоги", "панели", "скорость", "dialogs"]),
@@ -234,7 +241,10 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   // Визуализатор и отклик на бас переехали из «Расширений» 19.07 (спека §7):
   // ключи остались settings.extensions.*, место рендера — Кастомизация.
   e("appearance", "customize", "settings.extensions.visualizer", ["визуализатор", "волна", "бары", "visualizer"]),
-  e("appearance", "customize", "settings.extensions.visualizerKind", ["визуализатор", "вид"]),
+  e("appearance", "customize", "settings.extensions.visualizerKind", ["визуализатор", "вид", "бары", "волна"]),
+  // Стиль до 2026-08-14 был безымянной строкой чипов — ряда не было, и найти
+  // его поиском было нечем. Теперь это плашка образцов со своим названием.
+  e("appearance", "customize", "settings.extensions.visualizerStyle", ["стиль", "визуализатор", "классика", "плотные", "воздушные", "лента", "style"]),
   e("appearance", "customize", "settings.extensions.visualizerMirror", ["зеркало", "визуализатор"]),
   e("appearance", "customize", "settings.extensions.visualizerPeaks", ["пики", "шапки", "пластинки", "peaks"]),
   e("appearance", "customize", "settings.extensions.visualizerPeakFall", ["пики", "падение", "скорость", "peaks"]),
@@ -284,9 +294,11 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   e("lyrics", null, "settings.lyrics.autoScroll", ["автоскролл", "прокрутка текста"]),
   e("lyrics", null, "settings.lyrics.endNote", ["нотка", "конец текста"]),
   e("lyrics", null, "settings.lyrics.videoNowPlaying", ["видео", "клип", "обложка", "video"], { needs: "videoTrack" }),
-  e("lyrics", null, "settings.lyrics.karaokeSize", ["караоке", "размер строки"]),
+  e("lyrics", null, "settings.lyrics.karaokeSize", ["караоке", "размер строки", "крупный", "мелкий"]),
+  e("lyrics", null, "settings.lyrics.karaokeSize.exact", ["размер строки", "точный", "px", "караоке"]),
   e("lyrics", null, "settings.lyrics.karaokeLines", ["строки", "сколько строк", "караоке", "lines"]),
   e("lyrics", null, "settings.lyrics.panelLines", ["строки", "сколько строк", "панель", "сейчас играет", "lines"]),
+  e("lyrics", null, "settings.lyrics.panelLines.exact", ["строки", "точное число", "панель", "lines"]),
   // «Перевод» из индекса убран (аудит 22.07): фича ещё не существует —
   // поиск не должен приводить к ряду-заглушке. Вернуть вместе с фичей.
   e("lyrics", null, "settings.lyrics.meaningMode", ["смысл", "значение", "meaning"]),

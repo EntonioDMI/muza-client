@@ -18,17 +18,17 @@
  *     нельзя было бы найти поиском по настройкам. */
 
 import { useMemo, useRef, useState } from "react";
-import { Button, ChipGroup, IconButton, Select, Switch, Tabs } from "@muza/ui";
+import { Button, IconButton, Select, Switch, Tabs } from "@muza/ui";
 import { useT, type TranslationKey } from "../../i18n";
 import { legacyInvertFromSpin, normalizeDiscs, normalizeSpin, SPIN_PAIRS } from "../../prefs/backdrop";
 import { DEFAULT_PREFS, RADIUS_OVERRIDE_OFF, type BgAnimDiscs, type BgAnimSpin, type Prefs } from "../../prefs/types";
-import { matchPreset, PRESETS_BG } from "../../prefs/presets";
+import { matchPreset, PRESETS_BG, PRESETS_MOTION } from "../../prefs/presets";
 import { availableFonts, CUSTOM_FONT_CHOICE_KEY, fontFamily } from "../../prefs/fonts";
 import { applyCustomFont, installCustomFontFile, removeCustomFont } from "../../prefs/customFont";
 import type { SavedTheme } from "../../prefs/themes";
 import { VIS_LIMITS } from "../../lib/visualizerMath";
 import { activeVisPreset, BAR_PRESETS, WAVE_PRESETS } from "../../lib/visualizerPresets";
-import { ColorDot, GroupTitle, LiveSlider, paneStyle, PresetRow, SettingInput, SettingRow, SubHeader, VisSliderRow } from "./primitives";
+import { ColorDot, GroupTitle, LiveSlider, paneStyle, PresetRow, SampleChoice, SampleVisualizer, SettingInput, SettingRow, SubHeader, VisSliderRow } from "./primitives";
 import { currentAccentHex } from "./appearancePresets";
 import { useSettingsScreen } from "./settingsContext";
 import { ThemeDialogs, useThemeLibrary } from "./themeLibrary";
@@ -493,8 +493,25 @@ export function CustomizeSub() {
         <SettingRow title={t("settings.customize.motion.anims.title")} hint={t("settings.customize.motion.anims.hint")}>
           <Switch checked={prefs.anims} onChange={(anims: boolean) => set({ anims })} label={t("settings.customize.motion.anims.title")} />
         </SettingRow>
-        <SettingRow title={t("settings.customize.motion.animSpeed.title")} hint={t("settings.customize.motion.animSpeed.hint")}>
-          <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+        {/* ТЕМП ДВИЖЕНИЯ — один выбор поверх четырёх процентов (правка
+            2026-08-14, разбор в prefs/presets.ts у PRESETS_MOTION). Четыре
+            ползунка стояли подряд и почти всегда двигались вместе: человеку
+            нужно «поспокойнее», а не «отклики 130, окна 120, переходы 140».
+            Точные множители никуда не делись — они под стрелкой «Настроить», и
+            тронувший любой из них честно получает чип «Своё». */}
+        <PresetRow
+          title={t("settings.customize.motion.pace.title")}
+          hint={prefs.anims ? t("settings.customize.motion.pace.hint") : t("settings.customize.motion.pace.disabledHint")}
+          chips={[
+            { key: "calm", label: t("settings.customize.motion.pace.presets.calm") },
+            { key: "normal", label: t("settings.customize.motion.pace.presets.normal") },
+            { key: "lively", label: t("settings.customize.motion.pace.presets.lively") },
+          ]}
+          active={matchPreset(PRESETS_MOTION, prefs)}
+          disabled={!prefs.anims}
+          onPick={(k) => set(PRESETS_MOTION[k])}
+        >
+          <SettingRow title={t("settings.customize.motion.animSpeed.title")} hint={t("settings.customize.motion.animSpeed.hint")}>
             <LiveSlider
               value={prefs.animSpeed - 60}
               max={110}
@@ -502,12 +519,10 @@ export function CustomizeSub() {
               suffix={`${prefs.animSpeed} %`}
               onChange={(v) => set({ animSpeed: 60 + Math.round(v) })}
             />
-          </div>
-        </SettingRow>
-        {/* Раздельные длительности по группам — множители поверх общей
-            скорости выше. Гаснут вместе с выключателем движения. */}
-        <SettingRow title={t("settings.customize.motion.durMenu.title")} hint={t("settings.customize.motion.durMenu.hint")}>
-          <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          </SettingRow>
+          {/* Раздельные длительности по группам — множители поверх общей
+              скорости выше. */}
+          <SettingRow title={t("settings.customize.motion.durMenu.title")} hint={t("settings.customize.motion.durMenu.hint")}>
             <LiveSlider
               value={prefs.durMenuMult - 60}
               max={110}
@@ -515,10 +530,8 @@ export function CustomizeSub() {
               suffix={`${prefs.durMenuMult} %`}
               onChange={(v) => set({ durMenuMult: 60 + Math.round(v) })}
             />
-          </div>
-        </SettingRow>
-        <SettingRow title={t("settings.customize.motion.durDialog.title")} hint={t("settings.customize.motion.durDialog.hint")}>
-          <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          </SettingRow>
+          <SettingRow title={t("settings.customize.motion.durDialog.title")} hint={t("settings.customize.motion.durDialog.hint")}>
             <LiveSlider
               value={prefs.durDialogMult - 60}
               max={110}
@@ -526,10 +539,8 @@ export function CustomizeSub() {
               suffix={`${prefs.durDialogMult} %`}
               onChange={(v) => set({ durDialogMult: 60 + Math.round(v) })}
             />
-          </div>
-        </SettingRow>
-        <SettingRow title={t("settings.customize.motion.durPage.title")} hint={t("settings.customize.motion.durPage.hint")}>
-          <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+          </SettingRow>
+          <SettingRow title={t("settings.customize.motion.durPage.title")} hint={t("settings.customize.motion.durPage.hint")}>
             <LiveSlider
               value={prefs.durPageMult - 60}
               max={110}
@@ -537,8 +548,8 @@ export function CustomizeSub() {
               suffix={`${prefs.durPageMult} %`}
               onChange={(v) => set({ durPageMult: 60 + Math.round(v) })}
             />
-          </div>
-        </SettingRow>
+          </SettingRow>
+        </PresetRow>
         <SettingRow title={t("settings.customize.motion.ease.title")} hint={t("settings.customize.motion.ease.hint")}>
           <div style={prefs.anims ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
             <Tabs
@@ -869,29 +880,74 @@ export function CustomizeSub() {
               const visPresets = prefs.visualizer === "bars" ? BAR_PRESETS : WAVE_PRESETS;
               return (
                 <>
-                  <SettingRow title={t("settings.extensions.visualizerKind.title")} hint={t("settings.extensions.visualizerKind.hint")}>
-                    <Tabs
-                      items={[
-                        { key: "bars", label: t("settings.extensions.visualizerKind.bars") },
-                        { key: "wave", label: t("settings.extensions.visualizerKind.wave") },
-                      ]}
-                      value={prefs.visualizer}
-                      onChange={(k: string) => set({ visualizer: k as Prefs["visualizer"] })}
-                    />
-                  </SettingRow>
-                  <div style={{ display: "flex", gap: "var(--sp-2)", flexWrap: "wrap" }}>
-                    <ChipGroup
-                      items={[
-                        ...visPresets.map((p) => ({ key: p.key, label: t(`settings.extensions.visualizerStyle.${p.key}`) })),
-                        { key: "custom", label: t("settings.extensions.visualizerStyle.custom") },
-                      ]}
-                      value={activeVisPreset(visPresets, prefs) ?? "custom"}
-                      onChange={(k: string) => {
-                        const p = visPresets.find((x) => x.key === k);
-                        if (p) set(p.set);
-                      }}
-                    />
-                  </div>
+                  {/* ВИД И СТИЛЬ ВИЗУАЛИЗАТОРА — образцами (правка 2026-08-14).
+                      «Бары / Волна» словами и «Классика / Плотные / Воздушные»
+                      чипами описывали картинку, которую в этот момент не видно:
+                      визуализатор живёт в режиме прослушивания, а настраивают
+                      его отсюда. Узнать, чем «Плотные» отличаются от
+                      «Воздушных», можно было только перебором с уходом на
+                      другой экран. Плитки рисуют ровно те числа, которые
+                      запишутся. */}
+                  <SampleChoice
+                    title={t("settings.extensions.visualizerKind.title")}
+                    hint={t("settings.extensions.visualizerKind.hint")}
+                    minTile={116}
+                    items={[
+                      { key: "bars", label: t("settings.extensions.visualizerKind.bars"), sample: <SampleVisualizer kind="bars" bars={prefs.visualizerBars} barFill={prefs.visualizerBarFill} barRound={prefs.visualizerBarRound} /> },
+                      { key: "wave", label: t("settings.extensions.visualizerKind.wave"), sample: <SampleVisualizer kind="wave" waveThick={prefs.visualizerWaveThick} waveFill={prefs.visualizerWaveFill} /> },
+                    ]}
+                    value={prefs.visualizer}
+                    onPick={(k) => set({ visualizer: k as Prefs["visualizer"] })}
+                  />
+                  <SampleChoice
+                    title={t("settings.extensions.visualizerStyle.title")}
+                    hint={t("settings.extensions.visualizerStyle.hint")}
+                    minTile={104}
+                    items={[
+                      ...visPresets.map((p) => ({
+                        key: p.key,
+                        label: t(`settings.extensions.visualizerStyle.${p.key}`),
+                        sample: (
+                          <SampleVisualizer
+                            kind={prefs.visualizer === "bars" ? "bars" : "wave"}
+                            bars={p.set.visualizerBars}
+                            barFill={p.set.visualizerBarFill}
+                            barRound={p.set.visualizerBarRound}
+                            waveThick={p.set.visualizerWaveThick}
+                            waveFill={p.set.visualizerWaveFill}
+                          />
+                        ),
+                      })),
+                      // Плитка «Своё» — тот же индикатор, что чип «Своё» у
+                      // PresetRow: появляется, только когда числа не совпали ни
+                      // с одним стилем, и рисует ТЕКУЩИЕ значения. Нажатие по
+                      // ней ничего не меняет (некуда), но глазу нужно видеть,
+                      // что получилось.
+                      ...(activeVisPreset(visPresets, prefs) === null
+                        ? [
+                            {
+                              key: "custom",
+                              label: t("settings.extensions.visualizerStyle.custom"),
+                              sample: (
+                                <SampleVisualizer
+                                  kind={prefs.visualizer === "bars" ? "bars" : "wave"}
+                                  bars={prefs.visualizerBars}
+                                  barFill={prefs.visualizerBarFill}
+                                  barRound={prefs.visualizerBarRound}
+                                  waveThick={prefs.visualizerWaveThick}
+                                  waveFill={prefs.visualizerWaveFill}
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                    value={activeVisPreset(visPresets, prefs) ?? "custom"}
+                    onPick={(k) => {
+                      const p = visPresets.find((x) => x.key === k);
+                      if (p) set(p.set);
+                    }}
+                  />
                   {prefs.visualizer === "bars" ? (
                     <>
                       <VisSliderRow

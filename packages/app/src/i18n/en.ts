@@ -245,12 +245,17 @@ export const en = {
         title: "Glass density",
         hint: "How dense the frosted glass is across the whole window — panels, side zones, lists and dialogs.",
         disabledHint: "With glass off, density changes nothing.",
+        light: "Light",
+        normal: "Normal",
+        dense: "Dense",
+        exact: { title: "Exact density", hint: "Any value between the three ready ones. Below 30% the text on panels gets harder to read." },
       },
       background: {
         title: "Background",
-        hint: "Quickly turns on a background made from the track cover. Other background types live in Customize.",
+        hint: "What shows under the interface. \"Custom\" is built in Customize: a color, a gradient, a picture or living circles.",
         fromCover: "From cover",
         custom: "Custom",
+        setUp: "Build it",
         ariaLabel: "Background from cover",
       },
       scale: {
@@ -343,6 +348,12 @@ export const en = {
       motion: {
         groupTitle: "Motion",
         anims: { title: "Animations", hint: "The interface moves smoothly. Turn this off and everything switches instantly." },
+        pace: {
+          title: "Motion pace",
+          hint: "How unhurried everything in the app appears, opens and changes.",
+          disabledHint: "With motion off, pace changes nothing.",
+          presets: { calm: "Calm", normal: "Normal", lively: "Lively" },
+        },
         animSpeed: { title: "Animation speed", hint: "Left — animations get faster, right — slower and softer." },
         durMenu: { title: "Responses", hint: "How long menus, tooltips and small touches take to appear. Left — snappier." },
         durDialog: { title: "Windows", hint: "How long dialogs and panels take to open. Left — snappier." },
@@ -742,8 +753,10 @@ export const en = {
     playback: {
       transitionsGroup: "Transitions",
       tempoMode: {
-        title: "Punchy drums when speed changes",
-        hint: "A sped-up or slowed-down track keeps its drum attack. Sustained sounds — vocals, synths — get slightly less smooth. Off is the opposite.",
+        title: "Sound at other speeds",
+        hint: "What to protect when a track plays faster or slower than usual. \"Punch\" keeps the drums tight, \"Smoothness\" keeps vocals and sustained notes even. One or the other, there is no third way.",
+        beats: "Punch",
+        smooth: "Smoothness",
       },
       crossfade: {
         title: "Crossfade",
@@ -768,7 +781,7 @@ export const en = {
         count: "{n} devices",
       },
       normalize: { title: "Volume leveling", hint: "Quiet and loud tracks play at roughly the same volume." },
-      speedSteps: { title: "Speed steps", hint: "The \"1×\" button in the player cycles through these values. List your own steps comma-separated, from 0.25 to 4." },
+      speedSteps: { title: "Speed steps", hint: "The \"1×\" button in the player cycles through the speeds you mark. Mark the ones you actually use, up to eight." },
       queueGroup: "Queue",
       radioEndless: { title: "Endless radio", hint: "When the queue runs out, the music keeps going with similar tracks." },
       recsGroup: "Recommendations",
@@ -787,7 +800,7 @@ export const en = {
         auto: "Auto",
         econom: "Economy",
       },
-      sleepTimer: { title: "Sleep timer", hint: "The moon button in the player cycles through: off, these minutes, end of track.", minSuffix: "min" },
+      sleepTimer: { title: "Sleep timer", hint: "The moon button in the player cycles through: off, the times you mark, end of track. Mark up to six.", minSuffix: "min" },
       units: { seconds: "{n} s", tracks: "{n} tr." },
       queuePrep: {
         title: "Queue preparation",
@@ -844,7 +857,15 @@ export const en = {
         title: "Video instead of cover art",
         hint: "When a track has a video (usually YouTube tracks), Now Playing shows it instead of the cover. The sound stays the same.",
       },
-      karaokeSize: { title: "Karaoke text size", hint: "Size of the lyrics line in listening mode." },
+      karaokeSize: {
+        title: "Karaoke text size",
+        hint: "Size of the lyrics line in listening mode.",
+        sample: "Words",
+        normal: "Normal",
+        large: "Large",
+        huge: "Huge",
+        exact: { title: "Exact size", hint: "Any value between the three ready ones." },
+      },
       linesSuffix: "{count} lines",
       karaokeLines: {
         title: "Karaoke lines on screen",
@@ -852,8 +873,9 @@ export const en = {
       },
       panelLines: {
         title: "Lyrics lines in the panel",
-        hint: "How many lines fit in Now playing. On Auto the line size follows the general Text size. Pick a number and the size is chosen for you — Text size stops affecting the lyrics.",
-        auto: "Auto",
+        hint: "How many lines fit in Now playing. On As many as fit the line size follows the general Text size. Pick a number and the size is chosen for you — Text size stops affecting the lyrics.",
+        auto: "As many as fit",
+        exact: { title: "Exact line count", hint: "From four to fourteen." },
       },
       understandingGroup: "Understanding",
       translation: { title: "Translation", hint: "Translates lines into a chosen language. Coming later.", soon: "Coming soon" },
@@ -904,6 +926,8 @@ export const en = {
       visualizer: { title: "Visualizer", hint: "A picture moving in time with the music, in listening mode." },
       visualizerKind: { title: "Visualizer style", hint: "Bars jump with the sound's frequencies, the wave follows its shape.", bars: "Bars", wave: "Wave" },
       visualizerStyle: {
+        title: "Style",
+        hint: "Ready combinations of density, width and character. Touch any dial below and \"Custom\" shows up.",
         custom: "Custom",
         waveSoft: "Soft",
         waveRibbon: "Ribbon",

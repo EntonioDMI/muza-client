@@ -8,7 +8,7 @@
  *  «настройки», 2026-08-02): разметка, стили и порядок рядов не тронуты —
  *  приложение после переезда обязано выглядеть ровно как до него. */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Kbd, Switch, Tabs } from "@muza/ui";
 import { useT } from "../../i18n";
 import type { Prefs } from "../../prefs/types";
@@ -21,7 +21,8 @@ import {
   paneStyle,
   PresetRow,
   PresetTile,
-  RowValue,
+  SampleChoice,
+  SampleGlass,
   ScaleSlider,
   SettingRow,
 } from "./primitives";
@@ -36,6 +37,14 @@ const CUSTOM = "custom";
  *  и старые сохранения (prefs/legacyPrefs.ts). Своя копия числа в интерфейсе
  *  означала бы ряд, умеющий выставить значение, которое фильтр тем зарежет. */
 const RADIUS_MAX = PREF_RANGES.radius.max;
+
+/** Три плотности стекла образцами. Средняя РАВНА значению по умолчанию (62) —
+ *  тот, кто настройку не трогал, видит выбранной именно её, а не «Своё». */
+const GLASS_SAMPLES = [
+  { key: "light", value: 35 },
+  { key: "normal", value: 62 },
+  { key: "dense", value: 88 },
+] as const;
 
 export function AppearancePane() {
   const { t } = useT();
@@ -54,6 +63,38 @@ export function AppearancePane() {
   useEffect(() => {
     if (prefs.bgType !== "none") lastBgType.current = prefs.bgType;
   }, [prefs.bgType]);
+  /** Как выглядит плитка «Свой»: настоящий цвет/градиент/картинка из
+   *  Кастомизации, а не абстрактный образец. Ради этого плитка и заводилась —
+   *  тумблер до неё не мог показать, ЧТО именно вернётся при включении.
+   *  Тип берём из текущего, а если фон выключен — из запомненного: иначе,
+   *  выключив фон, человек терял бы и картинку того, что выключил. */
+  const customBg = useMemo(() => {
+    const type = prefs.bgType === "none" ? lastBgType.current : prefs.bgType;
+    if (type === "gradient") return { css: `linear-gradient(135deg, ${prefs.bgColor}, ${prefs.bgColor2})`, caption: t("settings.customize.background.type.gradient") };
+    if (type === "color") return { css: prefs.bgColor, caption: t("settings.customize.background.type.color") };
+    if (type === "image") {
+      // Ссылка может быть пустой или битой — тогда под картинкой виден цвет, и
+      // плитка не становится дырой. Кавычки, скобки и слеши вырезаем: ссылка
+      // приезжает из поля ввода прямо в строку CSS, и без этого её можно было
+      // бы закрыть и дописать своё правило.
+      const url = prefs.bgImageUrl.trim().replace(/["'()\\]/g, "");
+      return {
+        css: url ? `${prefs.bgColor} center/cover no-repeat url("${url}")` : prefs.bgColor,
+        caption: t("settings.customize.background.type.image"),
+      };
+    }
+    if (type === "animated")
+      return {
+        css: `radial-gradient(60% 60% at 30% 35%, ${prefs.bgColor} 0%, transparent 60%), radial-gradient(60% 60% at 70% 70%, ${prefs.bgColor2} 0%, transparent 60%), var(--surface-1)`,
+        caption: t("settings.customize.background.type.animated"),
+      };
+    // Своего фона ещё не собирали. Заготовленные цвета показывать НЕЛЬЗЯ: по
+    // умолчанию это #1a1815 и #101418, то есть два почти чёрных — плитка
+    // выходила неотличимой от соседней «Выкл» (замер скриншотом 14.08), и обе
+    // читались как пустые. Пока собирать нечего, плитка обещает не конкретный
+    // фон, а возможность: полоса от акцента к поверхности.
+    return { css: "linear-gradient(135deg, var(--accent), var(--surface-4) 85%)", caption: t("settings.appearance.background.setUp") };
+  }, [prefs.bgType, prefs.bgColor, prefs.bgColor2, prefs.bgImageUrl, t]);
   return (
     <div className={paneClass} style={paneStyle}>
       {/* Переключатель языка — первый элемент вкладки по требованию владельца.
@@ -172,36 +213,99 @@ export function AppearancePane() {
       <SettingRow title={t("settings.appearance.glassOn.title")} hint={t("settings.appearance.glassOn.hint")}>
         <Switch checked={prefs.glassOn} onChange={(glassOn: boolean) => set({ glassOn })} label={t("settings.appearance.glassOn.title")} />
       </SettingRow>
-      <SettingRow
+      {/* ПЛОТНОСТЬ СТЕКЛА — образцами (правка 2026-08-14). Ползунок «0…100 %»
+          просил вообразить материал по числу; хуже того, единственное место, где
+          его видно прямо сейчас, — плашка самих настроек, то есть человек
+          настраивал стекло, глядя на стекло, которое под ним же и меняется.
+          Образцы показывают ТРИ материала рядом, и выбор становится сравнением,
+          а не угадыванием. Точный процент — под стрелкой, как у скругления. */}
+      <SampleChoice
         title={t("settings.appearance.glass.title")}
         hint={prefs.glassOn ? t("settings.appearance.glass.hint") : t("settings.appearance.glass.disabledHint")}
+        disabled={!prefs.glassOn}
+        minTile={104}
+        items={GLASS_SAMPLES.map((g) => ({
+          key: g.key,
+          label: t(`settings.appearance.glass.${g.key}`),
+          sample: <SampleGlass opacity={g.value} />,
+        }))}
+        value={GLASS_SAMPLES.find((g) => g.value === prefs.glassOpacity)?.key ?? "custom"}
+        onPick={(k) => {
+          const g = GLASS_SAMPLES.find((x) => x.key === k);
+          if (g) set({ glassOpacity: g.value });
+        }}
       >
-        <div style={prefs.glassOn ? undefined : { pointerEvents: "none", opacity: 0.4 }}>
+        <SettingRow title={t("settings.appearance.glass.exact.title")} hint={t("settings.appearance.glass.exact.hint")}>
           <LiveSlider
             value={prefs.glassOpacity - GLASS_MIN}
             max={100 - GLASS_MIN}
-            label={t("settings.appearance.glass.title")}
+            label={t("settings.appearance.glass.exact.title")}
             suffix={`${prefs.glassOpacity} %`}
             onChange={(v) => set({ glassOpacity: GLASS_MIN + Math.round(v) })}
           />
-        </div>
-      </SettingRow>
-      <SettingRow title={t("settings.appearance.background.title")} hint={t("settings.appearance.background.hint")}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-          <RowValue>
-            {prefs.bgType === "cover"
-              ? t("settings.appearance.background.fromCover")
-              : prefs.bgType === "none"
-                ? t("common.off")
-                : t("settings.appearance.background.custom")}
-          </RowValue>
-          <Switch
-            checked={prefs.bgType !== "none"}
-            onChange={(on: boolean) => set({ bgType: on ? lastBgType.current : "none" })}
-            label={t("settings.appearance.background.ariaLabel")}
-          />
-        </div>
-      </SettingRow>
+        </SettingRow>
+      </SampleChoice>
+      {/* ФОН — три образца вместо тумблера (правка 2026-08-14, ровно тот случай,
+          который владелец назвал первым: «тумблер у того, что на деле имеет три
+          состояния»). Величина здесь никогда не была двоичной: фон бывает из
+          обложки, свой (цвет, градиент, картинка, анимация) и никакой. Тумблер
+          умел показать только «какой-то есть / нет», а КАКОЙ именно — дописывала
+          строчка слева от него. Значит, орган не справлялся и его подпирали
+          текстом.
+          Теперь три плитки рисуют результат: у «Своего» в плитке настоящий цвет
+          или градиент, который человек собрал в Кастомизации, — по нему и видно,
+          что там ждёт. Память прошлого типа (lastBgType) осталась: она нужна,
+          чтобы «Свой» вернул именно ТОТ фон, а не обложку. */}
+      <SampleChoice
+        title={t("settings.appearance.background.title")}
+        hint={t("settings.appearance.background.hint")}
+        minTile={112}
+        items={[
+          {
+            key: "cover",
+            label: t("settings.appearance.background.fromCover"),
+            // Обложки конкретного трека тут нет и быть не может (настройки не
+            // знают, что играет) — образец показывает ПРИЁМ: размытое цветное
+            // пятно под интерфейсом.
+            sample: (
+              <span
+                style={{
+                  display: "block",
+                  width: "100%",
+                  height: "100%",
+                  background: "radial-gradient(120% 120% at 25% 20%, var(--accent) 0%, transparent 55%), radial-gradient(120% 120% at 80% 80%, var(--surface-4) 0%, var(--surface-1) 70%)",
+                  filter: "blur(3px)",
+                }}
+              ></span>
+            ),
+          },
+          {
+            key: "custom",
+            label: t("settings.appearance.background.custom"),
+            caption: customBg.caption,
+            sample: <span style={{ display: "block", width: "100%", height: "100%", background: customBg.css }}></span>,
+          },
+          {
+            key: "none",
+            label: t("common.off"),
+            // «Без фона» — не пустая плитка, а честный образец: ровная
+            // поверхность приложения. Пустота читалась бы как «не загрузилось»,
+            // поэтому берём заметную ступень поверхности, а не прозрачную.
+            sample: <span style={{ display: "block", width: "100%", height: "100%", background: "var(--surface-4)" }}></span>,
+          },
+        ]}
+        value={prefs.bgType === "cover" || prefs.bgType === "none" ? prefs.bgType : "custom"}
+        onPick={(k) => {
+          if (k === "custom") {
+            // Своего фона ещё нет — вести человека в пустую настройку нечестно,
+            // ведём туда, где его собирают.
+            if (lastBgType.current === "cover") openSub("customize");
+            else set({ bgType: lastBgType.current });
+            return;
+          }
+          set({ bgType: k as Prefs["bgType"] });
+        }}
+      />
       <SettingRow title={t("settings.appearance.scale.title")} hint={t("settings.appearance.scale.hint")}>
         <ScaleSlider value={prefs.uiScale} label={t("settings.appearance.scale.title")} onCommit={(uiScale) => set({ uiScale })} />
       </SettingRow>

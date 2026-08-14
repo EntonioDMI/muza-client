@@ -21,10 +21,19 @@ import { useEffect, useRef, useState } from "react";
 import { Switch, Tabs } from "@muza/ui";
 import type { RecsSettings } from "@muza/api-client";
 import { useT } from "../../i18n";
-import { DEFAULT_PREFS, type Prefs } from "../../prefs/types";
+import type { Prefs } from "../../prefs/types";
 import { matchPreset, PRESETS_WARM } from "../../prefs/presets";
-import { DisabledSlider, GroupTitle, LiveSlider, paneStyle, PresetRow, RowValue, SettingRow, StepsEditor } from "./primitives";
+import { ChipSet, DisabledSlider, GroupTitle, LiveSlider, paneStyle, PresetRow, RowValue, SettingRow } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
+
+/** Скорости, которые вообще имеет смысл предлагать. Поле принимает 0.25…4
+ *  любым числом, но осмысленных значений там полтора десятка, а не бесконечность:
+ *  между 1.3× и 1.35× человек разницы не слышит. Перечисляем те, что слышно. */
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+/** Готовые времена таймера сна. Крайние (5 и 120) есть у всех плееров: «ещё
+ *  один трек» и «до конца альбома». */
+const SLEEP_OPTIONS = [5, 10, 15, 20, 30, 45, 60, 90, 120];
 
 /** Шаг перемотки: чипы 5/10/30 с — та же конвенция «пресеты поверх обычного
  *  поля», набор локальный (одно поле). */
@@ -138,19 +147,30 @@ export function RecsTuning() {
 }
 
 export function PlaybackPane() {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { prefs, set, caps, openSub, paneClass } = useSettingsScreen();
   return (
     <div className={paneClass} style={paneStyle}>
       <GroupTitle>{t("settings.playback.transitionsGroup")}</GroupTitle>
       {/* Характер темпа стоит ПЕРЕД кроссфейдом: оба про то, как звучит стык,
           но этот меняет сам звук растянутого трека, а кроссфейд — только
-          переход между треками. Разбор — src-tauri/src/wsola.rs. */}
+          переход между треками. Разбор — src-tauri/src/wsola.rs.
+
+          ⚠️ ЭТО ВЫБОР, А НЕ ТУМБЛЕР (правка 2026-08-14). Тумблер обещает, что
+          есть «включено» и «выключено», то есть что одно из положений — отказ
+          от функции. Здесь оба положения одинаково работают, просто берегут
+          разное: удары или гладкость тянущихся звуков. Подпись честно говорила
+          об этом словом «наоборот» — и это ровно тот случай, когда подпись
+          латает орган. Два сегмента называют оба исхода по имени, и выбирать
+          больше не нужно, читая мелкий текст. */}
       <SettingRow title={t("settings.playback.tempoMode.title")} hint={t("settings.playback.tempoMode.hint")}>
-        <Switch
-          checked={prefs.tempoWsola}
-          onChange={(v: boolean) => set({ tempoWsola: v })}
-          label={t("settings.playback.tempoMode.title")}
+        <Tabs
+          items={[
+            { key: "beats", label: t("settings.playback.tempoMode.beats") },
+            { key: "smooth", label: t("settings.playback.tempoMode.smooth") },
+          ]}
+          value={prefs.tempoWsola ? "beats" : "smooth"}
+          onChange={(k: string) => set({ tempoWsola: k === "beats" })}
         />
       </SettingRow>
       <SettingRow title={t("settings.playback.crossfade.title")} hint={t("settings.playback.crossfade.hint")}>
@@ -193,15 +213,18 @@ export function PlaybackPane() {
       <SettingRow title={t("settings.playback.normalize.title")} hint={t("settings.playback.normalize.hint")}>
         <Switch checked={prefs.normalize} onChange={(v: boolean) => set({ normalize: v })} label={t("settings.playback.normalize.title")} />
       </SettingRow>
+      {/* ШАГИ СКОРОСТИ — набор, а не строка (правка 2026-08-14). Здесь стояло
+          поле ввода «1, 1.25, 1.5, 2» с кнопкой «Применить»: человек обязан был
+          знать синтаксис перечисления, знать границы 0.25…4 и не промахнуться —
+          а промах фильтр отбрасывал МОЛЧА. Это был самый разработческий орган
+          во всей программе. Теперь скорости нарисованы: нажал — есть в наборе,
+          нажал ещё раз — нет. Ошибиться нечем и применять нечего. */}
       <SettingRow title={t("settings.playback.speedSteps.title")} hint={t("settings.playback.speedSteps.hint")}>
-        <StepsEditor
+        <ChipSet
+          options={SPEED_OPTIONS.map((v) => ({ value: v, label: `${v.toLocaleString(lang)}×` }))}
           values={prefs.speedSteps}
-          onApply={(speedSteps) => set({ speedSteps })}
-          min={0.25}
-          max={4}
-          maxCount={8}
-          fallback={DEFAULT_PREFS.speedSteps}
-          suffix="×"
+          onChange={(speedSteps) => set({ speedSteps })}
+          max={8}
         />
       </SettingRow>
       <GroupTitle>{t("settings.playback.queueGroup")}</GroupTitle>
@@ -291,14 +314,14 @@ export function PlaybackPane() {
           плеера. Нет кнопки — ряд настраивал бы то, чего не запустить. */}
       {caps.has("sleepTimer") ? (
         <SettingRow title={t("settings.playback.sleepTimer.title")} hint={t("settings.playback.sleepTimer.hint")}>
-          <StepsEditor
+          {/* Тот же разбор, что у шагов скорости: перечисление минут через
+              запятую заменено набором готовых времён. Потолок 6 — столько
+              пунктов влезает в меню кнопки-луны в полосе плеера. */}
+          <ChipSet
+            options={SLEEP_OPTIONS.map((v) => ({ value: v, label: `${v} ${t("settings.playback.sleepTimer.minSuffix")}` }))}
             values={prefs.sleepPresets}
-            onApply={(sleepPresets) => set({ sleepPresets: sleepPresets.map(Math.round) })}
-            min={1}
-            max={600}
-            maxCount={6}
-            fallback={DEFAULT_PREFS.sleepPresets}
-            suffix={t("settings.playback.sleepTimer.minSuffix")}
+            onChange={(sleepPresets) => set({ sleepPresets })}
+            max={6}
           />
         </SettingRow>
       ) : null}

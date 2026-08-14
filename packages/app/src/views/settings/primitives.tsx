@@ -16,7 +16,7 @@
  *  в обеих программах. */
 
 import { useEffect, useState } from "react";
-import { Button, ChipGroup, ColorPicker, Icon, IconButton, Slider, Tooltip } from "@muza/ui";
+import { Button, Chip, ChipGroup, ColorPicker, Icon, IconButton, Slider, Tooltip } from "@muza/ui";
 import { useT } from "../../i18n";
 import { comboFromEvent, formatCombo } from "../../lib/hotkeys";
 
@@ -586,6 +586,400 @@ export function AccentSwatch({
         }}
       ></button>
     </Tooltip>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ОРГАНЫ, ПРИДУМАННЫЕ ПОД ВЕЛИЧИНУ (правка владельца 2026-08-14)
+   ───────────────────────────────────────────────────────────────────────────
+   Заявка дословно: «сейчас у нас используются просто ползунки, переключатели и
+   информация… большинство элементов — это обычные переключатели, а не
+   уникальные или удобные настройки». Речь НЕ про отказ от дизайн-системы:
+   токены, палитра, типографика и материал остаются её. Меняется словарь
+   УПРАВЛЕНИЯ — орган выбирается под величину, а не по тому, что лежит в наборе.
+
+   Образец, который назвал сам владелец, — акцентный цвет: три готовых свотча
+   плюс пипетка. Ни ползунка, ни тумблера, и при этом настройка полностью в
+   руках человека. Ниже — та же мысль, обобщённая до трёх кирпичей:
+
+   • SampleChoice — выбор ОБРАЗЦА вместо числа. Плитка рисует РЕЗУЛЬТАТ (сколько
+     строк, какое стекло, какой фон), а не подписывает его словом. Точное
+     значение никуда не девается: оно живёт под стрелкой «Настроить», ровно как
+     у PresetRow. Применяется там, где число само по себе человеку ничего не
+     говорит, а картинка говорит всё.
+   • ChipSet — НАБОР значений (какие шаги скорости, какие пресеты сна). Это не
+     выбор одного из и не число: это множество. До правки такие настройки
+     редактировались строкой «1, 1.25, 1.5, 2» через запятую — самый
+     разработческий орган во всей программе.
+   • SampleBars / SampleGlass — рисовалки образцов, чтобы плитки в разных
+     разделах выглядели одним семейством, а не тремя самоделками.
+
+   ⚠️ ПОЧЕМУ ЭТО НЕ SettingRow. Ряд кладёт контрол СПРАВА от заголовка и на
+   узком экране сворачивается в стек. Плиткам образцов нужна вся ширина всегда —
+   иначе они схлопнутся в марки размером с чип и перестанут быть образцами.
+   Поэтому у SampleChoice своя плашка: та же поверхность, тот же радиус, тот же
+   отступ, что у ряда, но раскладка колонкой.
+
+   ⚠️ ЯКОРЬ ПОИСКА. data-rowtitle обязателен: searchSettings прокручивает к ряду
+   по видимому названию (см. SettingRow выше). Плашка образцов ищется точно так
+   же, как обычный ряд, и запись в lib/settingsIndex.ts ей нужна такая же. */
+
+/** Плашка выбора образцов: заголовок с подсказкой, под ним — сетка плиток,
+ *  каждая из которых РИСУЕТ свой результат.
+ *
+ *  children (если переданы) — точное значение за стрелкой «Настроить»: обещание
+ *  «удобно по умолчанию, но ничего не заперто» держится тем же приёмом, что в
+ *  PresetRow, и человеку не нужно учить два разных раскрытия. */
+export function SampleChoice({
+  title,
+  hint,
+  items,
+  value,
+  disabled,
+  /** Ширина плитки, ниже которой сетка переносит строку. Разным образцам нужна
+   *  разная: полоскам строк хватает 82px, картинке фона нужно 112. */
+  minTile = 108,
+  /** Потолок ширины плитки. Без него три образца на широком окне
+   *  растягиваются на полтысячи пикселей каждый, и внутри плитки остаётся
+   *  пустое поле вокруг маленькой картинки — плитка перестаёт читаться как
+   *  образец и начинает читаться как пустая панель. */
+  maxTile = 260,
+  onPick,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  items: { key: string; label: string; caption?: string; sample: React.ReactNode }[];
+  value: string;
+  disabled?: boolean;
+  minTile?: number;
+  maxTile?: number;
+  onPick: (key: string) => void;
+  children?: React.ReactNode;
+}) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div
+        data-rowtitle={title}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--sp-4)",
+          padding: "var(--sp-4) var(--sp-5)",
+          borderRadius: "var(--r-md)",
+          background: "var(--surface-2)",
+          fontFamily: "var(--font-ui)",
+          // Тот же клип, что у ряда: на скруглении до 200% прямоугольные плитки
+          // вылезали бы за скруглённый силуэт плашки.
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-3)" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "var(--fs-body)", fontWeight: 400, color: "var(--text-1)" }}>{title}</div>
+            {hint ? (
+              <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2, lineHeight: 1.45 }}>{hint}</div>
+            ) : null}
+          </div>
+          {children ? (
+            <IconButton
+              icon={open ? "chevron-up" : "chevron-down"}
+              size="sm"
+              label={t("settings.presetRow.tune")}
+              disabled={disabled}
+              onClick={() => setOpen((v) => !v)}
+            />
+          ) : null}
+        </div>
+        <div
+          // Плитки — группа радиокнопок, и группе нужно ИМЯ: без него читалка
+          // объявляет «выбрано, Обычное» без единого слова о том, чего это
+          // обычное — стекла, размера или числа строк (W3C APG, radiogroup).
+          role="radiogroup"
+          aria-label={title}
+          style={{
+            display: "grid",
+            // auto-fit + потолок: плитки заполняют ряд, пока их мало, и
+            // переносятся, когда перестают влезать; лишнюю ширину забирает
+            // не плитка, а пустое место справа (justifyContent).
+            gridTemplateColumns: `repeat(auto-fit, minmax(${minTile}px, ${maxTile}px))`,
+            justifyContent: "start",
+            gap: "var(--sp-3)",
+            ...(disabled ? { pointerEvents: "none", opacity: 0.4 } : null),
+          }}
+        >
+          {items.map((it) => (
+            <SampleTile
+              key={it.key}
+              label={it.label}
+              caption={it.caption}
+              sample={it.sample}
+              selected={it.key === value}
+              onClick={() => onPick(it.key)}
+            />
+          ))}
+        </div>
+      </div>
+      {open && !disabled ? children : null}
+    </>
+  );
+}
+
+/** Одна плитка-образец. Выбранная обведена акцентом, а не только залита: на
+ *  плитке, ВНУТРИ которой нарисована картинка, одной заливкой выбор не читается —
+ *  глаз считает разницу фона за часть образца. */
+function SampleTile({
+  label,
+  caption,
+  sample,
+  selected,
+  onClick,
+}: {
+  label: string;
+  caption?: string;
+  sample: React.ReactNode;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      // Плитки — набор равноправных состояний одной величины: это radio, а не
+      // группа независимых кнопок. aria-pressed соврал бы про независимость.
+      role="radio"
+      aria-checked={selected}
+      onClick={onClick}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--sp-2)",
+        padding: "var(--sp-3)",
+        border: "none",
+        borderRadius: "var(--r-md)",
+        background: selected ? "var(--surface-4)" : "var(--surface-3)",
+        // Обводка внутрь (offset -2): наружная на плотной сетке съедала зазор
+        // между соседними плитками и они слипались.
+        outline: selected ? "2px solid var(--accent)" : "2px solid transparent",
+        outlineOffset: -2,
+        cursor: "pointer",
+        textAlign: "left",
+        fontFamily: "var(--font-ui)",
+        transition: "background var(--dur-state) var(--ease-standard), outline-color var(--dur-state) var(--ease-standard)",
+      }}
+    >
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 54,
+          borderRadius: "var(--r-sm)",
+          background: "var(--surface-1)",
+          overflow: "hidden",
+        }}
+      >
+        {sample}
+      </span>
+      <span style={{ display: "block", fontSize: "var(--fs-caption)", color: selected ? "var(--text-1)" : "var(--text-2)" }}>{label}</span>
+      {caption ? <span style={{ display: "block", fontSize: "var(--fs-caption)", color: "var(--text-3)" }}>{caption}</span> : null}
+    </button>
+  );
+}
+
+/** НАБОР ЗНАЧЕНИЙ чипами-переключателями: каждый чип включён или выключен, и
+ *  вместе они и есть значение настройки.
+ *
+ *  Заменил StepsEditor там, где список значений заранее известен (шаги скорости,
+ *  пресеты таймера сна). У поля «через запятую» было три беды разом: человек
+ *  обязан знать синтаксис, обязан знать допустимые границы, и обязан не
+ *  промахнуться — а промах молча отбрасывался фильтром. Здесь промахнуться
+ *  нечем: доступные значения нарисованы, набранного мусора не бывает.
+ *
+ *  StepsEditor НЕ удалён — он остаётся для величин, у которых осмысленных
+ *  значений бесконечность (там перечислить чипами нечего). */
+export function ChipSet({
+  options,
+  values,
+  onChange,
+  /** Сколько значений обязано остаться. Ноль шагов скорости означал бы кнопку
+   *  «1×» в плеере, которой нечего переключать, — последний чип не снимается. */
+  min = 1,
+  max,
+}: {
+  options: { value: number; label: string }[];
+  values: number[];
+  onChange: (v: number[]) => void;
+  min?: number;
+  max?: number;
+}) {
+  const on = new Set(values);
+  const toggle = (v: number) => {
+    if (on.has(v)) {
+      if (values.length <= min) return;
+      onChange(values.filter((x) => x !== v));
+      return;
+    }
+    if (max !== undefined && values.length >= max) return;
+    // Порядок значений — возрастающий всегда, независимо от порядка нажатий:
+    // кнопка «1×» в плеере ходит по этому списку по кругу, и «1 → 2 → 1.25»
+    // читалось бы как поломка.
+    onChange([...values, v].sort((a, b) => a - b));
+  };
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-2)", justifyContent: "flex-end" }}>
+      {options.map((o) => (
+        <Chip
+          key={o.value}
+          selected={on.has(o.value)}
+          onClick={() => toggle(o.value)}
+          // Обводка акцентом ПОВЕРХ обычного выделения чипа. В группе с ОДНИМ
+          // выбором ступени поверхности хватает: выбран ровно один, и глазу не
+          // с чем путаться. Здесь выбранных пять из девяти вперемешку, и разница
+          // «поверхность 4 против поверхности 2» на ряду вразнобой читается как
+          // подсветка под курсором, а не как «это в наборе».
+          style={on.has(o.value) ? { outline: "1.5px solid var(--accent)", outlineOffset: -1.5 } : undefined}
+        >
+          {o.label}
+        </Chip>
+      ))}
+    </div>
+  );
+}
+
+/** Образец «сколько строк текста видно»: столбик полосок, средняя — активная.
+ *  Полоски разной длины, чтобы читались словами, а не таблицей. */
+export function SampleLines({ count, accent = true }: { count: number; accent?: boolean }) {
+  // Нечётное окно караоке симметрично: середина — та строка, что поётся сейчас.
+  const mid = Math.floor(count / 2);
+  // Псевдослучайная, но УСТОЙЧИВАЯ длина: реальный текст неровный, а ровный
+  // столбик читался бы как полоски прогресса, а не как строки песни.
+  const widths = [86, 64, 78, 55, 92, 70, 60, 83, 68, 74, 58, 88, 62, 80];
+  return (
+    <span style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, width: "100%", padding: "0 var(--sp-3)" }}>
+      {Array.from({ length: count }, (_, i) => (
+        <span
+          key={i}
+          style={{
+            display: "block",
+            height: i === mid ? 5 : 3,
+            width: `${widths[i % widths.length]}%`,
+            borderRadius: 999,
+            background: i === mid && accent ? "var(--accent)" : "var(--text-3)",
+            opacity: i === mid ? 1 : 0.45,
+          }}
+        ></span>
+      ))}
+    </span>
+  );
+}
+
+/** Образец «какое стекло»: настоящая матовая плашка поверх полосатой подложки.
+ *
+ *  Полосы — не украшение. Сквозь ровный фон ни размытие, ни плотность не видны
+ *  вовсе: первая версия образца стояла на однотонной подложке, и все три
+ *  плитки вышли неразличимы (замер скриншотом 14.08). Полоса даёт контур,
+ *  который стекло обязано размыть и притушить, — тогда 35 % и 88 % отличаются
+ *  с одного взгляда. Кайма по краю оставлена нарочно: рядом с открытой полосой
+ *  видно, СКОЛЬКО именно стекло съело.
+ *
+ *  Цвет — rgba(var(--glass-base)), тот же, из которого themeVars собирает
+ *  настоящие --glass-*. Через --surface-* это не сделать: они сами уже
+ *  полупрозрачные (rgba(255,255,255,0.025) в тёмной теме), и доля от доли даёт
+ *  невидимое — ровно та ошибка, что была здесь до правки. */
+export function SampleGlass({ opacity }: { opacity: number }) {
+  const blur = 4 + Math.round(opacity / 10);
+  return (
+    <span
+      style={{
+        position: "relative",
+        display: "block",
+        width: "100%",
+        height: "100%",
+        // Полос немного и они приглушены: частая яркая «сигнальная лента»
+        // перетягивала внимание на себя и читалась как узор образца, а не как
+        // то, что стекло скрывает.
+        background:
+          "repeating-linear-gradient(115deg, color-mix(in srgb, var(--accent) 72%, transparent) 0 9px, transparent 9px 26px), var(--surface-4)",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          inset: 9,
+          borderRadius: "var(--r-sm)",
+          background: `rgba(var(--glass-base, 28, 26, 23), ${opacity / 100})`,
+          backdropFilter: `blur(${blur}px)`,
+          WebkitBackdropFilter: `blur(${blur}px)`,
+        }}
+      ></span>
+    </span>
+  );
+}
+
+/** Образец визуализатора: рисует РЕЗУЛЬТАТ набора чисел, а не подписывает его
+ *  словом. Пока стили выбирались чипами «Классика / Плотные / Воздушные», узнать
+ *  разницу можно было единственным способом — нажать, уйти в режим прослушивания
+ *  и посмотреть. Три чипа — три похода.
+ *
+ *  Форма спектра (SHAPE) намеренно постоянная и падающая слева направо: так
+ *  выглядит настоящий звук, и рядом стоящие образцы отличаются ТОЛЬКО тем, чем
+ *  отличаются пресеты. Случайные высоты сделали бы плитки несравнимыми. */
+const SHAPE = [0.96, 0.78, 1, 0.66, 0.88, 0.58, 0.74, 0.48, 0.64, 0.4, 0.54, 0.33, 0.44, 0.27, 0.36, 0.22];
+
+export function SampleVisualizer({
+  kind,
+  bars = 56,
+  barFill = 84,
+  barRound = 100,
+  waveThick = 45,
+  waveFill = 45,
+}: {
+  kind: "bars" | "wave";
+  bars?: number;
+  barFill?: number;
+  barRound?: number;
+  waveThick?: number;
+  waveFill?: number;
+}) {
+  if (kind === "wave") {
+    // Толщина линии и налив под ней — те же два числа, что у настоящей волны.
+    const stroke = 0.8 + (waveThick / 100) * 5;
+    return (
+      <svg viewBox="0 0 100 34" preserveAspectRatio="none" style={{ width: "84%", height: "70%", overflow: "visible" }} aria-hidden="true">
+        <path d="M0 17 C 10 2, 18 32, 28 17 S 46 2, 56 17 S 74 32, 84 17 S 96 6, 100 17 L100 34 L0 34 Z" fill="var(--accent)" opacity={(waveFill / 100) * 0.55} />
+        <path
+          d="M0 17 C 10 2, 18 32, 28 17 S 46 2, 56 17 S 74 32, 84 17 S 96 6, 100 17"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+  // Столбиков в образце меньше, чем в настоящем ряду: 88 полосок в плитку
+  // шириной 96 px не влезут физически. Пропорция сохранена — плотный пресет
+  // остаётся заметно плотнее воздушного.
+  const count = Math.max(5, Math.min(SHAPE.length, Math.round(bars / 6)));
+  return (
+    <span style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: `${((100 - barFill) / 100) * 4 + 1}px`, width: "84%", height: "70%" }}>
+      {SHAPE.slice(0, count).map((h, i) => (
+        <span
+          key={i}
+          style={{
+            display: "block",
+            flex: 1,
+            height: `${Math.round(h * 100)}%`,
+            borderRadius: (barRound / 100) * 3,
+            background: "var(--accent)",
+            // Дальние частоты тише — так же, как в настоящем визуализаторе.
+            opacity: 0.5 + h * 0.5,
+          }}
+        ></span>
+      ))}
+    </span>
   );
 }
 
