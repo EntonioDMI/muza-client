@@ -857,6 +857,12 @@ export const en = {
       synced: { title: "Synced lyrics", hint: "Lines light up in time with the music. Turn this off and the lyrics become a plain list." },
       autoScroll: { title: "Auto-scroll", hint: "The lyrics follow the current line on their own. Turn this off to scroll freely." },
       endNote: { title: "End note", hint: "A decorative music note at the very bottom of the lyrics." },
+      offset: {
+        title: "Lyrics timing",
+        hint: "For when lines light up off the beat. Right — lyrics run earlier, left — later. A small head start is built in already; this is for songs whose own timing is off.",
+        reset: "Reset",
+        value: "{n} s",
+      },
       videoNowPlaying: {
         title: "Video instead of cover art",
         hint: "When a track has a video (usually YouTube tracks), Now Playing shows it instead of the cover. The sound stays the same.",
@@ -1244,8 +1250,11 @@ export const en = {
       playNext: "Play next",
       queue: "Add to queue",
       radio: "Radio from this track",
+      goToArtist: "Go to artist",
       like: "Add to Favorites",
       unlike: "Remove from Favorites",
+      dislike: "Not for me",
+      muteArtist: "Stop recommending {artist}",
       addToJam: "Add to Jam",
       share: "Share",
       versions: "Sources",
@@ -1319,6 +1328,16 @@ export const en = {
       noOther: "No other lyrics out there",
       restored: "Lyrics are back",
       failed: "That didn't work — try again",
+    },
+    dislike: {
+      done: "We won't recommend this",
+      failed: "Didn't work — try again",
+      undoFailed: "Couldn't undo that",
+    },
+    muteArtist: {
+      done: "{artist} won't show up in recommendations",
+      failed: "Didn't work — try again",
+      undoFailed: "Couldn't undo that",
     },
     radio: {
       continuing: "Radio: continuing with similar tracks",

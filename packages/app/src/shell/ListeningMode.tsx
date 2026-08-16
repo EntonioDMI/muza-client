@@ -33,6 +33,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import { Cover, IconButton, Lyrics, Slider } from "@muza/ui";
 import { fmtTime } from "../lib/format";
 import { AnimatedBackdrop } from "./AnimatedBackdrop";
+import { ArtistLink } from "./ArtistLink";
 import { DEFAULT_SCENE_BACKDROP, type BackdropView } from "../prefs/backdrop";
 import { Visualizer } from "./Visualizer";
 import type { VisualizerTuning } from "../lib/visualizerMath";
@@ -87,6 +88,7 @@ export function ListeningMode({
   onSeekLine,
   onExplain,
   onLineContextMenu,
+  onOpenArtist,
   onClose,
   lyricsShown = true,
   onToggleLyrics,
@@ -130,6 +132,9 @@ export function ListeningMode({
    *  пеньком apps/desktop/src/shell/ListeningMode.tsx, у веба его пока нет
    *  (см. подробное объяснение в shell/NowPlayingPanel.tsx). */
   onLineContextMenu?: (e: ReactMouseEvent, i: number | null) => void;
+  /** Клик по имени артиста ведёт на его страницу (16.08). Нет пропа — имя
+   *  остаётся текстом (правило площадок, см. ArtistLink). */
+  onOpenArtist?: (name: string) => void;
   onClose: () => void;
   /** Текст показан (преф listeningLyricsShown). false — «только обложка/
    *  визуализатор»: блок текста плавно гаснет, его колонка схлопывается
@@ -433,7 +438,8 @@ export function ListeningMode({
               {track.title}
             </div>
             <div style={{ fontSize: "var(--fs-strong)", color: "var(--text-2)", marginTop: 6 }}>
-              {track.album ? `${track.artist} · ${track.album}` : track.artist}
+              <ArtistLink name={track.artist} onOpen={onOpenArtist} />
+              {track.album ? ` · ${track.album}` : null}
             </div>
           </div>
         </div>

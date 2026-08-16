@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { Session } from "@muza/api-client";
+import { useQueryScope } from "@muza/app/lib/queryClient";
 import { getApi } from "./api";
 
 /** Сессия веба. Анонимный режим десктопа на вебе не существует: без серверной
@@ -20,6 +21,9 @@ const Ctx = createContext<SessionCtx | null>(null);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  // Кэш запросов один на вкладку и переживает выход — привязываем его к
+  // аккаунту здесь, выше всех экранов. Разбор — @muza/app/lib/queryClient.
+  useQueryScope(session?.user.id ?? null);
 
   useEffect(() => {
     // Отзыв входа на ходу (2026-07-20): restoreSession больше не ходит в

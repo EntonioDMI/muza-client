@@ -35,6 +35,7 @@ export function StatsView({
   onCatalogMenu,
   onCustomize,
   onSetStatsBlocks,
+  onOpenArtist,
 }: {
   api: MuzaApi;
   /** false у анонима: истории на сервере нет — честная заглушка. */
@@ -49,6 +50,8 @@ export function StatsView({
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
   /** Открыть под-экран настроек «Статистика» (кнопка «Настроить»). */
   onCustomize: () => void;
+  /** Клик по имени артиста в строке трека — на его страницу (16.08). */
+  onOpenArtist?: (name: string) => void;
   /** Записать список блоков (режим правки вида, Ctrl+E). Нет колбэка — блоки
    *  не переставляются. */
   onSetStatsBlocks?: (blocks: Prefs["statsBlocks"]) => void;
@@ -69,6 +72,7 @@ export function StatsView({
       onLike={onLike}
       onCatalogMenu={onCatalogMenu}
       onCustomize={onCustomize}
+      onOpenArtist={onOpenArtist}
       // Экран переставляет ВИДИМЫЕ блоки; выключенные обязаны остаться на
       // своих местах в списке настроек — applyVisibleOrder ровно про это.
       onReorderBlocks={

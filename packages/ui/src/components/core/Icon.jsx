@@ -95,6 +95,9 @@ export const ICONS = {
   "radio-tower": HI.Radio02Icon,
   heart: HI.FavouriteIcon,
   "heart-off": HI.HeartRemoveIcon,
+  // «Не нравится» (16.08): дизлайк трека в меню. Пара к heart, но НЕ
+  // «сердце наоборот» — это другой сигнал, и знак у него свой.
+  "thumbs-down": HI.ThumbsDownIcon,
   history: HI.HistoryIcon,
   home: HI.Home01Icon,
   bookmark: HI.Bookmark01Icon,
@@ -161,6 +164,9 @@ export const ICONS = {
   user: HI.UserIcon,
   "user-round": HI.UserCircleIcon,
   "user-x": HI.UserRemove01Icon,
+  // «Не рекомендовать артиста» (16.08). Минус, а не крест: крестом рядом
+  // (user-x) уже сказано «удалить пользователя» — разные действия, разные знаки.
+  "user-minus": HI.UserMinus01Icon,
   users: HI.UserGroupIcon,
   "log-in": HI.Login01Icon,
   "log-out": HI.Logout01Icon,

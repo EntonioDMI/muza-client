@@ -119,6 +119,7 @@ export function HomeFeed({
   withSnapshot = noSnapshot,
   warmRow = noWarmRow,
   padding = "var(--sp-6) var(--sp-6) 0",
+  onOpenArtist,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, лента недоступна. */
@@ -166,6 +167,10 @@ export function HomeFeed({
    *  у веба поля несёт панель-зона `.main`, поэтому веб передаёт "0" —
    *  иначе поля сложились бы вдвое. */
   padding?: string;
+  /** Клик по имени артиста в строке трека (16.08). Нет пропа — имя остаётся
+   *  обычным текстом: у площадки может не быть страницы артиста (то же
+   *  правило умений, что у пунктов меню). */
+  onOpenArtist?: (name: string) => void;
 }) {
   const { t, lang } = useT();
   const { phone } = useLayout();
@@ -441,6 +446,7 @@ export function HomeFeed({
                         showCover={rowShow?.cover !== false}
                         title={tr.title}
                         artist={tr.artist}
+                        onArtist={onOpenArtist}
                         album={rowShow?.album ? (tr.album ?? undefined) : undefined}
                         duration={fmtTime(tr.durationSec)}
                         showDuration={rowShow?.duration !== false}

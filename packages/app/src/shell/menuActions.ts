@@ -87,6 +87,18 @@ export interface MenuAbilities {
   addToPlaylist?: (tr: Track) => void;
   isLiked?: (id: string) => boolean;
   toggleLike?: (id: string) => void;
+  /** Открыть страницу артиста (16.08). Имя строкой — сущности «артист» в
+   *  продукте нет, сервер адресует её так же (`/artists/tracks?artist=`). */
+  openArtist?: (name: string) => void;
+  /** «Не рекомендовать артиста» (16.08). Отдельное умение от dislikeTrack, и
+   *  это не дробление: дизлайк трека даёт артисту лишь МЯГКИЙ штраф, другие
+   *  его песни остаются в ленте. Здесь — жёсткое исключение всего артиста. */
+  muteArtist?: (name: string) => void;
+  /** «Не рекомендовать» (16.08). Отдельное умение, а не «лайк наоборот»:
+   *  снятый лайк — это «больше не в Любимом», дизлайк — «не показывай мне
+   *  это впредь», и второго в продукте не было ВООБЩЕ, хотя сервер его умел
+   *  с самого появления рекомендаций. */
+  dislikeTrack?: (tr: Track) => void;
   /** Гость jam: докинуть трек хосту; null — jam не активен или мы хост. */
   jamAdd?: ((tr: Track) => void) | null;
   shareTrack?: (tr: Track) => void;
@@ -310,6 +322,9 @@ function trackItems(target: Extract<ContextTarget, { kind: "track" }>, ctx: Menu
   const pinned = ctx.isPinned?.(tr.id) ?? false;
   const jamAdd = ctx.jamAdd;
   const toggleLike = ctx.toggleLike;
+  const dislikeTrack = ctx.dislikeTrack;
+  const openArtist = ctx.openArtist;
+  const muteArtist = ctx.muteArtist;
   const toggleOffline = ctx.toggleOffline;
   const downloadTrack = ctx.downloadTrack;
 
@@ -349,6 +364,12 @@ function trackItems(target: Extract<ContextTarget, { kind: "track" }>, ctx: Menu
     ...(ctx.addToPlaylist
       ? [{ icon: "plus", label: t("menu.addToPlaylist"), onClick: () => ctx.addToPlaylist?.(tr) }]
       : []),
+    // «Перейти к артисту» (16.08, жалоба «нажимаю на автора у трека, но не
+    // могу на него зайти»). Пустое имя встречается у прямых ссылок и локальных
+    // файлов — открывать нечего, пункта нет.
+    ...(openArtist && tr.artist
+      ? [{ icon: "user", label: t("menu.catalog.goToArtist"), onClick: () => openArtist(tr.artist) }]
+      : []),
     ...(toggleLike
       ? [
           {
@@ -357,6 +378,18 @@ function trackItems(target: Extract<ContextTarget, { kind: "track" }>, ctx: Menu
             onClick: () => toggleLike(tr.id),
           },
         ]
+      : []),
+    // «Не нравится» стоит СРАЗУ ПОСЛЕ лайка: это соседняя мысль о той же
+    // песне, и человек ищет её там же. Локальный файл сюда не доходит —
+    // цель "track" несёт каталожный Track, у плеерной цели своя ветка ниже.
+    ...(dislikeTrack
+      ? [{ icon: "thumbs-down", label: t("menu.catalog.dislike"), onClick: () => dislikeTrack(tr) }]
+      : []),
+    // Заглушка артиста стоит СРАЗУ ЗА дизлайком трека: это соседняя мысль
+    // («не эта песня» → «и вообще не он»), и разносить их по разным концам
+    // меню значило бы прятать вторую от того, кто уже нашёл первую.
+    ...(muteArtist && tr.artist
+      ? [{ icon: "user-minus", label: t("menu.catalog.muteArtist", { artist: tr.artist }), onClick: () => muteArtist(tr.artist) }]
       : []),
     ...(jamAdd ? [{ icon: "radio-tower", label: t("menu.catalog.addToJam"), onClick: () => jamAdd(tr) }] : []),
     // ⚠️ «Поделиться» УБРАНО ИЗ МЕНЮ 13.08. Пункт открывал ShareDialog, а тот

@@ -375,6 +375,7 @@ export function LibraryView({
   onDropTrack,
   onReorderPlaylists,
   onPlaylistsChanged,
+  initialArtist,
 }: {
   api: MuzaApi;
   /** false у анонима: серверная библиотека недоступна (локальные — работают). */
@@ -422,6 +423,14 @@ export function LibraryView({
   onNotify: (text: string, icon?: string) => void;
   /** Массовое удаление плиток прошло — App перечитывает список (2026-07-20). */
   onPlaylistsChanged?: () => void;
+  /** Открыть сразу страницу этого артиста (16.08). Имя, а не id: сущности
+   *  «артист» в продукте нет, сервер адресует его строкой — разбор в
+   *  HistoryPayload.artistName.
+   *
+   *  ⚠️ Экран артиста был ЗАПЕРТ в этом компоненте: попасть на него можно было
+   *  только чипом «Артисты» и кликом по плитке. Проп — дверь снаружи: из меню
+   *  трека, из «Сейчас играет», из режима прослушивания. */
+  initialArtist?: string | null;
 }) {
   const { t } = useT();
   const { phone } = useLayout();
@@ -653,6 +662,35 @@ export function LibraryView({
   useEffect(() => {
     if (chip !== "artists" && openArtist !== null) setOpenArtist(null);
   }, [chip, openArtist]);
+
+  /** Открыть артиста ВНУТРИ Медиатеки (клик по имени в «Истории»). Свой путь,
+   *  а не onOpenArtist наружу: мы уже на том экране, где живёт эта страница, —
+   *  запись истории заводить незачем, достаточно переключить чип. */
+  const showArtist = (name: string) => {
+    setChip("artists");
+    setOpenArtist({ name, count: 0, coverUrl: null });
+  };
+
+  // ВХОД СНАРУЖИ (16.08): имя артиста приехало пропом — открываем его сразу,
+  // не заставляя человека идти в чип «Артисты» и искать плитку. Список
+  // артистов при этом грузится своим чередом (эффект выше) — страница его не
+  // ждёт: треки и справка запрашиваются по ИМЕНИ.
+  useEffect(() => {
+    if (!initialArtist) return;
+    setChip("artists");
+    // count/coverUrl подставит эффект-сверка ниже, когда доедет список.
+    setOpenArtist((cur) => (cur?.name === initialArtist ? cur : { name: initialArtist, count: 0, coverUrl: null }));
+  }, [initialArtist]);
+
+  // Сверка заглушки с настоящей записью: у артиста, открытого снаружи, нет ни
+  // числа треков, ни обложки — они лежат в списке api.artists(), который
+  // приезжает отдельно. Пока не приехал, шапка честно не показывает счётчик
+  // (см. рендер), а не рисует ноль.
+  useEffect(() => {
+    if (!artists || !openArtist || openArtist.count > 0) return;
+    const real = artists.find((a) => a.name === openArtist.name);
+    if (real) setOpenArtist(real);
+  }, [artists, openArtist]);
 
   const addLocal = async (kind: "files" | "folder") => {
     if (scanning || !local) return;
@@ -939,9 +977,14 @@ export function LibraryView({
                 >
                   {openArtist.name}
                 </h2>
-                <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
-                  {t("views.library.artists.count", { count: openArtist.count })}
-                </div>
+                {/* Счётчик молчит, пока не приехал список артистов: у входа
+                    снаружи (initialArtist) числа ещё нет, и «0 треков» над
+                    полным списком треков — не «пока не знаю», а ложь. */}
+                {openArtist.count > 0 ? (
+                  <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
+                    {t("views.library.artists.count", { count: openArtist.count })}
+                  </div>
+                ) : null}
                 <div>
                   {/* Кнопка появляется, только когда играть УЖЕ есть что:
                       «Слушать всё» над пустым списком — обещание, которого
@@ -1096,6 +1139,7 @@ export function LibraryView({
                 cover={h.track.coverUrl}
                 title={h.track.title}
                 artist={h.track.artist}
+                onArtist={showArtist}
                 duration={fmtTime(h.track.durationSec)}
                 active={currentId === h.track.id}
                 playing={currentId === h.track.id && playing}

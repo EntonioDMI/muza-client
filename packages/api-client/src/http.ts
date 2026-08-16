@@ -961,6 +961,47 @@ export class HttpMuzaApi implements MuzaApi {
     await this.authedRequest(`/me/favorites/${encodeURIComponent(trackId)}`, { method: "DELETE" });
   }
 
+  /** «Не рекомендовать этот трек».
+   *
+   *  ⚠️ Ручки на сервере жили с самого появления рекомендаций, а клиента у
+   *  них не было ВООБЩЕ — до 16.08 дизлайк нельзя было поставить ниоткуда.
+   *  Видно это было по замеру в самом сервере (recs.service.ts): «на боевой
+   *  базе 13.08 дизлайков РОВНО НОЛЬ». Ноль не потому, что людям всё
+   *  нравилось.
+   *
+   *  Дизлайк и лайк ВЗАИМОИСКЛЮЧАЮЩИ — это решает сервер (addDislike убирает
+   *  лайк), клиенту достаточно позвать одну ручку. */
+  async addDislike(trackId: string): Promise<void> {
+    await this.authedRequest(`/me/dislikes/${encodeURIComponent(trackId)}`, { method: "PUT" });
+  }
+
+  async removeDislike(trackId: string): Promise<void> {
+    await this.authedRequest(`/me/dislikes/${encodeURIComponent(trackId)}`, { method: "DELETE" });
+  }
+
+  async getDislikes(): Promise<Track[]> {
+    const rows = await this.authedRequest<TrackWire[]>("/me/dislikes");
+    return tracksFromWire(rows);
+  }
+
+  /** «Не рекомендовать этого артиста» (16.08).
+   *
+   *  ⚠️ Имя уходит В ТЕЛЕ и в query, а не в пути: в именах встречаются слэши
+   *  («AC/DC»), и путь пришлось бы кодировать дважды — один раз здесь, второй
+   *  чтобы Nest не разобрал его на сегменты. */
+  async muteArtist(artist: string): Promise<void> {
+    await this.authedRequest("/me/artist-mutes", { method: "PUT", body: JSON.stringify({ artist }) });
+  }
+
+  async unmuteArtist(artist: string): Promise<void> {
+    await this.authedRequest(`/me/artist-mutes?artist=${encodeURIComponent(artist)}`, { method: "DELETE" });
+  }
+
+  async getMutedArtists(): Promise<string[]> {
+    const out = await this.authedRequest<{ artists: string[] }>("/me/artist-mutes");
+    return out.artists ?? [];
+  }
+
   /** «Заменить версию» в Любимом: атомарно, место в списке сохраняется. */
   async replaceFavorite(oldTrackId: string, newTrackId: string): Promise<void> {
     await this.authedRequest(`/me/favorites/${encodeURIComponent(oldTrackId)}/replace`, {

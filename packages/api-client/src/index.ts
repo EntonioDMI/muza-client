@@ -198,6 +198,18 @@ export interface MuzaApi {
   /** «Заменить версию» в Любимом: атомарно снять лайк со старого и поставить
    *  новому, сохранив место в списке (createdAt наследуется). */
   replaceFavorite(oldTrackId: string, newTrackId: string): Promise<void>;
+  /** «Не рекомендовать»: трек уходит из рекомендаций жёстко, его артист
+   *  получает штраф к скору (recs). Ставит дизлайк — снимает лайк, это делает
+   *  сервер. */
+  addDislike(trackId: string): Promise<void>;
+  removeDislike(trackId: string): Promise<void>;
+  getDislikes(): Promise<Track[]>;
+  /** «Не рекомендовать этого артиста»: жёсткое исключение из ВСЕХ полок,
+   *  включая глобальные. Артист адресуется точной строкой имени — сущности
+   *  «артист» в продукте нет. */
+  muteArtist(artist: string): Promise<void>;
+  unmuteArtist(artist: string): Promise<void>;
+  getMutedArtists(): Promise<string[]>;
   getPlaylists(): Promise<PlaylistMeta[]>;
   /** icon — id из манифеста @muza/core ("pi-01".."pi-38"); клиент обычно
    *  подбирает случайный сам (T47) и передаёт сюда, но поле опционально. */

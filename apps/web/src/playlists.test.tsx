@@ -15,6 +15,10 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistMeta } from "@muza/api-client";
+// SessionProvider с 16.08 привязывает кэш запросов к аккаунту (useQueryScope),
+// то есть требует QueryClientProvider — в приложении он стоит выше сессии
+// (providers.tsx), а тест обязан принести его сам.
+import { QueryTestProvider } from "@muza/app/lib/queryTestUtils";
 
 /** Плеер подменён: usePlaylists соседствует с usePlayPlaylist, тот тянет
  *  настоящий плеер (два `<audio>`, Web Audio, таймеры) — к порядку строк это
@@ -71,11 +75,13 @@ describe("usePlaylists.reorder", () => {
       return null;
     }
     render(
-      <SessionProvider>
-        <PlaylistsProvider>
-          <Probe />
-        </PlaylistsProvider>
-      </SessionProvider>,
+      <QueryTestProvider>
+        <SessionProvider>
+          <PlaylistsProvider>
+            <Probe />
+          </PlaylistsProvider>
+        </SessionProvider>
+      </QueryTestProvider>,
     );
     await waitFor(() => expect(ctx!.playlists).toHaveLength(5));
 
@@ -98,11 +104,13 @@ describe("usePlaylists.reorder", () => {
       return null;
     }
     render(
-      <SessionProvider>
-        <PlaylistsProvider>
-          <Probe />
-        </PlaylistsProvider>
-      </SessionProvider>,
+      <QueryTestProvider>
+        <SessionProvider>
+          <PlaylistsProvider>
+            <Probe />
+          </PlaylistsProvider>
+        </SessionProvider>
+      </QueryTestProvider>,
     );
     await waitFor(() => expect(ctx!.playlists).toHaveLength(5));
 

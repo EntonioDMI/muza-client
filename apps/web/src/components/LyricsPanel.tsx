@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Dialog, Icon, IconButton, Lyrics } from "@muza/ui";
 import type { Annotation, Lyrics as LyricsData } from "@muza/api-client";
 import { useT } from "@muza/app";
+import { activeLyricLine, lyricSeekSec } from "@muza/app/lib/activeLine";
 import { useContextMenu } from "@muza/app/shell/ContextMenu";
 import { usePlatform } from "@muza/app/platform";
 import { getApi } from "../api";
@@ -232,37 +233,26 @@ export function useTrackLyrics(): TrackLyrics {
     return [];
   }, [data, notes]);
 
-  const activeLine = useMemo(() => {
-    // Выключенный «Синхронный текст» превращает synced в обычный список: −1 —
-    // это и есть «подсветки нет» (тот же приём, что в приложении).
-    if (!data?.synced?.length || !prefs.syncedLyrics) return -1;
-    const synced = data.synced;
-    let idx = -1;
-    for (let i = 0; i < synced.length; i++) {
-      if (synced[i].t <= position) idx = i;
-      else break;
-    }
-    // Нотка-финал: после последней строки активная «переезжает» на нотку
-    // (виртуальный индекс lines.length) — «текст кончился, доигрывает
-    // музыка». Последнюю строку держим примерно столько же, сколько типичную
-    // (зазор до предпоследней), в рамках 2..8с — иначе нотка загоралась бы
-    // акцентом ещё пока последняя строка поётся. Числа и правило — из
-    // приложения (apps/desktop/src/App.tsx, activeLine).
-    if (prefs.lyricsEndNote && idx === synced.length - 1) {
-      const last = synced[idx].t;
-      const prev = synced.length > 1 ? synced[idx - 1].t : last - 4;
-      const hold = Math.min(8, Math.max(2, last - prev));
-      if (position - last >= hold) idx = synced.length;
-    }
-    return idx;
-  }, [data, position, prefs.syncedLyrics, prefs.lyricsEndNote]);
+  // Правило активной строки — ОБЩЕЕ с приложением (@muza/app/lib/activeLine).
+  // До 16.08 здесь лежала своя копия: тот же цикл, те же числа 2..8 у нотки.
+  // Разъехалась она ровно тогда, когда понадобилось лечить отставание текста
+  // — упреждение и ручной сдвиг пришлось бы вписывать дважды.
+  const activeLine = useMemo(
+    () =>
+      activeLyricLine(position, data?.synced ?? [], {
+        synced: Boolean(data?.synced?.length) && prefs.syncedLyrics,
+        endNote: prefs.lyricsEndNote,
+        offsetMs: prefs.lyricsOffsetMs,
+      }),
+    [data, position, prefs.syncedLyrics, prefs.lyricsEndNote, prefs.lyricsOffsetMs],
+  );
 
   const seekLine = useCallback(
     (i: number) => {
       const line = data?.synced?.[i];
-      if (line) seek(line.t);
+      if (line) seek(lyricSeekSec(line.t, prefs.lyricsOffsetMs));
     },
-    [data, seek],
+    [data, seek, prefs.lyricsOffsetMs],
   );
 
   const explainLine = notes.size > 0 ? setMeaningLine : undefined;

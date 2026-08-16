@@ -93,6 +93,7 @@ export function TrackRow({
   onPlay,
   onLike,
   onMore,
+  onArtist,
   playLabel = "Play",
   pauseLabel = "Pause",
   likeLabel = "Like",
@@ -297,7 +298,27 @@ export function TrackRow({
         {/* Альбом — в одной строке с артистом через « · », приглушённее
             (text-3): обрезку обеих частей делает общий ellipsis родителя. */}
         <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {artist}
+          {/* Имя артиста — ссылка, когда есть куда вести (16.08). ⚠️ Клик
+              ГАСИТСЯ: у строки свой обработчик «играть», и без stopPropagation
+              один жест делал бы два дела разом. Стиль — .muza-artist-link
+              (подчёркивание по наведению, ui/interactions.css); без обработчика
+              остаётся обычный текст, как было. */}
+          {onArtist && artist ? (
+            <button
+              type="button"
+              className="muza-artist-link"
+              onClick={(e) => {
+                e.stopPropagation();
+                onArtist(artist);
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+              style={{ background: "none", border: "none", padding: 0, margin: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
+            >
+              {artist}
+            </button>
+          ) : (
+            artist
+          )}
           {album ? <span style={{ color: "var(--text-3)" }}> · {album}</span> : null}
         </div>
       </div>

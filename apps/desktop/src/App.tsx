@@ -14,6 +14,8 @@ import { type Prefs, type View } from "./types";
 import { loadPrefs, PREFS_KEY } from "@muza/app/prefs/load";
 import { usePrefsSync } from "@muza/app/prefs/usePrefsSync";
 import { DEFAULT_PLAYER_STATE, loadPlayerState, savePlayerState } from "@muza/app/lib/playerState";
+import { useQueryClient } from "@tanstack/react-query";
+import { QK, useQueryScope } from "@muza/app/lib/queryClient";
 // Общий движок темы: профиль настроек → CSS-переменные корня, одни и те же
 // формулы у приложения и у веба (см. шапку themeVars.ts).
 import { buildThemeVars } from "@muza/app/theme/themeVars";
@@ -57,7 +59,7 @@ import { usePlayback } from "./player/usePlayback";
 // Позиция воспроизведения живёт ВНЕ состояния React (03.08). Почему именно
 // так и что ломает наивная версия — в шапке player/positionStore.ts.
 import { DerivedPositionScope, PositionScope } from "./player/positionStore";
-import { activeLyricLine } from "./player/activeLine";
+import { activeLyricLine, lyricSeekSec } from "./player/activeLine";
 import { useWarmer, WarmerProvider } from "./player/useWarmer";
 import { useWheelScroll } from "./lib/useWheelScroll";
 import { applyCustomFont } from "./lib/customFont";
@@ -188,6 +190,10 @@ function AppRoot() {
   const apiHost = useMemo(() => devApiHost(apiBaseUrl, import.meta.env.DEV), [apiBaseUrl]);
   const [session, setSession] = useState<Session | null>(null);
   const [restoring, setRestoring] = useState(true);
+  // Кэш запросов живёт дольше сессии (один клиент на окно) и пользователя в
+  // ключах не различает — привязываем его к текущему аккаунту здесь, ВЫШЕ
+  // Player, чтобы сброс успел до рендера экранов. Разбор — lib/queryClient.ts.
+  useQueryScope(session?.user.id ?? null);
 
   // Сцены окна: на входе оно размером с карточку, после входа разворачивается
   // во все стороны (заказ владельца 03.08; механика — lib/authWindowStage.ts и
@@ -433,6 +439,10 @@ function Player({
   const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
   // read-only страница плейлиста SoundCloud из выдачи (2026-07-20)
   const [openScPlaylistId, setOpenScPlaylistId] = useState<string | null>(null);
+  // Артист, открытый снаружи Медиатеки (16.08). Такое же параметрическое
+  // состояние вида, как id плейлиста: живёт в записи истории, поэтому «назад»
+  // возвращает на страницу артиста, а не мимо неё.
+  const [openArtistName, setOpenArtistName] = useState<string | null>(null);
   // Текст поиска — на уровне App (2026-07-20, жалоба владельца): «назад»
   // боковой кнопкой мыши из плейлиста возвращал ПУСТОЙ поиск — запрос жил в
   // SearchView и умирал с размонтированием вью при уходе на плейлист.
@@ -448,6 +458,10 @@ function Player({
   // shell/ContextMenu.tsx + shell/menuActions.ts — App снаружи провайдера
   // (сам его рендерит), поэтому его колбэки открывают меню через ref.
   const menuApiRef = useRef<ContextMenuApi | null>(null);
+  // Лента Главной живёт в кэше запросов минуту (lib/queryClient.ts). Дизлайк
+  // меняет её состав на сервере, поэтому ключ надо ронять руками — иначе
+  // отвергнутая песня осталась бы на экране.
+  const queryClient = useQueryClient();
   const [versionsTrack, setVersionsTrack] = useState<CatalogTrack | null>(null);
   // «Заменить версию» (2026-07-18): трек + где заменяем (плейлист/Любимое)
   const [replaceCtx, setReplaceCtx] = useState<ReplaceCtx | null>(null);
@@ -1413,6 +1427,7 @@ function Player({
     activeLyricLine(sec, lyrics, {
       synced: lyricsSynced && prefs.syncedLyrics,
       endNote: prefs.lyricsEndNote,
+      offsetMs: prefs.lyricsOffsetMs,
     });
 
   /** ⚠️ Отказ висит дольше удачи. 2400 мс хватает на «Добавлено в очередь», но
@@ -1758,7 +1773,8 @@ function Player({
   const seekLine = (i: number) => {
     if (!lyricsSynced) return; // у plain-текста нет таймкодов
     const line = lyrics[i];
-    if (line) pb.seek(line.t);
+    // Ручной сдвиг вычитается, упреждение — нет: разбор у lyricSeekSec.
+    if (line) pb.seek(lyricSeekSec(line.t, prefs.lyricsOffsetMs));
   };
 
   // ⚠️ «ТЕКСТ НЕ ОТ ЭТОЙ ПЕСНИ» (14.08) — ответ на испорченные данные У
@@ -1803,6 +1819,82 @@ function Player({
         showToast(t("toast.favorites.syncFailed"), "x");
       });
     }
+  };
+
+  /** «Не нравится»: трек уходит из рекомендаций, его артист получает штраф.
+   *
+   *  ⚠️ ПОЧЕМУ ЭТО НЕ «ЛАЙК НАОБОРОТ». Дизлайк и лайк взаимоисключающи, и
+   *  снимает лайк СЕРВЕР (me.controller.addDislike). Клиент обязан отразить
+   *  это у себя, иначе сердечко останется гореть на треке, который человек
+   *  только что отверг, — и следующий заход в Любимое покажет его снова.
+   *
+   *  ⚠️ ЛЕНТУ ПЕРЕЧИТЫВАЕМ. Рекомендации собираются на сервере из сигналов, и
+   *  дизлайк — самый сильный из них (жёсткое исключение трека). Без
+   *  инвалидации человек нажал бы «не нравится» и продолжил видеть эту песню
+   *  на Главной ещё минуту (staleTime) — то есть ровно то поведение, из-за
+   *  которого кнопке и не верят.
+   *
+   *  Тост с «Вернуть» обязателен: промах по пункту меню иначе стоил бы
+   *  необратимого сигнала, отменить который негде — экрана дизлайков нет. */
+  const dislikeTrack = async (track: CatalogTrack) => {
+    if (!canSearch || !isCatalogId(track.id)) return;
+    const wasLiked = likes.includes(track.id);
+    try {
+      await api.addDislike(track.id);
+    } catch (e) {
+      showToast(humanError(e, t("toast.dislike.failed")), "x");
+      return;
+    }
+    if (wasLiked) setLikes((ls) => ls.filter((x) => x !== track.id));
+    void queryClient.invalidateQueries({ queryKey: QK.home });
+    if (wasLiked) void queryClient.invalidateQueries({ queryKey: QK.favorites });
+    showUndoToast(t("toast.dislike.done"), "thumbs-down", () => {
+      void api
+        .removeDislike(track.id)
+        .then(() => {
+          // Лайк сервер снял — вернуть его должен тот же жест, что отменяет
+          // дизлайк, иначе «Вернуть» вернуло бы половину.
+          if (wasLiked) {
+            setLikes((ls) => (ls.includes(track.id) ? ls : [...ls, track.id]));
+            return api.addFavorite(track.id);
+          }
+          return undefined;
+        })
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: QK.home });
+          if (wasLiked) void queryClient.invalidateQueries({ queryKey: QK.favorites });
+        })
+        .catch(() => showToast(t("toast.dislike.undoFailed"), "x"));
+    });
+  };
+
+  /** «Не рекомендовать этого артиста».
+   *
+   *  ⚠️ СИЛЬНЕЕ ДИЗЛАЙКА, и потому отдельным жестом: дизлайк трека исключает
+   *  трек и лишь штрафует артиста (−0.2 к скору), а заглушка выключает его
+   *  целиком — во всех полках, включая глобальные «В тренде» и «Новое».
+   *
+   *  Артист адресуется ТОЧНОЙ строкой имени: сущности «артист» в продукте нет
+   *  (у трека нет artistId, у сервера — модели). Следствие, которое видно
+   *  человеку: заглушив «Kai Angel», он не заглушит «Kai Angel & 9mice».
+   *
+   *  «Вернуть» обязательно — как и у дизлайка: экрана заглушённых артистов
+   *  нет, и промах по пункту меню иначе стоил бы артиста навсегда. */
+  const muteArtist = async (name: string) => {
+    if (!canSearch || !name) return;
+    try {
+      await api.muteArtist(name);
+    } catch (e) {
+      showToast(humanError(e, t("toast.muteArtist.failed")), "x");
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: QK.home });
+    showUndoToast(t("toast.muteArtist.done", { artist: name }), "user-minus", () => {
+      void api
+        .unmuteArtist(name)
+        .then(() => void queryClient.invalidateQueries({ queryKey: QK.home }))
+        .catch(() => showToast(t("toast.muteArtist.undoFailed"), "x"));
+    });
   };
 
   /** «⋯» на каталожном (серверном) треке — меню Stage 4. Координаты уходят
@@ -2028,6 +2120,10 @@ function Player({
     historyRef.current = pushHistory(historyRef.current, { view: next, payload });
     if (payload && "playlistId" in payload) setOpenPlaylistId(payload.playlistId ?? null);
     if (payload && "scPlaylistId" in payload) setOpenScPlaylistId(payload.scPlaylistId ?? null);
+    // Уход на любой другой экран гасит артиста: иначе возврат в Медиатеку
+    // «через дверь» (боковая панель) снова открывал бы прошлого артиста
+    // вместо списка плейлистов.
+    setOpenArtistName(next === "library" ? (payload?.artistName ?? null) : null);
     setView(next);
   };
 
@@ -2037,6 +2133,7 @@ function Player({
     setView(entry.view);
     setOpenPlaylistId(entry.payload?.playlistId ?? null);
     setOpenScPlaylistId(entry.payload?.scPlaylistId ?? null);
+    setOpenArtistName(entry.payload?.artistName ?? null);
     // Место в настройках — такая же часть записи, как id плейлиста (13.08).
     // Номер растёт ТОЛЬКО здесь — на «назад»/«вперёд». По нему экран настроек
     // отличает переход по истории от собственного монтирования; без этого
@@ -2127,6 +2224,18 @@ function Player({
       return;
     }
     navigate("playlist", { playlistId: id });
+  };
+
+  /** Страница артиста (16.08). Своего вида у неё нет: экран живёт внутри
+   *  Медиатеки, и открывается он параметром записи истории — как раздел
+   *  настроек. Так «назад» работает сам собой, без отдельного роутера.
+   *
+   *  Анониму серверная библиотека недоступна (артисты — тот же сервер),
+   *  поэтому у него этого перехода нет вовсе: menuCtx.openArtist подставляется
+   *  всегда, а гейт стоит здесь — одним местом на все входы. */
+  const openArtist = (name: string) => {
+    if (!canSearch || !name) return;
+    navigate("library", { artistName: name });
   };
 
   /** «Сохранить к себе» со страницы SC-плейлиста (2026-07-20): копия обычным
@@ -2417,6 +2526,9 @@ function Player({
     addToPlaylist: (tr) => setPlPick([tr]),
     isLiked: (id) => likes.includes(id),
     toggleLike: (id) => toggleLike(id),
+    openArtist: (name) => openArtist(name),
+    muteArtist: (name) => void muteArtist(name),
+    dislikeTrack: (tr) => void dislikeTrack(tr),
     jamAdd: jam.active && !jam.isHost ? (tr) => void jam.addTrack(tr.id) : null,
     shareTrack: (tr) => setShareData({ kind: "track", title: tr.title, artist: tr.artist, coverUrl: tr.coverUrl }),
     showVersions: (tr) => setVersionsTrack(tr),
@@ -2695,6 +2807,7 @@ function Player({
           <div className="muza-view" ref={viewFade.ref} data-view-phase={viewFade.phase}>
             {rendered === "home" ? (
               <HomeFeed
+                onOpenArtist={openArtist}
                 api={api}
                 canSearch={canSearch}
                 greetName={greetName}
@@ -2724,6 +2837,7 @@ function Player({
               />
             ) : rendered === "search" ? (
               <SearchView
+                onOpenArtist={openArtist}
                 api={api}
                 canSearch={canSearch}
                 currentId={track?.id ?? null}
@@ -2745,6 +2859,7 @@ function Player({
               />
             ) : rendered === "scPlaylist" && openScPlaylistId ? (
               <ExternalPlaylistView
+                onOpenArtist={openArtist}
                 api={api}
                 playlistId={openScPlaylistId}
                 currentId={track?.id ?? null}
@@ -2760,6 +2875,7 @@ function Player({
               />
             ) : rendered === "favorites" ? (
               <FavoritesView
+                onOpenArtist={openArtist}
                 api={api}
                 canSearch={canSearch}
                 likes={likes}
@@ -2773,6 +2889,7 @@ function Player({
               />
             ) : rendered === "playlist" && openPlaylistId ? (
               <PlaylistView
+                onOpenArtist={openArtist}
                 key={`${openPlaylistId}:${plBump}`}
                 api={api}
                 playlistId={openPlaylistId}
@@ -2825,9 +2942,11 @@ function Player({
                 onDropTrack={dropTrackOnPlaylist}
                 onReorderPlaylists={reorderPlaylists}
                 onPlaylistsChanged={() => void reloadServerPlaylists()}
+                initialArtist={openArtistName}
               />
             ) : rendered === "stats" ? (
               <StatsView
+                onOpenArtist={openArtist}
                 api={api}
                 canSearch={canSearch}
                 prefs={prefs}
@@ -2900,6 +3019,7 @@ function Player({
             lyricsPanelLines={prefs.lyricsPanelLines}
             onSeekLine={seekLine}
             onExplain={setMeaningLine}
+            onOpenArtist={openArtist}
             onWrongLyrics={wrongLyrics}
             onRestoreLyrics={restoreWrongLyrics}
             videoUrl={trackVideoUrl}
@@ -3495,6 +3615,7 @@ function Player({
         onSeek={pb.seek}
         onSeekLine={seekLine}
         onExplain={setMeaningLine}
+        onOpenArtist={openArtist}
         onWrongLyrics={wrongLyrics}
         onRestoreLyrics={restoreWrongLyrics}
         onClose={() => setExpanded(false)}

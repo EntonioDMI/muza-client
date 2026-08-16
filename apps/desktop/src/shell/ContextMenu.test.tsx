@@ -32,6 +32,9 @@ function makeCtx(over: Partial<MenuContext> = {}): MenuContext {
     addToPlaylist: vi.fn(),
     isLiked: () => false,
     toggleLike: vi.fn(),
+    dislikeTrack: vi.fn(),
+    openArtist: vi.fn(),
+    muteArtist: vi.fn(),
     jamAdd: null,
     shareTrack: vi.fn(),
     showVersions: vi.fn(),
@@ -90,9 +93,11 @@ describe("ContextMenu — транспорт", () => {
     // fireEvent возвращает false, если внутри был preventDefault
     expect(fireEvent.contextMenu(screen.getByTestId("row"), { clientX: 40, clientY: 50 })).toBe(false);
     expect(screen.getByRole("menu")).toBeTruthy();
-    // базовый набор каталожного трека вне Любимого: 5 пунктов (было 8 —
-    // чистка 13.08 сняла радио/поделиться/офлайн; см. menuActions.test.ts)
-    expect(screen.getAllByRole("menuitem")).toHaveLength(5);
+    // базовый набор каталожного трека вне Любимого: 8 пунктов (было 8 →
+    // чистка 13.08 сняла радио/поделиться/офлайн → 16.08 добавились
+    // «Перейти к артисту», «Не нравится» и «Не рекомендовать артиста»;
+    // состав стережёт menuActions.test.ts)
+    expect(screen.getAllByRole("menuitem")).toHaveLength(8);
   });
 
   it("клик по пункту зовёт действие и закрывает меню", () => {

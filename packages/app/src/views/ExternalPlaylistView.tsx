@@ -42,6 +42,7 @@ export function ExternalPlaylistView({
   onTrackMenu,
   canSave,
   onSaveCopy,
+  onOpenArtist,
 }: {
   api: MuzaApi;
   /** id из выдачи (с префиксом sc:). */
@@ -59,6 +60,10 @@ export function ExternalPlaylistView({
   canSave: boolean;
   /** Создать у себя копию плейлиста (App: createPlaylist + треки по одному). */
   onSaveCopy: (name: string, tracks: Track[]) => Promise<void>;
+  /** Клик по имени артиста в строке трека (16.08). Нет пропа — имя остаётся
+   *  обычным текстом: у площадки может не быть страницы артиста (то же
+   *  правило умений, что у пунктов меню). */
+  onOpenArtist?: (name: string) => void;
 }) {
   const { t, lang } = useT();
   const { phone } = useLayout();
@@ -209,6 +214,7 @@ export function ExternalPlaylistView({
             showCover={rowShow?.cover !== false}
             title={tr.title}
             artist={tr.artist}
+            onArtist={onOpenArtist}
             album={rowShow?.album ? (tr.album ?? undefined) : undefined}
             duration={fmtTime(tr.durationSec)}
             showDuration={rowShow?.duration !== false}

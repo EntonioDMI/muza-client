@@ -77,6 +77,7 @@ export function SearchView({
   onResultsChange,
   warmRow,
   style,
+  onOpenArtist,
 }: {
   api: MuzaApi;
   /** false у анонима: сервер его не знает, каталог недоступен. */
@@ -122,6 +123,10 @@ export function SearchView({
   /** Стили корня экрана. Веб гасит ими собственные отступы: его зона контента
    *  уже с полями, иначе поля удвоились бы. */
   style?: React.CSSProperties;
+  /** Клик по имени артиста в строке трека (16.08). Нет пропа — имя остаётся
+   *  обычным текстом: у площадки может не быть страницы артиста (то же
+   *  правило умений, что у пунктов меню). */
+  onOpenArtist?: (name: string) => void;
 }) {
   const { t, lang } = useT();
   const { phone } = useLayout();
@@ -424,6 +429,7 @@ export function SearchView({
         showCover={rowShow?.cover !== false}
         title={tr.title}
         artist={tr.artist}
+        onArtist={onOpenArtist}
         album={rowShow?.album ? (tr.album ?? undefined) : undefined}
         duration={fmtTime(tr.durationSec)}
         showDuration={rowShow?.duration !== false}

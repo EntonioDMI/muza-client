@@ -450,6 +450,7 @@ export function StatsView({
   onReorderBlocks,
   loadOverview,
   rowProps,
+  onOpenArtist,
 }: {
   api: MuzaApi;
   /** false у анонима: истории на сервере нет — честная заглушка. */
@@ -462,6 +463,10 @@ export function StatsView({
   currentId: string | null;
   playing: boolean;
   likes: string[];
+  /** Клик по имени артиста в строке трека (16.08). Нет пропа — имя остаётся
+   *  обычным текстом: у площадки может не быть страницы артиста (то же правило
+   *  умений, что у пунктов меню). */
+  onOpenArtist?: (name: string) => void;
   onPlayCatalog: (tracks: Track[], id: string) => void;
   onLike: (id: string) => void;
   onCatalogMenu: (t: Track, e: React.MouseEvent) => void;
@@ -629,6 +634,7 @@ export function StatsView({
                   cover={entry.track.coverUrl ?? undefined}
                   title={entry.track.title}
                   artist={entry.track.artist}
+                  onArtist={onOpenArtist}
                   // поле длительности показывает счётчик прослушиваний —
                   // для топа это информативнее хронометража
                   duration={`${entry.plays}×`}

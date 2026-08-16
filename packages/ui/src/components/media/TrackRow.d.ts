@@ -51,6 +51,10 @@ export interface TrackRowProps {
    *  кнопка-номер: правый кластер (лайк, длительность, «⋯») клик не пропускает. */
   onPlay?: () => void;
   onLike?: () => void;
+  /** Клик по имени артиста (16.08): имя становится ссылкой на его страницу.
+   *  Нет обработчика — остаётся обычным текстом, как было. Клик гасится, чтобы
+   *  не запустить заодно воспроизведение строки. */
+  onArtist?: (artist: string) => void;
   /** Shows an ellipsis button on hover — open a <Menu /> from it. */
   onMore?: (e: React.MouseEvent) => void;
   /** Play button aria label. Default "Play" (app passes a localized value). */

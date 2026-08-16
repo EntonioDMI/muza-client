@@ -38,6 +38,7 @@ export function FavoritesView({
   onNotify,
   loadFavorites,
   warmRow,
+  onOpenArtist,
 }: {
   api: MuzaApi;
   canSearch: boolean;
@@ -59,6 +60,10 @@ export function FavoritesView({
   loadFavorites?: () => Promise<Track[]>;
   /** Готовит трек заранее по наведению; нет умения — строки просто без него. */
   warmRow?: WarmRow;
+  /** Клик по имени артиста в строке трека (16.08). Нет пропа — имя остаётся
+   *  обычным текстом: у площадки может не быть страницы артиста (то же
+   *  правило умений, что у пунктов меню). */
+  onOpenArtist?: (name: string) => void;
 }) {
   const { t, lang } = useT();
   const { phone } = useLayout();
@@ -160,6 +165,7 @@ export function FavoritesView({
               showCover={rowShow?.cover !== false}
               title={tr.title}
               artist={tr.artist}
+              onArtist={onOpenArtist}
               album={rowShow?.album ? (tr.album ?? undefined) : undefined}
               duration={fmtTime(tr.durationSec)}
               showDuration={rowShow?.duration !== false}

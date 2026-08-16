@@ -268,3 +268,25 @@
 .muza-setting-row:focus-visible {
   --setting-bg: var(--surface-3);
 }
+
+/* ── ИМЯ АРТИСТА КАК ССЫЛКА ──────────────────────────────────────────────
+   Кнопка-имя (@muza/app/shell/ArtistLink) стоит внутри подписи и обязана
+   выглядеть текстом, пока к ней не подвели курсор: подчёркивать имя всегда —
+   значит расчертить пунктиром половину интерфейса, потому что артист написан
+   почти под каждой обложкой.
+
+   Подчёркивание, а не смена цвета: цветом в подписях уже сказано другое
+   (--text-2 против --text-1 — это иерархия, а не «сюда можно нажать»). */
+.muza-artist-link {
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition:
+    text-decoration-color var(--dur-state) var(--ease-standard),
+    color var(--dur-state) var(--ease-standard);
+}
+.muza-artist-link:hover,
+.muza-artist-link:focus-visible {
+  color: var(--text-1);
+  text-decoration-color: currentColor;
+}

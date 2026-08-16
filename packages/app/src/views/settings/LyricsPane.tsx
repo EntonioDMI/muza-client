@@ -33,8 +33,25 @@ const KARAOKE_LINES = [3, 5, 7, 9, 11];
  *  ОТДЕЛЬНОЙ плиткой, а не крайним положением ползунка. */
 const PANEL_LINES = [6, 9, 12];
 
+/** Плечо шкалы сдвига текста, мс. Три секунды в каждую сторону: этого хватает
+ *  на кривую разметку источника (там расхождение бывает в пару секунд) и не
+ *  хватает на «переехать на следующий куплет» — то есть шкала остаётся
+ *  подстройкой, а не способом сломать себе текст. */
+const LYRICS_OFFSET_MAX = 3000;
+
+/** Мс → подпись у ползунка: «+0,25», «0», «−0,50». Знак показываем ВСЕГДА
+ *  (кроме нуля): без него «0,25» не отвечает на вопрос «раньше или позже»,
+ *  ради которого человек и трогает этот ряд. Минус — типографский, как во
+ *  всём интерфейсе; запятая или точка — по языку, иначе подпись выглядит
+ *  чужой ровно в той половине случаев, где её и читают. */
+function formatOffset(ms: number, lang: string): string {
+  if (ms === 0) return "0";
+  const sec = (Math.abs(ms) / 1000).toFixed(2);
+  return `${ms > 0 ? "+" : "−"}${lang === "ru" ? sec.replace(".", ",") : sec}`;
+}
+
 export function LyricsPane() {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { prefs, set, caps, paneClass } = useSettingsScreen();
   return (
     <div className={paneClass} style={paneStyle}>
@@ -47,6 +64,24 @@ export function LyricsPane() {
       </SettingRow>
       <SettingRow title={t("settings.lyrics.endNote.title")} hint={t("settings.lyrics.endNote.hint")}>
         <Switch checked={prefs.lyricsEndNote} onChange={(lyricsEndNote: boolean) => set({ lyricsEndNote })} label={t("settings.lyrics.endNote.title")} />
+      </SettingRow>
+      {/* СДВИГ ТЕКСТА — ползунок с нулём ПОСРЕДИНЕ, а не с края (16.08, жалоба
+          «текст сильно отстаёт»). Наша задержка показа лечится константой в
+          коде (LYRICS_LEAD_MS), а этот ряд — про чужую разметку: в LRCLIB
+          попадаются тексты, размеченные ровной сеткой «строка каждые две
+          секунды», и одна разметка, разложенная на издания разной длины.
+          Такое можно поправить только рукой и только на слух, поэтому шкала
+          двусторонняя: «раньше» нужно чаще, но «позже» — тоже настоящий
+          случай. Шаг 50 мс: мельче человек не слышит, а ползунок в 240 px
+          иначе не даёт попасть в круглое число. */}
+      <SettingRow title={t("settings.lyrics.offset.title")} hint={t("settings.lyrics.offset.hint")}>
+        <LiveSlider
+          value={prefs.lyricsOffsetMs + LYRICS_OFFSET_MAX}
+          max={LYRICS_OFFSET_MAX * 2}
+          label={t("settings.lyrics.offset.title")}
+          suffix={t("settings.lyrics.offset.value", { n: formatOffset(prefs.lyricsOffsetMs, lang) })}
+          onChange={(v) => set({ lyricsOffsetMs: Math.round((v - LYRICS_OFFSET_MAX) / 50) * 50 })}
+        />
       </SettingRow>
       {/* Видео-дорожку добывает движок на устройстве; площадке, которой сервер
           отдаёт только звук, показывать вместо обложки нечего. */}

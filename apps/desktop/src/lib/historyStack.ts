@@ -24,6 +24,19 @@ export interface HistoryPayload {
    *  Второй уровень той же вложенности — без него «назад» из под-экрана
    *  выбрасывал бы из настроек целиком, ровно как раньше из раздела. */
   settingsSub?: string;
+  /** view="library": имя артиста, чью страницу открыли (16.08).
+   *
+   *  ⚠️ ИМЕНЕМ, А НЕ ID — потому что сущности «артист» в продукте нет вовсе:
+   *  в базе это колонка `tracks.artist` строкой, и сервер адресует артиста
+   *  ровно так же (`GET /artists/tracks?artist=<имя>`). Заводить здесь id
+   *  значило бы придумать его на пустом месте.
+   *
+   *  Зачем в истории: до этой правки страница артиста жила в useState внутри
+   *  LibraryView и попасть на неё можно было ТОЛЬКО через чип «Артисты» в
+   *  Медиатеке. Жалоба владельца 16.08: «нажимаю на автора у трека, но не
+   *  могу на него зайти». Payload-поле и делает страницу адресуемой — тем же
+   *  приёмом, которым 13.08 стал адресуемым раздел настроек. */
+  artistName?: string;
 }
 
 /** Поля payload, по которым записи считаются разными. Список ЯВНЫЙ, а не
@@ -31,7 +44,7 @@ export interface HistoryPayload {
  *  разные записи в одну — и «назад» молча перескакивает через экран. Так уже
  *  было со `scPlaylistId`: его добавили в payload 20.07, а в сравнение нет, и
  *  два разных плейлиста SoundCloud подряд считались одной записью. */
-const PAYLOAD_KEYS = ["playlistId", "scPlaylistId", "settingsTab", "settingsSub"] as const;
+const PAYLOAD_KEYS = ["playlistId", "scPlaylistId", "settingsTab", "settingsSub", "artistName"] as const;
 
 export interface HistoryEntry<V extends string = string> {
   view: V;

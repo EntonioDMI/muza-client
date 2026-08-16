@@ -32,6 +32,7 @@ import { useEffect, useRef, useState } from "react";
 import { Cover, EmptyState, IconButton, Lyrics } from "@muza/ui";
 import { useT } from "../i18n";
 import { useVideoSync } from "../lib/videoSync";
+import { ArtistLink } from "./ArtistLink";
 import type { NowPlayingTrack, SharedLyricLine } from "./mediaTypes";
 
 /** Растворение кромок окошка текста: вверху — в кадр или обложку над ним,
@@ -160,6 +161,7 @@ export function NowPlayingPanel({
   onSeekLine,
   onExplain,
   onLineContextMenu,
+  onOpenArtist,
   videoUrl = null,
   pos = 0,
   playing = false,
@@ -198,6 +200,9 @@ export function NowPlayingPanel({
    *  подставляет обработчик пеньком apps/desktop/src/shell/NowPlayingPanel.tsx;
    *  у веба своего меню пока нет, и панель просто не вешает onContextMenu. */
   onLineContextMenu?: (e: React.MouseEvent, i: number | null) => void;
+  /** Клик по имени артиста ведёт на его страницу (16.08). Пропа нет — имя
+   *  остаётся обычным текстом: у площадки может не быть куда вести. */
+  onOpenArtist?: (name: string) => void;
   /** Видео трека (2026-07-21, преф videoNowPlaying): удалённый googlevideo-URL
    *  из useTrackVideo; null — обложка (нет видео / тумблер выключен). */
   videoUrl?: string | null;
@@ -484,7 +489,8 @@ export function NowPlayingPanel({
             {track.title}
           </div>
           <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)" }}>
-            {track.album ? `${track.artist} · ${track.album}` : track.artist}
+            <ArtistLink name={track.artist} onOpen={onOpenArtist} />
+            {track.album ? ` · ${track.album}` : null}
           </div>
         </div>
         <IconButton icon="heart" active={liked} filled={liked} label={t("common.like")} onClick={onLike} />

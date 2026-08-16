@@ -71,6 +71,7 @@ export function PlaylistView({
   localFiles,
   onTracksChange,
   style,
+  onOpenArtist,
 }: {
   api: MuzaApi;
   playlistId: string;
@@ -131,6 +132,10 @@ export function PlaylistView({
   /** Стили корня экрана. Веб гасит ими собственные отступы: его зона контента
    *  уже с полями, иначе поля удвоились бы (тот же проп у общего поиска). */
   style?: React.CSSProperties;
+  /** Клик по имени артиста в строке трека (16.08). Нет пропа — имя остаётся
+   *  обычным текстом: у площадки может не быть страницы артиста (то же
+   *  правило умений, что у пунктов меню). */
+  onOpenArtist?: (name: string) => void;
 }) {
   const { t, lang } = useT();
   const { phone } = useLayout();
@@ -748,6 +753,7 @@ export function PlaylistView({
                 showCover={rowShow?.cover !== false}
                 title={tr.title}
                 artist={artistLine}
+                onArtist={onOpenArtist}
                 album={rowShow?.album ? (tr.album ?? undefined) : undefined}
                 duration={fmtTime(tr.durationSec)}
                 showDuration={rowShow?.duration !== false}

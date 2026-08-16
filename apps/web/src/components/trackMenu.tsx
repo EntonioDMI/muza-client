@@ -3,7 +3,9 @@
 import { useRef, useState } from "react";
 import { Dialog, Icon } from "@muza/ui";
 import type { PlaylistMeta, Track } from "@muza/api-client";
+import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@muza/app";
+import { QK } from "@muza/app/lib/queryClient";
 import type { ContextMenuApi, MenuAbilities, TrackPlace } from "@muza/app/shell/ContextMenu";
 import { ReplaceVersionDialog, type ReplaceCtx } from "@muza/app/shell/ReplaceVersionDialog";
 import { ShareDialog } from "@muza/app/shell/ShareDialog";
@@ -85,6 +87,9 @@ export function useWebTrackMenu(
   const { current, playing, playContext } = usePlayer();
   const { playlists, loaded, refresh: refreshPlaylists } = usePlaylists();
   const notify = useToast();
+  // Лента Главной кэшируется на минуту; дизлайк меняет её состав на сервере,
+  // поэтому ключ роняем руками (та же причина, что в приложении).
+  const queryClient = useQueryClient();
   const { t } = useT();
   const apiRef = useRef<ContextMenuApi<MenuAbilities> | null>(null);
   // пикер «В плейлист» работает и на один трек, и на пачку — список, а не трек
@@ -166,6 +171,29 @@ export function useWebTrackMenu(
     toggleLike: (id) => {
       const tr = byId(id);
       if (tr) toggle(tr);
+    },
+    // «Не нравится» — тот же жест, что в приложении (App.tsx, dislikeTrack).
+    // Здесь он короче: у веба нет тоста с «Вернуть», поэтому отмена живёт
+    // в самом сообщении — второй дизлайк того же трека сервер примет молча,
+    // а вернуть можно только заново лайкнув.
+    dislikeTrack: (tr) => {
+      void getApi()
+        .addDislike(tr.id)
+        .then(() => {
+          if (likedIds.has(tr.id)) toggle(tr);
+          void queryClient.invalidateQueries({ queryKey: QK.home });
+          notify(t("toast.dislike.done"), "thumbs-down");
+        })
+        .catch((e) => notify(humanError(e, t("toast.dislike.failed")), "x"));
+    },
+    muteArtist: (name) => {
+      void getApi()
+        .muteArtist(name)
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: QK.home });
+          notify(t("toast.muteArtist.done", { artist: name }), "user-minus");
+        })
+        .catch((e) => notify(humanError(e, t("toast.muteArtist.failed")), "x"));
     },
     shareTrack: (tr) => setShareData({ kind: "track", title: tr.title, artist: tr.artist, coverUrl: tr.coverUrl }),
     showVersions: (tr) => setVersionsTrack(tr),

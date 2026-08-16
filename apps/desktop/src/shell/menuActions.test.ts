@@ -43,6 +43,9 @@ function makeCtx(over: Partial<MenuContext> = {}): MenuContext {
     addToPlaylist: vi.fn(),
     isLiked: () => false,
     toggleLike: vi.fn(),
+    dislikeTrack: vi.fn(),
+    openArtist: vi.fn(),
+    muteArtist: vi.fn(),
     jamAdd: null,
     shareTrack: vi.fn(),
     showVersions: vi.fn(),
@@ -99,9 +102,55 @@ describe("buildMenuItems: каталожный трек", () => {
       "menu.catalog.playNext",
       "menu.catalog.queue",
       "menu.addToPlaylist",
+      // «Перейти к артисту» (16.08): до этой правки страница артиста была
+      // достижима ТОЛЬКО чипом «Артисты» в Медиатеке.
+      "menu.catalog.goToArtist",
       "menu.catalog.like",
+      // «Не нравится» (16.08) — соседняя мысль о той же песне, поэтому сразу
+      // за лайком. До этой правки поставить дизлайк было нельзя ниоткуда,
+      // хотя сервер умел его с самого появления рекомендаций.
+      "menu.catalog.dislike",
+      // Заглушка артиста — соседняя мысль после дизлайка трека («не эта
+      // песня» → «и вообще не он»), поэтому сразу за ним.
+      "menu.catalog.muteArtist",
       "menu.catalog.versions",
     ]);
+  });
+
+  it("«Перейти к артисту» исчезает без умения и без имени", () => {
+    // Умения нет — площадке некуда вести (у веба страницы артиста нет вовсе).
+    const noAbility = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx({ openArtist: undefined }), t);
+    expect(labels(noAbility)).not.toContain("menu.catalog.goToArtist");
+    // Имени нет — открывать нечего: так выглядят прямые ссылки и локальные
+    // файлы без тегов. Пункт, ведущий на страницу пустого артиста, показал бы
+    // человеку пустой экран вместо ответа.
+    const noName = buildMenuItems({ kind: "track", track: { ...track, artist: "" }, place: "search" }, makeCtx(), t);
+    expect(labels(noName)).not.toContain("menu.catalog.goToArtist");
+  });
+
+  it("«Не нравится» исчезает вместе с умением, а не серым пунктом", () => {
+    // Правило площадок (шапка menuActions.ts): нет умения — нет пункта.
+    // Проверяем явно, потому что у веба и приложения умения разные, а
+    // дизлайк — первое умение, добавленное после переезда меню в общий пакет.
+    const items = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx({ dislikeTrack: undefined }), t);
+    expect(labels(items)).not.toContain("menu.catalog.dislike");
+  });
+
+  it("«Не рекомендовать артиста» исчезает без умения и без имени", () => {
+    const noAbility = buildMenuItems({ kind: "track", track, place: "search" }, makeCtx({ muteArtist: undefined }), t);
+    expect(labels(noAbility)).not.toContain("menu.catalog.muteArtist");
+    // Пустое имя заглушить нельзя: такая заглушка вычистила бы из
+    // рекомендаций всё безымянное разом (прямые ссылки, локальные файлы).
+    const noName = buildMenuItems({ kind: "track", track: { ...track, artist: "" }, place: "search" }, makeCtx(), t);
+    expect(labels(noName)).not.toContain("menu.catalog.muteArtist");
+  });
+
+  it("заглушка артиста и дизлайк трека — РАЗНЫЕ пункты", () => {
+    // Регресс-гвард против «схлопнуть в один пункт»: у них разная сила —
+    // дизлайк штрафует артиста на 0.2, заглушка выключает его целиком.
+    const items = labels(buildMenuItems({ kind: "track", track, place: "search" }, makeCtx(), t));
+    expect(items).toContain("menu.catalog.dislike");
+    expect(items).toContain("menu.catalog.muteArtist");
   });
 
   it("снятые 13.08 пункты не возвращаются: радио, поделиться, сохранить офлайн", () => {
