@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useRef, useState } from "react";
-import { Toast, TOAST_HOLD } from "@muza/ui";
+import { Toast, TOAST_HOLD, TOAST_HOLD_ACTION } from "@muza/ui";
 
 /** Тосты веба: одна тихая пилюля над баром (модель десктопа).
  *
@@ -22,10 +22,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Отказ висит дольше удачи — та же причина, что в приложении (App.tsx):
+   *  канал один, не стопится, а объяснение отказа надо успеть прочитать. */
   const notify = useCallback<Notify>((text, icon = "check") => {
     if (timer.current) clearTimeout(timer.current);
     setToast({ open: true, text, icon });
-    timer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), TOAST_HOLD);
+    const hold = icon === "x" ? TOAST_HOLD_ACTION : TOAST_HOLD;
+    timer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), hold);
   }, []);
 
   return (

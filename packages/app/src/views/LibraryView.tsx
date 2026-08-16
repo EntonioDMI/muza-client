@@ -22,6 +22,7 @@ import { useMultiSelect } from "../lib/useMultiSelect";
 import { useAltFileDrag, useLocalFiles, type LocalFileEntry } from "../platform";
 import { playlistIconSrc } from "@muza/core";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /* Вкладка «История» и её пустое состояние берут строки из views.library.* —
  * как остальные подписи экрана. Здесь была пара «новый ключ, а пока его нет —
@@ -677,7 +678,14 @@ export function LibraryView({
       // Цикл здесь, а не в порту: сеть — дело общего кода, а порт знает про
       // устройство (близнец — registerLocalTracks в apps/desktop/src/lib/
       // localFiles.ts: тем же путём регистрируются файлы, брошенные в окно).
+      // ⚠️ Считаем УДАВШИЕСЯ, а не поданные. Раньше итог рапортовал
+      // `entries.length` независимо от отказов: сервер мог отвергнуть все файлы
+      // до единого, а человек читал «добавлено N файлов» и потом не находил их
+      // в медиатеке. Отказ по одному файлу по-прежнему не рвёт цикл — остальные
+      // важнее, — но и молчать о нём больше нельзя.
+      let registered = entries.length;
       if (canSearch) {
+        registered = 0;
         for (const entry of entries) {
           try {
             const track = await api.addLocalTrack({
@@ -687,20 +695,21 @@ export function LibraryView({
               hash: entry.hash,
             });
             local.rememberServerId(entry.hash, track.id);
+            registered++;
           } catch {
             /* один файл не зарегистрировался — остальные важнее */
           }
         }
       }
       onNotify(
-        scanned.truncated
-          ? t("views.library.filesAddedPartial", { count: entries.length })
-          : t("views.library.filesAdded", { count: entries.length }),
+        scanned.truncated || registered < entries.length
+          ? t("views.library.filesAddedPartial", { count: registered })
+          : t("views.library.filesAdded", { count: registered }),
         "hard-drive",
       );
       await reloadLocals();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("views.library.addFilesFailed"), "x");
+      onNotify(humanError(e, t("views.library.addFilesFailed")), "x");
     } finally {
       setScanning(false);
     }
@@ -1259,7 +1268,13 @@ export function LibraryView({
               />
             );
           })}
-          {srvPlaylists.length === 0 ? (
+          {/* ⚠️ Условие учитывает закреплённую плитку «Любимое», а не только
+              список с сервера. Раньше здесь стояло `srvPlaylists.length === 0`,
+              и человек с непустым «Любимым» видел на одном экране плитку И
+              текст «Плейлистов пока нет» — два утверждения об одном и том же,
+              одно из них ложное. Плитка рисуется безусловно (выше), поэтому
+              «пусто» на этой сетке означает «нет ни плейлистов, ни любимого». */}
+          {srvPlaylists.length === 0 && favoritesCount === 0 ? (
             <div style={{ gridColumn: "1 / -1", padding: "var(--sp-6) 0", color: "var(--text-2)", lineHeight: 1.6 }}>
               {t("views.library.playlistsEmpty")}
             </div>

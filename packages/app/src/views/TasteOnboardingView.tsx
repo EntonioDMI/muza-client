@@ -96,11 +96,11 @@ export function TasteOnboardingView({
 
   // Ключ локальный, а не из QK: экран самодостаточен и ни с кем этот запрос не
   // делит — разъехаться тут нечему.
-  const { data, isPending } = useQuery({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: ["taste-options", [...tags].sort().join(","), debounced, limit],
     queryFn: () => api.getTasteOptions({ tags, query: debounced || undefined, limit }),
-    // Отказ отдаём пустотой: экран не обязателен, и вешать на него ошибку
-    // сервера значило бы упереть человека в стену на первом же шаге.
+    // Отказ НЕ роняет экран: он не обязателен, и упирать человека в стену на
+    // первом же шаге нельзя. Но и молчать нельзя — см. `isError` ниже.
     throwOnError: false,
     staleTime: 5 * 60_000,
   });
@@ -143,7 +143,11 @@ export function TasteOnboardingView({
   }
 
   const pad = phone ? "var(--sp-4)" : "var(--sp-6)";
-  const empty = !isPending && grid.length === 0;
+  /** ⚠️ Отказ сервера — ТРЕТИЙ случай, и раньше он молча сливался с «в каталоге
+   *  пусто»: `throwOnError:false` отдавал `data === undefined`, сетка выходила
+   *  пустой, и человеку на ПЕРВОМ экране показывали текст «каталог наполняется,
+   *  пропусти этот шаг» — то есть врали о причине и уговаривали уйти. */
+  const empty = !isPending && !isError && grid.length === 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -210,7 +214,18 @@ export function TasteOnboardingView({
               />
             </div>
 
-            {empty ? (
+            {isError ? (
+              <EmptyState
+                icon="cloud-off"
+                title={t("views.taste.failedTitle")}
+                hint={t("views.taste.failedHint")}
+                action={
+                  <Button variant="secondary" icon="rotate-cw" onClick={() => void refetch()}>
+                    {t("common.retry")}
+                  </Button>
+                }
+              />
+            ) : empty ? (
               // Две РАЗНЫЕ пустоты, и путать их нельзя: «не нашлось по запросу»
               // лечится другим запросом, «в каталоге пока пусто» — не лечится
               // вовсе, и честнее отпустить человека дальше.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Dialog, Icon, IconButton, SearchInput, TrackRow, cssZoom } from "@muza/ui";
+import { Button, Dialog, EmptyState, Icon, IconButton, SearchInput, TrackRow, cssZoom } from "@muza/ui";
 import { humanError } from "@muza/api-client";
 import type { MuzaApi, PlaylistDetail, Track } from "@muza/api-client";
 import { fmtTime, primarySourceLabel } from "../lib/format";
@@ -154,6 +154,8 @@ export function PlaylistView({
     // как читали до переезда.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /** Пакетное удаление в полёте — панель выбора остаётся кликабельной. */
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -303,11 +305,28 @@ export function PlaylistView({
   /** Убрать выделенное: по одному (пакетного метода нет; серверный reorder
    *  подмножеством НЕ удаляет — он лишь переписывает позиции перечисленных). */
   const removeSelected = async (ids: string[]) => {
+    // ⚠️ Панель выбора остаётся на экране весь цикл, и до этой защиты её можно
+    // было нажать повторно — второй проход слал те же удаления заново. Плюс
+    // отказ в СЕРЕДИНЕ рапортовал полный провал после частичного успеха: часть
+    // треков уже удалена, а человек читает «не получилось».
+    if (bulkBusy) return;
+    setBulkBusy(true);
+    let removed = 0;
     try {
-      for (const id of ids) await api.removePlaylistTrack(playlistId, id);
+      for (const id of ids) {
+        await api.removePlaylistTrack(playlistId, id);
+        removed++;
+      }
       onNotify(t("views.playlist.removedFromPlaylist"), "list-x");
     } catch {
-      onNotify(t("views.playlist.removeTrackFailed"), "x");
+      onNotify(
+        removed > 0
+          ? t("views.playlist.removeTrackPartial", { count: removed, total: ids.length })
+          : t("views.playlist.removeTrackFailed"),
+        "x",
+      );
+    } finally {
+      setBulkBusy(false);
     }
     multi.clear();
     await load();
@@ -785,9 +804,34 @@ export function PlaylistView({
             </div>
           );
         })}
+        {/* Скелет вместо пустоты на время загрузки. До 15.08 область контента
+            была ПУСТА, пока идёт запрос, а потом N строк выскакивали разом:
+            человек не мог отличить «грузится» от «плейлист пуст». Форма взята у
+            HomeFeed.tsx:571 и StatsView.tsx:305 — те же ступени поверхности,
+            та же роль status для читалки. */}
+        {detail === null && error === null ? (
+          <div
+            role="status"
+            aria-label={t("views.playlist.loadingLabel")}
+            style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", padding: "var(--sp-2) 0" }}
+          >
+            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", height: 60 }}>
+                <div style={{ width: 44, height: 44, flex: "none", borderRadius: "var(--r-sm)", background: "var(--surface-2)" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ height: 12, width: "38%", borderRadius: 6, background: "var(--surface-2)" }} />
+                  <div style={{ height: 10, width: "22%", marginTop: 8, borderRadius: 5, background: "var(--surface-1)" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {/* ⚠️ Экран, который у нового человека пуст чаще любого другого, рисовал
+            пустоту голым <div> мимо ДС — без значка, без подсказки, с другими
+            отступами, чем восемь остальных пустых состояний продукта. */}
         {detail && detail.tracks.length === 0 ? (
-          <div style={{ padding: "var(--sp-7) var(--sp-4)", color: "var(--text-2)", fontSize: "var(--fs-body)", lineHeight: 1.6 }}>
-            {t("views.playlist.empty")}
+          <div style={{ padding: "var(--sp-6) var(--sp-4)" }}>
+            <EmptyState icon="list-music" title={t("views.playlist.emptyTitle")} hint={t("views.playlist.empty")} />
           </div>
         ) : null}
       </div>

@@ -8,6 +8,7 @@ import { getApi } from "./api";
 import { usePlayer } from "./player";
 import { useSession } from "./session";
 import { useToast } from "./toast";
+import { humanError } from "@muza/api-client";
 
 /** Плейлисты как общий контекст (как лайки в likes.tsx): сайдбар AppShell,
  *  «В плейлист…» и страницы библиотеки/плейлиста смотрят на один список —
@@ -29,6 +30,8 @@ const Ctx = createContext<PlaylistsCtx | null>(null);
 
 export function PlaylistsProvider({ children }: { children: React.ReactNode }) {
   const { session } = useSession();
+  const notify = useToast();
+  const { t } = useT();
   const [playlists, setPlaylists] = useState<PlaylistMeta[]>([]);
   const [loaded, setLoaded] = useState(false);
   /** Живой список для обработчиков жеста: два быстрых перетаскивания подряд не
@@ -80,11 +83,15 @@ export function PlaylistsProvider({ children }: { children: React.ReactNode }) {
       apply(next); // оптимистично: строка встаёт на место до ответа сервера
       try {
         await getApi().reorderPlaylists(next.map((p) => p.id));
-      } catch {
+      } catch (e) {
+        // Откат был, объяснения не было: строка молча прыгала назад, и человек
+        // не мог отличить «не сохранилось» от «промахнулся мимо слота».
+        // Приложение в том же случае говорит (PlaylistView.tsx:364).
         void refresh(); // не сохранилось — вернём серверный порядок
+        notify(humanError(e, t("views.playlist.reorderFailed")), "x");
       }
     },
-    [apply, refresh],
+    [apply, refresh, notify, t],
   );
 
   useEffect(() => {
@@ -127,7 +134,7 @@ export function usePlayPlaylist(): (id: string) => Promise<void> {
         playContext(detail.tracks, 0);
       } catch (e) {
         // общий текст неудачи (views.playlist.loadFailed) — тот же, что в приложении
-        notify(e instanceof Error ? e.message : t("views.playlist.loadFailed"), "x");
+        notify(humanError(e, t("views.playlist.loadFailed")), "x");
       }
     },
     [playContext, notify, t],

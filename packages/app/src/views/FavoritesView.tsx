@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { EmptyState, Icon, TrackRow } from "@muza/ui";
+import { Button, EmptyState, Icon, TrackRow } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { QK } from "../lib/queryClient";
 import { fmtTime, primarySourceLabel } from "../lib/format";
@@ -76,14 +76,17 @@ export function FavoritesView({
    *  строку СРАЗУ, без похода в сеть (фильтр ниже). Настоящая
    *  рассинхронизация (лайк, поставленный на другом устройстве) закрывается
    *  инвалидацией ключа — она дешевле и точнее таймера. */
-  const { data: server = null } = useQuery({
+  const {
+    data: server = null,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: QK.favorites,
     // Stage 4: сервер лёг — приложение показывает последний снимок списка
     // (loadFavorites); у веба такого умения нет, он спрашивает сервер прямо.
     queryFn: () => (loadFavorites ? loadFavorites() : api.getFavorites()),
     enabled: canSearch,
-    // Экран без списка бесполезен, поэтому отказ отдаём пустотой, а не ошибкой:
-    // прежнее поведение (.catch → setServer([])) сохранено ровно.
+    // Экран без списка бесполезен, поэтому отказ НЕ роняет вью.
     throwOnError: false,
   });
 
@@ -173,8 +176,24 @@ export function FavoritesView({
 
         {/* Аноним: лайки живут в аккаунте, сервера у него нет — говорим прямо.
             Залогиненный с пустым избранным — честное «пока пусто». */}
+        {/* ⚠️ Порядок веток важен. Раньше пустое состояние стояло под условием
+            `server !== null`, а при отказе `server` так и оставался null — и
+            экран не показывал НИЧЕГО: один заголовок над пустотой. «Сервер лёг»
+            и «у тебя пока нет любимого» были неотличимы. Теперь отказ говорит о
+            себе и даёт повтор. */}
         {!canSearch ? (
           <EmptyState icon="user" title={t("views.favorites.anon.title")} hint={t("views.favorites.anon.hint")} />
+        ) : isError && total === 0 ? (
+          <EmptyState
+            icon="cloud-off"
+            title={t("views.favorites.failedTitle")}
+            hint={t("views.favorites.failedHint")}
+            action={
+              <Button variant="secondary" icon="rotate-cw" onClick={() => void refetch()}>
+                {t("common.retry")}
+              </Button>
+            }
+          />
         ) : total === 0 && server !== null ? (
           <EmptyState icon="heart" title={t("views.favorites.emptyTitle")} hint={t("views.favorites.empty")} />
         ) : null}
