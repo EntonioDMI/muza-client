@@ -2943,6 +2943,18 @@ function Player({
                 onReorderPlaylists={reorderPlaylists}
                 onPlaylistsChanged={() => void reloadServerPlaylists()}
                 initialArtist={openArtistName}
+                // ⚠️ БЕЗ ЭТОГО ОБРАБОТЧИКА СТРАНИЦА АРТИСТА НЕМАЯ (жалоба
+                // 17.08: «ни на какой вкладке артиста нельзя воспроизвести
+                // музыку, нажимаешь — ничего»). LibraryView зовёт его через
+                // `onPlayHistory?.(...)`, то есть без него клик молча не делает
+                // НИЧЕГО — ни ошибки, ни следа. Проп не передавали НИ РАЗУ с
+                // коммита 319f0c3, где страница артиста и появилась; тем же
+                // молчанием были выключены списки жанров, а вкладка «История»
+                // не показывалась вовсе (historyTab = Boolean(onPlayHistory)).
+                onPlayHistory={(tracks, startIndex) => {
+                  const clicked = tracks[startIndex];
+                  if (clicked) playCatalog(tracks, clicked.id);
+                }}
               />
             ) : rendered === "stats" ? (
               <StatsView
