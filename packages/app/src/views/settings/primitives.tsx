@@ -452,7 +452,6 @@ export function SettingInput({
         color: "var(--text-1)",
         fontFamily: "var(--font-ui)",
         fontSize: "var(--fs-caption)",
-        outline: "none",
         boxSizing: "border-box",
         flex: "none",
       }}
@@ -536,7 +535,14 @@ export function CustomAccentSwatch({
   onPick: (hex: string) => void;
 }) {
   const { t } = useT();
-  return <ColorPicker value={color} selected={selected} size={44} label={t("settings.appearance.accent.customLabel")} onChange={onPick} />;
+  return <ColorPicker
+      value={color}
+      selected={selected}
+      size={44}
+      label={t("settings.appearance.accent.customLabel")}
+      resetLabel={t("settings.appearance.accent.resetLabel")}
+      onChange={onPick}
+    />;
 }
 
 /** Цветовая точка фона — тоже ДС ColorPicker. */

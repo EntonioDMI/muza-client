@@ -37,6 +37,7 @@ export { Tooltip } from "./components/feedback/Tooltip.jsx";
 // lib
 export { cssZoom } from "./lib/cssZoom.js";
 export { useLayerState } from "./lib/useLayerState.js";
+export { useModalFocus } from "./lib/useModalFocus.js";
 export { readDurationMs, DELAY_TIP, TOAST_HOLD, TOAST_HOLD_ACTION } from "./lib/motion.js";
 
 // media

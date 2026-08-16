@@ -12,5 +12,7 @@ export interface ButtonProps {
   children?: React.ReactNode;
   disabled?: boolean;
   onClick?: () => void;
+  /** Native button type. Default "button". Pass "submit" to make a real <form> work. */
+  type?: "button" | "submit" | "reset";
   style?: React.CSSProperties;
 }

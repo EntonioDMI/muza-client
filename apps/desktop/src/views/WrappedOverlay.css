@@ -221,22 +221,35 @@
   padding-block: 8px; /* зона клика по сегментам заметно шире полоски */
 }
 
-.wrapped__progress span {
+/* Сегменты — настоящие <button> (были <span onClick>: мышью работало, с
+   клавиатуры не работало вовсе). Кнопочные умолчания гасим здесь: рамка,
+   собственный фон и padding иначе разнесли бы полоску. */
+.wrapped__progress button {
   position: relative;
   height: 4px;
   flex: 1;
   overflow: hidden;
+  border: none;
+  padding: 0;
+  font: inherit;
+  appearance: none;
   border-radius: var(--r-pill);
   background: var(--surface-3);
   cursor: pointer;
   transition: height var(--dur-state) var(--ease-standard);
 }
 
-.wrapped__progress:hover span {
+/* Фокус виден: точка без подписи, и кольцо — единственный признак, где ты. */
+.wrapped__progress button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+.wrapped__progress:hover button {
   height: 6px;
 }
 
-.wrapped__progress span::after {
+.wrapped__progress button::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -245,14 +258,14 @@
   transform-origin: left;
 }
 
-.wrapped__progress span.is-done::after,
-.wrapped__progress span.is-current::after {
+.wrapped__progress button.is-done::after,
+.wrapped__progress button.is-current::after {
   transform: scaleX(1);
 }
 
 /* Заливка догоняет слайд: она и есть «сегмент стал текущим», поэтому едет
    ровно столько же, сколько приходит сам слайд. */
-.wrapped__progress span.is-current::after {
+.wrapped__progress button.is-current::after {
   animation: wrappedProgressIn var(--wr-enter) var(--ease-out) both;
 }
 
@@ -1401,7 +1414,7 @@
   .wrapped__slide,
   .wrapped__slide *,
   .wrapped__scenery,
-  .wrapped__progress span.is-current::after {
+  .wrapped__progress button.is-current::after {
     animation: none !important;
   }
 

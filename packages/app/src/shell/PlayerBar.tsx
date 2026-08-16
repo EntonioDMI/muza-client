@@ -629,6 +629,18 @@ export function PlayerBar({
         style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", minWidth: 0 }}
         onContextMenu={onTrackMenu}
       >
+        {/* ⚠️ Обложка — КНОПКА ТОЛЬКО ТАМ, ГДЕ ЕЙ ЕСТЬ ЧТО ДЕЛАТЬ.
+            Раньше `<button aria-label="Режим прослушивания">` рисовалась
+            безусловно, а её `onClick` звал `onExpand?.()`. В вебе этот проп не
+            передаётся НАМЕРЕННО (шапка apps/web/src/components/PlayerBar.tsx,
+            решение 10.08: у одного действия один глиф, караоке уходит как
+            `onLyrics`). Итог: скринридеру объявлялась кнопка с подписью
+            «Режим прослушивания», которая не делала ничего.
+            Правило продукта — «умение есть → рисуем; умения нет → его НЕТ, а не
+            серое», поэтому здесь именно отсутствие кнопки, а не `disabled`. */}
+        {!onExpand && !onCoverDragOut ? (
+          <Cover key={track.id} src={track.cover} size="var(--size-cover-bar)" radius="var(--r-sm)" className="muza-view" />
+        ) : (
         <Tooltip label={onCoverDragOut ? t("player.listeningModeTooltipDrag") : t("player.listeningModeTooltip")}>
           {/* настоящая кнопка: клавиатура открывает режим прослушивания;
               с зажатой ЛКМ обложка утаскивается файлом наружу */}
@@ -681,6 +693,7 @@ export function PlayerBar({
             />
           </button>
         </Tooltip>
+        )}
         <div style={{ minWidth: 0 }}>
           <div
             style={{

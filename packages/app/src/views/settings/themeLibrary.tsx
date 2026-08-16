@@ -199,7 +199,6 @@ export function ThemeDialogs({ lib }: { lib: ThemeLibrary }) {
               color: "var(--text-1)",
               fontFamily: "Consolas, monospace",
               fontSize: 13,
-              outline: "none",
             }}
           />
           {d.importErr ? (

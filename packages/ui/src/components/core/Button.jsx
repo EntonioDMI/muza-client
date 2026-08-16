@@ -9,6 +9,11 @@ export function Button({
   children,
   disabled = false,
   onClick,
+  /** По умолчанию "button" — как было зашито до 15.08, ни одно место поведения
+   *  не меняет. Проп нужен ради `type="submit"`: без него ни один экран не мог
+   *  стать настоящей <form>, и вход обходился обёрткой с onKeyDown. Из-за этого
+   *  менеджеры паролей не предлагали сохранить пароль и плохо автозаполняли. */
+  type = "button",
   style,
 }) {
   const [hover, setHover] = useState(false);
@@ -30,7 +35,7 @@ export function Button({
 
   return (
     <button
-      type="button"
+      type={type}
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}

@@ -1165,7 +1165,6 @@ export function CustomizeSub() {
                 fontFamily: "Consolas, monospace",
                 fontSize: 13,
                 lineHeight: 1.5,
-                outline: "none",
               }}
             />
             <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>

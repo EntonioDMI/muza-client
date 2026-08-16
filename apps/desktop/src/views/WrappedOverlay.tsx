@@ -36,7 +36,7 @@
  *  копии, — и они уже разъехались. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, IconButton, Slider } from "@muza/ui";
+import { Button, IconButton, Slider, useModalFocus } from "@muza/ui";
 import type { MuzaApi, Wrapped } from "@muza/api-client";
 import { hourLabel } from "../lib/hourLabel";
 import { wrappedSeason } from "../lib/wrappedSeason";
@@ -45,6 +45,7 @@ import type { ShareData } from "../lib/shareCard";
 import { WrappedAmbient } from "../player/wrappedAmbient";
 import { useT, type Lang } from "../i18n";
 import "./WrappedOverlay.css";
+import { humanError } from "@muza/api-client";
 
 type SlideKind = "empty" | "intro" | "minutes" | "tracks" | "artists" | "rhythm" | "final";
 
@@ -237,7 +238,7 @@ export function WrappedOverlay({
     api
       .getWrapped({ year: wrappedSeason().year })
       .then(setWrapped)
-      .catch((e) => setError(e instanceof Error ? e.message : t("views.wrapped.errors.fetchFailed")));
+      .catch((e) => setError(humanError(e, t("views.wrapped.errors.fetchFailed"))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, open]);
 
@@ -341,6 +342,12 @@ export function WrappedOverlay({
     return () => window.removeEventListener("keydown", onKey, { capture: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, slides.length]);
+
+  /** Фокус входил (корень с tabIndex={-1}), но ловушки Tab и возврата фокуса не
+   *  было: Tab уводил под оверлей на живое окно, а после закрытия фокус оставался
+   *  где придётся. Модель общая с диалогами ДС. Свой вход ниже сохранён — он
+   *  ставит фокус на КОРЕНЬ (сцена слушает стрелки), а не на первую кнопку. */
+  const onTrapKeyDown = useModalFocus(open, rootRef, Boolean(wrapped));
 
   useEffect(() => {
     if (open) rootRef.current?.focus();
@@ -643,6 +650,7 @@ export function WrappedOverlay({
       aria-modal="true"
       aria-label={t("views.wrapped.ariaLabel", { year: wrapped?.year ?? "" })}
       className="wrapped"
+      onKeyDown={onTrapKeyDown}
       data-slide={kind ?? "loading"}
       // Одно число на уход слайда: отсюда его читают и .is-leaving-* в CSS, и
       // таймер снятия копии выше (см. SLIDE_LEAVE_MS).
@@ -686,10 +694,18 @@ export function WrappedOverlay({
             aria-valuenow={position}
             onClick={(event) => event.stopPropagation()}
           >
+            {/* ⚠️ Были голые <span onClick>: ни роли, ни tabIndex, ни клавиатуры.
+                Перейти к конкретному слайду мышью было можно, с клавиатуры —
+                нельзя вовсе, при том что вся остальная сцена стрелки понимает.
+                Кнопка даёт и фокус, и Enter/Space бесплатно; подпись нужна,
+                потому что видимого текста у точки нет. */}
             {slides.map((item, index) => (
-              <span
+              <button
                 key={item}
+                type="button"
                 className={index < slide ? "is-done" : index === slide ? "is-current" : undefined}
+                aria-label={t("views.wrapped.goToSlide", { position: index + 1, total: slides.length })}
+                aria-current={index === slide ? "true" : undefined}
                 onClick={() => navigate(index)}
               />
             ))}

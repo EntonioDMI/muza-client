@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Track } from "@muza/api-client";
-import { Cover, IconButton, Slider, useLayerState } from "@muza/ui";
+import { Cover, IconButton, Slider, useLayerState, useModalFocus } from "@muza/ui";
 import { useT } from "@muza/app";
 import { fmtTime } from "../format";
 import { useLikes } from "../likes";
@@ -49,6 +49,10 @@ export function MobileNowPlaying({ open, onClose }: { open: boolean; onClose: ()
   const [view, setView] = useState<"cover" | "lyrics">("cover");
   const current = p.current;
   const { mounted, layerProps } = useLayerState(open);
+  /** Полноэкранный слой объявлен `role="dialog"`, но фокус-модели не имел:
+   *  Tab уходил под него, а по закрытию фокус не возвращался на мини-бар. */
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const onTrapKeyDown = useModalFocus(open, panelRef, mounted);
 
   // Слушатель — ТОЛЬКО пока экран открыт: узел живёт всё время работы вкладки,
   // и безусловная подписка отбирала бы Esc у диалогов оболочки.
@@ -78,7 +82,15 @@ export function MobileNowPlaying({ open, onClose }: { open: boolean; onClose: ()
   const repeatLabel = p.repeat === "one" ? t("player.repeat.one") : p.repeat === "all" ? t("player.repeat.all") : t("player.repeat.off");
 
   return (
-    <div className="np-overlay muza-layer muza-layer--scene" role="dialog" aria-label={t("nowPlaying.heading")} {...layerProps}>
+    <div
+      ref={panelRef}
+      className="np-overlay muza-layer muza-layer--scene"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("nowPlaying.heading")}
+      onKeyDown={onTrapKeyDown}
+      {...layerProps}
+    >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         {/* «Свернуть» — общая строка режима прослушивания: та же кнопка выхода
             из полноэкранного «Сейчас играет», что в приложении. */}

@@ -10,6 +10,12 @@ export function Switch({ checked = false, onChange, disabled = false, label, sty
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange && onChange(!checked)}
+      /* Зона попадания добирается до --hit-min (44px) псевдоэлементом, вид не
+         меняется. Тумблер 46×28 — самый частый орган продукта (48 мест), и до
+         15.08 он один из шести примитивов проходил мимо собственного минимума
+         системы: класс .muza-hit существовал и применялся у IconButton, Chip и
+         ChipGroup, а здесь его не было. */
+      className="muza-hit"
       style={{
         position: "relative",
         width: 46,

@@ -8,6 +8,9 @@ export interface ColorPickerProps {
   onChange?: (hex: string) => void;
   /** Accessible label + tooltip (Russian), e.g. "Свой акцент". */
   label?: string;
+  /** Tooltip and aria-label of the "revert to the colour you opened with" button.
+   *  Package ships no i18n — the caller translates (see Dialog.jsx header). */
+  resetLabel?: string;
   /** Show the selection ring (this swatch is the active choice). */
   selected?: boolean;
   /** Circle diameter, px. Default 36. */

@@ -115,7 +115,7 @@ function thumbStyle(left, top) {
  *  есть желаемое — состояние там равно текущему цвету, а сохранённый оттенок для
  *  ахроматичных значений точнее пересчитанного. Всё, что обязано повториться на
  *  каждое открытие, висит на эффектах с deps [open], а не на монтировании. */
-function ColorPickerPopover({ open, layerProps, anchor, initialHex, label, onChange, onClose }) {
+function ColorPickerPopover({ open, layerProps, anchor, initialHex, label, resetLabel, onChange, onClose }) {
   const [hsv, setHsv] = useState(() => hexToHsv(initialHex));
   const [hexText, setHexText] = useState(initialHex);
   const [svDrag, setSvDrag] = useState(false);
@@ -319,11 +319,11 @@ function ColorPickerPopover({ open, layerProps, anchor, initialHex, label, onCha
             title давали стоковые плашки WebView2 (жалоба 2026-07-16). */}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)" }}>
           <div style={{ display: "flex", flex: "none" }}>
-            <Tooltip label="Вернуть исходный">
+            <Tooltip label={resetLabel}>
               <button
                 type="button"
                 onClick={revertToInitial}
-                aria-label="Reset to original color"
+                aria-label={resetLabel}
                 style={{
                   width: 28,
                   height: 28,
@@ -378,7 +378,6 @@ function ColorPickerPopover({ open, layerProps, anchor, initialHex, label, onCha
               fontSize: "var(--fs-body)",
               fontVariantNumeric: "tabular-nums",
               textTransform: "uppercase",
-              outline: "none",
               boxSizing: "border-box",
             }}
           />
@@ -393,7 +392,7 @@ function ColorPickerPopover({ open, layerProps, anchor, initialHex, label, onCha
  *  диалога — родной `<input type="color">` не стилизуется никак, отсюда и переезд.
  *  Выбранность показывает кольцо (outline, не тень — теней в ДС нет). Родился из
  *  CustomAccentSwatch настроек десктопа; hex-подпись — опционально. */
-export function ColorPicker({ value = "#3b82f6", onChange, label, selected = false, size = 36, showValue = false, style }) {
+export function ColorPicker({ value = "#3b82f6", onChange, label, resetLabel = "Reset to original color", selected = false, size = 36, showValue = false, style }) {
   const [hover, setHover] = useState(false);
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
@@ -504,6 +503,7 @@ export function ColorPicker({ value = "#3b82f6", onChange, label, selected = fal
           anchor={anchor}
           initialHex={openedWithRef.current}
           label={label}
+          resetLabel={resetLabel}
           onChange={onChange}
           onClose={() => setOpen(false)}
         />

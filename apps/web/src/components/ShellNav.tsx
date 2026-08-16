@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
-import { Icon, useLayerState } from "@muza/ui";
+import { useEffect, useRef } from "react";
+import { Icon, useLayerState, useModalFocus } from "@muza/ui";
 import { useT } from "@muza/app";
 import { isFillableNavIcon } from "@muza/app/shell/Sidebar";
 
@@ -139,6 +139,12 @@ export function ShellDrawer({
   const { t } = useT();
   const panel = useLayerState(open);
   const scrim = useLayerState(open);
+  /** Ящик объявлен `role="dialog"`, но фокус-модели у него не было вовсе: ни
+   *  входа, ни ловушки Tab, ни возврата на кнопку-бургер. Модель общая с
+   *  диалогами ДС — см. useModalFocus. `panel.mounted` в третьем аргументе:
+   *  узел появляется позже смены `open`. */
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const onTrapKeyDown = useModalFocus(open, drawerRef, panel.mounted);
 
   // Esc закрывает — слушатель только пока открыт, иначе ящик отбирал бы
   // клавишу у диалогов оболочки.
@@ -166,9 +172,12 @@ export function ShellDrawer({
       ) : null}
       {panel.mounted ? (
         <aside
+          ref={drawerRef}
           className="drawer muza-layer muza-layer--panel"
           role="dialog"
+          aria-modal="true"
           aria-label={t("web.nav.menuAria")}
+          onKeyDown={onTrapKeyDown}
           {...panel.layerProps}
         >
           {children}

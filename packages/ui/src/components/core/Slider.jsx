@@ -181,6 +181,14 @@ export function Slider({ value = 0, max = 100, onChange, ariaLabel, valueText, h
       onPointerUp={() => setDrag(false)}
       onPointerCancel={() => setDrag(false)}
       onLostPointerCapture={() => setDrag(false)}
+      /* ⚠️ `muza-hit` здесь НЕ вешаем, хотя дорожка 20px и вдвое ниже --hit-min.
+         Причина — запрет в самом классе (animations.css): его нельзя вешать на
+         элементы плотной сетки. Ползунок громкости стоит в ряду иконок-кнопок
+         полосы плеера (PlayerBar.tsx:865, ширина 110), а у тех своя расширенная
+         зона; два перекрывающихся расширения — это украденные клики по соседу.
+         Полоса перемотки (PlayerBar.tsx:968) соседствует с подписями времени.
+         Правильное лечение — точечное, у мест вызова с проверенным зазором, а
+         не в примитиве. Аудит 15.08. */
       style={{
         position: "relative",
         height: 20,
