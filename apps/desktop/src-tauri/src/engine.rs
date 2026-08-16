@@ -241,6 +241,10 @@ pub fn init(app: &AppHandle) {
             format!("сеть: найден системный прокси {proxy} — добыча идёт через него"),
         );
     }
+    // Прогрев соединений ступени 0 — в фоне, сразу после того как известен
+    // прокси (клиент строится с ним, и греть надо уже правильный маршрут).
+    // Разбор и замеры — у prewarm_stage0.
+    prewarm_stage0();
     // Ключ SoundCloud — тоже ДО ранних return'ов рецепта. Без персиста первый
     // же SC-трек КАЖДОГО запуска заново тянул главную soundcloud.com и до 12
     // JS-бандлов, и всё это лежало прямо на пути «клик → звук». Поднятое из
@@ -1601,6 +1605,19 @@ struct WarmEntry {
     /// провайдеров. `size` у HLS — ОЦЕНКА по длительности и битрейту
     /// пресета: настоящий размер известен только после скачивания.
     hls_segments: Vec<String>,
+    /// Какая гостевая сессия YouTube добыла адрес — номер поколения
+    /// (см. `stage0_rotate_session`). `None` = адрес НЕ привязан к нашей
+    /// сессии, и чужой 403 его не касается.
+    ///
+    /// ⚠️ РАЗЛИЧАТЬ ОБЯЗАТЕЛЬНО (телеметрия прода 16.08). Прогретый кэш
+    /// наполняют ДВА источника: ступень 0 (наш visitorData) и yt-dlp-прогрев,
+    /// который поднимает СВОЮ гостевую сессию. До этого поля чистка после 403
+    /// сносила всё с `provider == "youtube"` — то есть и yt-dlp'шные адреса,
+    /// к запретному ведру отношения не имеющие, а они самые дорогие (процесс
+    /// yt-dlp против одного POST). По телеметрии это видно прямо: попаданий в
+    /// прогретый кэш на прослушивание 0.40 в 0.2.5 против 0.27 в 0.3.0, где
+    /// чистка появилась.
+    session_gen: Option<u64>,
 }
 
 /// Разобранный выхлоп `--print` прогрева (см. build_ytdlp_simulate_args).
@@ -2074,6 +2091,26 @@ fn warm_http_client() -> &'static reqwest::Client {
             // редкими. Но повторный клик по тому же треку и добор сегментов
             // HLS с одного CDN он закрывает, а стоит один флаг.
             .hickory_dns(true)
+            // ⚠️ СОЕДИНЕНИЕ НЕ ДАЁМ ПРОТУХНУТЬ (16.08, замер ниже). У reqwest
+            // пул закрывает простаивающее соединение через 90 секунд — то
+            // есть у человека, который слушает трек за треком по 3 минуты,
+            // КАЖДЫЙ клик приходится на закрытый пул и платит полное
+            // рукопожатие заново.
+            //
+            // Замер на машине владельца (curl, три холодных прогона к
+            // youtubei.googleapis.com): TLS 854 / 3183 / 323 мс при connect
+            // 2 мс и DNS 7–56 мс. То есть РУКОПОЖАТИЕ — самая большая часть
+            // ступени 0, больше самого запроса. Второй запрос по уже открытому
+            // соединению: TTFB 102 мс против 961–3740 мс у холодного.
+            //
+            // Десять минут выбраны не «побольше»: столько живёт типичный
+            // сеанс прослушивания подряд, а держать сокет открытым сутками
+            // незачем — сервер всё равно закроет его сам.
+            .pool_idle_timeout(Duration::from_secs(600))
+            // Keep-alive на уровне TCP: NAT домашнего роутера рвёт молчащее
+            // соединение раньше, чем истечёт наш таймаут пула, и тогда
+            // «живое» соединение оказывается мёртвым ровно в момент клика.
+            .tcp_keepalive(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10))
             .proxy(reqwest::Proxy::custom(|url| {
                 crate::sysproxy::proxy_for(url.as_str())
@@ -2081,6 +2118,46 @@ fn warm_http_client() -> &'static reqwest::Client {
             .build()
             .expect("reqwest client строится")
     })
+}
+
+/// Хосты ступени 0, к которым имеет смысл держать соединение заранее.
+///
+/// ⚠️ ТОЛЬКО ТЕ, ЧЕЙ АДРЕС ИЗВЕСТЕН ДО КЛИКА. CDN сюда не входит принципиально:
+/// googlevideo выдаёт КАЖДОМУ треку свой хост (rr3---sn-xxxx.googlevideo.com),
+/// узнать его заранее нельзя, и греть нечего. Греется вход — тот самый, где
+/// по замеру и стоит рукопожатие.
+const PREWARM_HOSTS: [&str; 2] = [
+    "https://youtubei.googleapis.com/generate_204",
+    "https://api-v2.soundcloud.com/",
+];
+
+/// Открыть TLS-соединения к входам ступени 0 заранее, чтобы первый клик их не
+/// оплачивал.
+///
+/// ЗАЧЕМ (16.08). Жалоба, записанная в самом коде журнала стартов, звучит так:
+/// «первый трек ПОСЛЕ ЗАПУСКА приложения особенно долгий». Замер объясняет её
+/// целиком: рукопожатие с youtubei.googleapis.com на машине владельца стоит
+/// 323–3183 мс, а тот же запрос по уже открытому соединению — 102 мс. До этой
+/// правки первое рукопожатие всегда приходилось на путь «клик → звук».
+///
+/// ⚠️ ЭТО НЕ ЗАПРОС ЗА ДАННЫМИ, А ОТКРЫТИЕ СОКЕТА. Берём самые дешёвые
+/// адреса: `generate_204` отдаёт пустой ответ, корень api-v2 — короткий отказ.
+/// Нам безразличен и статус, и тело: ценность целиком в том, что после вызова
+/// в пуле лежит живое соединение с завершённым TLS.
+///
+/// ⚠️ МОЛЧА И БЕЗ ПОСЛЕДСТВИЙ. Прогрев не имеет права ни задержать запуск, ни
+/// что-то сломать: он уходит в фон, ошибки глотаются, результат не проверяется.
+/// Нет сети на старте — просто не прогрелись, дальше всё как раньше.
+pub fn prewarm_stage0() {
+    tauri::async_runtime::spawn(async {
+        for url in PREWARM_HOSTS {
+            let _ = warm_http_client()
+                .get(url)
+                .timeout(Duration::from_secs(8))
+                .send()
+                .await;
+        }
+    });
 }
 
 /// Скачивание по прогретому URL в кэш — замена всего процесса yt-dlp на один
@@ -2428,23 +2505,40 @@ async fn write_hls_to_part(
         if status != 200 {
             return Err(format!("сегмент {index}: статус {status}"));
         }
-        let bytes = resp
-            .bytes()
-            .await
+        // ⚠️ ЧАНКАМИ, А НЕ `resp.bytes()` (16.08). Раньше сегмент буферизовался
+        // ЦЕЛИКОМ и только потом попадал в .part — всё время его закачки
+        // `written` стоял на месте. Для читателя растущего файла это
+        // неотличимо от «встало»: он ждёт байт, которых нет, хотя сеть
+        // работает. Обычный путь (fetch_to_cache_with_progress) пишет по
+        // чанкам с самого начала — здесь была единственная дыра в этой
+        // дисциплине, и досталась она ровно тому пути, на который в 0.3.0
+        // ушёл весь холодный SoundCloud.
+        let mut resp = resp;
+        loop {
+            let next = resp.chunk();
+            let chunk = match cancel {
+                Some(n) => tokio::select! {
+                    _ = n.notified() => return Err("стрим отменён на сегменте".into()),
+                    c = next => c,
+                },
+                None => next.await,
+            }
             .map_err(|e| format!("чтение сегмента {index}: {e}"))?;
-        written += bytes.len() as u64;
-        if !content_length_ok(written) {
-            return Err(format!("склейка HLS вне лимита: {written}"));
-        }
-        file.write_all(&bytes)
-            .map_err(|e| format!("запись .part: {e}"))?;
-        if let Some(tx) = progress {
-            tx.send_replace(StreamProgress {
-                written,
-                total: estimate.max(written),
-                finalized: false,
-                failed: false,
-            });
+            let Some(chunk) = chunk else { break };
+            written += chunk.len() as u64;
+            if !content_length_ok(written) {
+                return Err(format!("склейка HLS вне лимита: {written}"));
+            }
+            file.write_all(&chunk)
+                .map_err(|e| format!("запись .part: {e}"))?;
+            if let Some(tx) = progress {
+                tx.send_replace(StreamProgress {
+                    written,
+                    total: estimate.max(written),
+                    finalized: false,
+                    failed: false,
+                });
+            }
         }
     }
     if written == 0 {
@@ -2632,6 +2726,7 @@ fn innertube_visitor(raw: &serde_json::Value) -> Option<String> {
 fn innertube_warm_entry_with_lookup(
     fmt: &InnertubeFormat,
     now: SystemTime,
+    session_gen: u64,
     lookup: &mut impl FnMut(&str, u16) -> LookupResult,
 ) -> Result<WarmEntry, String> {
     if !content_length_ok(fmt.size) {
@@ -2652,10 +2747,15 @@ fn innertube_warm_entry_with_lookup(
         provider: "youtube".into(),
         expires_at,
         hls_segments: Vec::new(),
+        session_gen: Some(session_gen),
     })
 }
 
-fn innertube_warm_entry(fmt: &InnertubeFormat, now: SystemTime) -> Result<WarmEntry, String> {
+fn innertube_warm_entry(
+    fmt: &InnertubeFormat,
+    now: SystemTime,
+    session_gen: u64,
+) -> Result<WarmEntry, String> {
     let mut lookup = |host: &str, port: u16| {
         debug_assert_eq!(port, 443);
         (host, 443)
@@ -2663,7 +2763,7 @@ fn innertube_warm_entry(fmt: &InnertubeFormat, now: SystemTime) -> Result<WarmEn
             .map(|answers| answers.map(|answer| answer.ip()).collect())
             .map_err(|error| format!("DNS lookup failed: {error}"))
     };
-    innertube_warm_entry_with_lookup(fmt, now, &mut lookup)
+    innertube_warm_entry_with_lookup(fmt, now, session_gen, &mut lookup)
 }
 
 /// Ступень 0 — только когда ВЕДУЩИЙ источник YouTube с валидным id:
@@ -2937,22 +3037,63 @@ fn is_gvs_forbidden(error: &str) -> bool {
 /// лестницу, чем крутить лотерею (каждый круг ~0.75 с).
 const STAGE0_FORBIDDEN_ROUNDS: usize = 2;
 
-/// Сменить гостевую сессию после 403 от CDN и выбросить прогретые ею адреса.
+/// Сменить гостевую сессию после 403 от CDN и выбросить прогретые ЕЮ адреса.
 ///
-/// Два действия неразделимы: адрес уже добыт СТАРОЙ сессией, и все остальные
-/// записи прогрева добыты ею же — оставить их значит гарантированно заплатить
-/// по ещё одному обречённому GET за каждый трек, к которому притронется
-/// пользователь. Чистим только YouTube: SoundCloud к visitorData отношения не
-/// имеет, а его прогрев дорогой (client_id + api-v2).
+/// Два действия неразделимы: адрес уже добыт СТАРОЙ сессией, и остальные её
+/// адреса обречены так же — оставить их значит заплатить по ещё одному
+/// обречённому GET за каждый трек, к которому притронется пользователь.
+///
+/// ⚠️ «ЕЮ» — НЕ «ВСЕ YOUTUBE» (правка 16.08 по телеметрии прода). Раньше
+/// условие было `provider != "youtube"`, и один 403 сносил до 512 записей
+/// разом, включая:
+///  - адреса **yt-dlp-прогрева**: у того своя гостевая сессия, наше ведро его
+///    не касается, а стоит такая запись целого процесса;
+///  - адреса, которые УЖЕ добыла НОВАЯ сессия, — когда 403 приходит с
+///    опозданием от фоновой закачки, начатой до смены (она идёт с сохранённым
+///    у себя `entry`, и порядок с кликом ничем не связан).
+/// Второй случай ещё и запускал петлю: чистка → промах кэша → лишний резолв →
+/// новый шанс на 403. По телеметрии 16.08 попаданий в прогретый кэш на
+/// прослушивание 0.27 у 0.3.0 против 0.40 у 0.2.5, а 403 на прослушивание —
+/// 0.295 против 0.059.
+///
+/// `minted_by` — поколение сессии, добывшей отбитый адрес (`WarmEntry::
+/// session_gen`). Смена происходит, только если оно РАВНО текущему: `None`
+/// (адрес не наш) и отставшее поколение (сессия уже сменена) означают, что
+/// менять нечего — иначе каждая опоздавшая закачка гнала бы ещё один круг
+/// «новая сессия → холодный /player → бот-гейт», а бот-гейт кормит
+/// предохранитель (в 0.2.5 его на прослушивание было 0, в 0.3.0 — 0.114).
 ///
 /// Возвращает, сколько записей выброшено, — только для журнала.
-fn stage0_rotate_session(state: &EngineState, now: SystemTime, detail: &str) -> usize {
-    *state.gvs_forbidden.lock().unwrap() += 1;
+fn stage0_rotate_session(
+    state: &EngineState,
+    minted_by: Option<u64>,
+    now: SystemTime,
+    detail: &str,
+) -> usize {
+    let current = *state.gvs_forbidden.lock().unwrap();
+    let doomed = match minted_by {
+        Some(gen) if gen == current => gen,
+        _ => {
+            stage0_log(
+                state,
+                now,
+                match minted_by {
+                    // адрес добыт не ступенью 0 — сессия ни при чём
+                    None => "CDN отказал в байтах (403) на чужом адресе — гостевую сессию не трогаем".to_string(),
+                    Some(gen) => format!(
+                        "CDN отказал в байтах (403) от сессии {gen}, а работает уже {current} — смена не нужна"
+                    ),
+                },
+            );
+            return 0;
+        }
+    };
+    *state.gvs_forbidden.lock().unwrap() = current + 1;
     *state.youtube_visitor.lock().unwrap() = None;
     let dropped = {
         let mut warm = state.warm.lock().unwrap();
         let before = warm.len();
-        warm.retain(|_, entry| entry.provider != "youtube");
+        warm.retain(|_, entry| entry.session_gen != Some(doomed));
         before - warm.len()
     };
     let detail: String = detail.chars().take(120).collect();
@@ -3251,13 +3392,19 @@ async fn resolve_via_innertube_client(
         async move { innertube_player_call(&cfg, &vid, visitor.as_deref()).await }
     })
     .await?;
+    // Поколение гостевой сессии читаем ЗДЕСЬ, после ответа /player: именно эта
+    // сессия добыла адрес, и по этой метке 403 узна́ет свои адреса (см.
+    // WarmEntry::session_gen и stage0_rotate_session).
+    let session_gen = *state.gvs_forbidden.lock().unwrap();
     // DNS-preflight validate_warm_url — блокирующий getaddrinfo: с async-
     // рантайма его уводит spawn_blocking (лестница делает так же в
     // build_attempts) — медленный DNS не душит соседние async-задачи.
-    tauri::async_runtime::spawn_blocking(move || innertube_warm_entry(&fmt, SystemTime::now()))
-        .await
-        .map_err(|e| InnertubeFail::Other(format!("spawn_blocking: {e}")))?
-        .map_err(InnertubeFail::Other)
+    tauri::async_runtime::spawn_blocking(move || {
+        innertube_warm_entry(&fmt, SystemTime::now(), session_gen)
+    })
+    .await
+    .map_err(|e| InnertubeFail::Other(format!("spawn_blocking: {e}")))?
+    .map_err(InnertubeFail::Other)
 }
 
 /// Боевая ступень 0 целиком: клиент рецепта, при SABR-only — фолбэк-клиенты
@@ -3602,10 +3749,30 @@ fn sc_pick_transcoding(track: &serde_json::Value) -> Result<ScTranscoding, Sound
         .as_array()
         .ok_or_else(|| SoundcloudFail::Other("нет media.transcodings".into()))?;
     let mut best_hls: Option<(u8, ScTranscoding)> = None;
+    let mut snipped_seen = false;
     for t in transcodings {
+        // ⚠️ ПРЕВЬЮ НА 30 СЕКУНД (16.08, жалоба «песни под видом полных всего
+        // 30 секунд»). У лицензионного каталога SoundCloud отдаёт транскодинги
+        // с url вида .../preview/progressive и пометкой snipped: true. Они
+        // качаются штатно и целиком — потому ни одна проверка целостности их
+        // не ловит: CDN заявил размер превью, столько и приехало. Единственное
+        // место, где превью ещё отличимо от песни, — вот эта пометка.
+        //
+        // Отбор здесь — вторая линия: первую держит сервер, не пуская сниппеты
+        // в каталог (soundcloud-snippet.ts). Эта нужна для источников, уже
+        // лежащих в базе с прошлых поисков.
         let Some(url) = t["url"].as_str().filter(|u| !u.is_empty()) else {
             continue;
         };
+        // Признаков ДВА, и это не перестраховка: ровно так же решает сам
+        // yt-dlp (extractor/soundcloud.py, is_preview) —
+        //     t.get('snipped') or '/preview/' in format_url or …
+        // — потому что пометка `snipped` стоит не на всех превью, а путь
+        // .../preview/... в адресе транскодинга стоит всегда.
+        if t["snipped"].as_bool() == Some(true) || url.contains("/preview/") {
+            snipped_seen = true;
+            continue;
+        }
         let Some(ext) = sc_ext_from_mime(t["format"]["mime_type"].as_str().unwrap_or("")) else {
             continue;
         };
@@ -3640,6 +3807,15 @@ fn sc_pick_transcoding(track: &serde_json::Value) -> Result<ScTranscoding, Sound
     }
     if let Some((_, hls)) = best_hls {
         return Ok(hls);
+    }
+    // Разные слова у двух отказов не косметика: «все потоки снипнуты» значит
+    // «полной дорожки у SoundCloud нет вовсе», и запасная дорога тоже принесёт
+    // тридцать секунд. Без этой строки такой трек читался бы в журнале как
+    // обычный промах ступени 0.
+    if snipped_seen {
+        return Err(SoundcloudFail::Other(
+            "у трека только снипнутые потоки — это 30-секундное превью, а не песня".into(),
+        ));
     }
     Err(SoundcloudFail::Other(
         "у трека нет ни progressive, ни AAC HLS — качаем запасной дорогой".into(),
@@ -4267,6 +4443,8 @@ fn soundcloud_warm_entry_with_lookup(
         provider: "soundcloud".into(),
         expires_at: now + SOUNDCLOUD_WARM_TTL,
         hls_segments,
+        // SoundCloud к visitorData YouTube отношения не имеет
+        session_gen: None,
     })
 }
 
@@ -4547,6 +4725,12 @@ pub async fn engine_warm(
                     ext: sim.ext,
                     provider: attempt_provider,
                     hls_segments: Vec::new(),
+                    // ⚠️ ИМЕННО None, ХОТЯ ПРОВАЙДЕР МОЖЕТ БЫТЬ "youtube":
+                    // адрес добыт процессом yt-dlp, а он поднимает СВОЮ
+                    // гостевую сессию. Наш 403 про наше ведро и этот адрес
+                    // не порочит — выбрасывать его нельзя (он дороже всех
+                    // прочих: целый процесс против одного POST).
+                    session_gen: None,
                 };
                 if entry.expires_at <= now {
                     last_error = "warm-URL уже протух".into();
@@ -4876,7 +5060,15 @@ pub async fn engine_stream_start(
                     // прежде чем ответить фронту.
                     if is_gvs_forbidden(&reason) {
                         st.stats.lock().unwrap().fail_403 += 1;
-                        stage0_rotate_session(&st, SystemTime::now(), &reason);
+                        // Закачка живёт своей жизнью и могла начаться ДО
+                        // предыдущей смены сессии — метку берём из адреса,
+                        // с которым она шла, а не из состояния «сейчас».
+                        stage0_rotate_session(
+                            &st,
+                            entry.session_gen,
+                            SystemTime::now(),
+                            &reason,
+                        );
                     }
                     // .part уже удалён самим fetch_to_cache_with_progress
                     let p = *tx.borrow();
@@ -5379,8 +5571,8 @@ pub async fn engine_resolve(
                 // добыт, сидит в запретном ведре (см. блок «PO-токен и 403 от
                 // CDN»). Меняем её ПРЯМО СЕЙЧАС, чтобы ступень 0 ниже, в этом
                 // же вызове, спросила адрес уже у новой.
-                if entry.provider == "youtube" && is_gvs_forbidden(&e) {
-                    stage0_rotate_session(&state, SystemTime::now(), &e);
+                if is_gvs_forbidden(&e) {
+                    stage0_rotate_session(&state, entry.session_gen, SystemTime::now(), &e);
                 }
             }
         }
@@ -5505,7 +5697,12 @@ pub async fn engine_resolve(
                                     if !is_gvs_forbidden(&e) {
                                         break;
                                     }
-                                    stage0_rotate_session(&state, SystemTime::now(), &e);
+                                    stage0_rotate_session(
+                                        &state,
+                                        entry.session_gen,
+                                        SystemTime::now(),
+                                        &e,
+                                    );
                                     if round + 1 >= STAGE0_FORBIDDEN_ROUNDS {
                                         // Круги кончились: помним провал (клик
                                         // по тому же треку в ближайшую минуту
@@ -7622,6 +7819,7 @@ mod warm_tests {
             size: 100,
             ext: "opus".into(),
             provider: "youtube".into(),
+            session_gen: None,
             expires_at,
             hls_segments: Vec::new(),
         }
@@ -7912,6 +8110,7 @@ mod warm_tests {
                     size: sim.size,
                     ext: sim.ext,
                     provider: "youtube".into(),
+                    session_gen: None,
                     hls_segments: Vec::new(),
                 };
                 let t1 = Instant::now();
@@ -8243,7 +8442,7 @@ mod innertube_tests {
             size: 3_433_755,
             ext: "webm".into(),
         };
-        let entry = innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).unwrap();
+        let entry = innertube_warm_entry_with_lookup(&fmt, now, 0, &mut public_lookup).unwrap();
         assert_eq!(
             entry.expires_at,
             SystemTime::UNIX_EPOCH + Duration::from_secs(1_021_000) - WARM_EXPIRY_MARGIN
@@ -8267,7 +8466,7 @@ mod innertube_tests {
                 ext: "webm".into(),
             };
             assert!(
-                innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                innertube_warm_entry_with_lookup(&fmt, now, 0, &mut public_lookup).is_err(),
                 "{raw:?} обязан отвергаться"
             );
         }
@@ -8282,7 +8481,7 @@ mod innertube_tests {
             size: 100,
             ext: "webm".into(),
         };
-        assert!(innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err());
+        assert!(innertube_warm_entry_with_lookup(&fmt, now, 0, &mut public_lookup).is_err());
     }
 
     /// Лимит 512 МиБ — тот же, что у yt-dlp-пути (проверка ДО запроса байт).
@@ -8297,7 +8496,7 @@ mod innertube_tests {
                 ext: "webm".into(),
             };
             assert!(
-                innertube_warm_entry_with_lookup(&fmt, now, &mut public_lookup).is_err(),
+                innertube_warm_entry_with_lookup(&fmt, now, 0, &mut public_lookup).is_err(),
                 "size {size} обязан отвергаться"
             );
         }
@@ -8542,39 +8741,102 @@ mod innertube_tests {
     }
 
     /// Смена сессии обязана делать ОБА дела разом: выбросить visitorData и
-    /// выбросить прогретые им YouTube-адреса. Записи SoundCloud остаются —
-    /// они к visitorData отношения не имеют, а их прогрев дорогой.
+    /// выбросить адреса, добытые ИМЕННО ЭТОЙ сессией. Остальное остаётся:
+    /// SoundCloud к visitorData отношения не имеет, а у yt-dlp-прогрева своя
+    /// гостевая сессия — и его записи самые дорогие (правка 16.08, раньше
+    /// условие было `provider != "youtube"` и сносило всё разом).
     #[test]
-    fn rotate_session_drops_visitor_and_youtube_warm_only() {
+    fn rotate_session_drops_visitor_and_own_session_warm_only() {
         let state = EngineState::default();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
         *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
             value: "V-ОТРАВЛЕННЫЙ".into(),
             obtained_at: now,
         });
-        let mk = |provider: &str| WarmEntry {
-            url: Url::parse("https://rr1---sn-x.googlevideo.com/videoplayback?itag=251").unwrap(),
-            size: 1024,
-            ext: "webm".into(),
-            provider: provider.into(),
-            expires_at: now + Duration::from_secs(3600),
-            hls_segments: Vec::new(),
-        };
-        store_warm_entry(&state, "ns", "yt-1", mk("youtube"));
-        store_warm_entry(&state, "ns", "yt-2", mk("youtube"));
-        store_warm_entry(&state, "ns", "sc-1", mk("soundcloud"));
+        store_warm_entry(&state, "ns", "yt-1", mk_warm(now, "youtube", Some(0)));
+        store_warm_entry(&state, "ns", "yt-2", mk_warm(now, "youtube", Some(0)));
+        store_warm_entry(&state, "ns", "ytdlp", mk_warm(now, "youtube", None));
+        store_warm_entry(&state, "ns", "sc-1", mk_warm(now, "soundcloud", None));
 
-        let dropped = stage0_rotate_session(&state, now, "warm GET: статус 403");
+        let dropped = stage0_rotate_session(&state, Some(0), now, "warm GET: статус 403");
 
-        assert_eq!(dropped, 2, "выброшены обе YouTube-записи");
+        assert_eq!(dropped, 2, "выброшены обе записи ОТБИТОЙ сессии");
         assert!(
             state.youtube_visitor.lock().unwrap().is_none(),
             "гостевая сессия сброшена — следующий POST возьмёт новую"
         );
         let warm = state.warm.lock().unwrap();
         assert!(warm.contains_key(&warm_key("ns", "sc-1")), "SoundCloud не тронут");
+        assert!(
+            warm.contains_key(&warm_key("ns", "ytdlp")),
+            "адрес yt-dlp-прогрева не наш по сессии — переживает чужой 403"
+        );
         assert!(!warm.contains_key(&warm_key("ns", "yt-1")));
         assert_eq!(*state.gvs_forbidden.lock().unwrap(), 1, "счётчик диагностики");
+    }
+
+    fn mk_warm(now: SystemTime, provider: &str, session_gen: Option<u64>) -> WarmEntry {
+        WarmEntry {
+            url: Url::parse("https://rr1---sn-x.googlevideo.com/videoplayback?itag=251").unwrap(),
+            size: 1024,
+            ext: "webm".into(),
+            provider: provider.into(),
+            expires_at: now + Duration::from_secs(3600),
+            hls_segments: Vec::new(),
+            session_gen,
+        }
+    }
+
+    /// 403 ОПОЗДАВШЕЙ закачки (её адрес добыт сессией, которую уже сменили) не
+    /// имеет права ни менять сессию ещё раз, ни выбрасывать то, что новая уже
+    /// успела прогреть. Иначе одна неудачная закачка гонит петлю
+    /// «смена → пустой кэш → лишний резолв → холодный /player → бот-гейт».
+    #[test]
+    fn stale_forbidden_does_not_rotate_again() {
+        let state = EngineState::default();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        *state.gvs_forbidden.lock().unwrap() = 1; // сессия уже сменена
+        store_warm_entry(&state, "ns", "fresh", mk_warm(now, "youtube", Some(1)));
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-НОВЫЙ".into(),
+            obtained_at: now,
+        });
+
+        let dropped = stage0_rotate_session(&state, Some(0), now, "warm GET: статус 403");
+
+        assert_eq!(dropped, 0, "старый 403 ничего не выбрасывает");
+        assert_eq!(*state.gvs_forbidden.lock().unwrap(), 1, "второй смены нет");
+        assert!(
+            state.youtube_visitor.lock().unwrap().is_some(),
+            "свежая гостевая сессия уцелела"
+        );
+        assert!(
+            state.warm.lock().unwrap().contains_key(&warm_key("ns", "fresh")),
+            "адрес, добытый новой сессией, остаётся прогретым"
+        );
+    }
+
+    /// 403 на адресе, добытом НЕ ступенью 0 (yt-dlp поднимает свою гостевую
+    /// сессию), про наше ведро не говорит ничего — менять нечего.
+    #[test]
+    fn foreign_forbidden_does_not_rotate() {
+        let state = EngineState::default();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        *state.youtube_visitor.lock().unwrap() = Some(VisitorData {
+            value: "V-ЖИВОЙ".into(),
+            obtained_at: now,
+        });
+        store_warm_entry(&state, "ns", "mine", mk_warm(now, "youtube", Some(0)));
+
+        let dropped = stage0_rotate_session(&state, None, now, "warm GET: статус 403");
+
+        assert_eq!(dropped, 0);
+        assert_eq!(*state.gvs_forbidden.lock().unwrap(), 0, "смены нет");
+        assert!(state.youtube_visitor.lock().unwrap().is_some());
+        assert!(
+            state.warm.lock().unwrap().contains_key(&warm_key("ns", "mine")),
+            "свои адреса чужой 403 не выбрасывает"
+        );
     }
 
     /// Счётчик 403 виден в «Диагностике добычи» и НЕ обнуляется выгрузкой
@@ -8583,8 +8845,10 @@ mod innertube_tests {
     fn status_shows_forbidden_count_surviving_stats_drain() {
         let state = EngineState::default();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
-        stage0_rotate_session(&state, now, "warm GET: статус 403");
-        stage0_rotate_session(&state, now, "warm GET: статус 403");
+        // каждый следующий 403 приходит уже от НОВОЙ сессии — иначе он
+        // считается опоздавшим и смены не вызывает (stale_forbidden_...)
+        stage0_rotate_session(&state, Some(0), now, "warm GET: статус 403");
+        stage0_rotate_session(&state, Some(1), now, "warm GET: статус 403");
         // имитируем выгрузку аналитики (engine_stats_take черпает досуха)
         *state.stats.lock().unwrap() = EngineStats::default();
         assert_eq!(stage0_status_snapshot(&state, now).gvs_forbidden, 2);
@@ -9081,6 +9345,65 @@ mod soundcloud_tests {
             ]}
         });
         assert!(sc_pick_transcoding(&track).unwrap().url.contains("/160/"));
+    }
+
+    /// Превью на 30 секунд: у лицензионного каталога SoundCloud все потоки
+    /// помечены snipped и ведут на .../preview/... . Скачиваются они штатно,
+    /// поэтому ни одна проверка целостности их не ловит — отличить можно
+    /// только здесь. Форма взята с живого ответа (Daft Punk — «Get Lucky»,
+    /// фикстура сервера __fixtures__/soundcloud-search.json).
+    #[test]
+    fn pick_rejects_snipped_preview() {
+        let track: serde_json::Value = serde_json::json!({
+            "policy": "SNIP",
+            "duration": 30000,
+            "full_duration": 369659,
+            "media": { "transcodings": [
+                { "url": "https://api-v2.soundcloud.com/x/preview/hls", "preset": "aac_160k",
+                  "snipped": true, "format": { "protocol": "hls", "mime_type": "audio/mp4" } },
+                { "url": "https://api-v2.soundcloud.com/x/preview/progressive", "preset": "mp3_0_0",
+                  "snipped": true, "format": { "protocol": "progressive", "mime_type": "audio/mpeg" } },
+            ]}
+        });
+        let err = sc_pick_transcoding(&track).unwrap_err();
+        let SoundcloudFail::Other(msg) = err else {
+            panic!("ожидали Other, получили {err:?}");
+        };
+        assert!(msg.contains("превью"), "отказ должен называть причину: {msg}");
+    }
+
+    /// Смешанный случай: превью-поток соседствует с полным. Берём полный, а не
+    /// первый попавшийся progressive — иначе правило «progressive вперёд»
+    /// выбрало бы именно превью (у SoundCloud оно там и лежит вторым).
+    #[test]
+    fn pick_skips_snipped_but_takes_full_stream() {
+        let track: serde_json::Value = serde_json::json!({
+            "media": { "transcodings": [
+                { "url": "https://api-v2.soundcloud.com/x/preview/progressive", "preset": "mp3_0_0",
+                  "snipped": true, "format": { "protocol": "progressive", "mime_type": "audio/mpeg" } },
+                { "url": "https://api-v2.soundcloud.com/x/full/progressive", "preset": "mp3_0_0",
+                  "snipped": false, "format": { "protocol": "progressive", "mime_type": "audio/mpeg" } },
+            ]}
+        });
+        assert!(sc_pick_transcoding(&track).unwrap().url.contains("/full/"));
+    }
+
+    /// Превью БЕЗ пометки: `snipped` стоит не всегда, а `/preview/` в адресе —
+    /// всегда. Второй признак взят у yt-dlp (is_preview в его экстракторе);
+    /// без него такой транскодинг молча стал бы «песней» на 30 секунд.
+    #[test]
+    fn pick_rejects_preview_url_without_snipped_flag() {
+        let track: serde_json::Value = serde_json::json!({
+            "media": { "transcodings": [
+                { "url": "https://api-v2.soundcloud.com/media/x/preview/progressive", "preset": "mp3_0_0",
+                  "format": { "protocol": "progressive", "mime_type": "audio/mpeg" } },
+            ]}
+        });
+        let err = sc_pick_transcoding(&track).unwrap_err();
+        let SoundcloudFail::Other(msg) = err else {
+            panic!("ожидали Other, получили {err:?}");
+        };
+        assert!(msg.contains("превью"), "отказ должен называть причину: {msg}");
     }
 
     #[test]
