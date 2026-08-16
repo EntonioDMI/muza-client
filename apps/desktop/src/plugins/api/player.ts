@@ -16,11 +16,7 @@ function arg(args: unknown): Record<string, unknown> {
   return (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
 }
 
-/** Метаданные трека для плагина — БЕЗ URL источников/токенов (§3.1 дока). */
-function safeTrack(t: { id: string; title: string; artist: string; album: string; duration: number } | null) {
-  if (!t) return null;
-  return { id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration };
-}
+import { safeTrackPayload as safeTrack } from "./events";
 
 export const playerApi: PluginApiModule = {
   "player.getState": ({ bridge }: PluginApiContext) => {

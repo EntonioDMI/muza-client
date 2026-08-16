@@ -15,9 +15,7 @@ function strArr(v: unknown, name: string): string[] {
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new Error(`bad_args: ${name} — массив строк`);
   return v as string[];
 }
-function safeTrack(t: { id: string; title: string; artist: string; album: string; duration: number }) {
-  return { id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration };
-}
+import { safeTrackPayload as safeTrack } from "./events";
 
 export const libraryApi: PluginApiModule = {
   "library.getPlaylists": ({ bridge }: PluginApiContext) => bridge.library.getPlaylists(),

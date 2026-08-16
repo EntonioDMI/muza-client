@@ -20,10 +20,25 @@ export function allowedEventTypes(granted: PluginPermission[]): PluginEventType[
   return (Object.keys(EVENT_PERMISSIONS) as PluginEventType[]).filter((t) => granted.includes(EVENT_PERMISSIONS[t]));
 }
 
-/** Метаданные трека без URL/токенов источников (§3.1 дока). */
-export function safeTrackPayload(
-  t: { id: string; title: string; artist: string; album: string; duration: number } | null,
-): { id: string; title: string; artist: string; album: string; duration: number } | null {
+/** Ровно те поля трека, которые плагину можно видеть. */
+export type PluginTrackFields = { id: string; title: string; artist: string; album: string; duration: number };
+
+/** Метаданные трека без URL/токенов источников (§3.1 дока).
+ *
+ *  ⚠️ ЕДИНСТВЕННАЯ КОПИЯ ФИЛЬТРА — не заводить локальные `safeTrack` рядом с
+ *  местом использования. До 15.08 их было четыре: здесь, в `App.tsx`, в
+ *  `api/player.ts` и в `api/library.ts`; эта, документированная, оказалась
+ *  единственной МЁРТВОЙ, а три живые копии могли разъехаться независимо. Всё,
+ *  что уходит плагину, идёт через `pluginHost.emit` → `postMessage(…, "*")`,
+ *  то есть это граница доверия: новое поле, добавленное сюда, немедленно
+ *  становится видимым чужому коду.
+ *
+ *  Перегрузки, а не `| null` в одной сигнатуре: `library.*` отдаёт списки без
+ *  дырок, и общий null-терпимый тип заставил бы дописывать `!` на каждом
+ *  `.map()`. */
+export function safeTrackPayload(t: PluginTrackFields): PluginTrackFields;
+export function safeTrackPayload(t: PluginTrackFields | null | undefined): PluginTrackFields | null;
+export function safeTrackPayload(t: PluginTrackFields | null | undefined): PluginTrackFields | null {
   if (!t) return null;
   return { id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration };
 }
