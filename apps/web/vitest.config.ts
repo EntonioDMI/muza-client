@@ -9,6 +9,10 @@ import { defineConfig } from "vitest/config";
  *  (src/player.tsx, src/audioFx.ts), поэтому ни next/jest, ни SWC не нужны. */
 export default defineConfig({
   test: {
+    // 5 с по умолчанию у vitest не хватает под параллельной нагрузкой: три
+    // теста PlaylistView падали по таймауту, а не по логике, и делали гейт
+    // отката недостоверным (аудит 15.08).
+    testTimeout: 15000,
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],
   },
