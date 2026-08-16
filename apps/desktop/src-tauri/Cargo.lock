@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "muza-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "audioadapter-buffers",
  "base64 0.22.1",
