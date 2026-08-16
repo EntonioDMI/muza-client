@@ -51,7 +51,14 @@ describe("автопроверка обновлений", () => {
   });
 });
 
-describe("загрузка и установка разделены", () => {
+/** ⚠️ РАНЬШЕ ЭТОТ БЛОК НАЗЫВАЛСЯ «загрузка и установка разделены» И ЗАКРЕПЛЯЛ
+ *  СЛОМАННОЕ ПОВЕДЕНИЕ (жалоба 17.08: «Couldn't install the update»). В нём
+ *  стояло `expect(update.download).not.toHaveBeenCalled()` при установке —
+ *  то есть тест ТРЕБОВАЛ ставить нескачанное, а плагин на это отвечает
+ *  `Update.install called before Update.download`. Приёмка была зелёной именно
+ *  поэтому: проверяли не тот контракт. Порт `UpdatesPort` объявляет ОДНУ
+ *  операцию — «скачать и поставить», и тесты теперь проверяют её. */
+describe("установка сама скачивает, потом ставит", () => {
   /** Найденное обновление с подставными download/install. */
   const foundUpdate = () => {
     const update = { version: "0.2.1", body: "заметки релиза", download: vi.fn(), install: vi.fn() };
@@ -68,30 +75,47 @@ describe("загрузка и установка разделены", () => {
     expect(found?.notes).toBe("заметки релиза");
   });
 
-  // Главный смысл разделения: кнопка в сайдбаре включается только после того,
-  // как установщик уже на диске. Если бы download тянул за собой установку,
-  // приложение закрывалось бы само, без нажатия.
-  it("download НЕ ставит обновление и не перезапускает приложение", async () => {
+  // Тот самый баг: без скачивания плагин бросает
+  // `Update.install called before Update.download`, и человек видит только
+  // «не удалось установить».
+  it("скачивает ПЕРЕД установкой, а не ставит нескачанное", async () => {
+    const update = foundUpdate();
+
+    const found = await checkForUpdate();
+    await found?.install(() => undefined);
+
+    expect(update.download).toHaveBeenCalledTimes(1);
+    expect(update.install).toHaveBeenCalledTimes(1);
+    expect(tauri.relaunch).toHaveBeenCalledTimes(1);
+  });
+
+  // Сайдбар качает молча заранее — второй раз тянуть 60 МБ нельзя.
+  it("после явного download установка НЕ качает повторно", async () => {
     const update = foundUpdate();
 
     const found = await checkForUpdate();
     await found?.download(() => undefined);
-
-    expect(update.download).toHaveBeenCalledTimes(1);
-    expect(update.install).not.toHaveBeenCalled();
-    expect(tauri.relaunch).not.toHaveBeenCalled();
-  });
-
-  it("install ставит уже скачанное и перезапускает", async () => {
-    const update = foundUpdate();
-
-    const found = await checkForUpdate();
     await found?.install();
 
+    expect(update.download).toHaveBeenCalledTimes(1);
     expect(update.install).toHaveBeenCalledTimes(1);
     expect(tauri.relaunch).toHaveBeenCalledTimes(1);
-    // Повторно качать нечего — установщик уже лежит на диске.
-    expect(update.download).not.toHaveBeenCalled();
+  });
+
+  it("порядок именно такой: сначала скачать, потом ставить", async () => {
+    const update = foundUpdate();
+    const order: string[] = [];
+    update.download.mockImplementation(async () => {
+      order.push("download");
+    });
+    update.install.mockImplementation(async () => {
+      order.push("install");
+    });
+
+    const found = await checkForUpdate();
+    await found?.install(() => undefined);
+
+    expect(order).toEqual(["download", "install"]);
   });
 
   it("прогресс загрузки доходит наружу в процентах", async () => {
@@ -104,7 +128,7 @@ describe("загрузка и установка разделены", () => {
 
     const seen: number[] = [];
     const found = await checkForUpdate();
-    await found?.download((pct) => seen.push(pct));
+    await found?.install((pct) => seen.push(pct));
 
     expect(seen).toEqual([0, 50, 100]);
   });
@@ -118,7 +142,7 @@ describe("загрузка и установка разделены", () => {
 
     const seen: number[] = [];
     const found = await checkForUpdate();
-    await found?.download((pct) => seen.push(pct));
+    await found?.install((pct) => seen.push(pct));
 
     expect(seen).toEqual([-1]);
   });

@@ -13,14 +13,29 @@ export interface FoundUpdate {
   /** Скачать установщик, НЕ устанавливая. onProgress: 0..100 (или -1, если
    *  сервер не прислал размер).
    *
-   *  Загрузка отделена от установки намеренно: кнопка обновления показывается
-   *  готовой только когда установщик уже лежит на диске. Иначе человек жмёт
-   *  «Установить» и минуту смотрит на неподвижное окно, не понимая, началось
-   *  что-то или нет. */
+   *  Нужен сайдбару: он тянет установщик молча сразу после проверки, чтобы к
+   *  моменту, когда человек заметит и нажмёт кнопку, ставить было уже нечего.
+   *  Иначе человек жмёт «Установить» и минуту смотрит на неподвижное окно. */
   download: (onProgress: (pct: number) => void) => Promise<void>;
-  /** Поставить уже скачанное и перезапуститься. Windows закрывает приложение
-   *  сам — вызывать после download(). */
-  install: () => Promise<void>;
+  /** Скачать (если ещё не) и поставить, затем перезапуститься. Windows
+   *  закрывает приложение сам — код после вызова не исполняется.
+   *
+   *  ⚠️ «ЕСЛИ ЕЩЁ НЕ» — ЭТО И ЕСТЬ ИСПРАВЛЕНИЕ (жалоба 17.08: «Couldn't
+   *  install the update», при том что проверка обновление находит). Потоков
+   *  обновления ДВА, и раньше выживал только один:
+   *    - сайдбар (App.tsx) — сам звал `download()`, потом `install()`: работал;
+   *    - экран настроек — зовёт `install(onProgress)` СРАЗУ, потому что порт
+   *      `UpdatesPort` объявляет ровно одну операцию «скачать и поставить».
+   *      Он попадал в install() без единого download — а плагин на это
+   *      отвечает `Update.install called before Update.download`
+   *      (dist-js/index.js). Человек видел общее «не удалось установить».
+   *  Теперь инвариант «к установке байты есть» держит ЭТОТ модуль, а не
+   *  дисциплина вызывающих: их двое, и один её уже нарушил.
+   *
+   *  ⚠️ ПОЧЕМУ ЭТО НЕ ПОЙМАЛ TYPESCRIPT: функция с МЕНЬШИМ числом аргументов
+   *  присваивается туда, где ждут больше. `install: () => Promise<void>` тихо
+   *  сошла за `install(onProgress)` из порта, и сборка была зелёной. */
+  install: (onProgress?: (pct: number) => void) => Promise<void>;
 }
 
 export function updaterAvailable(): boolean {
@@ -32,25 +47,31 @@ export async function checkForUpdate(): Promise<FoundUpdate | null> {
   if (!isTauri()) return null;
   const update: Update | null = await check();
   if (!update) return null;
+  // Скачано ли уже — ЗДЕСЬ, а не у вызывающих: их двое (сайдбар и настройки),
+  // и повторный download на одном и том же Update качал бы установщик заново.
+  let downloaded = false;
+  const runDownload = async (onProgress: (pct: number) => void) => {
+    let total = 0;
+    let got = 0;
+    await update.download((event) => {
+      if (event.event === "Started") {
+        total = event.data.contentLength ?? 0;
+        onProgress(total > 0 ? 0 : -1);
+      } else if (event.event === "Progress") {
+        got += event.data.chunkLength;
+        if (total > 0) onProgress(Math.min(99, Math.round((got / total) * 100)));
+      } else {
+        onProgress(100);
+      }
+    });
+    downloaded = true;
+  };
   return {
     version: update.version,
     notes: update.body ?? null,
-    download: async (onProgress) => {
-      let total = 0;
-      let got = 0;
-      await update.download((event) => {
-        if (event.event === "Started") {
-          total = event.data.contentLength ?? 0;
-          onProgress(total > 0 ? 0 : -1);
-        } else if (event.event === "Progress") {
-          got += event.data.chunkLength;
-          if (total > 0) onProgress(Math.min(99, Math.round((got / total) * 100)));
-        } else {
-          onProgress(100);
-        }
-      });
-    },
-    install: async () => {
+    download: runDownload,
+    install: async (onProgress) => {
+      if (!downloaded) await runDownload(onProgress ?? (() => undefined));
       await update.install();
       await relaunch();
     },

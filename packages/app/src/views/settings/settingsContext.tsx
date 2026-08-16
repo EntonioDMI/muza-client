@@ -433,9 +433,17 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
     setUpdPct(-1);
     try {
       await updFound.install(setUpdPct); // дальше перезапуск — код ниже не выполнится
-    } catch {
+    } catch (e) {
       setUpdState("error");
-      onNotify(t("settings.system.update.errors.installFailed"), "x");
+      // ⚠️ ПРИЧИНУ ПОКАЗЫВАЕМ, А НЕ ГЛОТАЕМ (17.08). Раньше здесь стояло голое
+      // `catch {}` с общим «не удалось установить», и настоящая ошибка —
+      // `Update.install called before Update.download` — не доходила НИ ДО
+      // КОГО: ни до человека, ни до журнала. Баг прожил до релиза и был
+      // диагностирован только чтением исходников плагина. Текст плагина
+      // английский и человеку сам по себе мало что говорит, поэтому идёт
+      // ПОСЛЕ понятной фразы, а не вместо неё.
+      const reason = e instanceof Error ? e.message : String(e);
+      onNotify(`${t("settings.system.update.errors.installFailed")}: ${reason}`, "x");
     }
   }, [updFound, onNotify, t]);
 
