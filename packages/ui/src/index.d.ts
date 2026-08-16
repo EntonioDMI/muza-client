@@ -25,6 +25,7 @@ import type { MenuProps } from "./components/feedback/Menu";
 import type { ToastProps } from "./components/feedback/Toast";
 import type { TooltipProps } from "./components/feedback/Tooltip";
 import type { CoverProps } from "./components/media/Cover";
+import type { MarqueeProps } from "./components/media/Marquee";
 import type { LyricsProps } from "./components/media/Lyrics";
 import type { ShelfProps } from "./components/media/Shelf";
 import type { TileProps } from "./components/media/Tile";
@@ -50,6 +51,7 @@ export type {
   ToastProps,
   TooltipProps,
   CoverProps,
+  MarqueeProps,
   LyricsProps,
   ShelfProps,
   TileProps,
@@ -80,6 +82,7 @@ export declare function Toast(props: ToastProps): React.JSX.Element;
 export declare function Tooltip(props: TooltipProps): React.JSX.Element;
 export declare function Lyrics(props: LyricsProps): React.JSX.Element;
 export declare function Cover(props: CoverProps): React.JSX.Element;
+export declare function Marquee(props: MarqueeProps): React.JSX.Element;
 export declare function Shelf(props: ShelfProps): React.JSX.Element;
 export declare function Tile(props: TileProps): React.JSX.Element;
 export declare function TrackRow(props: TrackRowProps): React.JSX.Element;

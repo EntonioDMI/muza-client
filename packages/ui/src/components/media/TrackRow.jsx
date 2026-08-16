@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Icon } from "../core/Icon.jsx";
 import { IconButton } from "../core/IconButton.jsx";
 import { Cover } from "./Cover.jsx";
+import { Marquee } from "./Marquee.jsx";
 import { Tooltip } from "../feedback/Tooltip.jsx";
 
 /** Track list row — no dividers; hover is a surface layer, active is accent title.
@@ -279,18 +280,19 @@ export function TrackRow({
       ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-2)" }}>
-          <span
+          {/* Название — бегущей строкой, но ТОЛЬКО когда не поместилось и
+              только под курсором (разбор — Marquee.jsx). До этого хвост
+              длинных названий срезался многоточием и дочитать его было
+              нельзя ничем: нативного title здесь нет намеренно (см. ниже про
+              стоковую подсказку). */}
+          <Marquee
+            text={title}
             style={{
               fontSize: "var(--fs-body)",
               fontWeight: "var(--fw-medium)",
               color: active ? "var(--accent-active-text, var(--accent-text))" : "var(--text-1)",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
             }}
-          >
-            {title}
-          </span>
+          />
           {explicit ? (
             <span style={{ flex: "none", fontSize: 11, fontWeight: "var(--fw-semibold)", color: "var(--text-3)", background: "var(--surface-3)", borderRadius: 4, padding: "1px 5px" }}>E</span>
           ) : null}
