@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Badge, Button, Cover, Dialog, SearchInput } from "@muza/ui";
 import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
-import { ApiError } from "@muza/api-client";
+import { ApiError, humanError } from "@muza/api-client";
 import { useT } from "@muza/app";
 import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
 import { DragLayer } from "@muza/app/shell/DragLayer";
@@ -212,7 +212,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
       void reloadPlaylists();
     } catch (err) {
-      notify(err instanceof Error ? err.message : t("toast.playlist.addFailed"), "x");
+      notify(humanError(err, t("toast.playlist.addFailed")), "x");
     }
   };
 
@@ -249,6 +249,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    *  на странице библиотеки: случайная свободная иконка, затем переход в
    *  созданный плейлист. */
   const createPlaylist = async () => {
+    // Проверка занятости живёт ВНУТРИ, а не только у кнопки: Enter в диалоге
+    // идёт мимо disabled, и автоповтор клавиши штамповал дубли (аудит 15.08).
+    if (createBusy) return;
     const name = createName.trim();
     if (!name) return;
     setCreateBusy(true);
@@ -259,7 +262,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       closeCreate();
       router.push(`/playlist?id=${created.id}`);
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : t("toast.playlist.createFailed"), "x");
+      notify(humanError(e, t("toast.playlist.createFailed")), "x");
     } finally {
       setCreateBusy(false);
     }
@@ -275,7 +278,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       await getApi().setPlaylistPinned(id, !pl.pinned);
       await reloadPlaylists();
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      notify(humanError(e, t("views.search.somethingWrong")), "x");
     }
   };
 
@@ -283,13 +286,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const target = plRename;
     const name = plRenameValue.trim();
     if (!target || !name) return;
-    setPlRename(null);
     try {
       await getApi().renamePlaylist(target.id, name);
+      // Закрываем ТОЛЬКО после успеха — иначе при отказе сети диалог уже исчез,
+      // а набранное имя вернуть неоткуда (то же в App.tsx приложения).
+      setPlRename(null);
       await reloadPlaylists();
       notify(t("toast.playlist.renamed"), "pencil");
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("toast.playlist.renameFailed"), "x");
+      notify(humanError(e, t("toast.playlist.renameFailed")), "x");
     }
   };
 
@@ -304,7 +309,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       await getApi().deletePlaylist(target.id);
       await reloadPlaylists();
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("toast.playlist.deleteFailed"), "x");
+      notify(humanError(e, t("toast.playlist.deleteFailed")), "x");
       return;
     }
     notify(t("toast.playlist.deleted"), "trash-2");
@@ -324,7 +329,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       await reloadPlaylists();
       notify(t("views.search.publicPlaylist.removed"), "list-x");
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      notify(humanError(e, t("views.search.somethingWrong")), "x");
     }
   };
 

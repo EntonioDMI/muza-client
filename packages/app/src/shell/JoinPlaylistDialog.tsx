@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button, Dialog, Icon, SearchInput } from "@muza/ui";
 import type { MuzaApi, PlaylistMeta } from "@muza/api-client";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Вход в совместный плейлист по инвайт-коду (Stage 7). Код выдаёт
  *  владелец: страница плейлиста → «Совместный доступ».
@@ -31,26 +32,37 @@ export function JoinPlaylistDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Отмена во время запроса. Ответ всё равно приедет — сервер уже принял
+   *  вступление, — но уводить человека в плейлист, который он только что
+   *  передумал открывать, нельзя. Флаг живёт в ref: `close()` меняет его
+   *  синхронно, а `join()` читает уже после await. */
+  const cancelled = useRef(false);
+
   const join = async () => {
+    // Проверка ВНУТРИ, а не только у кнопки: Enter в диалоге идёт мимо disabled.
+    if (busy) return;
     const trimmed = code.trim().toUpperCase();
     if (trimmed.length < 4) {
       setError(t("dialogs.codeTooShort"));
       return;
     }
+    cancelled.current = false;
     setBusy(true);
     setError(null);
     try {
       const playlist = await api.joinPlaylist(trimmed);
+      if (cancelled.current) return;
       setCode("");
       onJoined(playlist);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("dialogs.joinPlaylist.joinFailed"));
+      if (!cancelled.current) setError(humanError(e, t("dialogs.joinPlaylist.joinFailed")));
     } finally {
       setBusy(false);
     }
   };
 
   const close = () => {
+    cancelled.current = true;
     setError(null);
     setCode("");
     onClose();

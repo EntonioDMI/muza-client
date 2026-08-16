@@ -3,6 +3,7 @@ import { Button, Dialog, Icon, IconButton, Spinner } from "@muza/ui";
 import type { MuzaApi, Track, TrackAlternative } from "@muza/api-client";
 import { fmtTime, providerLabel } from "../lib/format";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** «Заменить версию» (ПКМ по треку в плейлисте/Любимом): подмена трека на
  *  ДРУГУЮ загрузку той же песни — отдельный канонический трек. Не путать с
@@ -56,15 +57,26 @@ export function ReplaceVersionDialog({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  /** Флаг живости — та же причина, что в VersionsDialog: диалог переоткрывают на
+   *  другом треке, и ответ по прежнему приезжал под новым заголовком. Здесь цена
+   *  выше — `replaceWith()` подменил бы трек НЕ ТОТ. */
   useEffect(() => {
+    let alive = true;
     setAlternatives(null);
     setError(null);
     setBusyId(null);
     if (!ctx) return;
     api
       .getTrackAlternatives(ctx.track.id)
-      .then(setAlternatives)
-      .catch((e) => setError(e instanceof Error ? e.message : t("dialogs.replaceVersion.loadFailed")));
+      .then((list) => {
+        if (alive) setAlternatives(list);
+      })
+      .catch((e) => {
+        if (alive) setError(humanError(e, t("dialogs.replaceVersion.loadFailed")));
+      });
+    return () => {
+      alive = false;
+    };
   }, [api, ctx, t]);
 
   const replaceWith = async (alt: TrackAlternative) => {
@@ -82,7 +94,7 @@ export function ReplaceVersionDialog({
       onClose();
     } catch (e) {
       // Диалог не закрываем: пусть человек выберет другого кандидата
-      onNotify(e instanceof Error ? e.message : t("dialogs.replaceVersion.replaceFailed"), "x");
+      onNotify(humanError(e, t("dialogs.replaceVersion.replaceFailed")), "x");
       setBusyId(null);
     }
   };

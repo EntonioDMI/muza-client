@@ -4,6 +4,7 @@ import type { MuzaApi, Track, TrackSource } from "@muza/api-client";
 import { fmtTime, providerLabel } from "../lib/format";
 import { usePlatform } from "../platform";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Разворот «Версии и источники» (Stage 4): опциональный выбор конкретного
  *  источника канонического трека. Выбор запоминается per-user на сервере
@@ -48,14 +49,26 @@ export function VersionsDialog({
   const kindLabel = (kind: string) =>
     kind === "direct" ? t("dialogs.versions.kindDirect") : kind === "local" ? t("dialogs.versions.kindLocal") : kind;
 
+  /** ⚠️ Флаг живости обязателен: диалог переоткрывают на ДРУГОМ треке, и ответ
+   *  по прежнему успевал приехать под новым заголовком. Дальше человек жал
+   *  «выбрать» — и `choose()` отправлял id источника ЧУЖОГО трека. Тот же приём
+   *  уже стоит в LibraryView.tsx:577-589. */
   useEffect(() => {
+    let alive = true;
     setSources(null);
     setError(null);
     if (!track) return;
     api
       .getTrackSources(track.id)
-      .then(setSources)
-      .catch((e) => setError(e instanceof Error ? e.message : t("dialogs.versions.loadFailed")));
+      .then((list) => {
+        if (alive) setSources(list);
+      })
+      .catch((e) => {
+        if (alive) setError(humanError(e, t("dialogs.versions.loadFailed")));
+      });
+    return () => {
+      alive = false;
+    };
   }, [api, track]);
 
   const chosen = sources?.find((s) => s.isChosen) ?? null;
@@ -69,7 +82,7 @@ export function VersionsDialog({
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: x.id === s.id })));
       onNotify(t("dialogs.versions.nowPlaying", { provider: providerLabel(s.provider, lang) }), "check");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.versions.chooseFailed"), "x");
+      onNotify(humanError(e, t("dialogs.versions.chooseFailed")), "x");
     } finally {
       setBusyId(null);
     }
@@ -84,7 +97,7 @@ export function VersionsDialog({
       setSources((list) => (list ?? []).map((x) => ({ ...x, isChosen: false })));
       onNotify(t("dialogs.versions.resetDone"), "check");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.versions.resetFailed"), "x");
+      onNotify(humanError(e, t("dialogs.versions.resetFailed")), "x");
     } finally {
       setBusyId(null);
     }

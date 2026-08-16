@@ -5,6 +5,7 @@ import { fmtTime, primarySourceLabel, providerLabel } from "../lib/format";
 import { trackRowL10n } from "../lib/dsLabels";
 import { useLayout } from "../shell/LayoutContext";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Read-only страница плейлиста внешней площадки (2026-07-20 SoundCloud,
  *  2026-08-14 YouTube и Deezer). Тонкий вью ОТДЕЛЬНО от PlaylistView: тому
@@ -65,13 +66,23 @@ export function ExternalPlaylistView({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  /** Флаг живости: экран переоткрывают на другом плейлисте, и ответ по прежнему
+   *  успевал нарисоваться под новым заголовком. */
   useEffect(() => {
+    let alive = true;
     setPl(null);
     setError(null);
     api
       .getExternalPlaylist(playlistId)
-      .then(setPl)
-      .catch((e) => setError(e instanceof Error ? e.message : t("views.scPlaylist.loadFailed")));
+      .then((data) => {
+        if (alive) setPl(data);
+      })
+      .catch((e) => {
+        if (alive) setError(humanError(e, t("views.scPlaylist.loadFailed")));
+      });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlistId]);
 

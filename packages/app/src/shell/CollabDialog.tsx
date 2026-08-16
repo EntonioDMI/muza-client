@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Dialog, Icon, IconButton } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail } from "@muza/api-client";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** «Совместный доступ» плейлиста (Stage 7). Владелец: инвайт-код
  *  (создать/скопировать/отозвать) + участники с киком. Участник: список
@@ -38,6 +39,14 @@ export function CollabDialog({
   const { t } = useT();
   const [busy, setBusy] = useState(false);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
+  /** ⚠️ Сброс взведённого подтверждения при закрытии. Диалог смонтирован
+   *  БЕЗУСЛОВНО (PlaylistView рендерит его всегда, прячет проп `open`), поэтому
+   *  состояние переживало закрытие: человек закрывал диалог на полпути, открывал
+   *  заново — и разрушительная кнопка уже стояла взведённой, в одном случайном
+   *  клике от выхода из общего плейлиста. */
+  useEffect(() => {
+    if (!open) setLeaveConfirm(false);
+  }, [open]);
   if (!detail) return null;
   const isOwner = detail.isOwner;
 
@@ -47,7 +56,7 @@ export function CollabDialog({
       await api.createPlaylistInvite(playlistId);
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.collab.createFailed"), "x");
+      onNotify(humanError(e, t("dialogs.collab.createFailed")), "x");
     } finally {
       setBusy(false);
     }
@@ -60,7 +69,7 @@ export function CollabDialog({
       onNotify(t("dialogs.collab.codeRevoked"), "shield");
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.collab.revokeFailed"), "x");
+      onNotify(humanError(e, t("dialogs.collab.revokeFailed")), "x");
     } finally {
       setBusy(false);
     }
@@ -76,23 +85,36 @@ export function CollabDialog({
     }
   };
 
+  /** ⚠️ `busy` тут не косметика. Удаление участника идемпотентно, поэтому второй
+   *  клик доходит до сервера и получает 404 — и тост «не получилось» приезжает
+   *  ПОСЛЕ тоста об успехе. Канал тостов один и не стопится (Toast.jsx), значит
+   *  последнее, что видит человек после удавшегося действия, — сообщение об
+   *  ошибке. */
   const kick = async (userId: string, username: string) => {
+    if (busy) return;
+    setBusy(true);
     try {
       await api.removePlaylistMember(playlistId, userId);
       onNotify(t("dialogs.collab.memberRemoved", { username }), "user-x");
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.collab.kickFailed"), "x");
+      onNotify(humanError(e, t("dialogs.collab.kickFailed")), "x");
+    } finally {
+      setBusy(false);
     }
   };
 
   const leave = async () => {
+    if (busy) return;
+    setBusy(true);
     try {
       await api.removePlaylistMember(playlistId, myUserId);
       onNotify(t("dialogs.collab.left"), "log-out");
       onLeft();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.collab.leaveFailed"), "x");
+      onNotify(humanError(e, t("dialogs.collab.leaveFailed")), "x");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -143,7 +165,7 @@ export function CollabDialog({
               {t("dialogs.close")}
             </Button>
             {leaveConfirm ? (
-              <Button variant="primary" icon="log-out" onClick={() => void leave()}>
+              <Button variant="primary" icon="log-out" disabled={busy} onClick={() => void leave()}>
                 {t("dialogs.collab.confirmLeave")}
               </Button>
             ) : (

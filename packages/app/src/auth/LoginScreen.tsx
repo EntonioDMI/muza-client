@@ -1,26 +1,54 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Dialog, Icon, Tabs } from "@muza/ui";
 import { translate, type Lang, type TranslationKey, type TParams } from "../i18n";
-import { ApiError, CredentialsSchema, EmailSchema, type MuzaApi, type Session } from "@muza/api-client";
+import { ApiError, CredentialsSchema, EmailSchema, type MuzaApi, type Session, humanError } from "@muza/api-client";
 
+/** Один экран входа на окно, поэтому id постоянный: связывает поля с текстом
+ *  ошибки через aria-describedby. */
+const AUTH_ERROR_ID = "auth-error";
+
+/** Поле экрана входа.
+ *
+ *  ⚠️ Три вещи здесь не косметические, все три чинят вход (аудит 15.08):
+ *  1. `name` + `autoComplete` — без них менеджер паролей не предлагает сохранить
+ *     пароль и не умеет автозаполнить. Это была самая дорогая поломка экрана.
+ *  2. Доступное имя. Плейсхолдер им быть не может: он исчезает при вводе, и
+ *     скринридер остаётся без подписи ровно тогда, когда в поле уже что-то есть.
+ *  3. Кольца фокуса больше не гасим. Инлайновый `outline: "none"` бил глобальное
+ *     `:focus-visible` из tokens/base.css (инлайн сильнее авторского правила), и
+ *     у полей входа не было видимого фокуса вообще. `SearchInput` делает так же,
+ *     но его спасает обёртка `.muza-field:focus-within` — здесь её нет. */
 function Field({
   value,
   onChange,
   placeholder,
   type = "text",
   autoFocus,
+  name,
+  autoComplete,
+  invalid,
+  describedBy,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
   type?: string;
   autoFocus?: boolean;
+  name?: string;
+  autoComplete?: string;
+  invalid?: boolean;
+  describedBy?: string;
 }) {
   return (
     <input
       type={type}
       value={value}
       autoFocus={autoFocus}
+      name={name}
+      autoComplete={autoComplete}
+      aria-label={placeholder}
+      aria-invalid={invalid || undefined}
+      aria-describedby={invalid ? describedBy : undefined}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       style={{
@@ -32,7 +60,6 @@ function Field({
         color: "var(--text-1)",
         fontFamily: "var(--font-ui)",
         fontSize: "var(--fs-body)",
-        outline: "none",
         width: "100%",
         boxSizing: "border-box",
       }}
@@ -117,6 +144,9 @@ export function LoginScreen({
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [resendNote, setResendNote] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
+  /** Запрос письма в полёте. Кулдаун от повторных кликов не спасает: он
+   *  выставляется ПОСЛЕ успешного ответа, а до него равен нулю. */
+  const [resending, setResending] = useState(false);
   const completingRef = useRef(false);
 
   // тик кулдауна повторной отправки письма
@@ -149,7 +179,7 @@ export function LoginScreen({
           }
         } catch (e) {
           if (!cancelled) {
-            const msg = e instanceof Error ? e.message : t("auth.errors.completeFailed");
+            const msg = humanError(e, t("auth.errors.completeFailed"));
             setConfirm((c) => (c ? { ...c, dead: msg } : c));
           }
         } finally {
@@ -183,7 +213,7 @@ export function LoginScreen({
         // сервер всегда 204: формулировка не выдаёт, есть ли такая почта
         setNotice(t("auth.recoverySent"));
       } catch (e) {
-        setError(e instanceof Error ? e.message : t("auth.errors.somethingWrong"));
+        setError(humanError(e, t("auth.errors.somethingWrong")));
       } finally {
         setBusy(false);
       }
@@ -215,14 +245,17 @@ export function LoginScreen({
         onSession(session);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("auth.errors.somethingWrong"));
+      setError(humanError(e, t("auth.errors.somethingWrong")));
     } finally {
       setBusy(false);
     }
   };
 
   const resend = async () => {
-    if (!confirm) return;
+    // Занятость проверяем здесь: кнопка заперта только кулдауном, а он во время
+    // самого запроса ещё нулевой — быстрые повторные клики слали повторные письма.
+    if (!confirm || resending) return;
+    setResending(true);
     setResendNote(null);
     try {
       await api.registerResend(confirm.pendingId);
@@ -232,8 +265,10 @@ export function LoginScreen({
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         setConfirm((c) => (c ? { ...c, dead: e.message } : c));
       } else {
-        setResendNote(e instanceof Error ? e.message : t("auth.errors.resendFailed"));
+        setResendNote(humanError(e, t("auth.errors.resendFailed")));
       }
+    } finally {
+      setResending(false);
     }
   };
 
@@ -244,12 +279,20 @@ export function LoginScreen({
   };
 
   const goAnonymous = async () => {
+    if (busy) return;
     setAnonDialog(false);
     setBusy(true);
+    setError(null);
     try {
       const session = await api.loginAnonymous();
       onTelemetry?.(telemetryOk); // аноним — тоже создание аккаунта, выбор честный
       onSession(session);
+    } catch (e) {
+      // ⚠️ Здесь был try/finally БЕЗ catch: бросок (квота localStorage, приватный
+      // режим Safari) уходил в никуда, диалог к тому моменту уже закрыт, занятость
+      // снималась — и не происходило ровно ничего. Человек жал кнопку, и экран
+      // молчал.
+      setError(humanError(e, t("auth.errors.somethingWrong")));
     } finally {
       setBusy(false);
     }
@@ -360,7 +403,7 @@ export function LoginScreen({
               </Button>
             ) : (
               <>
-                <Button variant="ghost" disabled={cooldown > 0} onClick={resend} style={{ width: "100%" }}>
+                <Button variant="ghost" disabled={cooldown > 0 || resending} onClick={resend} style={{ width: "100%" }}>
                   {cooldown > 0 ? t("auth.check.resendIn", { count: cooldown }) : t("auth.check.resend")}
                 </Button>
                 <Button variant="ghost" onClick={backToForm} style={{ width: "100%" }}>
@@ -385,20 +428,36 @@ export function LoginScreen({
                 setNotice(null);
               }}
             />
-            {/* Enter = главная кнопка, как в вебе и как в любой нативной форме.
-                <form> тут не годится: Button из ДС хардкодит type="button" и не
-                может стать submit-кнопкой. Обёртка ловит Enter из ЛЮБОГО поля
-                (native-семантика формы), а не только из последнего. */}
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || busy) return;
+            {/* Настоящая <form> (15.08). Раньше здесь был <div onKeyDown>, потому
+                что Button из ДС зашивал type="button"; теперь у него есть проп
+                type, и форма стала возможной. Это не косметика: без формы и без
+                name/autoComplete у полей браузер не предлагал сохранить пароль и
+                плохо автозаполнял вход. Enter по-прежнему работает из любого
+                поля — теперь родной семантикой, а не перехватом. */}
+            <form
+              /* Зазор формы = зазор карточки (sp-5), поля внутри держат свой
+                 sp-3. Так кнопка отправки попала ВНУТРЬ формы (без этого
+                 type="submit" ничего не отправляет), а расстояния на экране
+                 остались ровно прежними. */
+              style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}
+              onSubmit={(e) => {
                 e.preventDefault();
+                if (busy) return;
                 void submit();
               }}
             >
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
               {mode !== "recover" ? (
-                <Field value={username} onChange={setUsername} placeholder={t("auth.fields.username")} autoFocus />
+                <Field
+                  value={username}
+                  onChange={setUsername}
+                  placeholder={t("auth.fields.username")}
+                  autoFocus
+                  name="username"
+                  autoComplete="username"
+                  invalid={!!error}
+                  describedBy={AUTH_ERROR_ID}
+                />
               ) : null}
               {showEmailFeatures && mode !== "login" ? (
                 <Field
@@ -407,13 +466,32 @@ export function LoginScreen({
                   placeholder={mode === "recover" ? t("auth.fields.emailAccount") : t("auth.fields.emailOptional")}
                   type="email"
                   autoFocus={mode === "recover"}
+                  name="email"
+                  autoComplete="email"
+                  invalid={!!error}
+                  describedBy={AUTH_ERROR_ID}
                 />
               ) : null}
               {mode !== "recover" ? (
-                <Field value={password} onChange={setPassword} placeholder={t("auth.fields.password")} type="password" />
+                <Field
+                  value={password}
+                  onChange={setPassword}
+                  placeholder={t("auth.fields.password")}
+                  type="password"
+                  name="password"
+                  autoComplete={mode === "register" ? "new-password" : "current-password"}
+                  invalid={!!error}
+                  describedBy={AUTH_ERROR_ID}
+                />
               ) : null}
+              {/* role="alert" — отказ входа обязан прозвучать. Без него человек
+                  со скринридером отправлял форму и не узнавал, что не вышло. */}
               {error ? (
-                <div style={{ color: "var(--danger)", fontSize: "var(--fs-caption)", fontFamily: "var(--font-ui)" }}>
+                <div
+                  id={AUTH_ERROR_ID}
+                  role="alert"
+                  style={{ color: "var(--danger)", fontSize: "var(--fs-caption)", fontFamily: "var(--font-ui)" }}
+                >
                   {error}
                 </div>
               ) : null}
@@ -432,10 +510,11 @@ export function LoginScreen({
                   <ConsentRow t={t} checked={telemetryOk} onToggle={() => setTelemetryOk((v) => !v)} onMore={() => setTelemetryInfo(true)} />
                 </div>
               ) : null}
-            </div>
-            <Button variant="primary" size="lg" disabled={busy} onClick={submit} style={{ width: "100%" }}>
-              {mode === "login" ? t("auth.submit.login") : mode === "register" ? t("auth.submit.register") : t("auth.submit.recover")}
-            </Button>
+              </div>
+              <Button variant="primary" size="lg" type="submit" disabled={busy} style={{ width: "100%" }}>
+                {mode === "login" ? t("auth.submit.login") : mode === "register" ? t("auth.submit.register") : t("auth.submit.recover")}
+              </Button>
+            </form>
             {showAnonymous ? (
               <Button variant="ghost" disabled={busy} onClick={() => setAnonDialog(true)} style={{ width: "100%" }}>
                 {t("auth.continueAnon")}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Icon, SearchInput, Toast, Tooltip } from "@muza/ui";
+import { Button, Dialog, Icon, SearchInput, Toast, Tooltip, TOAST_HOLD_ACTION } from "@muza/ui";
 import { pickRandomPlaylistIcon, playlistIconSrc } from "@muza/core";
 import {
   HttpMuzaApi,
+  humanError,
   resolveApiBaseUrl,
   type MuzaApi,
   type PlaylistMeta,
@@ -114,6 +115,7 @@ import { usePlugins } from "./plugins/usePlugins";
 import { PluginFrames } from "./plugins/PluginFrames";
 import { pluginHost } from "./plugins/host";
 import { createPluginBridge, type PluginBridgeLive } from "./plugins/appBridge";
+import { safeTrackPayload } from "./plugins/api/events";
 
 /** ПРИХОД И УХОД «СЕЙЧАС ИГРАЕТ». Держим кадры здесь, а не в animations.css:
  *  панель приходит и уходит только в оболочке приложения, дизайн-системе это
@@ -422,6 +424,10 @@ function Player({
   const [meaningLine, setMeaningLine] = useState<number | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [plName, setPlName] = useState("");
+  // Сторож двойной отправки. Проверяется ВНУТРИ createPlaylist, а не только у
+  // кнопки: Enter в диалоге идёт мимо disabled, а автоповтор клавиши штамповал
+  // по плейлисту на каждое повторение (аудит 15.08). Идемпотентности на сервере нет.
+  const [createBusy, setCreateBusy] = useState(false);
   // Слайс 4: серверные плейлисты и открытая страница плейлиста
   const [srvPlaylists, setSrvPlaylists] = useState<PlaylistMeta[]>([]);
   const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
@@ -663,9 +669,8 @@ function Player({
   const pluginTabActive = plugins.activeTab;
 
   // Трансляция событий приложения плагинам (host фильтрует по правам плагина).
-  // Метаданные трека — без URL/токенов источников (§3.1 дока).
-  const safeTrack = (t: PlayerTrack | null | undefined) =>
-    t ? { id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration } : null;
+  // Фильтр полей — единственная копия в plugins/api/events.ts (граница доверия).
+  const safeTrack = safeTrackPayload;
   useEffect(() => {
     // null долетает и до плагинов — «ничего не играет» это тоже событие
     pluginHost.emit("track:change", safeTrack(track));
@@ -900,7 +905,7 @@ function Player({
       pb.playContext([track, ...radio].map(fromCatalog), track.id);
       showToast(t("toast.radio.byTrack", { title: track.title }), "radio");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.radio.buildFailed"), "x");
+      showToast(humanError(e, t("toast.radio.buildFailed")), "x");
     }
   };
 
@@ -1410,10 +1415,17 @@ function Player({
       endNote: prefs.lyricsEndNote,
     });
 
+  /** ⚠️ Отказ висит дольше удачи. 2400 мс хватает на «Добавлено в очередь», но
+   *  не на объяснение, что пошло не так и что делать: русская фраза в 7 слов
+   *  читается дольше, а канал тостов ОДИН и не стопится (Toast.jsx) — серия
+   *  отказов показывает только последний. Значение не выдумано: рядом, в
+   *  packages/ui/src/lib/motion.js, уже лежит TOAST_HOLD_ACTION для случая
+   *  «до кнопки надо успеть дотянуться» — тот же класс задачи. */
   const showToast = (text: string, icon = "check") => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ open: true, text, icon });
-    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), 2400);
+    const hold = icon === "x" ? TOAST_HOLD_ACTION : 2400;
+    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, open: false })), hold);
   };
 
   // Дабл-клик по строке = «в очередь» (настройка «Действие по двойному клику»);
@@ -1441,7 +1453,7 @@ function Player({
       }
       fn(detail.tracks);
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("views.playlist.loadFailed"), "x");
+      showToast(humanError(e, t("views.playlist.loadFailed")), "x");
     }
   };
 
@@ -1489,7 +1501,7 @@ function Player({
       );
       navigate("library");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.files.addFailed"), "x");
+      showToast(humanError(e, t("toast.files.addFailed")), "x");
     }
   };
   useEffect(() => {
@@ -1637,7 +1649,7 @@ function Player({
       await reloadServerPlaylists();
       showToast(t("toast.queue.savedAsPlaylist", { name, count: catalog.length }), "save");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.queue.saveFailed"), "x");
+      showToast(humanError(e, t("toast.queue.saveFailed")), "x");
     }
   };
 
@@ -1829,7 +1841,7 @@ function Player({
       await reloadServerPlaylists();
       showToast(t("views.search.publicPlaylist.removed"), "list-x");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      showToast(humanError(e, t("views.search.somethingWrong")), "x");
     }
   };
 
@@ -1839,16 +1851,22 @@ function Player({
     const target = plRename;
     const name = plRenameValue.trim();
     if (!target || !name) return;
-    setPlRename(null);
     // Плейлисты есть только у серверной сессии — анониму переименовывать нечего
-    if (!canSearch) return;
+    if (!canSearch) {
+      setPlRename(null);
+      return;
+    }
     try {
       await api.renamePlaylist(target.id, name);
+      // ⚠️ Диалог закрывается ТОЛЬКО после успеха. Раньше он закрывался до
+      // запроса: сеть падала — диалога уже нет, набранное имя не вернуть, и
+      // остаётся один тост «не получилось» без единого способа повторить.
+      setPlRename(null);
       await reloadServerPlaylists();
       if (openPlaylistId === target.id) setPlBump((v) => v + 1); // открытая страница перечитает имя
       showToast(t("toast.playlist.renamed"), "pencil");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.playlist.renameFailed"), "x");
+      showToast(humanError(e, t("toast.playlist.renameFailed")), "x");
     }
   };
 
@@ -1863,7 +1881,7 @@ function Player({
       await api.deletePlaylist(target.id);
       await reloadServerPlaylists();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.playlist.deleteFailed"), "x");
+      showToast(humanError(e, t("toast.playlist.deleteFailed")), "x");
       return;
     }
     showToast(t("toast.playlist.deleted"), "trash-2");
@@ -1874,6 +1892,7 @@ function Player({
   };
 
   const createPlaylist = async () => {
+    if (createBusy) return;
     const name = plName.trim() || t("app.newPlaylistName");
     // Плейлист живёт на сервере. Аноним раньше «создавал» его в useState: до
     // первого перезапуска, без возможности положить трек — а тост при этом
@@ -1884,6 +1903,7 @@ function Player({
       showToast(t("toast.playlist.needsAccount"), "user");
       return;
     }
+    setCreateBusy(true);
     try {
       const icon = pickRandomPlaylistIcon(usedPlaylistIcons());
       const created = await api.createPlaylist(name, icon);
@@ -1893,7 +1913,9 @@ function Player({
       showToast(t("toast.playlist.created"), "list-music");
       navigate("playlist", { playlistId: created.id });
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.playlist.createFailed"), "x");
+      showToast(humanError(e, t("toast.playlist.createFailed")), "x");
+    } finally {
+      setCreateBusy(false);
     }
   };
 
@@ -1927,7 +1949,7 @@ function Player({
       setIconPicker(null);
       showToast(t("toast.playlist.iconChanged"), "image");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.playlist.iconChangeFailed"), "x");
+      showToast(humanError(e, t("toast.playlist.iconChangeFailed")), "x");
     } finally {
       setIconPickerBusy(false);
     }
@@ -1950,7 +1972,7 @@ function Player({
             await reloadServerPlaylists();
             showToast(t("toast.playlist.addedTrack", { name }), "list-music");
           })
-          .catch((e: unknown) => showToast(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x"));
+          .catch((e: unknown) => showToast(humanError(e, t("toast.playlist.addFailed")), "x"));
       }
     : undefined;
 
@@ -2122,7 +2144,7 @@ function Player({
       showToast(t("views.scPlaylist.savedCopy", { name }), "list-music");
       navigate("playlist", { playlistId: created.id });
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("views.scPlaylist.saveFailed"), "x");
+      showToast(humanError(e, t("views.scPlaylist.saveFailed")), "x");
     }
   };
 
@@ -2141,7 +2163,7 @@ function Player({
         "list-music",
       );
     } catch (e) {
-      showToast(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x");
+      showToast(humanError(e, t("toast.playlist.addFailed")), "x");
     }
   };
 
@@ -3114,7 +3136,7 @@ function Player({
                 try {
                   return await exportCachedTrack(track.id, track.artist, track.title);
                 } catch (e) {
-                  showToast(e instanceof Error ? e.message : t("toast.files.prepareFailed"), "x");
+                  showToast(humanError(e, t("toast.files.prepareFailed")), "x");
                   return null;
                 }
               }
@@ -3198,7 +3220,10 @@ function Player({
             <Button variant="ghost" onClick={() => setPlRename(null)}>
               {t("common.cancel")}
             </Button>
-            <Button variant="primary" icon="check" onClick={() => void renameFromMenu()}>
+            {/* Пустое поле запирает «Сохранить»: раньше кнопка была активна, а
+                `renameFromMenu` молча выходил по `if (!name) return` — клик не
+                делал ничего и ничего не объяснял. В вебе так уже сделано. */}
+            <Button variant="primary" icon="check" disabled={!plRenameValue.trim()} onClick={() => void renameFromMenu()}>
               {t("common.save")}
             </Button>
           </>
@@ -3351,10 +3376,10 @@ function Player({
         onClose={() => setDialogOpen(false)}
         actions={
           <>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)}>
+            <Button variant="ghost" disabled={createBusy} onClick={() => setDialogOpen(false)}>
               {t("common.cancel")}
             </Button>
-            <Button variant="primary" icon="plus" onClick={createPlaylist}>
+            <Button variant="primary" icon="plus" disabled={createBusy} onClick={createPlaylist}>
               {t("app.newPlaylistDialog.create")}
             </Button>
           </>
