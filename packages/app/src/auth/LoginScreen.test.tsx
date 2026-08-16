@@ -29,15 +29,28 @@ function type(placeholder: string, value: string) {
   fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value } });
 }
 
+/** Enter из поля = отправка формы, в которой это поле лежит.
+ *
+ *  ⚠️ Почему не `fireEvent.keyDown(..., "Enter")`, как было до 15.08: тогда
+ *  вокруг полей стоял `<div onKeyDown>`, и нажатие ловил он. Теперь это
+ *  настоящая `<form>` — в браузере Enter из текстового поля вызывает неявную
+ *  отправку, а **jsdom её не реализует вовсе**. Поэтому здесь шлём то самое
+ *  событие, которое браузер послал бы сам; утверждения тестов не изменились. */
+function enter(placeholder: string) {
+  const form = screen.getByPlaceholderText(placeholder).closest("form");
+  if (!form) throw new Error(`поле «${placeholder}» вне формы — неявная отправка по Enter не сработает`);
+  fireEvent.submit(form);
+}
+
 /** Enter должен работать из ЛЮБОГО поля — как в нативной <form>, а не только
- *  из последнего. Обёртка с onKeyDown стоит вокруг всех полей (LoginScreen.tsx). */
+ *  из последнего. */
 describe("LoginScreen: Enter = главная кнопка", () => {
   it("вход: Enter из поля пароля логинит", () => {
     const api = stubApi();
     render(<LoginScreen api={api} onSession={vi.fn()} lang="ru" glyphSrc="/glyph.svg" />);
     type("Имя пользователя", "sivren");
     type("Пароль", "hunter22");
-    fireEvent.keyDown(screen.getByPlaceholderText("Пароль"), { key: "Enter" });
+    enter("Пароль");
     expect(api.login).toHaveBeenCalledWith({ username: "sivren", password: "hunter22" });
   });
 
@@ -46,7 +59,7 @@ describe("LoginScreen: Enter = главная кнопка", () => {
     render(<LoginScreen api={api} onSession={vi.fn()} lang="ru" glyphSrc="/glyph.svg" />);
     type("Имя пользователя", "sivren");
     type("Пароль", "hunter22");
-    fireEvent.keyDown(screen.getByPlaceholderText("Имя пользователя"), { key: "Enter" });
+    enter("Имя пользователя");
     expect(api.login).toHaveBeenCalledTimes(1);
   });
 
@@ -55,7 +68,7 @@ describe("LoginScreen: Enter = главная кнопка", () => {
     render(<LoginScreen api={stubApi()} onSession={onSession} lang="ru" glyphSrc="/glyph.svg" />);
     type("Имя пользователя", "sivren");
     type("Пароль", "hunter22");
-    fireEvent.keyDown(screen.getByPlaceholderText("Пароль"), { key: "Enter" });
+    enter("Пароль");
     await vi.waitFor(() => expect(onSession).toHaveBeenCalledWith(session));
   });
 
@@ -73,7 +86,7 @@ describe("LoginScreen: Enter = главная кнопка", () => {
     render(<LoginScreen api={api} onSession={vi.fn()} lang="ru" glyphSrc="/glyph.svg" />);
     type("Имя пользователя", "s");
     type("Пароль", "1");
-    fireEvent.keyDown(screen.getByPlaceholderText("Пароль"), { key: "Enter" });
+    enter("Пароль");
     expect(api.login).not.toHaveBeenCalled();
   });
 
@@ -82,7 +95,7 @@ describe("LoginScreen: Enter = главная кнопка", () => {
     render(<LoginScreen api={api} onSession={vi.fn()} lang="ru" glyphSrc="/glyph.svg" />);
     fireEvent.click(screen.getByText("Восстановление"));
     type("Email аккаунта", "a@b.co");
-    fireEvent.keyDown(screen.getByPlaceholderText("Email аккаунта"), { key: "Enter" });
+    enter("Email аккаунта");
     expect(api.recoveryStart).toHaveBeenCalledWith("a@b.co");
   });
 });
@@ -119,7 +132,7 @@ describe("LoginScreen: набор возможностей пропсами (в�
     fireEvent.click(screen.getByText("Регистрация"));
     type("Имя пользователя", "sivren");
     type("Пароль", "hunter22");
-    fireEvent.keyDown(screen.getByPlaceholderText("Пароль"), { key: "Enter" });
+    enter("Пароль");
     await vi.waitFor(() => expect(onSession).toHaveBeenCalledWith(session));
     expect(api.registerStart).not.toHaveBeenCalled();
   });

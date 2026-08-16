@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, PlaylistDetail } from "@muza/api-client";
 import { ShareVisibilityDialog } from "./ShareVisibilityDialog";
+import { ApiError } from "@muza/api-client";
 
 // «Поделиться плейлистом» (2026-07-17): лесенка private→code→public + код.
 // Без LanguageProvider → DEFAULT_LANG="en", ассерты на английский.
@@ -92,7 +93,7 @@ describe("ShareVisibilityDialog — лесенка", () => {
   });
 
   it("403 админ-бана — текст сервера тостом, ступень не меняется", async () => {
-    const setPlaylistVisibility = vi.fn().mockRejectedValue(new Error("Публикация запрещена администратором"));
+    const setPlaylistVisibility = vi.fn().mockRejectedValue(new ApiError(409, "Публикация запрещена администратором"));
     const onNotify = vi.fn();
     renderDialog({ setPlaylistVisibility } as unknown as MuzaApi, detail(), { onNotify });
 
@@ -132,7 +133,7 @@ describe("ShareVisibilityDialog — @адрес", () => {
   });
 
   it("409 занят — текст сервера тостом", async () => {
-    const setPlaylistHandle = vi.fn().mockRejectedValue(new Error("Адрес занят"));
+    const setPlaylistHandle = vi.fn().mockRejectedValue(new ApiError(409, "Адрес занят"));
     const onNotify = vi.fn();
     renderDialog({ setPlaylistHandle } as unknown as MuzaApi, publicDetail(), { onNotify });
 

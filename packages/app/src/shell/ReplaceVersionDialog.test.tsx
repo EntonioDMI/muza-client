@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { MuzaApi, Track, TrackAlternative } from "@muza/api-client";
 import { ReplaceVersionDialog, type ReplaceCtx } from "./ReplaceVersionDialog";
+import { ApiError } from "@muza/api-client";
 
 // «Заменить версию» (2026-07-18): кандидаты с сервера, Δ-бейдж, прослушка,
 // замена в плейлисте/Любимом. Без LanguageProvider → DEFAULT_LANG="en".
@@ -85,7 +86,7 @@ describe("ReplaceVersionDialog — загрузка и список", () => {
   });
 
   it("ошибка сервера — показывается в диалоге", async () => {
-    const getTrackAlternatives = vi.fn().mockRejectedValue(new Error("Слишком часто ищешь — подожди минуту"));
+    const getTrackAlternatives = vi.fn().mockRejectedValue(new ApiError(409, "Слишком часто ищешь — подожди минуту"));
     renderDialog({ getTrackAlternatives }, playlistCtx());
     await waitFor(() => expect(screen.getByText("Слишком часто ищешь — подожди минуту")).toBeTruthy());
   });
@@ -147,7 +148,7 @@ describe("ReplaceVersionDialog — замена", () => {
   });
 
   it("ошибка замены — тост с ошибкой, диалог не закрывается", async () => {
-    const replacePlaylistTrack = vi.fn().mockRejectedValue(new Error("Трека нет в плейлисте"));
+    const replacePlaylistTrack = vi.fn().mockRejectedValue(new ApiError(409, "Трека нет в плейлисте"));
     const onClose = vi.fn();
     const onNotify = vi.fn();
     renderDialog(
