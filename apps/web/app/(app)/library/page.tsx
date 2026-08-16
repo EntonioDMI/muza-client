@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Dialog, SearchInput } from "@muza/ui";
 import { pickRandomPlaylistIcon } from "@muza/core";
-import { ApiError } from "@muza/api-client";
+import { ApiError, humanError } from "@muza/api-client";
 import { useT } from "@muza/app";
 import { ContextMenuProvider, type ContextMenuApi, type MenuAbilities } from "@muza/app/shell/ContextMenu";
 import { AddLinkDialog } from "@muza/app/shell/AddLinkDialog";
@@ -70,7 +70,7 @@ export default function LibraryPage() {
       notify(t("toast.playlist.addedTrack", { name: pl.name }), "list-music");
       void refresh();
     } catch (err) {
-      notify(err instanceof Error ? err.message : t("toast.playlist.addFailed"), "x");
+      notify(humanError(err, t("toast.playlist.addFailed")), "x");
     }
   };
 
@@ -90,7 +90,7 @@ export default function LibraryPage() {
       closeCreate();
       router.push(`/playlist?id=${playlist.id}`);
     } catch (e) {
-      notify(e instanceof ApiError ? e.message : t("toast.playlist.createFailed"), "x");
+      notify(humanError(e, t("toast.playlist.createFailed")), "x");
     } finally {
       setCreateBusy(false);
     }

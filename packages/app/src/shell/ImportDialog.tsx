@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Dialog, Icon, SearchInput } from "@muza/ui";
 import type { ImportPreview, ImportReport, MuzaApi } from "@muza/api-client";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Пауза после ввода перед походом за превью: каждый вызов — запрос к серверу,
  *  а тот идёт на страницу Spotify. По нажатию клавиши так ходить нельзя. */
@@ -90,7 +91,7 @@ export function ImportDialog({
       setReport(out);
       onImported(out);
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.importPlaylist.failed"), "x");
+      onNotify(humanError(e, t("dialogs.importPlaylist.failed")), "x");
     } finally {
       setBusy(false);
     }

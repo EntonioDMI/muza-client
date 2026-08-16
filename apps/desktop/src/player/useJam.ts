@@ -13,6 +13,7 @@ import type { JamMember, JamSnapshot, JamState, MuzaApi } from "@muza/api-client
 import { DEFAULT_LANG, translate, type Lang, type TParams, type TranslationKey } from "../i18n";
 import type { PositionStore } from "./positionStore";
 import { fromCatalog, type PlayerTrack } from "./types";
+import { humanError } from "@muza/api-client";
 
 /** Порог дрейфа позиции у гостя, сек. */
 const DRIFT_SEC = 3;
@@ -187,7 +188,7 @@ export function useJam({
     try {
       applySnapshot(await api.createJam());
     } catch (e) {
-      onNotifyRef.current(e instanceof Error ? e.message : t("media.jam.createFailed"), "x");
+      onNotifyRef.current(humanError(e, t("media.jam.createFailed")), "x");
     } finally {
       setBusy(false);
     }
@@ -201,7 +202,7 @@ export function useJam({
       onNotifyRef.current(t("media.jam.joinedAs", { username: snap.host.username }), "radio-tower");
       if (!snap.isHost && snap.state) applyState(snap.state);
     } catch (e) {
-      onNotifyRef.current(e instanceof Error ? e.message : t("media.jam.joinFailed"), "x");
+      onNotifyRef.current(humanError(e, t("media.jam.joinFailed")), "x");
       throw e;
     } finally {
       setBusy(false);
@@ -222,7 +223,7 @@ export function useJam({
     try {
       await api.addJamTrack(s.code, trackId);
     } catch (e) {
-      onNotifyRef.current(e instanceof Error ? e.message : t("media.jam.addFailed"), "x");
+      onNotifyRef.current(humanError(e, t("media.jam.addFailed")), "x");
     }
   };
 

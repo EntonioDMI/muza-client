@@ -32,7 +32,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button, Dialog, Switch } from "@muza/ui";
-import { ApiError, type ScrobblingStatus } from "@muza/api-client";
+import { ApiError, type ScrobblingStatus, humanError } from "@muza/api-client";
 import { useT } from "../../i18n";
 import { paneStyle, RowValue, SettingInput, SettingRow } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
@@ -123,7 +123,7 @@ export function IntegrationsPane() {
       }
       onNotify(t("settings.integrations.lastfm.errors.timeout"), "x");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : t("settings.integrations.lastfm.errors.connectFailed"), "x");
+      onNotify(humanError(e, t("settings.integrations.lastfm.errors.connectFailed")), "x");
     } finally {
       setLfmWaiting(false);
     }
@@ -154,7 +154,7 @@ export function IntegrationsPane() {
       setLbToken("");
       onNotify(t("settings.integrations.listenbrainz.connected", { username }), "radio-tower");
     } catch (e) {
-      setLbErr(e instanceof ApiError ? e.message : t("settings.integrations.listenbrainz.errors.connectFailed"));
+      setLbErr(humanError(e, t("settings.integrations.listenbrainz.errors.connectFailed")));
     } finally {
       setLbBusy(false);
     }

@@ -14,6 +14,7 @@ import { useLikes } from "../likes";
 import { usePlayer } from "../player";
 import { usePlaylists } from "../playlists";
 import { useToast } from "../toast";
+import { humanError } from "@muza/api-client";
 
 /** Правая кнопка по строке трека в вебе: умения площадки + диалоги, которые
  *  эти умения открывают.
@@ -110,7 +111,7 @@ export function useWebTrackMenu(
       );
       void refreshPlaylists();
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("toast.playlist.addFailed"), "x");
+      notify(humanError(e, t("toast.playlist.addFailed")), "x");
     }
   };
 
@@ -123,7 +124,7 @@ export function useWebTrackMenu(
       playContext([track, ...radio], 0);
       notify(t("toast.radio.byTrack", { title: track.title }), "radio");
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("toast.radio.buildFailed"), "x");
+      notify(humanError(e, t("toast.radio.buildFailed")), "x");
     }
   };
 
@@ -140,7 +141,7 @@ export function useWebTrackMenu(
       a.remove();
       notify(t("web.trackList.downloadStarted"), "download");
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("web.trackList.downloadFailed"), "x");
+      notify(humanError(e, t("web.trackList.downloadFailed")), "x");
     }
   };
 

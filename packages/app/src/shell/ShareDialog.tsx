@@ -3,6 +3,7 @@ import { Button, Dialog } from "@muza/ui";
 import { usePlatform } from "../platform";
 import { renderShareCard, shareText, type ShareData } from "../lib/shareCard";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Шеринг-карточка (Stage 7): предпросмотр canvas-PNG + скопировать
  *  картинку/текст, сохранить файл. Всё на клиенте.
@@ -56,7 +57,7 @@ export function ShareDialog({
         setPreviewUrl(url);
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : t("dialogs.share.renderFailed"));
+        if (alive) setError(humanError(e, t("dialogs.share.renderFailed")));
       });
     return () => {
       alive = false;
@@ -90,7 +91,7 @@ export function ShareDialog({
       // раньше: `if (!path) return` до всякого тоста).
       if (saved) onNotify(t("dialogs.share.saved"), "check");
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.share.saveFailed"), "x");
+      onNotify(humanError(e, t("dialogs.share.saveFailed")), "x");
     }
   };
 

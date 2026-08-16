@@ -24,7 +24,7 @@
 
 import { useEffect, useState } from "react";
 import { Badge, Button, ChipGroup, Dialog, Icon, IconButton } from "@muza/ui";
-import { ApiError, type MarketPlugin, type MarketTheme } from "@muza/api-client";
+import { ApiError, type MarketPlugin, type MarketTheme, humanError } from "@muza/api-client";
 import { useT } from "../../i18n";
 // Список сохранённых оформлений здесь не держим: его читает «Кастомизация»
 // при входе (listThemes — это чтение хранилища устройства), и после
@@ -264,7 +264,7 @@ export function MarketSub() {
       await api.reportMarketTheme(theme.id);
       onNotify(t("settings.market.reportSent"), "flag");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : t("settings.market.errors.reportFailed"), "x");
+      onNotify(humanError(e, t("settings.market.errors.reportFailed")), "x");
     }
   };
 
@@ -289,7 +289,7 @@ export function MarketSub() {
       setPublishOpen(false);
       onNotify(t("settings.market.themePublished", { name: published.name }), "upload");
     } catch (e) {
-      setPublishErr(e instanceof ApiError ? e.message : t("settings.market.errors.publishFailed"));
+      setPublishErr(humanError(e, t("settings.market.errors.publishFailed")));
     } finally {
       setPublishBusy(false);
     }
@@ -319,7 +319,7 @@ export function MarketSub() {
       });
       setMarketPlugins((list) => list?.map((x) => (x.id === m.id ? { ...x, installs: x.installs + 1 } : x)) ?? list);
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("settings.market.errors.installPluginFailed"), "x");
+      onNotify(humanError(e, t("settings.market.errors.installPluginFailed")), "x");
     } finally {
       setPluginInstalling(null);
     }
@@ -340,7 +340,7 @@ export function MarketSub() {
       await api.reportMarketPlugin(m.id);
       onNotify(t("settings.market.reportSent"), "flag");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : t("settings.market.errors.reportFailed"), "x");
+      onNotify(humanError(e, t("settings.market.errors.reportFailed")), "x");
     }
   };
 

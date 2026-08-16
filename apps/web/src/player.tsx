@@ -23,6 +23,7 @@ import {
   setSlotLevel,
 } from "./audioFx";
 import { usePrefs } from "./prefs";
+import { humanError } from "@muza/api-client";
 
 /** Веб-плеер (Stage 8): `<audio>` поверх серверного резолвера.
  *
@@ -562,7 +563,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         if (loadSeqRef.current !== seq) return; // чужая беда, не наша
         // резолв первого запроса может идти десятки секунд — 503 честно скажет
-        setError(e instanceof Error ? e.message : t("media.player.errors.playFailed"));
+        setError(humanError(e, t("media.player.errors.playFailed")));
         setLoading(false);
       }
     },

@@ -142,8 +142,8 @@ export const mediaEn = {
     trackCount: "{count} tr.",
     fromOwner: " · from {owner}",
     errors: {
-      canvasBlobFailed: "canvas.toBlob returned null",
-      canvas2dUnavailable: "canvas 2d isn't available",
+      canvasBlobFailed: "Couldn't put the image together — try again.",
+      canvas2dUnavailable: "Couldn't draw the image on this device.",
     },
   },
   share: {

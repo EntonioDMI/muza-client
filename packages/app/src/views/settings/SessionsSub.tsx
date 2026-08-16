@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@muza/ui";
-import { ApiError, type SessionInfo } from "@muza/api-client";
+import { ApiError, type SessionInfo, humanError } from "@muza/api-client";
 import { useT, type TranslationKey, type TParams } from "../../i18n";
 import { paneStyle, RowValue, SettingRow, SubHeader } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
@@ -59,7 +59,7 @@ export function SessionsSub() {
       setSessions((list) => list?.filter((s) => s.id !== id) ?? list);
       onNotify(t("settings.account.sessions.revoked"), "shield-check");
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : t("settings.account.sessions.errors.revokeFailed"), "x");
+      onNotify(humanError(e, t("settings.account.sessions.errors.revokeFailed")), "x");
     }
   };
 

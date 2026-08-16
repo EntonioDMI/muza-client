@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Dialog, Icon, IconButton } from "@muza/ui";
 import type { MuzaApi, PlaylistDetail, PlaylistVisibility } from "@muza/api-client";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Ступень лесенки — плоская плашка по ДС (замечание владельца 17.07: НИКАКИХ
  *  обводок): покой surface-2, ховер surface-3, актив accent-soft + accent-text.
@@ -118,7 +119,7 @@ export function ShareVisibilityDialog({
       setFreshCode(out.publicCode);
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.shareVisibility.changeFailed"), "x");
+      onNotify(humanError(e, t("dialogs.shareVisibility.changeFailed")), "x");
     } finally {
       setBusy(false);
     }
@@ -149,7 +150,7 @@ export function ShareVisibilityDialog({
       onNotify(t("dialogs.shareVisibility.handleSaved"), "check");
       onChanged();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("views.search.somethingWrong"), "x");
+      onNotify(humanError(e, t("views.search.somethingWrong")), "x");
     } finally {
       setHandleBusy(false);
     }
@@ -277,7 +278,6 @@ export function ShareVisibilityDialog({
                     color: "var(--text-1)",
                     fontFamily: "var(--font-ui)",
                     fontSize: "var(--fs-body)",
-                    outline: "none",
                   }}
                 />
                 <Button variant="secondary" disabled={!draftValid || handleBusy} onClick={() => void saveHandle()}>

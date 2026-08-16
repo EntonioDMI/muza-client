@@ -556,10 +556,18 @@ export class HttpMuzaApi implements MuzaApi {
         headers: { "Content-Type": "application/json", ...init?.headers },
       });
     } catch {
-      throw new ApiError(0, "Сервер недоступен. Проверь, что muza-server запущен.");
+      // ⚠️ ЭТО ТЕКСТ ДЛЯ ЧЕЛОВЕКА, а не для разработчика: он уходит в ApiError,
+      // а `humanError` показывает сообщения ApiError как есть. Раньше здесь
+      // стояло «Проверь, что muza-server запущен» — имя внутреннего процесса,
+      // которое слушателю ничего не говорит и говорить не должно.
+      throw new ApiError(0, "Нет связи с Muza. Проверь интернет и попробуй ещё раз.");
     }
     if (!res.ok) {
-      let message = `Ошибка ${res.status}`;
+      // Запасной текст на случай, когда сервер не прислал своего. Голый код
+      // («Ошибка 502») человеку бесполезен: он не подсказывает ни причины, ни
+      // следующего шага. Код остаётся в `ApiError.status` — для журнала и
+      // разбора он там и нужен.
+      let message = res.status >= 500 ? "Muza сейчас не отвечает. Попробуй через минуту." : "Не получилось. Попробуй ещё раз.";
       try {
         const body = (await res.json()) as { message?: string | string[] };
         if (body.message) message = Array.isArray(body.message) ? body.message[0] : body.message;
@@ -575,7 +583,7 @@ export class HttpMuzaApi implements MuzaApi {
       // 200 с не-JSON телом (сплэш каптив-портала, HTML-страница прокси) —
       // беда транспорта, не авторизации: наверх уходит ApiError, а не голый
       // SyntaxError (его выше по стеку однажды приняли за отказ и разлогинили)
-      throw new ApiError(0, "Сервер ответил не-JSON — похоже, сеть перехвачена");
+      throw new ApiError(0, "Ответ пришёл не от Muza — похоже, сеть перехвачена. Проверь Wi-Fi.");
     }
   }
 

@@ -184,7 +184,19 @@ export function DiagnosticsSub() {
     ];
     for (const p of overview.places) out.push(`${p.key}${TAB}${p.count}`);
     for (const s of overview.searchPlaces) {
-      out.push(`${s.source}${TAB}${s.downNow ? "нет ответа" : "ok"}${TAB}${s.failed}/${s.attempts}${TAB}${s.lastFailure ?? ""}`);
+      // ⚠️ Число подписано, и слова переведены. До 15.08 строка выглядела как
+      // «youtube:music  ok  0/2» с зашитыми по-русски «ok»/«нет ответа»: дробь
+      // читалась как доля УДАЧ («сработало ноль из двух»), хотя это доля
+      // ОТКАЗОВ, то есть ноль отказов — всё хорошо. Сводку копируют и шлют за
+      // помощью, поэтому цена ошибки здесь — разбор по перевёрнутому смыслу.
+      out.push(
+        [
+          s.source,
+          s.downNow ? t("settings.system.stage0.overview.sourceNoAnswer") : t("settings.system.stage0.overview.sourceAnswering"),
+          t("settings.system.stage0.overview.sourceFailRatio", { failed: s.failed, attempts: s.attempts }),
+          s.lastFailure ?? "",
+        ].join(TAB),
+      );
     }
     return out;
   };

@@ -17,6 +17,7 @@ import type {
 import { useT } from "../i18n";
 import type { Lang } from "../i18n";
 import { SeriesChart } from "./adminCharts";
+import { humanError } from "@muza/api-client";
 
 /** Админ-панель (Stage 5) — экраны из заметки «аналитика-и-админка»:
  *  Обзор / Рост / Контент / Здоровье добычи / Ошибки / Пользователи. Виден
@@ -271,6 +272,10 @@ function useAdminData<T>(
       })
       .catch((e) => {
         if (alive) {
+          // Сырой ответ админу полезен и показывается НАМЕРЕННО (рядом с
+          // человеческим объяснением и кнопкой повтора) — админка это
+          // инструмент владельца, а не витрина. Поэтому здесь не humanError:
+          // сторож копирайта по той же причине не смотрит на views.admin.*.
           setError(e instanceof Error ? e.message : t("views.admin.loadFailed"));
           setLoading(false);
         }
@@ -1131,7 +1136,7 @@ export function UsersTab({ api }: { api: MuzaApi }) {
       setRev((r) => r + 1);
     } catch (e) {
       // сервер не даёт снять права с самого себя — показываем его причину
-      setActionError(e instanceof Error ? e.message : t("views.admin.users.adminToggleFailed"));
+      setActionError(humanError(e, t("views.admin.users.adminToggleFailed")));
     } finally {
       setBusyId(null);
     }
@@ -1504,7 +1509,7 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
       await api.clearAdminErrors(filterArg);
       refresh();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : t("views.admin.errors.deleteFailed"));
+      setActionError(humanError(e, t("views.admin.errors.deleteFailed")));
     } finally {
       setBusy(false);
     }
@@ -1516,7 +1521,7 @@ function ErrorsTab({ api }: { api: MuzaApi }) {
       await api.deleteAdminErrorGroup(hash);
       refresh();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : t("views.admin.errors.deleteFailed"));
+      setActionError(humanError(e, t("views.admin.errors.deleteFailed")));
     } finally {
       setBusy(false);
     }

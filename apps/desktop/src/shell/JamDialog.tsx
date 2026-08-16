@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Dialog, Icon, SearchInput, IconButton } from "@muza/ui";
 import type { JamUi } from "../player/useJam";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** Jam — «слушать вместе» (Stage 7). Вне jam: создать или войти по коду.
  *  В jam: код, участники, у гостя — подпись «управляет хост». */
@@ -37,7 +38,7 @@ export function JamDialog({
       await jam.join(code);
       setCode("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("dialogs.jam.joinFailed"));
+      setError(humanError(e, t("dialogs.jam.joinFailed")));
     }
   };
 

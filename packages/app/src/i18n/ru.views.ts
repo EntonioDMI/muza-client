@@ -236,6 +236,7 @@ export const viewsRu: typeof viewsEn = {
     renameFailed: "Не удалось переименовать",
     deleteFailed: "Не удалось удалить",
     removeTrackFailed: "Не удалось убрать трек",
+    removeTrackPartial: "Убрано {count} из {total} — остальные остались. Попробуй ещё раз.",
     reorderFailed: "Не удалось изменить порядок",
     removedFromPlaylist: "Убрано из плейлиста",
     trackCount: "{count} тр.",
@@ -250,7 +251,8 @@ export const viewsRu: typeof viewsEn = {
     addedBy: "добавил {name}",
     fileNotOnDevice: "Файла нет на этом устройстве",
     localTrackNotOnDevice: "Локальный трек: файла нет на этом устройстве",
-    empty: "Пусто. Добавляй треки из поиска: «⋯ → В плейлист».",
+    emptyTitle: "Пока пусто",
+    empty: "Добавляй треки из поиска: «⋯ → В плейлист».",
     changePlaylistIcon: "Сменить иконку плейлиста",
     removeFromPlaylist: "Убрать из плейлиста",
     // Публичные плейлисты (2026-07-17): просмотр чужого (role viewer)
@@ -266,6 +268,8 @@ export const viewsRu: typeof viewsEn = {
     trackCount: "{count} тр.",
     emptyTitle: "Пока пусто",
     empty: "Жми сердечко у трека — он появится здесь.",
+    failedTitle: "Любимое не загрузилось",
+    failedHint: "Сервер не ответил. С самим списком ничего не случилось — он хранится в аккаунте.",
     anon: {
       title: "Любимое живёт в аккаунте",
       hint: "У анонимного аккаунта нет серверной стороны, поэтому лайки негде хранить. Войди — и они переживут переустановку.",
@@ -289,6 +293,9 @@ export const viewsRu: typeof viewsEn = {
     emptyHint: "В каталоге Музы такого имени нет. Попробуй написать иначе — или пропусти этот шаг и просто найди музыку через поиск.",
     emptyCatalogTitle: "Пока не из чего выбрать",
     emptyCatalogHint: "Каталог Музы наполняется, пока люди слушают. Пропусти этот шаг — рекомендации соберутся сами из того, что включишь.",
+    failedTitle: "Артисты не загрузились",
+    failedHint: "Сервер не ответил. Попробуй ещё раз — или пропусти шаг, ничего не потеряется.",
+    failedRetry: "Попробовать ещё раз",
     loadingAria: "Загружаем артистов",
   },
 
@@ -360,6 +367,7 @@ export const viewsRu: typeof viewsEn = {
     brandFallback: "ИТОГИ",
     close: "Закрыть итоги",
     slideProgress: "Слайд {position} из {total}",
+    goToSlide: "Перейти к слайду {position} из {total}",
     loading: {
       kicker: "Muza · {year}",
       title: "Собираем твой год",

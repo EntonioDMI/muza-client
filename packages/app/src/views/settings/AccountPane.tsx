@@ -25,7 +25,7 @@
 
 import { useState } from "react";
 import { Button, Dialog, Switch } from "@muza/ui";
-import { ApiError } from "@muza/api-client";
+import { ApiError, humanError } from "@muza/api-client";
 import { useT } from "../../i18n";
 import { GroupTitle, paneStyle, SettingInput, SettingRow } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
@@ -65,7 +65,7 @@ export function AccountPane() {
       setPwdOpen(false);
       onNotify(t("settings.account.password.changed"), "shield-check");
     } catch (e) {
-      setPwdErr(e instanceof ApiError ? e.message : t("settings.account.password.errors.changeFailed"));
+      setPwdErr(humanError(e, t("settings.account.password.errors.changeFailed")));
     } finally {
       setPwdBusy(false);
     }

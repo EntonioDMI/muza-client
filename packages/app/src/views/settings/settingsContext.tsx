@@ -41,6 +41,7 @@ import type {
 } from "../../platform";
 import { SETTINGS_INDEX, type SettingsCapability } from "../../lib/settingsIndex";
 import type { SettingsTabKey } from "./SettingsNav";
+import { humanError } from "@muza/api-client";
 
 /** Под-экраны настроек: тяжёлый пункт — отдельный экран, а не строка.
  *  Порядок массива ни на что не влияет, это просто перечень. */
@@ -334,7 +335,7 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
       const s = await pluginsPort.pickFile();
       if (s) setStaged(s); // откроется экран согласия
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.readFailed"), "x");
+      onNotify(humanError(e, t("settings.extensions.errors.readFailed")), "x");
     } finally {
       setInstallBusy(false);
     }
@@ -360,7 +361,7 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
       setStaged(null);
       refreshPlugins();
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.installFailed"), "x");
+      onNotify(humanError(e, t("settings.extensions.errors.installFailed")), "x");
     }
   };
   const declineInstall = () => {
@@ -381,7 +382,7 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
         }
         refreshPlugins();
       } catch (e) {
-        onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.toggleFailed"), "x");
+        onNotify(humanError(e, t("settings.extensions.errors.toggleFailed")), "x");
       }
     },
     [pluginsPort, installed, refreshPlugins, onNotify, t],
@@ -395,7 +396,7 @@ export function SettingsProvider({ children, onPluginsChanged, ...props }: Setti
         onNotify(t("settings.extensions.pluginRemoved", { name }), "trash-2");
         refreshPlugins();
       } catch (e) {
-        onNotify(e instanceof Error ? e.message : t("settings.extensions.errors.removeFailed"), "x");
+        onNotify(humanError(e, t("settings.extensions.errors.removeFailed")), "x");
       }
     },
     [pluginsPort, refreshPlugins, onNotify, t],

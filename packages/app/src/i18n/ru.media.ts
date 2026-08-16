@@ -107,8 +107,8 @@ export const mediaRu: typeof mediaEn = {
     trackCount: "{count} тр.",
     fromOwner: " · от {owner}",
     errors: {
-      canvasBlobFailed: "canvas.toBlob вернул null",
-      canvas2dUnavailable: "canvas 2d недоступен",
+      canvasBlobFailed: "Не удалось собрать картинку — попробуй ещё раз.",
+      canvas2dUnavailable: "Не удалось нарисовать картинку на этом устройстве.",
     },
   },
   share: {

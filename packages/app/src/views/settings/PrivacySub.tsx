@@ -13,7 +13,7 @@
 
 import { useState } from "react";
 import { Button, Dialog } from "@muza/ui";
-import { ApiError } from "@muza/api-client";
+import { ApiError, humanError } from "@muza/api-client";
 import { useT } from "../../i18n";
 import { paneStyle, SettingInput, SettingRow, SubHeader } from "./primitives";
 import { useSettingsScreen } from "./settingsContext";
@@ -43,7 +43,7 @@ export function PrivacySub() {
         URL.revokeObjectURL(url);
       }
     } catch (e) {
-      onNotify(e instanceof ApiError ? e.message : t("settings.privacy.errors.exportFailed"), "x");
+      onNotify(humanError(e, t("settings.privacy.errors.exportFailed")), "x");
     } finally {
       setExportBusy(false);
     }
@@ -62,7 +62,7 @@ export function PrivacySub() {
       onNotify(t("settings.privacy.accountDeleted"), "trash-2");
       onLogout();
     } catch (e) {
-      setDelErr(e instanceof ApiError ? e.message : t("settings.privacy.errors.deleteFailed"));
+      setDelErr(humanError(e, t("settings.privacy.errors.deleteFailed")));
     } finally {
       setDelBusy(false);
     }

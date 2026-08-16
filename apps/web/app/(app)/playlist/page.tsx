@@ -17,6 +17,7 @@ import { usePlaylists } from "../../../src/playlists";
 import { useSession } from "../../../src/session";
 import { useToast } from "../../../src/toast";
 import { useWebTrackMenu } from "../../../src/components/trackMenu";
+import { humanError } from "@muza/api-client";
 
 /** Страница плейлиста — ТОТ ЖЕ экран, что в приложении
  *  (@muza/app/views/PlaylistView, волна «экраны» веб-паритета, 2026-08-02).
@@ -88,7 +89,7 @@ function PlaylistBody() {
       notify(t("toast.playlist.iconChanged"), "image");
       void refreshPlaylists();
     } catch (e) {
-      notify(e instanceof Error ? e.message : t("toast.playlist.iconChangeFailed"), "x");
+      notify(humanError(e, t("toast.playlist.iconChangeFailed")), "x");
     } finally {
       setIconBusy(false);
     }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Dialog, SearchInput } from "@muza/ui";
 import type { MuzaApi, Track } from "@muza/api-client";
 import { useT } from "../i18n";
+import { humanError } from "@muza/api-client";
 
 /** «Добавить по ссылке» (Stage 4): YT/YTM/SoundCloud/Bandcamp — как есть,
  *  Spotify/Apple Music — сервер сопоставит через Odesli. Добавленная ссылка
@@ -38,7 +39,7 @@ export function AddLinkDialog({
       onClose();
       onAdded(track);
     } catch (e) {
-      onNotify(e instanceof Error ? e.message : t("dialogs.addLink.failed"), "x");
+      onNotify(humanError(e, t("dialogs.addLink.failed")), "x");
     } finally {
       setBusy(false);
     }

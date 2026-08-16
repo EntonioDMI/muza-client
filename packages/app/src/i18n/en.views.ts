@@ -227,6 +227,7 @@ export const viewsEn = {
     renameFailed: "Couldn't rename",
     deleteFailed: "Couldn't delete",
     removeTrackFailed: "Couldn't remove the track",
+    removeTrackPartial: "Removed {count} of {total} — the rest stayed. Try again.",
     reorderFailed: "Couldn't change the order",
     removedFromPlaylist: "Removed from the playlist",
     trackCount: "{count} tr.",
@@ -241,7 +242,8 @@ export const viewsEn = {
     addedBy: "added by {name}",
     fileNotOnDevice: "The file isn't on this device",
     localTrackNotOnDevice: "Local track: the file isn't on this device",
-    empty: 'Empty. Add tracks from Search: "⋯ → Add to playlist".',
+    emptyTitle: "Nothing here yet",
+    empty: 'Add tracks from Search: "⋯ → Add to playlist".',
     changePlaylistIcon: "Change playlist icon",
     removeFromPlaylist: "Remove from playlist",
     // Публичные плейлисты (2026-07-17): просмотр чужого (role viewer)
@@ -257,6 +259,8 @@ export const viewsEn = {
     trackCount: "{count} tr.",
     emptyTitle: "No favorites yet",
     empty: "Tap the heart on a track and it'll show up here.",
+    failedTitle: "Couldn't load your favorites",
+    failedHint: "The server didn't answer. Your favorites are safe — they're stored on your account.",
     anon: {
       title: "Favorites live in your account",
       hint: "An anonymous account has no server side, so there's nowhere to keep likes. Sign in — and they'll survive a reinstall.",
@@ -284,6 +288,9 @@ export const viewsEn = {
     emptyHint: "Nothing matches that name in Muza's catalogue. Try another spelling — or skip this and just search for music.",
     emptyCatalogTitle: "Nothing to pick from yet",
     emptyCatalogHint: "Muza's catalogue fills up as people listen. Skip this — recommendations will build themselves from what you play.",
+    failedTitle: "Couldn't load the artists",
+    failedHint: "The server didn't answer. Try again — or skip this step, nothing is lost.",
+    failedRetry: "Try again",
     loadingAria: "Loading artists",
   },
 
@@ -355,6 +362,7 @@ export const viewsEn = {
     brandFallback: "WRAPPED",
     close: "Close Wrapped",
     slideProgress: "Slide {position} of {total}",
+    goToSlide: "Go to slide {position} of {total}",
     loading: {
       kicker: "Muza · {year}",
       title: "Putting your year together",

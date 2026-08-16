@@ -24,6 +24,9 @@ import { mediaEn } from "./en.media";
 export const en = {
   common: {
     ok: "OK",
+    /** Общий повтор после отказа. Заведён 15.08: до этого каждая вьюха писала
+     *  свой, и на одном экране встречались «Retry» и «Ask again». */
+    retry: "Try again",
     cancel: "Cancel",
     save: "Save",
     apply: "Apply",
@@ -213,17 +216,18 @@ export const en = {
       },
       theme: {
         title: "Theme",
-        hint: "Light makes the background light and the text dark.",
+        hint: "Dark is for evening and dim light, Light is for a bright room. Your other look settings stay as they are.",
         dark: "Dark",
         light: "Light",
       },
       accent: {
         title: "Accent color",
-        hint: "Pick a ready-made color or any of your own — the square on the right opens a palette.",
+        hint: "Pick a ready-made color or any of your own — the last circle opens a palette.",
         blue: "Blue",
         red: "Red",
         bolt: "Bolt",
         customLabel: "Custom accent color",
+        resetLabel: "Back to the color you opened with",
       },
       radius: {
         title: "Corner radius",
@@ -252,7 +256,7 @@ export const en = {
       },
       background: {
         title: "Background",
-        hint: "What shows under the interface. \"Custom\" is built in Customize: a color, a gradient, a picture or living circles.",
+        hint: "What shows under the interface. \"Custom\" is built below, in \"Customize\": a color, a gradient, a picture or living circles.",
         fromCover: "From cover",
         custom: "Custom",
         setUp: "Build it",
@@ -418,7 +422,7 @@ export const en = {
         color: {
           title: "Background color",
           gradientTitle: "Gradient colors",
-          hint: "The square next to it opens a color picker.",
+          hint: "The circle next to it opens a color picker.",
           secondGradientColor: "Second gradient color",
         },
         imageUrl: { title: "Image by link", hint: "Paste a link to an image or a GIF — it becomes the background. Blur is set with the slider above." },
@@ -639,7 +643,7 @@ export const en = {
       filter: { all: "All", themes: "Themes", plugins: "Plugins" },
       publishTheme: "Publish theme",
       themesNeedAccount: "The theme marketplace is available after signing in — an anonymous account only lives on this device.",
-      themesEmpty: "Nothing here yet. Build a look in Customize and be the first — \"Publish theme\".",
+      themesEmpty: "Nothing here yet. Build a look in Appearance → Customize and be the first — \"Publish theme\".",
       pluginsNeedAccount: "The plugin marketplace is available after signing in — an anonymous account only lives on this device.",
       // ⚠️ Строка pluginsAppOnly удалена 2026-08-11 вместе с чипом
       // «Расширения» — см. ru.ts.
@@ -671,7 +675,7 @@ export const en = {
       },
       cssWarnDialog: {
         title: "Theme includes custom CSS",
-        body: "The author's styles can change the interface's look in any way. It's safe for your data, but if the look breaks — turn off \"Custom CSS\" in Customize or press \"Reset appearance\".",
+        body: "The author's styles can change the interface's look in any way. It's safe for your data, but if the look breaks — turn off \"Custom CSS\" in Appearance → Customize or press \"Reset appearance\".",
         installAnyway: "Install anyway",
       },
       errors: {
@@ -1057,6 +1061,13 @@ export const en = {
           typicalSlow: "on the slowest runs — {value}",
           didNotPlay: "Never played",
           didNotPlayValue: "{failed} of {total}",
+          /** Строка источника в копируемой сводке. Число ОБЯЗАНО быть подписано:
+           *  «ok 0/2» рядом с «ok 1/2» читается как доля УДАЧ, то есть ровно
+           *  наоборот, и человек шлёт в поддержку вывод, который сам понял
+           *  неверно (аудит 15.08). */
+          sourceAnswering: "answering",
+          sourceNoAnswer: "no answer",
+          sourceFailRatio: "failures {failed} of {attempts}",
           cold: "First track after launch",
           noData: "—",
           sec: "{value}s",
