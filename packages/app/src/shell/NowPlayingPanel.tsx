@@ -29,7 +29,7 @@
 
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-import { Cover, EmptyState, IconButton, Lyrics } from "@muza/ui";
+import { Cover, CoverGlow, EmptyState, IconButton, Lyrics } from "@muza/ui";
 import { useT } from "../i18n";
 import { useVideoSync } from "../lib/videoSync";
 import { ArtistLink } from "./ArtistLink";
@@ -357,7 +357,20 @@ export function NowPlayingPanel({
   }
 
   return (
-    <aside data-zone="nowplaying" className={className} style={zoneStyle} onAnimationEnd={onAnimationEnd}>
+    <aside
+      data-zone="nowplaying"
+      className={className}
+      // position/overflow — ради свечения ниже: оно вылезает за края нарочно
+      // и обязано обрезаться панелью, а не расползаться по окну.
+      // isolation — не украшение: свечение лежит на z-index -1, и без своего
+      // контекста наложения оно провалилось бы под фон предка. overflow —
+      // чтобы вылезающие за края 15% обрезались панелью, а не расползались.
+      style={{ ...zoneStyle, position: "relative", isolation: "isolate", overflow: "hidden" }}
+      onAnimationEnd={onAnimationEnd}
+    >
+      {/* Панель окрашивается тем, что сейчас играет (17.08). key по треку —
+          чтобы смена песни меняла и свечение, а не оставляла прежнее. */}
+      <CoverGlow key={track.id} src={track.cover} />
       {heading}
       {/* Обложка живёт, ПОКА у видео нет нарисованного кадра, — и уходит ровно
           в тот кадр, когда видео готово его заменить. Раньше здесь стоял
