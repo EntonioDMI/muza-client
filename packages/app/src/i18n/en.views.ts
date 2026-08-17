@@ -145,7 +145,7 @@ export const viewsEn = {
         hint: "This artist's songs can't be played right now — try another one.",
       },
       releases: "Latest releases",
-      releasesHint: "What this artist has put out. Reference only — you can't play these from here yet.",
+      releasesHint: "What this artist has put out. Tap a release to see what we have from it.",
       releasesTotal: "Releases in total: {count}",
       types: {
         album: "Album",

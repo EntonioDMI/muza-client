@@ -2943,6 +2943,10 @@ function Player({
                 onReorderPlaylists={reorderPlaylists}
                 onPlaylistsChanged={() => void reloadServerPlaylists()}
                 initialArtist={openArtistName}
+                // Релиз артиста открывается тем же экраном, что внешние
+                // подборки: сервер отдаёт его в той же форме (см. префикс
+                // `da:` в EXTERNAL_PLAYLIST_ROUTES).
+                onOpenAlbum={(id) => navigate("scPlaylist", { scPlaylistId: id })}
                 // ⚠️ БЕЗ ЭТОГО ОБРАБОТЧИКА СТРАНИЦА АРТИСТА НЕМАЯ (жалоба
                 // 17.08: «ни на какой вкладке артиста нельзя воспроизвести
                 // музыку, нажимаешь — ничего»). LibraryView зовёт его через

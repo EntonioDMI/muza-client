@@ -363,6 +363,7 @@ export function LibraryView({
   favoritesCount,
   onOpenFavorites,
   onOpenPlaylist,
+  onOpenAlbum,
   onPlaylistMenu,
   onPlayLocal,
   onAddToPlaylist,
@@ -394,6 +395,9 @@ export function LibraryView({
   favoritesCount: number;
   onOpenFavorites: () => void;
   onOpenPlaylist: (id: string) => void;
+  /** Открыть релиз артиста как подборку. Не задан — релизы остаются
+   *  справкой, как было до 17.08 (веб порт ещё не завёл). */
+  onOpenAlbum?: (id: string) => void;
   /** T17: ПКМ по плитке серверного плейлиста — то же меню, что в сайдбаре. */
   onPlaylistMenu?: (p: { id: string; name: string }, e: React.MouseEvent) => void;
   /** Играть локальные файлы (очередь = вкладка «Локальные»). Нужен только
@@ -1057,10 +1061,35 @@ export function LibraryView({
                     : undefined;
                   const kind = typeKey ? t(typeKey) : r.recordType;
                   const meta = [r.year, kind].filter(Boolean).join(" · ");
+                  // ⚠️ Нажимаемая строка — только когда обработчик есть:
+                  // иначе курсор-палец и подсветка обещали бы переход, которого
+                  // не случится. Тот же приём, что у остальных списков здесь.
+                  const open = onOpenAlbum ? () => onOpenAlbum(`da:${r.id}`) : undefined;
                   return (
                     <div
                       key={r.id}
-                      style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", padding: "var(--sp-1) 0" }}
+                      role={open ? "button" : undefined}
+                      tabIndex={open ? 0 : undefined}
+                      onClick={open}
+                      onKeyDown={
+                        open
+                          ? (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                open();
+                              }
+                            }
+                          : undefined
+                      }
+                      className={open ? "muza-hit muza-press" : undefined}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "var(--sp-3)",
+                        padding: "var(--sp-1) 0",
+                        cursor: open ? "pointer" : undefined,
+                        borderRadius: "var(--r-sm)",
+                      }}
                     >
                       <Cover src={r.coverUrl} size={48} radius="var(--r-sm)" />
                       <div style={{ minWidth: 0 }}>
