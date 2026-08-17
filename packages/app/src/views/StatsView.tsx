@@ -31,7 +31,7 @@
  *    настроек, веб — в диалог shell/StatsBlocksDialog.tsx. */
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muza/ui";
+import { Button, CountUp, Icon, IconButton, Spinner, Tabs, Tooltip, TrackRow } from "@muza/ui";
 import type { MuzaApi, StatsOverview, StatsPeriod, Track } from "@muza/api-client";
 import { BAR_MAX_WIDTH, barSpecs } from "../lib/statsBars";
 import { hourLabel } from "../lib/hourLabel";
@@ -154,7 +154,29 @@ const NARROW_BLOCK_MIN = 320;
 
 /** Крупное число с подписью снизу — типографикой, без плиток и иконок.
  *  `meta` — производная строка под подписью (см. блок «Сводка»). */
-function BigStat({ value, label, meta, accent }: { value: string; label: string; meta?: string | null; accent?: boolean }) {
+/** ⚠️ `count` — ЧИСЛО ДЛЯ ОТСЧЁТА, `value` — ГОТОВАЯ СТРОКА. Оба нужны:
+ *  часть плиток показывает не число, а формулировку («3 ч 12 мин»), и
+ *  отсчитывать там нечего. Где `count` передан — плитка досчитывает до
+ *  значения; где нет — показывает строку как раньше.
+ *
+ *  Экран статистики выбран под этот приём НАМЕРЕННО и единственным: сюда
+ *  заходят изредка и специально, чтобы посмотреть на числа. В плеере, открытом
+ *  весь день, такое оживление на каждом счётчике стало бы шумом. */
+function BigStat({
+  value,
+  count,
+  format,
+  label,
+  meta,
+  accent,
+}: {
+  value: string;
+  count?: number;
+  format?: (n: number) => string;
+  label: string;
+  meta?: string | null;
+  accent?: boolean;
+}) {
   return (
     <div style={{ flex: "1 1 0", minWidth: 0 }}>
       {/* --fs-num вместо сырых 36px (редизайн 04.08): числа статистики и
@@ -172,7 +194,7 @@ function BigStat({ value, label, meta, accent }: { value: string; label: string;
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {value}
+        {count === undefined ? value : <CountUp value={count} format={format} />}
       </div>
       <div style={{ fontSize: "var(--fs-caption)", color: "var(--text-2)", marginTop: 2 }}>{label}</div>
       {meta ? (
@@ -563,7 +585,13 @@ export function StatsView({
             <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-6)", rowGap: "var(--sp-5)" }}>
               <div style={pair}>
                 <BigStat value={fmtMinutes(d.totalMs, lang)} label={t("views.stats.summary.minutesLabel")} meta={minutesMeta} accent />
-                <BigStat value={d.totalPlays.toLocaleString(lang)} label={t("views.stats.summary.playsLabel")} meta={playsMeta} />
+                <BigStat
+                  value={d.totalPlays.toLocaleString(lang)}
+                  count={d.totalPlays}
+                  format={(n) => n.toLocaleString(lang)}
+                  label={t("views.stats.summary.playsLabel")}
+                  meta={playsMeta}
+                />
               </div>
               <div style={pair}>
                 <BigStat value={d.uniqueTracks.toLocaleString(lang)} label={t("views.stats.summary.tracksLabel")} meta={trackMeta} />

@@ -44,6 +44,7 @@ export { readDurationMs, DELAY_TIP, TOAST_HOLD, TOAST_HOLD_ACTION } from "./lib/
 export { Cover } from "./components/media/Cover.jsx";
 export { Marquee } from "./components/media/Marquee.jsx";
 export { CoverGlow } from "./components/media/CoverGlow.jsx";
+export { CountUp } from "./components/core/CountUp.jsx";
 export { Lyrics } from "./components/media/Lyrics.jsx";
 export { Shelf } from "./components/media/Shelf.jsx";
 export { Tile } from "./components/media/Tile.jsx";
